@@ -183,12 +183,16 @@ class AuthorIndexPoster extends Component {
 
     const elementStyle = {
       width: `${posterWidth}px`,
-      height: `${posterHeight}px`,
-      objectFit: 'contain'
+      height: `${posterHeight}px`
+    };
+
+    const posterStyle = {
+      ...elementStyle,
+      objectFit: 'cover'
     };
 
     return (
-      <div>
+      <div className={styles.container}>
         <div
           className={contentClassName}
           {...editorInteractionProps}
@@ -252,7 +256,7 @@ class AuthorIndexPoster extends Component {
             >
               <AuthorPoster
                 className={styles.poster}
-                style={elementStyle}
+                style={posterStyle}
                 images={images}
                 authorId={id}
                 selectedPosterHash={selectedPosterHash}

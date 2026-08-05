@@ -41,13 +41,10 @@ function calculateRowHeight(posterHeight, sortKey, isSmallScreen, posterOptions)
     showQualityProfile
   } = posterOptions;
 
-  const nextAiringHeight = 19;
-
   const heights = [
     posterHeight,
     detailedProgressBar ? detailedProgressBarHeight : progressBarHeight,
-    nextAiringHeight,
-    isSmallScreen ? columnPaddingSmallScreen : columnPadding
+    (isSmallScreen ? columnPaddingSmallScreen : columnPadding) * 2
   ];
 
   if (showTitle !== 'no') {
@@ -341,6 +338,7 @@ AuthorIndexPosters.propTypes = {
   shortDateFormat: PropTypes.string.isRequired,
   isSmallScreen: PropTypes.bool.isRequired,
   timeFormat: PropTypes.string.isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'all', 'ebook']).isRequired,
   selectedState: PropTypes.object.isRequired,
   onSelectedChange: PropTypes.func.isRequired,
   isEditorActive: PropTypes.bool.isRequired
