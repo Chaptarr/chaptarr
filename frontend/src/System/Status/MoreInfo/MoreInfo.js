@@ -25,10 +25,7 @@ class MoreInfo extends Component {
             <Link to="https://wiki.chaptarr.com">{translate('Wiki')}</Link>
           </DescriptionListItemDescription>
 
-          {/* <DescriptionListItemTitle>{translate('Reddit')}</DescriptionListItemTitle>
-          <DescriptionListItemDescription>
-            <Link to="https://discord.gg/nqFGsGUug2">{'Chaptarr'}</Link>
-          </DescriptionListItemDescription> */}
+          {/* No Reddit entry: r/chaptarr is already taken and not affiliated with Chaptarr, and no official subreddit is planned. */}
 
           <DescriptionListItemTitle>{translate('Discord')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
