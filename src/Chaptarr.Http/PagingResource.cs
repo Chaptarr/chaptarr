@@ -41,16 +41,14 @@ namespace Chaptarr.Http
     {
         public static PagingSpec<TModel> MapToPagingSpec<TResource, TModel>(this PagingResource<TResource> pagingResource, string defaultSortKey = "Id", SortDirection defaultSortDirection = SortDirection.Descending)
         {
-            const int maxPageSize = 1000;
-
             if (pagingResource.Page < 1)
             {
                 throw new BadRequestException(new { message = "Page must be >= 1" });
             }
 
-            if (pagingResource.PageSize < 1 || pagingResource.PageSize > maxPageSize)
+            if (pagingResource.PageSize < 1)
             {
-                throw new BadRequestException(new { message = $"PageSize must be between 1 and {maxPageSize}" });
+                throw new BadRequestException(new { message = "PageSize must be >= 1" });
             }
 
             var pagingSpec = new PagingSpec<TModel>
