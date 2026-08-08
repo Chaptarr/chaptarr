@@ -15,11 +15,7 @@ class MoreInfo extends Component {
     return (
       <FieldSet legend={translate('MoreInfo')}>
         <DescriptionList>
-          <DescriptionListItemTitle>{translate('HomePage')}</DescriptionListItemTitle>
-          <DescriptionListItemDescription>
-            <Link to="https://discord.gg/nqFGsGUug2">{'chaptarr.com'}</Link>
-          </DescriptionListItemDescription>
-
+          {/* No Home Page entry: chaptarr.com does not serve a site yet; re-add if a landing page ships. */}
           <DescriptionListItemTitle>{translate('Wiki')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
             <Link to="https://wiki.chaptarr.com">{translate('Wiki')}</Link>
