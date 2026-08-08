@@ -74,16 +74,10 @@ namespace NzbDrone.Common.Http.Dispatchers
                 }
             }
 
-            using var cts = new CancellationTokenSource();
-            if (request.RequestTimeout != TimeSpan.Zero)
-            {
-                cts.CancelAfter(request.RequestTimeout);
-            }
-            else
-            {
-                // The default for System.Net.Http.HttpClient
-                cts.CancelAfter(TimeSpan.FromSeconds(100));
-            }
+            using var timeoutCancellationTokenSource = new CancellationTokenSource();
+            timeoutCancellationTokenSource.CancelAfter(request.RequestTimeout != TimeSpan.Zero ? request.RequestTimeout : TimeSpan.FromSeconds(100));
+
+            using var linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancellationTokenSource.Token, request.CancellationToken);
 
             if (request.ContentData != null)
             {
@@ -102,15 +96,14 @@ namespace NzbDrone.Common.Http.Dispatchers
                 if (isTransmissionRpcSessionRequest && request.Headers != null)
                 {
                     // Defensive: ensure the header is set on the outgoing message even if a previous add was dropped.
-                    var sessionId = request.Headers.GetSingleValue(TransmissionSessionHeader);
-                    if (sessionId.IsNotNullOrWhiteSpace())
+                    if (request.Headers.GetSingleValue(TransmissionSessionHeader) is { } sessionId && sessionId.IsNotNullOrWhiteSpace())
                     {
                         requestMessage.Headers.Remove(TransmissionSessionHeader);
                         requestMessage.Headers.TryAddWithoutValidation(TransmissionSessionHeader, sessionId);
                     }
                 }
 
-                using var responseMessage = await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                using var responseMessage = await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, linkedCancellationTokenSource.Token);
 
                 byte[] data = null;
 
@@ -118,16 +111,20 @@ namespace NzbDrone.Common.Http.Dispatchers
                 {
                     if (request.ResponseStream != null && responseMessage.StatusCode == HttpStatusCode.OK)
                     {
-                        await responseMessage.Content.CopyToAsync(request.ResponseStream, null, cts.Token);
+                        await responseMessage.Content.CopyToAsync(request.ResponseStream, null, linkedCancellationTokenSource.Token);
                     }
                     else
                     {
-                        data = await responseMessage.Content.ReadAsByteArrayAsync(cts.Token);
+                        data = await responseMessage.Content.ReadAsByteArrayAsync(linkedCancellationTokenSource.Token);
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
-                    throw new WebException("Failed to read complete http response", ex, WebExceptionStatus.ReceiveFailure, null);
+                    throw new WebException("Failed to read complete http response", ex is HttpRequestException { InnerException: { } inner } ? inner : ex, WebExceptionStatus.ReceiveFailure, null);
                 }
 
                 var headers = responseMessage.Headers.ToNameValueCollection();
@@ -135,7 +132,7 @@ namespace NzbDrone.Common.Http.Dispatchers
 
                 return new HttpResponse(request, new HttpHeader(headers), data, responseMessage.StatusCode, responseMessage.Version);
             }
-            catch (OperationCanceledException ex) when (cts.IsCancellationRequested)
+            catch (OperationCanceledException ex) when (timeoutCancellationTokenSource.IsCancellationRequested)
             {
                 throw new WebException("Http request timed out", ex, WebExceptionStatus.Timeout, null);
             }

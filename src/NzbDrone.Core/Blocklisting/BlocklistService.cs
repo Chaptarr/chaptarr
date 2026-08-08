@@ -70,7 +70,7 @@ namespace NzbDrone.Core.Blocklisting
             }
 
             return _blocklistRepository.BlocklistedByTitle(authorId, release.Title)
-                .Where(b => b.Protocol == DownloadProtocol.Usenet)
+                .Where(b => b.Protocol == release.DownloadProtocol)
                 .Any(b => SameNzb(b, release));
         }
 

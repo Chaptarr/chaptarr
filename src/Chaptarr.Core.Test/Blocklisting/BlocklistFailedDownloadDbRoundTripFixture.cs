@@ -118,7 +118,21 @@ namespace Chaptarr.Core.Test.Blocklisting
                 "a hashless candidate with the same title and indexer must be blocklisted");
         }
 
-        private static DownloadFailedEvent BuildFailedEvent()
+        [Test]
+        public void failed_direct_release_should_match_only_direct_candidates_after_a_real_repository_round_trip()
+        {
+            _subject.Handle(BuildFailedEvent(DownloadProtocol.Direct));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(_subject.Blocklisted(AuthorId, BuildDirectRelease()), Is.True,
+                    "the failed direct release must be blocklisted for a matching direct candidate");
+                Assert.That(_subject.Blocklisted(AuthorId, BuildUsenetRelease()), Is.False,
+                    "a direct blocklist entry must not be treated as a usenet blocklist entry");
+            });
+        }
+
+        private static DownloadFailedEvent BuildFailedEvent(DownloadProtocol protocol = DownloadProtocol.Torrent)
         {
             return new DownloadFailedEvent
             {
@@ -128,7 +142,7 @@ namespace Chaptarr.Core.Test.Blocklisting
                 Message = "Download failed",
                 Data = new Dictionary<string, string>
                 {
-                    ["protocol"] = ((int)DownloadProtocol.Torrent).ToString(),
+                    ["protocol"] = ((int)protocol).ToString(),
                     ["indexer"] = Indexer,
                     ["publishedDate"] = "2026-08-06T19:12:42Z",
                     ["size"] = "123456789",
@@ -136,7 +150,7 @@ namespace Chaptarr.Core.Test.Blocklisting
                 },
                 TrackedDownload = new TrackedDownload
                 {
-                    Protocol = DownloadProtocol.Torrent,
+                    Protocol = protocol,
                     DownloadItem = new DownloadClientItem
                     {
                         DownloadId = TorrentHash,
@@ -154,6 +168,30 @@ namespace Chaptarr.Core.Test.Blocklisting
                 Indexer = Indexer,
                 DownloadProtocol = DownloadProtocol.Torrent,
                 InfoHash = hash
+            };
+        }
+
+        private static ReleaseInfo BuildDirectRelease()
+        {
+            return new ReleaseInfo
+            {
+                Title = SourceTitle,
+                Indexer = Indexer,
+                DownloadProtocol = DownloadProtocol.Direct,
+                PublishDate = DateTime.Parse("2026-08-06T19:12:42Z").ToUniversalTime(),
+                Size = 123456789
+            };
+        }
+
+        private static ReleaseInfo BuildUsenetRelease()
+        {
+            return new ReleaseInfo
+            {
+                Title = SourceTitle,
+                Indexer = Indexer,
+                DownloadProtocol = DownloadProtocol.Usenet,
+                PublishDate = DateTime.Parse("2026-08-06T19:12:42Z").ToUniversalTime(),
+                Size = 123456789
             };
         }
 

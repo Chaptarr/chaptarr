@@ -9,6 +9,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
+using NzbDrone.Core.Download.Clients.Direct;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.ThingiProvider;
@@ -116,6 +117,28 @@ namespace Chaptarr.Core.Test.Download
             public List<IIndexer> InteractiveSearchEnabled(bool filterBlockedIndexers = true) => new();
         }
 
+        private sealed class StubInternalDirectClientProvider : IInternalDirectClientProvider
+        {
+            private readonly IDownloadClient _client;
+
+            public StubInternalDirectClientProvider(IDownloadClient client)
+            {
+                _client = client;
+            }
+
+            public IDownloadClient GetClient() => _client;
+        }
+
+        private static IInternalDirectClientProvider NoInternalDirectClient()
+        {
+            return new StubInternalDirectClientProvider(null);
+        }
+
+        private static IInternalDirectClientProvider InternalDirectClientReturning(IDownloadClient client)
+        {
+            return new StubInternalDirectClientProvider(client);
+        }
+
         [Test]
         public void should_not_include_user_defined_alternate_client_names_in_protocol_mismatch_message()
         {
@@ -127,6 +150,7 @@ namespace Chaptarr.Core.Test.Download
                     new StubDownloadClient("qBittorrent", "Seedbox", DownloadProtocol.Torrent)
                 }),
                 new StubIndexerFactory(),
+                NoInternalDirectClient(),
                 new CacheManager(),
                 LogManager.GetCurrentClassLogger());
 
@@ -145,6 +169,7 @@ namespace Chaptarr.Core.Test.Download
                 new StubDownloadClientStatusService(),
                 new StubDownloadClientFactory(Array.Empty<IDownloadClient>()),
                 new StubIndexerFactory(),
+                NoInternalDirectClient(),
                 new CacheManager(),
                 LogManager.GetCurrentClassLogger());
 
@@ -152,6 +177,123 @@ namespace Chaptarr.Core.Test.Download
                 provider.GetDownloadClient(DownloadProtocol.Usenet, BookMediaType.Audiobook));
 
             Assert.That(exception.Message, Is.EqualTo("No enabled usenet download client is configured. Add and enable a usenet-capable download client, then retry."));
+        }
+
+        [Test]
+        public void should_use_internal_direct_client_when_other_protocols_configured_but_no_direct()
+        {
+            var internalClient = new StubDownloadClient("DirectDownloadClient", "Internal Direct", DownloadProtocol.Direct);
+            var provider = new DownloadClientProvider(
+                new StubDownloadClientStatusService(),
+                new StubDownloadClientFactory(new IDownloadClient[]
+                {
+                    new StubDownloadClient("SABnzbd", "Books Usenet", DownloadProtocol.Usenet),
+                    new StubDownloadClient("qBittorrent", "Books Torrent", DownloadProtocol.Torrent)
+                }),
+                new StubIndexerFactory(),
+                InternalDirectClientReturning(internalClient),
+                new CacheManager(),
+                LogManager.GetCurrentClassLogger());
+
+            var selected = provider.GetDownloadClient(DownloadProtocol.Direct, BookMediaType.Ebook);
+
+            Assert.That(selected, Is.SameAs(internalClient));
+        }
+
+        [Test]
+        public void should_assign_direct_releases_only_to_direct_clients()
+        {
+            var directClient = new StubDownloadClient("Direct Download Client", "Books Direct", DownloadProtocol.Direct);
+            var provider = new DownloadClientProvider(
+                new StubDownloadClientStatusService(),
+                new StubDownloadClientFactory(new IDownloadClient[]
+                {
+                    new StubDownloadClient("SABnzbd", "Books Usenet", DownloadProtocol.Usenet),
+                    new StubDownloadClient("qBittorrent", "Books Torrent", DownloadProtocol.Torrent),
+                    directClient
+                }),
+                new StubIndexerFactory(),
+                NoInternalDirectClient(),
+                new CacheManager(),
+                LogManager.GetCurrentClassLogger());
+
+            var selected = provider.GetDownloadClient(DownloadProtocol.Direct, BookMediaType.Ebook);
+
+            Assert.That(selected, Is.SameAs(directClient));
+        }
+
+        [Test]
+        public void should_resolve_internal_direct_client_when_no_configured_direct_client_exists()
+        {
+            var internalClient = new StubDownloadClient("DirectDownloadClient", "Direct Download", DownloadProtocol.Direct);
+            var provider = new DownloadClientProvider(
+                new StubDownloadClientStatusService(),
+                new StubDownloadClientFactory(Array.Empty<IDownloadClient>()),
+                new StubIndexerFactory(),
+                InternalDirectClientReturning(internalClient),
+                new CacheManager(),
+                LogManager.GetCurrentClassLogger());
+
+            var selected = provider.GetDownloadClient(DownloadProtocol.Direct, BookMediaType.Ebook);
+
+            Assert.That(selected, Is.SameAs(internalClient));
+        }
+
+        [Test]
+        public void should_still_throw_for_usenet_when_no_clients_configured()
+        {
+            var provider = new DownloadClientProvider(
+                new StubDownloadClientStatusService(),
+                new StubDownloadClientFactory(Array.Empty<IDownloadClient>()),
+                new StubIndexerFactory(),
+                NoInternalDirectClient(),
+                new CacheManager(),
+                LogManager.GetCurrentClassLogger());
+
+            var exception = Assert.Throws<DownloadClientUnavailableException>(() =>
+                provider.GetDownloadClient(DownloadProtocol.Usenet, BookMediaType.Audiobook));
+
+            Assert.That(exception.Message, Does.Contain("No enabled usenet download client is configured"));
+        }
+
+        [Test]
+        public void should_still_throw_for_torrent_when_no_clients_configured()
+        {
+            var provider = new DownloadClientProvider(
+                new StubDownloadClientStatusService(),
+                new StubDownloadClientFactory(Array.Empty<IDownloadClient>()),
+                new StubIndexerFactory(),
+                NoInternalDirectClient(),
+                new CacheManager(),
+                LogManager.GetCurrentClassLogger());
+
+            var exception = Assert.Throws<DownloadClientUnavailableException>(() =>
+                provider.GetDownloadClient(DownloadProtocol.Torrent, BookMediaType.Ebook));
+
+            Assert.That(exception.Message, Does.Contain("No enabled torrent download client is configured"));
+        }
+
+        [Test]
+        public void should_prefer_user_configured_direct_client_over_internal()
+        {
+            var userDirectClient = new StubDownloadClient("DirectDownloadClient", "User Direct", DownloadProtocol.Direct);
+            var internalClient = new StubDownloadClient("DirectDownloadClient", "Internal Direct", DownloadProtocol.Direct);
+            var provider = new DownloadClientProvider(
+                new StubDownloadClientStatusService(),
+                new StubDownloadClientFactory(new IDownloadClient[]
+                {
+                    new StubDownloadClient("SABnzbd", "Books Usenet", DownloadProtocol.Usenet),
+                    userDirectClient
+                }),
+                new StubIndexerFactory(),
+                InternalDirectClientReturning(internalClient),
+                new CacheManager(),
+                LogManager.GetCurrentClassLogger());
+
+            var selected = provider.GetDownloadClient(DownloadProtocol.Direct, BookMediaType.Ebook);
+
+            Assert.That(selected, Is.SameAs(userDirectClient));
+            Assert.That(selected, Is.Not.SameAs(internalClient));
         }
     }
 }

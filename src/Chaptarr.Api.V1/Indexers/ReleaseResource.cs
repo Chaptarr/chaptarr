@@ -568,7 +568,7 @@ namespace Chaptarr.Api.V1.Indexers
         {
             // Prefer explicit file type from indexers that provide it (e.g., MAM).
             // This is the most direct indicator of "ebook vs audiobook" and avoids category mismatches.
-            var fileType = torrent?.FileType;
+            var fileType = torrent?.FileType ?? release?.Container;
             if (!string.IsNullOrWhiteSpace(fileType))
             {
                 if (EbookHintRegex.IsMatch(fileType))

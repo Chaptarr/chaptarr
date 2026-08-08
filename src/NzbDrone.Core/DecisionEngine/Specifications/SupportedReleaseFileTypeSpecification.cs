@@ -22,25 +22,26 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         public Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
             var torrentInfo = subject?.Release as TorrentInfo;
+            var structuredFileType = torrentInfo?.FileType ?? subject?.Release?.Container;
             var requestedMediaType = GetRequestedMediaType(subject, searchCriteria);
-            if (torrentInfo?.FileType != null &&
+            if (!string.IsNullOrWhiteSpace(structuredFileType) &&
                 requestedMediaType.HasValue &&
-                ReleaseFileTypeCompatibility.TryGetMediaTypeMismatch(torrentInfo.FileType, requestedMediaType.Value, out var mismatchedFileType))
+                ReleaseFileTypeCompatibility.TryGetMediaTypeMismatch(structuredFileType, requestedMediaType.Value, out var mismatchedFileType))
             {
                 _logger.Debug("Rejecting release '{0}' because indexer file type '{1}' is not compatible with requested media type {2}",
                               subject.Release?.Title ?? "Unknown",
-                              torrentInfo.FileType,
+                              structuredFileType,
                               requestedMediaType.Value);
 
                 return Decision.RejectHardFilter("File type {0} is not compatible with {1} request", "Format", mismatchedFileType, FormatMediaType(requestedMediaType.Value));
             }
 
-            if (torrentInfo?.FileType != null &&
-                ReleaseFileTypeCompatibility.TryGetKnownUnsupportedFileType(torrentInfo.FileType, out var unsupportedFileType))
+            if (!string.IsNullOrWhiteSpace(structuredFileType) &&
+                ReleaseFileTypeCompatibility.TryGetKnownUnsupportedFileType(structuredFileType, out var unsupportedFileType))
             {
                 _logger.Debug("Rejecting release '{0}' because indexer file type '{1}' is not supported for import",
                               subject.Release?.Title ?? "Unknown",
-                              torrentInfo.FileType);
+                              structuredFileType);
 
                 return Decision.RejectHardFilter("Unsupported file type: {0}", "Format", unsupportedFileType);
             }
