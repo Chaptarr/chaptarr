@@ -116,12 +116,17 @@ class NamingVisualBuilder extends Component {
 
       promise.fail((error) => {
         console.error('Failed to compile pattern:', error);
+
+        const isHttpRejection = Boolean(error.status);
+
         this.setState({
           validation: {
             isValid: false,
             errors: [{
-              code: 'EXCEPTION',
-              message: error.status ? translate('NamingBuilderCompileRequestFailed') : translate('NamingBuilderCompileFailed')
+              code: isHttpRejection ? 'VALIDATION_ERROR' : 'EXCEPTION',
+              message: isHttpRejection ?
+                (error.responseJSON?.error || translate('NamingBuilderCompileRequestFailed')) :
+                translate('NamingBuilderCompileFailed')
             }]
           }
         });
