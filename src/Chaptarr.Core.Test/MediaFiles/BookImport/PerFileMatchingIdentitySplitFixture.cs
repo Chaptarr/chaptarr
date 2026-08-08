@@ -53,6 +53,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private sealed class BranchingEditionFtsRepository : IEditionFtsRepository
         {
             public int Calls { get; private set; }
+            public bool AlwaysMiss { get; set; }
 
             public bool FtsTableExists() => true;
 
@@ -63,6 +64,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
             {
                 Calls++;
+
+                if (AlwaysMiss)
+                {
+                    return new List<EditionFtsMatch>();
+                }
 
                 var tokenList = (tokens ?? Enumerable.Empty<string>())
                     .Select(t => t?.ToLowerInvariant())
@@ -197,6 +203,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private sealed class RecordingV5MatchingService : IV5MatchingService
         {
             public int Calls { get; private set; }
+            public bool ReturnNoSuggestion { get; set; }
+            public bool ThrowOnSearch { get; set; }
             public List<string> FilePaths { get; } = new();
             public List<string> Queries { get; } = new();
             public List<IDictionary<string, List<string>>> TagsByCall { get; } = new();
@@ -212,6 +220,16 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 FilePaths.Add(filePath);
                 Queries.Add(query);
                 TagsByCall.Add(tags);
+
+                if (ThrowOnSearch)
+                {
+                    throw new InvalidOperationException("simulated transport failure");
+                }
+
+                if (ReturnNoSuggestion)
+                {
+                    return new List<V5MatchedAuthor>();
+                }
 
                 if ((query ?? string.Empty).IndexOf("ruthless", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
@@ -1290,6 +1308,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var containment = new ContainmentValidator(new TagNormalizer(), logger);
             var fts = new BranchingEditionFtsRepository();
             var v5 = new RecordingV5MatchingService();
+            v5.ReturnNoSuggestion = true;
 
             var svc = new FileMatchingService(
                 matchingLogger: new NullMatchingUploadLogger(),
@@ -1328,7 +1347,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 new DiscoveredFileWithMetadata { Path = "/downloads/mixed/02-delta.mp3", AllTags = Tags("Delta Book", "Track 2") }
             };
 
-            var result = await svc.MatchFilesToLibraryAsync(files, restrictToAuthorId: null, MatchingContextPresets.ForManualPreview());
+            var result = await svc.MatchFilesToLibraryAsync(
+                files,
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview(allowPathFallback: false));
 
             Assert.Multiple(() =>
             {
@@ -1568,6 +1590,277 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(v5.Calls, Is.EqualTo(2));
                 Assert.That(result.UnmatchedFiles.Select(u => u.File.Path), Is.EquivalentTo(files.Select(f => f.Path)));
             });
+        }
+
+        [Test]
+        public async Task grouped_v5_miss_should_ask_each_distinct_track_question_once()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var svc = CreateNoMatchService(v5, fts);
+
+            Dictionary<string, List<string>> Tags(int track)
+            {
+                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ARTIST"] = new() { "Test Author" },
+                    ["ALBUM"] = new() { "Unresolved Book" },
+                    ["TITLE"] = new() { $"Track {track}" },
+                    ["TRACKNUMBER"] = new() { track.ToString() }
+                };
+            }
+
+            var files = Enumerable.Range(1, 102)
+                .Select(track => new DiscoveredFileWithMetadata
+                {
+                    Path = $"/downloads/unresolved-book/{track:000}.mp3",
+                    AllTags = Tags(track)
+                })
+                .ToArray();
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                files,
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.Calls, Is.EqualTo(files.Length * 2), "each file has one embedded ask and one path-evidence retry");
+                Assert.That(files.All(file =>
+                    v5.FilePaths.Count(path => string.Equals(path, file.Path, StringComparison.Ordinal)) == 2),
+                    Is.True, "the grouped representative questions must not be repeated by the member pass");
+                Assert.That(result.MatchedFiles, Is.Empty);
+                Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+            });
+        }
+
+        [Test]
+        public async Task same_author_single_file_books_with_distinct_titles_should_each_reach_v5()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var svc = CreateNoMatchService(v5, fts);
+
+            Dictionary<string, List<string>> Tags(string title)
+            {
+                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ARTIST"] = new() { "Test Author" },
+                    ["TITLE"] = new() { title }
+                };
+            }
+
+            var files = new[]
+            {
+                new DiscoveredFileWithMetadata { Path = "/downloads/mixed/Alpha.mp3", AllTags = Tags("Alpha") },
+                new DiscoveredFileWithMetadata { Path = "/downloads/mixed/Beta.mp3", AllTags = Tags("Beta") }
+            };
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                files,
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview(allowPathFallback: false));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.Calls, Is.EqualTo(3), "one author-only group miss plus both distinct member questions");
+                Assert.That(v5.Queries, Has.Some.Contains("alpha"));
+                Assert.That(v5.Queries, Has.Some.Contains("beta"));
+                Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+            });
+        }
+
+        [Test]
+        public async Task sparse_same_tag_books_with_distinct_filenames_should_each_reach_v5()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var svc = CreateNoMatchService(v5, fts);
+            var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ARTIST"] = new() { "Test Author" }
+            };
+            var files = new[]
+            {
+                new DiscoveredFileWithMetadata
+                {
+                    Path = "/downloads/mixed/Alpha.mp3",
+                    AllTags = new Dictionary<string, List<string>>(tags, StringComparer.OrdinalIgnoreCase)
+                },
+                new DiscoveredFileWithMetadata
+                {
+                    Path = "/downloads/mixed/Beta.mp3",
+                    AllTags = new Dictionary<string, List<string>>(tags, StringComparer.OrdinalIgnoreCase)
+                }
+            };
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                files,
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.FilePaths.Count(path => path == files[0].Path), Is.EqualTo(2));
+                Assert.That(v5.FilePaths.Count(path => path == files[1].Path), Is.EqualTo(2));
+                Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+            });
+        }
+
+        [Test]
+        public async Task same_full_question_without_filename_evidence_should_ask_once()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var svc = CreateNoMatchService(v5, fts);
+            var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ARTIST"] = new() { "Test Author" },
+                ["ALBUM"] = new() { "Unresolved Book" }
+            };
+            var files = new[]
+            {
+                new DiscoveredFileWithMetadata
+                {
+                    Path = "/downloads/unresolved-book/Alpha.mp3",
+                    AllTags = new Dictionary<string, List<string>>(tags, StringComparer.OrdinalIgnoreCase)
+                },
+                new DiscoveredFileWithMetadata
+                {
+                    Path = "/downloads/unresolved-book/Beta.mp3",
+                    AllTags = new Dictionary<string, List<string>>(tags, StringComparer.OrdinalIgnoreCase)
+                }
+            };
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                files,
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview(allowPathFallback: false));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.Calls, Is.EqualTo(1));
+                Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+            });
+        }
+
+        [Test]
+        public async Task files_without_stable_identity_should_retain_per_file_v5_requests()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var svc = CreateNoMatchService(v5, fts);
+            var files = Enumerable.Range(1, 3)
+                .Select(track => new DiscoveredFileWithMetadata
+                {
+                    Path = $"/downloads/tagless/{track:00}.mp3",
+                    AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                })
+                .ToArray();
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                files,
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview(allowPathFallback: false));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.Calls, Is.EqualTo(files.Length));
+                Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+            });
+        }
+
+        [Test]
+        public async Task unknown_language_chapter_atoms_should_fail_open_and_reach_v5()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var svc = CreateNoMatchService(v5, fts);
+
+            Dictionary<string, List<string>> Tags(int chapter)
+            {
+                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ARTIST"] = new() { "Test Author" },
+                    ["ALBUM"] = new() { "Unresolved Book" },
+                    ["TITLE"] = new() { $"Kapitel {chapter}" }
+                };
+            }
+
+            var files = new[]
+            {
+                new DiscoveredFileWithMetadata { Path = "/downloads/unresolved-book/01.mp3", AllTags = Tags(1) },
+                new DiscoveredFileWithMetadata { Path = "/downloads/unresolved-book/02.mp3", AllTags = Tags(2) }
+            };
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                files,
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview(allowPathFallback: false));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.Calls, Is.EqualTo(3), "unknown vocabulary must shrink suppression, never expand it");
+                Assert.That(v5.Queries, Has.Some.Contains("kapitel 1"));
+                Assert.That(v5.Queries, Has.Some.Contains("kapitel 2"));
+                Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+            });
+        }
+
+        [Test]
+        public async Task failed_v5_question_memory_should_die_with_each_matching_invocation()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ThrowOnSearch = true };
+            var svc = CreateNoMatchService(v5, fts);
+            var files = Enumerable.Range(1, 4)
+                .Select(track => new DiscoveredFileWithMetadata
+                {
+                    Path = $"/downloads/unresolved-book/{track:00}.mp3",
+                    AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["ARTIST"] = new() { "Test Author" },
+                        ["ALBUM"] = new() { "Unresolved Book" },
+                        ["TITLE"] = new() { $"Track {track}" }
+                    }
+                })
+                .ToArray();
+            var context = MatchingContextPresets.ForManualPreview(allowPathFallback: false);
+
+            var first = await svc.MatchFilesToLibraryAsync(files, restrictToAuthorId: null, context);
+            var second = await svc.MatchFilesToLibraryAsync(files, restrictToAuthorId: null, context);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.Calls, Is.EqualTo(2), "each invocation asks once; no transport failure survives into the next invocation");
+                Assert.That(first.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+                Assert.That(second.UnmatchedFiles, Has.Length.EqualTo(files.Length));
+            });
+        }
+
+        private static FileMatchingService CreateNoMatchService(
+            RecordingV5MatchingService v5,
+            BranchingEditionFtsRepository fts)
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            return new FileMatchingService(
+                matchingLogger: new NullMatchingUploadLogger(),
+                v5MatchingService: v5,
+                containmentValidator: new ContainmentValidator(new TagNormalizer(), logger),
+                pendingAuthorImportService: null,
+                commandQueue: null,
+                authorFolderMatchingService: null,
+                rootFolderService: null,
+                configService: ConfigServiceTestProxy.Create(usePathAsTagsFallback: true),
+                authorService: null,
+                eventAggregator: null,
+                authorLibraryService: null,
+                editionFtsRepository: fts,
+                bookService: null,
+                editionService: null,
+                editionRepository: null,
+                mediaInfoExtractor: null,
+                logger: logger);
         }
     }
 }
