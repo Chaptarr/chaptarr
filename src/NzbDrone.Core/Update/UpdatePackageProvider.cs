@@ -242,13 +242,14 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
-                            "Faster startup times and navigation speeds for most users.",
-                            "Worked to improve reliability for newest and upcoming books on the author list.",
-                            "Worked on 'Search All' for huge wanted lists using insane amounts of RAM."
+                            "Chaptarr is now open source at github.com/Chaptarr/chaptarr.",
+                            "The wiki is being updated and will be available asap."
                         },
                         Fixed = new List<string>
                         {
-                            "Re-grabbing the same failed downloads."
+                            "Third-party tools that connect to Chaptarr as Readarr (Unpackerr, Decluttarr, and others) no longer fail with \"PageSize must be between 1 and 1000\".",
+                            "The web interface now works correctly behind a reverse proxy URL Base. Author statistics, the filename builder, proxy testing, and author photo selection no longer break on subpath setups.",
+                            "The proxy Test button no longer hangs without giving a result."
                         }
                     }
                 }
