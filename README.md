@@ -156,7 +156,7 @@ If you experience an error, check folder ownership and permissions, then run com
 ### Building from Source
 Building from source requires the .NET 10 SDK, Node.js, and Yarn.
 
-```bash
+```cmd
 # Clone the repository
 git clone https://github.com/chaptarr/chaptarr.git
 cd chaptarr
