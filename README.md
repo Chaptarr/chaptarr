@@ -162,15 +162,15 @@ git clone https://github.com/chaptarr/chaptarr.git
 cd chaptarr
 
 # Build the backend
-dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -o _output/publish
+dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
 
 # Build the frontend
 yarn install
 yarn build
-cp -r _output/UI _output/publish/UI
+xcopy _output\UI _output\publish\UI /E /I
 
 # Run Chaptarr
-dotnet _output/publish/Chaptarr.dll
+dotnet _output/publish/Chaptarr.Console.dll
 ```
 
 ## Documentation
