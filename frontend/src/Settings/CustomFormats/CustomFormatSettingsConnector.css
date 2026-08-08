@@ -1,0 +1,11 @@
+.quickstartReturn {
+  margin-bottom: 20px;
+}
+
+.quickstartReturnButtonContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  line-height: 1;
+}

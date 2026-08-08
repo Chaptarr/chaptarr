@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Example runsettings for local Postgres development.
+
+  Usage:
+    cp src/postgres.runsettings.example src/postgres.runsettings
+
+  Notes:
+    - `src/postgres.runsettings` is gitignored to avoid committing real credentials/hosts.
+    - These values are placeholders. Set them to match your local Postgres instance.
+-->
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <Chaptarr__Postgres__Host>127.0.0.1</Chaptarr__Postgres__Host>
+      <Chaptarr__Postgres__Port>5432</Chaptarr__Postgres__Port>
+      <Chaptarr__Postgres__User>chaptarr</Chaptarr__Postgres__User>
+      <Chaptarr__Postgres__Password>CHANGE_ME</Chaptarr__Postgres__Password>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

@@ -1,0 +1,182 @@
+.profilesContainer {
+  margin-top: 20px;
+  max-width: 100%;
+  overflow: hidden; /* Prevent horizontal overflow */
+}
+
+.profilesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, 280px);
+  gap: 20px;
+  max-width: 1200px; /* Match the max width of other sections */
+}
+
+.profileCard {
+  composes: card from '~Components/Card.css';
+  width: 280px;
+  min-height: 150px;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+
+.profileCard:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.qualityProfileCard {
+  composes: profileCard;
+  height: 270px;
+}
+
+.profileContent {
+  padding: 20px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.profileHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.profileName {
+  font-size: 18px;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.cloneButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--cardAlternateBackgroundColor);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.cloneButton:hover {
+  background-color: var(--themeLightColor);
+}
+
+.profileDetails {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profileDetails > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  line-height: 1.6;
+}
+
+.qualityProfileDetails {
+  composes: profileDetails;
+
+  overflow-y: auto;
+  padding-right: 4px;
+  min-height: 0;
+}
+
+.metadataItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+}
+
+.metadataLabel {
+  color: var(--helpTextColor);
+  font-size: 14px;
+}
+
+.metadataValue {
+  font-weight: 500;
+}
+
+.ignoredTerms {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+
+.ignoredTermsLabel {
+  color: var(--helpTextColor);
+  font-size: 14px;
+}
+
+.ignoredTermsList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.addProfileCard {
+  composes: profileCard;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--cardBackgroundColor);
+  border: 2px dashed var(--inputBorderColor);
+}
+
+.qualityAddProfileCard {
+  composes: addProfileCard qualityProfileCard;
+}
+
+.addProfileCard:hover {
+  border-color: white;
+  background-color: var(--cardBackgroundColor);
+}
+
+.addProfileContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--helpTextColor);
+  gap: 10px;
+}
+
+.addProfileText {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.profilesTwoColumn {
+  display: grid;
+  grid-template-columns: repeat(2, 280px);
+  gap: 20px;
+  max-width: 1200px; /* Match the max width of other sections */
+  min-width: 0; /* Prevent grid blowout */
+}
+
+/* Responsive layout for smaller screens */
+@media (max-width: 680px) {
+  .profilesTwoColumn {
+    grid-template-columns: 280px;
+  }
+}
+
+.profileColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 20px; /* Match the standard 20px gap */
+  min-width: 0; /* Prevent flex item from overflowing */
+}
+
+.columnHeader {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--textColor);
+  margin: 0 0 20px 0;
+}

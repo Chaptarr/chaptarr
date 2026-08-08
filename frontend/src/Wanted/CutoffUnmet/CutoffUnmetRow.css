@@ -1,0 +1,14 @@
+.author,
+.bookTitle,
+.narrator {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  text-align: left;
+}
+
+.mediaType {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 50px;
+  text-align: center;
+}

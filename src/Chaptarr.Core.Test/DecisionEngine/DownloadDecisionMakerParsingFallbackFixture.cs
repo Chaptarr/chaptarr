@@ -1,0 +1,1692 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using NLog;
+using NUnit.Framework;
+using NzbDrone.Core.Blocklisting;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Datastore;
+using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.Download.Aggregation;
+using NzbDrone.Core.History;
+using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
+
+namespace Chaptarr.Core.Test.DecisionEngine
+{
+    [TestFixture]
+    public class DownloadDecisionMakerParsingFallbackFixture
+    {
+        private sealed class TestParsingService : IParsingService
+        {
+            public Author MappedAuthor { get; set; }
+            public List<Book> MappedBooks { get; set; } = new();
+            public int FuzzyParseCalls { get; private set; }
+
+            public Author GetAuthor(string title)
+            {
+                return null;
+            }
+
+            public RemoteBook Map(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria = null)
+            {
+                return new RemoteBook
+                {
+                    ParsedBookInfo = parsedBookInfo,
+                    Author = searchCriteria?.Author ?? MappedAuthor,
+                    Books = searchCriteria?.Books ?? MappedBooks ?? new List<Book>()
+                };
+            }
+
+            public RemoteBook Map(ParsedBookInfo parsedBookInfo, int authorId, IEnumerable<int> bookIds)
+            {
+                throw new NotImplementedException();
+            }
+
+            public List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null)
+            {
+                return searchCriteria?.Books ?? new List<Book>();
+            }
+
+            public ParsedBookInfo ParseBookTitleFuzzy(string title)
+            {
+                FuzzyParseCalls++;
+                return null;
+            }
+
+            public Book GetLocalBook(string filename, Author author)
+            {
+                return null;
+            }
+        }
+
+        private sealed class NoOpCustomFormatCalculationService : ICustomFormatCalculationService
+        {
+            public List<CustomFormat> ParseCustomFormat(RemoteBook remoteBook, long size) => new();
+            public List<CustomFormat> ParseCustomFormat(BookFile bookFile, Author artist) => new();
+            public List<CustomFormat> ParseCustomFormat(BookFile bookFile) => new();
+            public List<CustomFormat> ParseCustomFormat(Blocklist blocklist, Author artist) => new();
+            public List<CustomFormat> ParseCustomFormat(EntityHistory history, Author artist) => new();
+            public List<CustomFormat> ParseCustomFormat(LocalBook localBook) => new();
+        }
+
+        private sealed class NoOpRemoteBookAggregationService : IRemoteBookAggregationService
+        {
+            public RemoteBook Augment(RemoteBook remoteBook)
+            {
+                return remoteBook;
+            }
+        }
+
+        private sealed class NoOpReleaseNarratorMetadataEnricher : IReleaseNarratorMetadataEnricher
+        {
+            public void EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+            {
+            }
+        }
+
+        private sealed class RecordingReleaseSourceSpecification : IDecisionEngineSpecification
+        {
+            public ReleaseSourceType? SeenSource { get; private set; }
+            public SpecificationPriority Priority => SpecificationPriority.Default;
+            public RejectionType Type => RejectionType.Permanent;
+
+            public Decision IsSatisfiedBy(RemoteBook remoteBook, SearchCriteriaBase searchCriteria)
+            {
+                SeenSource = remoteBook.ReleaseSource;
+                return Decision.Accept();
+            }
+        }
+
+        private static DownloadDecision RunSingleSearchDecision(Author author, Book book, ReleaseInfo report)
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new ReleaseTitleMatchSpecification(logger)
+                                                          },
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            return decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria)[0];
+        }
+
+        [Test]
+        public void should_expose_interactive_source_before_decision_specifications_run()
+        {
+            var author = new Author { Id = 1, Name = "Author" };
+            var book = new Book { Id = 2, Author = author, AuthorId = author.Id, Title = "Book" };
+            var specification = new RecordingReleaseSourceSpecification();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification> { specification },
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          LogManager.GetCurrentClassLogger());
+
+            decisionMaker.GetSearchDecision(new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = "Author - Book EPUB",
+                    Author = "Author",
+                    Indexer = "MyAnonaMouse",
+                    Categories = new List<int>(),
+                    PublishDate = DateTime.UtcNow
+                }
+            }, new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                InteractiveSearch = true,
+                UserInvokedSearch = true
+            });
+
+            Assert.That(specification.SeenSource, Is.EqualTo(ReleaseSourceType.InteractiveSearch));
+        }
+
+        [Test]
+        public void should_fallback_to_search_criteria_when_title_parse_yields_no_author()
+        {
+            var author = new Author
+            {
+                Name = "Freida McFadden"
+            };
+
+            var book = new Book
+            {
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Want to Know a Secret"
+            };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var report = new ReleaseInfo
+            {
+                Title = "Want to Know a Secret by Freida McFadden EPUB",
+                Indexer = "The Pirate Bay (Prowlarr)",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(),
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decisions = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria);
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].Rejections, Is.Empty);
+            Assert.That(decisions[0].RemoteBook.ParsedBookInfo.AuthorName, Is.EqualTo("Freida McFadden"));
+        }
+
+        [Test]
+        public void should_apply_pack_detection_to_rss_decisions()
+        {
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Brandon Sanderson"
+            };
+
+            var book = new Book
+            {
+                Id = 101,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "The Final Empire",
+                SeriesName = "Mistborn",
+                SeriesPosition = "1"
+            };
+
+            author.Books = new List<Book>
+            {
+                book,
+                new Book
+                {
+                    Id = 102,
+                    Author = author,
+                    AuthorId = author.Id,
+                    Title = "The Well of Ascension",
+                    SeriesName = "Mistborn",
+                    SeriesPosition = "2"
+                }
+            };
+
+            var parsingService = new TestParsingService
+            {
+                MappedAuthor = author,
+                MappedBooks = new List<Book> { book }
+            };
+
+            var report = new ReleaseInfo
+            {
+                Title = "Brandon Sanderson - Mistborn Trilogy",
+                Author = "Brandon Sanderson",
+                Indexer = "MyAnonaMouse",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new MultiBookReleaseSpecification(logger)
+                                                          },
+                                                          parsingService,
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decision = decisionMaker.GetRssDecision(new List<ReleaseInfo> { report })[0];
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.RemoteBook.PackDetection.Verdict, Is.EqualTo(ReleasePackDetectionVerdict.MultipleBooks));
+            Assert.That(decision.Rejections.Select(r => r.Reason), Is.EqualTo(new[] { "Release appears to contain multiple books" }));
+        }
+
+        [Test]
+        public void should_use_mam_structured_author_without_fuzzy_parse_for_rss_decisions()
+        {
+            var parsingService = new TestParsingService();
+            var report = new TorrentInfo
+            {
+                Title = "Quite Ugly One Evening",
+                Author = "Chris Brookmyre",
+                Indexer = "MyAnonaMouse",
+                FileType = "mp3",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(),
+                                                          parsingService,
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decision = decisionMaker.GetRssDecision(new List<ReleaseInfo> { report })[0];
+
+            Assert.That(parsingService.FuzzyParseCalls, Is.EqualTo(0));
+            Assert.That(decision.RemoteBook.ParsedBookInfo.AuthorName, Is.EqualTo("Chris Brookmyre"));
+            Assert.That(decision.RemoteBook.ParsedBookInfo.BookTitle, Is.EqualTo("Quite Ugly One Evening"));
+            Assert.That(decision.Rejections.Select(r => r.Reason), Is.EqualTo(new[] { "Unknown Author" }));
+        }
+
+        [Test]
+        public void should_hide_short_title_false_positive_during_interactive_search()
+        {
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Fiona Cole"
+            };
+
+            var book = new Book
+            {
+                Id = 1,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Voyeur"
+            };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var report = new ReleaseInfo
+            {
+                Title = "Moongarden - Voyeur (2014) MP3",
+                Author = "Fiona Cole",
+                Indexer = "DrunkenSlug (Prowlarr)",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new ReleaseTitleMatchSpecification(logger)
+                                                          },
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decisions = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria);
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].Rejected, Is.True);
+            Assert.That(decisions[0].Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+            Assert.That(decisions[0].RemoteBook.ParsedBookInfo.BookTitle, Is.EqualTo("Moongarden - Voyeur (2014)"));
+        }
+
+        [Test]
+        public void should_label_interactive_alias_match_with_primary_monitored_title()
+        {
+            var author = new Author
+            {
+                Id = 33,
+                Name = "J.K. Rowling"
+            };
+
+            var book = new Book
+            {
+                Id = 1327,
+                Title = "Harry Potter and the Philosopher's Stone",
+                AnyEditionOk = true,
+                Author = author,
+                AuthorId = author.Id,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 1,
+                        Title = "Harry Potter and the Sorcerer's Stone",
+                        Monitored = true
+                    },
+                    new Edition
+                    {
+                        Id = 2,
+                        Title = "Harry Potter and the Philosopher's Stone"
+                    }
+                }
+            };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var report = new ReleaseInfo
+            {
+                Title = "Harry Potter and the Philosopher's Stone (aka Harry Potter and the Sorcerer's Stone)",
+                Author = "J K Rowling",
+                Indexer = "MyAnonaMouse",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new ReleaseTitleMatchSpecification(logger)
+                                                          },
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decisions = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria);
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].Rejections, Is.Empty);
+            Assert.That(decisions[0].RemoteBook.ParsedBookInfo.BookTitle, Is.EqualTo("Harry Potter and the Sorcerer's Stone"));
+        }
+
+        [Test]
+        public void should_match_interactive_and_automatic_search_viability_for_short_title_false_positive()
+        {
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Fiona Cole"
+            };
+
+            var book = new Book
+            {
+                Id = 1,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Voyeur"
+            };
+
+            var interactiveCriteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var automaticCriteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = false,
+                InteractiveSearch = false
+            };
+
+            var report = new ReleaseInfo
+            {
+                Title = "Moongarden - Voyeur (2014) MP3",
+                Author = "Fiona Cole",
+                Indexer = "DrunkenSlug (Prowlarr)",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var specs = new List<IDecisionEngineSpecification>
+            {
+                new ReleaseTitleMatchSpecification(logger)
+            };
+
+            var decisionMaker = new DownloadDecisionMaker(specs,
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var interactiveDecision = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, interactiveCriteria)[0];
+            var automaticDecision = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, automaticCriteria)[0];
+
+            Assert.That(interactiveDecision.Approved, Is.EqualTo(automaticDecision.Approved));
+            Assert.That(interactiveDecision.Rejections.Select(r => r.Reason), Is.EqualTo(automaticDecision.Rejections.Select(r => r.Reason)));
+            Assert.That(interactiveDecision.RemoteBook.ParsedBookInfo.BookTitle, Is.EqualTo(automaticDecision.RemoteBook.ParsedBookInfo.BookTitle));
+        }
+
+        [Test]
+        public void should_match_interactive_and_automatic_search_primary_title_for_alias_release()
+        {
+            var author = new Author
+            {
+                Id = 33,
+                Name = "J.K. Rowling"
+            };
+
+            var book = new Book
+            {
+                Id = 1327,
+                Title = "Harry Potter and the Philosopher's Stone",
+                AnyEditionOk = true,
+                Author = author,
+                AuthorId = author.Id,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 1,
+                        Title = "Harry Potter and the Sorcerer's Stone",
+                        Monitored = true
+                    },
+                    new Edition
+                    {
+                        Id = 2,
+                        Title = "Harry Potter and the Philosopher's Stone"
+                    }
+                }
+            };
+
+            var interactiveCriteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var automaticCriteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = false,
+                InteractiveSearch = false
+            };
+
+            var report = new ReleaseInfo
+            {
+                Title = "Harry Potter and the Philosopher's Stone (aka Harry Potter and the Sorcerer's Stone)",
+                Author = "J K Rowling",
+                Indexer = "MyAnonaMouse",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var specs = new List<IDecisionEngineSpecification>
+            {
+                new ReleaseTitleMatchSpecification(logger)
+            };
+
+            var decisionMaker = new DownloadDecisionMaker(specs,
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var interactiveDecision = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, interactiveCriteria)[0];
+            var automaticDecision = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, automaticCriteria)[0];
+
+            Assert.That(interactiveDecision.Approved, Is.EqualTo(automaticDecision.Approved));
+            Assert.That(interactiveDecision.RemoteBook.ParsedBookInfo.BookTitle, Is.EqualTo("Harry Potter and the Sorcerer's Stone"));
+            Assert.That(interactiveDecision.RemoteBook.ParsedBookInfo.BookTitle, Is.EqualTo(automaticDecision.RemoteBook.ParsedBookInfo.BookTitle));
+        }
+
+        [Test]
+        public void should_defer_title_matching_rejection_to_explicit_pack_spec_for_multi_book_search_result()
+        {
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Pierce Brown"
+            };
+
+            var book = new Book
+            {
+                Id = 5094,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Red Rising",
+                SeriesName = "Red Rising",
+                SeriesPosition = "1"
+            };
+
+            author.Books = new List<Book>
+            {
+                book,
+                new Book
+                {
+                    Id = 7245,
+                    Author = author,
+                    AuthorId = author.Id,
+                    Title = "Golden Son",
+                    SeriesName = "Red Rising",
+                    SeriesPosition = "2"
+                }
+            };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var report = new ReleaseInfo
+            {
+                Title = "Pierce Brown Red Rising and Golden Son Book 1 and 2",
+                Author = "Pierce Brown",
+                Indexer = "NZBgeek (Prowlarr)",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var specs = new List<IDecisionEngineSpecification>
+            {
+                new MultiBookReleaseSpecification(logger),
+                new ReleaseTitleMatchSpecification(logger)
+            };
+
+            var decisionMaker = new DownloadDecisionMaker(specs,
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decision = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria)[0];
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.RemoteBook.PackDetection.Verdict, Is.EqualTo(ReleasePackDetectionVerdict.MultipleBooks));
+            Assert.That(decision.Rejections.Select(r => r.Reason), Is.EqualTo(new[] { "Release appears to contain multiple books" }));
+        }
+
+        [Test]
+        public void should_not_null_ref_when_mam_fallback_parsing_builds_minimal_parsed_book_info()
+        {
+            var author = new Author
+            {
+                Name = "Travis Beacham"
+            };
+
+            var book = new Book
+            {
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Impact Winter"
+            };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var report = new TorrentInfo
+            {
+                Title = "Impact Winter: Evenfall",
+                Author = "Travis Beacham",
+                Indexer = "MyAnonaMouse",
+                FileType = "cbr",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(),
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decisions = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria);
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].RemoteBook.ParsedBookInfo, Is.Not.Null);
+            Assert.That(decisions[0].RemoteBook.ParsedBookInfo.Quality, Is.Not.Null);
+        }
+
+        [Test]
+        public void should_use_allowed_detected_quality_for_mam_multi_format_search_result()
+        {
+            var ebookProfile = CreateEbookProfile(Quality.EPUB);
+            var author = new Author
+            {
+                Id = 68,
+                Name = "Katee Robert",
+                EbookQualityProfileId = ebookProfile.Id,
+                EbookQualityProfile = new LazyLoaded<QualityProfile>(ebookProfile)
+            };
+
+            var book = new Book
+            {
+                Id = 901,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Learn My Lesson",
+                MediaType = BookMediaType.Ebook
+            };
+
+            author.Books = new List<Book> { book };
+
+            var report = new TorrentInfo
+            {
+                Title = "Learn My Lesson",
+                Author = "Katee Robert",
+                Indexer = "MyAnonaMouse",
+                FileType = "azw3 epub mobi",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new EbookFormatSpecification(logger),
+                                                              new QualityAllowedByProfileSpecification(logger),
+                                                              new ReleaseTitleMatchSpecification(logger)
+                                                          },
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var decision = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria)[0];
+
+            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.Quality, Is.EqualTo(Quality.EPUB));
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.DetectedQualities,
+                Is.EquivalentTo(new[] { Quality.AZW3, Quality.EPUB, Quality.MOBI }));
+        }
+
+        [TestCase("mobi-preferred", nameof(Quality.MOBI))]
+        [TestCase("epub-preferred", nameof(Quality.EPUB))]
+        public void should_promote_to_the_format_the_user_ranked_highest(string ranking, string expectedQualityName)
+        {
+            // Same release, same allowed set — only the user's ordering differs, and it alone decides
+            // which format is taken. Nothing in the pipeline may prefer a format on its own.
+            var ebookProfile = ranking == "mobi-preferred"
+                ? CreateRankedEbookProfile(Quality.PDF, Quality.AZW3, Quality.EPUB, Quality.MOBI)
+                : CreateRankedEbookProfile(Quality.PDF, Quality.AZW3, Quality.MOBI, Quality.EPUB);
+
+            var decision = GetMultiFormatDecision(ebookProfile, "Learn My Lesson [azw3 epub mobi]", fileType: null);
+
+            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.Quality.Name, Is.EqualTo(expectedQualityName));
+        }
+
+        [Test]
+        public void should_detect_a_multi_format_list_from_a_non_mam_title()
+        {
+            // The 2026-06-20 promotion only ever saw MAM's structured FileType. A plain Usenet title
+            // advertising the same bundle now feeds it too.
+            var ebookProfile = CreateEbookProfile(Quality.EPUB);
+
+            var decision = GetMultiFormatDecision(ebookProfile, "Learn My Lesson [azw3 epub mobi]", fileType: null);
+
+            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.Quality, Is.EqualTo(Quality.EPUB));
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.DetectedQualities,
+                Is.EquivalentTo(new[] { Quality.AZW3, Quality.EPUB, Quality.MOBI }));
+        }
+
+        [Test]
+        public void should_reject_a_request_post_whose_payload_extension_is_not_allowed()
+        {
+            // The reported release: prose asks for an epub, the payload is a mobi. The payload wins,
+            // so an EPUB-only profile never grabs it.
+            var ebookProfile = CreateEbookProfile(Quality.EPUB);
+
+            var decision = GetMultiFormatDecision(
+                ebookProfile,
+                "Learn My Lesson, epub, please...thanks - Katee Robert - Learn My Lesson/Katee Robert - Learn My Lesson.mobi",
+                fileType: null);
+
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.Quality, Is.EqualTo(Quality.MOBI));
+            Assert.That(decision.Rejections, Is.Not.Empty);
+        }
+
+        private static DownloadDecision GetMultiFormatDecision(QualityProfile ebookProfile, string title, string fileType)
+        {
+            var author = new Author
+            {
+                Id = 68,
+                Name = "Katee Robert",
+                EbookQualityProfileId = ebookProfile.Id,
+                EbookQualityProfile = new LazyLoaded<QualityProfile>(ebookProfile)
+            };
+
+            var book = new Book
+            {
+                Id = 901,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Learn My Lesson",
+                MediaType = BookMediaType.Ebook
+            };
+
+            author.Books = new List<Book> { book };
+
+            var report = new TorrentInfo
+            {
+                Title = title,
+                Author = "Katee Robert",
+                Indexer = fileType == null ? "NZBgeek" : "MyAnonaMouse",
+                FileType = fileType,
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new EbookFormatSpecification(logger),
+                                                              new QualityAllowedByProfileSpecification(logger),
+                                                              new ReleaseTitleMatchSpecification(logger)
+                                                          },
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            return decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria)[0];
+        }
+
+        [Test]
+        public void should_not_promote_or_accept_when_no_detected_quality_is_allowed()
+        {
+            var ebookProfile = CreateEbookProfile(Quality.EPUB);
+            var author = new Author
+            {
+                Id = 68,
+                Name = "Katee Robert",
+                EbookQualityProfileId = ebookProfile.Id,
+                EbookQualityProfile = new LazyLoaded<QualityProfile>(ebookProfile)
+            };
+
+            var book = new Book
+            {
+                Id = 901,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Learn My Lesson",
+                MediaType = BookMediaType.Ebook
+            };
+
+            author.Books = new List<Book> { book };
+
+            var report = new TorrentInfo
+            {
+                Title = "Learn My Lesson",
+                Author = "Katee Robert",
+                Indexer = "MyAnonaMouse",
+                FileType = "azw3 mobi",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new EbookFormatSpecification(logger),
+                                                              new QualityAllowedByProfileSpecification(logger),
+                                                              new ReleaseTitleMatchSpecification(logger)
+                                                          },
+                                                          new TestParsingService(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                UserInvokedSearch = true,
+                InteractiveSearch = true
+            };
+
+            var decision = decisionMaker.GetSearchDecision(new List<ReleaseInfo> { report }, criteria)[0];
+
+            // No detected format is allowed (EPUB-only profile, release is azw3+mobi):
+            // primary must stay AZW3 (no over-promotion) and the release must be rejected.
+            Assert.That(decision.Rejections, Is.Not.Empty);
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.Quality, Is.EqualTo(Quality.AZW3));
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.DetectedQualities,
+                Is.EquivalentTo(new[] { Quality.AZW3, Quality.MOBI }));
+        }
+
+        [Test]
+        public void should_use_allowed_detected_quality_for_mam_multi_format_rss_result()
+        {
+            var ebookProfile = CreateEbookProfile(Quality.EPUB);
+            var author = new Author
+            {
+                Id = 68,
+                Name = "Katee Robert",
+                EbookQualityProfileId = ebookProfile.Id,
+                EbookQualityProfile = new LazyLoaded<QualityProfile>(ebookProfile)
+            };
+
+            var book = new Book
+            {
+                Id = 901,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Learn My Lesson",
+                MediaType = BookMediaType.Ebook
+            };
+
+            var parsingService = new TestParsingService
+            {
+                MappedAuthor = author,
+                MappedBooks = new List<Book> { book }
+            };
+
+            var report = new TorrentInfo
+            {
+                Title = "Learn My Lesson",
+                Author = "Katee Robert",
+                Indexer = "MyAnonaMouse",
+                FileType = "azw3 epub mobi",
+                Categories = new List<int>(),
+                PublishDate = DateTime.UtcNow
+            };
+
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
+                                                          {
+                                                              new EbookFormatSpecification(logger),
+                                                              new QualityAllowedByProfileSpecification(logger)
+                                                          },
+                                                          parsingService,
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          logger);
+
+            var decision = decisionMaker.GetRssDecision(new List<ReleaseInfo> { report })[0];
+
+            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.Quality, Is.EqualTo(Quality.EPUB));
+            Assert.That(decision.RemoteBook.ParsedBookInfo.Quality.DetectedQualities,
+                Is.EquivalentTo(new[] { Quality.AZW3, Quality.EPUB, Quality.MOBI }));
+        }
+
+        [Test]
+        public void should_reject_music_artist_release_without_expected_author_evidence()
+        {
+            var author = new Author { Name = "George R.R. Martin" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Fire & Blood",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Fire & Blood", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Viserion-Fire and Blood-EP-24BIT-WEB-FLAC-2026-ENTiTLED",
+                Indexer = "NinjaCentral (Prowlarr)",
+                Categories = new List<int> { 3010 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+            Assert.That(decision.RemoteBook.ParsedBookInfo.AuthorName, Is.EqualTo("Viserion"));
+        }
+
+        [Test]
+        public void should_reject_same_long_title_from_a_different_author()
+        {
+            var author = new Author { Name = "George R.R. Martin" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Fire & Blood",
+                SeriesName = "A Targaryen History",
+                SeriesPosition = "1",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Fire & Blood", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "T.R. Fehrenbach - Fire and Blood: A History of Mexico 2014 Retail EPUB",
+                Author = string.Empty,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            Assert.Multiple(() =>
+            {
+                Assert.That(decision.RemoteBook.ParsedBookInfo.AuthorName, Is.Empty);
+                Assert.That(decision.RemoteBook.SearchCriteriaMatch.IsMatch, Is.False, "the title scorer must not manufacture expected-author evidence");
+                Assert.That(identity.HasPositiveIdentityEvidence, Is.False, "the identity layer must not mistake unrelated metadata for author/series evidence");
+                Assert.That(decision.Rejected, Is.True);
+            });
+        }
+
+        [Test]
+        public void should_accept_authorless_long_title_release()
+        {
+            var author = new Author { Name = "Mitch Albom" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "The Five People You Meet in Heaven",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "The Five People You Meet in Heaven", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "The Five People You Meet in Heaven (2004)",
+                Author = "",
+                Indexer = "NZBgeek (Prowlarr)",
+                Categories = new List<int> { 3010 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_reject_a_different_author_before_a_long_title_and_year()
+        {
+            var author = new Author { Name = "Louise Penny" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "All the Devils Are Here",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "All the Devils Are Here", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Bethany McLean - All the Devils Are Here 2010 Retail EPUB",
+                Author = string.Empty,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+        }
+
+        [Test]
+        public void should_accept_swedish_release_title_with_scandinavian_transliteration()
+        {
+            var author = new Author { Name = "Jonna Björnstjerna" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Sagan om den underbara familjen Kanin och mumiens återkomst",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Sagan om den underbara familjen Kanin och mumiens återkomst", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Jonna.Bjornstjerna.Sagan.om.den.underbara.familjen.Kanin.och.mumiens.aaterkomst.2021",
+                Author = "Jonna Bjornstjerna",
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_prefix_noise_before_author_and_title()
+        {
+            var author = new Author { Name = "Sally Rooney" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Normal People",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Normal People", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "AudioBookBay - Sally Rooney - Normal People",
+                Indexer = "Generic",
+                Categories = new List<int> { 3010 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_known_narrator_prefix_before_title()
+        {
+            var author = new Author { Name = "Stephen King" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "It",
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        Title = "It",
+                        Monitored = true,
+                        NarratorNames = new List<string> { "Will Patton" }
+                    }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Will Patton - It - Stephen King",
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_format_prefix_before_author_and_title()
+        {
+            var author = new Author { Name = "Sally Rooney" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Normal People",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Normal People", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Audiobook - Sally Rooney - Normal People",
+                Indexer = "Generic",
+                Categories = new List<int> { 3010 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_format_token_and_author_in_same_prefix_segment()
+        {
+            var author = new Author { Name = "Andy Weir" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Project Hail Mary",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Project Hail Mary", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "[M4B] Andy Weir-Project Hail Mary",
+                Indexer = "NZBgeek (Prowlarr)",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_author_after_title_at_right_boundary()
+        {
+            var author = new Author { Name = "Andy Weir" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Project Hail Mary",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Project Hail Mary", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Project Hail Mary - Andy Weir - 2024",
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_by_author_suffix_after_title()
+        {
+            var author = new Author { Name = "Andy Weir" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Project Hail Mary",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Project Hail Mary", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Project.Hail.Mary.by.Andy.Weir",
+                Indexer = "NZBgeek (Prowlarr)",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_multi_author_left_boundary_when_expected_author_is_first_contributor()
+        {
+            var author = new Author { Name = "Brandon Sanderson" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "The Gathering Storm",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "The Gathering Storm", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Brandon Sanderson & Robert Jordan - The Gathering Storm",
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_multi_author_right_boundary_when_expected_author_is_second_contributor()
+        {
+            var author = new Author { Name = "Brandon Sanderson" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "The Gathering Storm",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "The Gathering Storm", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "The Gathering Storm - Robert Jordan & Brandon Sanderson",
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_multi_author_left_boundary_with_and_separator()
+        {
+            var author = new Author { Name = "Stephen King" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "In the Tall Grass",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "In the Tall Grass", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Stephen King and Joe Hill - In the Tall Grass",
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_multi_author_left_boundary_with_comma_separator()
+        {
+            var author = new Author { Name = "Stephen King" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "In the Tall Grass",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "In the Tall Grass", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Stephen King, Joe Hill - In the Tall Grass (2012) MP3",
+                Indexer = "DrunkenSlug (Prowlarr)",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_accept_series_metadata_between_author_and_title()
+        {
+            var author = new Author { Name = "Frank Herbert" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Dune Messiah",
+                SeriesName = "Dune",
+                SeriesPosition = "2",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Dune Messiah", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Frank Herbert's 'Dune', Bk 2 - Dune Messiah (NMR 56 kbps) \"Dune Messiah.vol01+02.PAR2\" 03/86",
+                Indexer = "DrunkenSlug (Prowlarr)",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            if (decision.Rejections.Any())
+            {
+                Assert.Fail($"Rejections={string.Join("|", decision.Rejections.Select(r => r.Reason))} Match={decision.RemoteBook.SearchCriteriaMatch?.IsMatch} Problem={decision.RemoteBook.SearchCriteriaMatch?.ProblemCode} Variant={decision.RemoteBook.SearchCriteriaMatch?.MatchedVariant} Span={decision.RemoteBook.SearchCriteriaMatch?.MatchedStart}-{decision.RemoteBook.SearchCriteriaMatch?.MatchedEnd} Leftovers={string.Join(",", decision.RemoteBook.SearchCriteriaMatch?.MeaningfulLeftovers ?? new List<string>())}");
+            }
+        }
+
+        [TestCase("Louise Penny - [Chief Inspector Gamache 16] - All the Devils Are Here (retail)")]
+        [TestCase("Louise.Penny.-.[Chief.Inspector.Gamache.16].-.All.the.Devils.Are.Here.(UK).")]
+        [TestCase("Louise Penny - [Gamache 16] - All the Devils Are Here")]
+        [TestCase("Louise Penny - [Gamache 15] - All the Devils Are Here")]
+        [TestCase("Louise Penny - [Chief Inspector Armand Gamahce 16] - All the Devils Are Here")]
+        [TestCase("Louise Penny - [Inspector Rebus 16] - All the Devils Are Here")]
+        public void should_accept_exact_author_and_edition_title_without_punishing_extra_metadata(string releaseTitle)
+        {
+            var author = new Author { Name = "Louise Penny" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "All the Devils are Here",
+                SeriesName = "Chief Inspector Armand Gamache",
+                SeriesPosition = "16",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "All the Devils are Here", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = releaseTitle,
+                Indexer = "abNZB (Prowlarr)",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_reject_shortened_series_as_the_only_authorless_identity_evidence()
+        {
+            var author = new Author { Name = "Louise Penny" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "All the Devils are Here",
+                SeriesName = "Chief Inspector Armand Gamache",
+                SeriesPosition = "16",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "All the Devils are Here", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "[Chief Inspector Gamache 16] - All the Devils Are Here",
+                Author = string.Empty,
+                Indexer = "abNZB (Prowlarr)",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+        }
+
+        [Test]
+        public void should_not_treat_one_middle_series_word_as_authorless_identity_proof()
+        {
+            var author = new Author { Name = "Louise Penny" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "All the Devils are Here",
+                SeriesName = "Chief Inspector Armand Gamache",
+                SeriesPosition = "16",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "All the Devils are Here", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "[Inspector 16] - All the Devils Are Here",
+                Author = string.Empty,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+        }
+
+        /// <summary>
+        /// An ebook profile whose ranking is exactly the order given, worst first — i.e. whatever the
+        /// user dragged into place. Everything listed is allowed.
+        /// </summary>
+        private static QualityProfile CreateRankedEbookProfile(params Quality[] worstToBest)
+        {
+            return new QualityProfile
+            {
+                Id = 1,
+                Name = "User Ranked",
+                ProfileType = ProfileType.Ebook,
+                Cutoff = worstToBest.First().Id,
+                Items = worstToBest
+                    .Select(quality => new QualityProfileQualityItem { Quality = quality, Allowed = true })
+                    .ToList()
+            };
+        }
+
+        private static QualityProfile CreateEbookProfile(params Quality[] allowedQualities)
+        {
+            var allowedIds = allowedQualities.Select(q => q.Id).ToHashSet();
+
+            return new QualityProfile
+            {
+                Id = 1,
+                Name = "EPUB Only",
+                ProfileType = ProfileType.Ebook,
+                Cutoff = Quality.EPUB.Id,
+                Items = new List<QualityProfileQualityItem>
+                {
+                    CreateQualityItem(Quality.Unknown, allowedIds),
+                    CreateQualityItem(Quality.PDF, allowedIds),
+                    CreateQualityItem(Quality.MOBI, allowedIds),
+                    CreateQualityItem(Quality.EPUB, allowedIds),
+                    CreateQualityItem(Quality.AZW3, allowedIds)
+                }
+            };
+        }
+
+        private static QualityProfileQualityItem CreateQualityItem(Quality quality, HashSet<int> allowedIds)
+        {
+            return new QualityProfileQualityItem
+            {
+                Quality = quality,
+                Allowed = allowedIds.Contains(quality.Id)
+            };
+        }
+
+        [Test]
+        public void should_accept_series_boundary_identity_without_structured_author()
+        {
+            var author = new Author { Name = "J.K. Rowling" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Harry Potter and the Goblet of Fire",
+                SeriesName = "Harry Potter",
+                SeriesPosition = "4",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Harry Potter and the Goblet of Fire", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Harry Potter 4 - Harry Potter and the Goblet of Fire",
+                Author = string.Empty,
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_reject_music_artist_prefix_without_expected_author_evidence()
+        {
+            var author = new Author { Name = "George R.R. Martin" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Fire & Blood",
+                SeriesName = "A Targaryen History",
+                SeriesPosition = "1",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Fire & Blood", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Viserion-Fire and Blood-EP-WEB-FLAC-2026-ENTiTLED",
+                Author = string.Empty,
+                Indexer = "Generic",
+                Categories = new List<int> { 3010 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+        }
+
+        [Test]
+        public void should_reject_music_artist_suffix_without_expected_author_evidence()
+        {
+            var author = new Author { Name = "Sally Rooney" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Normal People",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Normal People", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Normal People - Paragon - WEB - 2014",
+                Author = string.Empty,
+                Indexer = "Generic",
+                Categories = new List<int> { 3010 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+        }
+
+        [Test]
+        public void should_accept_exact_author_and_title_without_punishing_extra_metadata()
+        {
+            var author = new Author { Name = "Andy Weir" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "Project Hail Mary",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "Project Hail Mary", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Andy Weir Collection-Project Hail Mary",
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejections, Is.Empty);
+        }
+
+        [Test]
+        public void should_soft_reject_embedded_one_word_title_false_positive()
+        {
+            var author = new Author { Name = "Stephen King" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "It",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "It", Monitored = true }
+                }
+            };
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Stephen King - If It Bleeds-AUDiOBOOK-WEB-EN-2020-OLDSWE iNT-xpost",
+                Author = "Stephen King",
+                Indexer = "Nzb.su (Prowlarr)",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Rejected, Is.True);
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+        }
+    }
+}

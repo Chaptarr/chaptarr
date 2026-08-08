@@ -1,0 +1,35 @@
+.button {
+  composes: toolbarButton from '~Components/Page/Toolbar/PageToolbarButton.css';
+
+  position: relative;
+}
+
+.isDisabled {
+  color: var(--disabledColor);
+}
+
+.labelContainer {
+  composes: labelContainer from '~Components/Page/Toolbar/PageToolbarButton.css';
+}
+
+.label {
+  composes: label from '~Components/Page/Toolbar/PageToolbarButton.css';
+}
+
+.indicatorContainer {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+}
+
+.indicatorBackground {
+  color: var(--themeDarkColor);
+}
+
+.enabled {
+  color: var(--successColor);
+}
+
+.disabled {
+  color: var(--dangerColor);
+}

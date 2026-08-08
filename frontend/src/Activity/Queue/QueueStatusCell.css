@@ -1,0 +1,30 @@
+.status {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 30px;
+}
+
+.convertingIcon {
+  transform-origin: center;
+  animation: conversionPulseSpin 3s ease-in-out infinite;
+}
+
+@keyframes conversionPulseSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  15% {
+    transform: rotate(360deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .convertingIcon {
+    animation: none;
+  }
+}

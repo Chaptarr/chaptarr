@@ -1,0 +1,279 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using FluentValidation.Results;
+using NLog;
+using NzbDrone.Common.Disk;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
+using NzbDrone.Core.Blocklisting;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients;
+using NzbDrone.Core.Download.Clients.Flood.Models;
+using NzbDrone.Core.MediaFiles.TorrentInfo;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.RemotePathMappings;
+using NzbDrone.Core.ThingiProvider;
+
+namespace NzbDrone.Core.Download.Clients.Flood
+{
+    public class Flood : TorrentClientBase<FloodSettings>
+    {
+        private readonly IFloodProxy _proxy;
+        private readonly IDownloadSeedConfigProvider _downloadSeedConfigProvider;
+
+        public Flood(IFloodProxy proxy,
+                        IDownloadSeedConfigProvider downloadSeedConfigProvider,
+                        ITorrentFileInfoReader torrentFileInfoReader,
+                        IHttpClient httpClient,
+                        IConfigService configService,
+                        IDiskProvider diskProvider,
+                        IRemotePathMappingService remotePathMappingService,
+                        IBlocklistService blocklistService,
+                        Logger logger)
+            : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, blocklistService, logger)
+        {
+            _proxy = proxy;
+            _downloadSeedConfigProvider = downloadSeedConfigProvider;
+        }
+
+        private static IEnumerable<string> GetInitialTags(RemoteBook remoteBook, FloodSettings settings)
+        {
+            return remoteBook.GetPreferredMediaType() == BookMediaType.Ebook
+                ? settings.EbookTags
+                : settings.AudiobookTags;
+        }
+
+        private static IEnumerable<string> HandleTags(RemoteBook remoteBook, FloodSettings settings, IEnumerable<string> initialTags)
+        {
+            var result = new HashSet<string>();
+
+            if (initialTags != null)
+            {
+                result.UnionWith(initialTags);
+            }
+
+            if (settings.AdditionalTags.Any())
+            {
+                foreach (var additionalTag in settings.AdditionalTags)
+                {
+                    switch (additionalTag)
+                    {
+                        case (int)AdditionalTags.Author:
+                            result.Add(remoteBook.Author.Name);
+                            break;
+                        case (int)AdditionalTags.Format:
+                            result.Add(remoteBook.ParsedBookInfo.Quality.Quality.ToString());
+                            break;
+                        case (int)AdditionalTags.ReleaseGroup:
+                            result.Add(remoteBook.ParsedBookInfo.ReleaseGroup);
+                            break;
+                        case (int)AdditionalTags.Year:
+                            result.UnionWith(remoteBook.Books.ConvertAll(book => book.ReleaseDate.Value.Year.ToString()));
+                            break;
+                        case (int)AdditionalTags.Indexer:
+                            result.Add(remoteBook.Release.Indexer);
+                            break;
+                        default:
+                            throw new DownloadClientException("Unexpected additional tag ID");
+                    }
+                }
+            }
+
+            return result.Where(t => t.IsNotNullOrWhiteSpace());
+        }
+
+        public override string Name => "Flood";
+        public override ProviderMessage Message => new ProviderMessage("Chaptarr will handle automatic removal of torrents based on the current seed criteria in Settings -> Indexers", ProviderMessageType.Info);
+
+        protected override string AddFromTorrentFile(RemoteBook remoteBook, string hash, string filename, byte[] fileContent)
+        {
+            var initialTags = GetInitialTags(remoteBook, Settings);
+            _proxy.AddTorrentByFile(Convert.ToBase64String(fileContent), HandleTags(remoteBook, Settings, initialTags), Settings);
+
+            return hash;
+        }
+
+        protected override string AddFromMagnetLink(RemoteBook remoteBook, string hash, string magnetLink)
+        {
+            var initialTags = GetInitialTags(remoteBook, Settings);
+            _proxy.AddTorrentByUrl(magnetLink, HandleTags(remoteBook, Settings, initialTags), Settings);
+
+            return hash;
+        }
+
+        public override IEnumerable<DownloadClientItem> GetItems()
+        {
+            var items = new List<DownloadClientItem>();
+
+            var list = _proxy.GetTorrents(Settings);
+            var audiobookTags = Settings.AudiobookTags?.Where(t => t.IsNotNullOrWhiteSpace()).ToList() ?? new List<string>();
+            var ebookTags = Settings.EbookTags?.Where(t => t.IsNotNullOrWhiteSpace()).ToList() ?? new List<string>();
+
+            foreach (var torrent in list)
+            {
+                var properties = torrent.Value;
+
+                var matchesAudiobook = audiobookTags.Any() && audiobookTags.All(tag => properties.Tags.Contains(tag));
+                var matchesEbook = ebookTags.Any() && ebookTags.All(tag => properties.Tags.Contains(tag));
+
+                if (!(matchesAudiobook || matchesEbook))
+                {
+                    continue;
+                }
+
+                var item = new DownloadClientItem
+                {
+                    DownloadClientInfo = DownloadClientItemClientInfo.FromDownloadClient(this, false),
+                    DownloadId = torrent.Key,
+                    Title = properties.Name,
+                    OutputPath = RemapRemoteToLocal(new OsPath(properties.Directory)),
+                    Category = properties.Tags.Count > 0 ? properties.Tags[0] : null,
+                    RemainingSize = properties.SizeBytes - properties.BytesDone,
+                    TotalSize = properties.SizeBytes,
+                    SeedRatio = properties.Ratio,
+                    Message = properties.Message,
+                    CanMoveFiles = false,
+                    CanBeRemoved = false,
+                };
+
+                if (properties.Eta > 0)
+                {
+                    item.RemainingTime = TimeSpan.FromSeconds(properties.Eta);
+                }
+
+                if (properties.Status.Contains("seeding") || properties.Status.Contains("complete"))
+                {
+                    item.Status = DownloadItemStatus.Completed;
+                }
+                else if (properties.Status.Contains("stopped"))
+                {
+                    item.Status = DownloadItemStatus.Paused;
+                }
+                else if (properties.Status.Contains("error"))
+                {
+                    item.Status = DownloadItemStatus.Warning;
+                }
+                else if (properties.Status.Contains("downloading"))
+                {
+                    item.Status = DownloadItemStatus.Downloading;
+                }
+
+                if (item.DownloadClientInfo.RemoveCompletedDownloads && item.Status == DownloadItemStatus.Completed)
+                {
+                    // Grab cached seedConfig
+                    var seedConfig = _downloadSeedConfigProvider.GetSeedConfiguration(item.DownloadId);
+
+                    if (seedConfig != null)
+                    {
+                        if (item.SeedRatio >= seedConfig.Ratio)
+                        {
+                            // Check if seed ratio reached
+                            item.CanMoveFiles = item.CanBeRemoved = true;
+                        }
+                        else if (properties.DateFinished != null && properties.DateFinished > 0)
+                        {
+                            // Check if seed time reached
+                            if ((DateTimeOffset.Now - DateTimeOffset.FromUnixTimeSeconds((long)properties.DateFinished)) >= seedConfig.SeedTime)
+                            {
+                                item.CanMoveFiles = item.CanBeRemoved = true;
+                            }
+                        }
+                    }
+                }
+
+                items.Add(item);
+            }
+
+            return items;
+        }
+
+        public override DownloadClientItem GetImportItem(DownloadClientItem item, DownloadClientItem previousImportAttempt)
+        {
+            var result = item.Clone();
+
+            var contentPaths = _proxy.GetTorrentContentPaths(item.DownloadId, Settings);
+
+            if (contentPaths.Count < 1)
+            {
+                throw new DownloadClientUnavailableException($"Failed to fetch list of contents of torrent: {item.DownloadId}");
+            }
+
+            if (contentPaths.Count == 1)
+            {
+                // For single-file torrent, OutputPath should be the path of file.
+                result.OutputPath = TorrentClientPathHelper.CombineClientPath(item.OutputPath, contentPaths[0]);
+            }
+            else
+            {
+                // For multi-file torrent, OutputPath should be the path of base directory of torrent.
+                var baseDirectoryPaths = contentPaths.ConvertAll(path =>
+                    path.Split(new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries)[0]);
+
+                // Check first segment (directory) of paths of contents. If all contents share the same directory, use that directory.
+                if (baseDirectoryPaths.TrueForAll(path => path == baseDirectoryPaths[0]))
+                {
+                    result.OutputPath = item.OutputPath + new OsPath(baseDirectoryPaths[0]);
+                }
+
+                // Otherwise, OutputPath is already the base directory.
+            }
+
+            return result;
+        }
+
+        public override void MarkItemAsImported(DownloadClientItem downloadClientItem)
+        {
+            if (Settings.PostImportTags.Any())
+            {
+                var list = _proxy.GetTorrents(Settings);
+
+                if (list.ContainsKey(downloadClientItem.DownloadId))
+                {
+                    _proxy.SetTorrentsTags(downloadClientItem.DownloadId,
+                        list[downloadClientItem.DownloadId].Tags.Concat(Settings.PostImportTags).ToHashSet(),
+                        Settings);
+                }
+            }
+        }
+
+        public override void RemoveItem(DownloadClientItem item, bool deleteData)
+        {
+            _proxy.DeleteTorrent(item.DownloadId, deleteData, Settings);
+        }
+
+        public override DownloadClientInfo GetStatus()
+        {
+            var destDir = _proxy.GetClientSettings(Settings).DirectoryDefault;
+
+            if (Settings.Destination.IsNotNullOrWhiteSpace())
+            {
+                destDir = Settings.Destination;
+            }
+
+            return new DownloadClientInfo
+            {
+                IsLocalhost = Settings.Host == "127.0.0.1" || Settings.Host == "::1" || Settings.Host == "localhost",
+                OutputRootFolders = new List<OsPath> { RemapRemoteToLocal(new OsPath(destDir)) }
+            };
+        }
+
+        protected override void Test(List<ValidationFailure> failures)
+        {
+            try
+            {
+                _proxy.AuthVerify(Settings);
+            }
+            catch (DownloadClientAuthenticationException ex)
+            {
+                failures.Add(new ValidationFailure("Password", ex.Message));
+            }
+            catch (Exception ex)
+            {
+                failures.Add(new ValidationFailure("Host", ex.Message));
+            }
+        }
+    }
+}

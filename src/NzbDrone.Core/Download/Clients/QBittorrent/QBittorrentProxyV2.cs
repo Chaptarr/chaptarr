@@ -1,0 +1,532 @@
+using System;
+using System.Collections.Generic;
+using System.Net;
+using NLog;
+using NzbDrone.Common.Cache;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
+
+namespace NzbDrone.Core.Download.Clients.QBittorrent
+{
+    // API https://github.com/qbittorrent/qBittorrent/wiki/Web-API-Documentation
+    public class QBittorrentProxyV2 : IQBittorrentProxy
+    {
+        private static readonly HttpStatusCode[] AuthenticationFailureStatusCodes =
+        {
+            HttpStatusCode.Forbidden,
+            HttpStatusCode.Unauthorized
+        };
+
+        private readonly IHttpClient _httpClient;
+        private readonly Logger _logger;
+        private readonly ICached<Dictionary<string, string>> _authCookieCache;
+
+        public QBittorrentProxyV2(IHttpClient httpClient, ICacheManager cacheManager, Logger logger)
+        {
+            _httpClient = httpClient;
+            _logger = logger;
+
+            _authCookieCache = cacheManager.GetCache<Dictionary<string, string>>(GetType(), "authCookies");
+        }
+
+        public bool IsApiSupported(QBittorrentSettings settings)
+        {
+            // We can do the api test without having to authenticate since v3.2.0-v4.0.4 will return 404 on the request.
+            var request = BuildRequest(settings).Resource("/api/v2/app/webapiVersion");
+            request.SuppressHttpError = true;
+
+            try
+            {
+                var response = _httpClient.Execute(request.Build());
+
+                // Version request will return 404 if it doesn't exist.
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return false;
+                }
+
+                if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    return true;
+                }
+
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    throw new DownloadClientException("Failed to connect to qBittorrent. Check your settings and qBittorrent configuration.", new HttpException(response));
+                }
+
+                if (response.HasHttpError)
+                {
+                    throw new DownloadClientException("Failed to connect to qBittorrent, check your settings.", new HttpException(response));
+                }
+
+                return true;
+            }
+            catch (WebException ex)
+            {
+                if (ex.Status == WebExceptionStatus.TrustFailure)
+                {
+                    throw new DownloadClientUnavailableException("Unable to connect to qBittorrent, certificate validation failed.", ex);
+                }
+
+                throw new DownloadClientException("Failed to connect to qBittorrent, check your settings.", ex);
+            }
+        }
+
+        public Version GetApiVersion(QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/app/webapiVersion");
+            var response = Version.Parse(ProcessRequest(request, settings));
+
+            return response;
+        }
+
+        public string GetVersion(QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/app/version");
+            var response = ProcessRequest(request, settings).TrimStart('v');
+
+            // eg "4.2alpha"
+            return response;
+        }
+
+        public QBittorrentPreferences GetConfig(QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/app/preferences");
+            var response = ProcessRequest<QBittorrentPreferences>(request, settings);
+
+            return response;
+        }
+
+        public List<QBittorrentTorrent> GetTorrents(QBittorrentSettings settings, string category = null)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/info");
+            var selectedCategory = category ?? settings.MusicCategory;
+            if (selectedCategory.IsNotNullOrWhiteSpace())
+            {
+                request.AddQueryParam("category", selectedCategory);
+            }
+
+            var response = ProcessRequest<List<QBittorrentTorrent>>(request, settings);
+
+            return response;
+        }
+
+        public bool IsTorrentLoaded(string hash, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/properties")
+                                                .AddQueryParam("hash", hash);
+            request.LogHttpError = false;
+
+            try
+            {
+                ProcessRequest(request, settings);
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public QBittorrentTorrentProperties GetTorrentProperties(string hash, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/properties")
+                                                .AddQueryParam("hash", hash);
+            var response = ProcessRequest<QBittorrentTorrentProperties>(request, settings);
+
+            return response;
+        }
+
+        public List<QBittorrentTorrentFile> GetTorrentFiles(string hash, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/files")
+                                                .AddQueryParam("hash", hash);
+            var response = ProcessRequest<List<QBittorrentTorrentFile>>(request, settings);
+
+            return response;
+        }
+
+        public void AddTorrentFromUrl(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, string category = null)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/add")
+                                                .Post()
+                                                .AddFormParameter("urls", torrentUrl);
+
+            AddTorrentDownloadFormParameters(request, settings, category);
+
+            if (seedConfiguration != null)
+            {
+                AddTorrentSeedingFormParameters(request, seedConfiguration);
+            }
+
+            var result = ProcessRequest(request, settings);
+
+            // Note: Older qbit versions returned nothing, so we can't do != "Ok." here.
+            if (result == "Fails.")
+            {
+                throw new DownloadClientException("qBittorrent rejected the torrent add request (response: Fails.).");
+            }
+        }
+
+        public void AddTorrentFromFile(string fileName, byte[] fileContent, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, string category = null)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/add")
+                                                .Post()
+                                                .AddFormUpload("torrents", fileName, fileContent);
+
+            AddTorrentDownloadFormParameters(request, settings, category);
+
+            if (seedConfiguration != null)
+            {
+                AddTorrentSeedingFormParameters(request, seedConfiguration);
+            }
+
+            var result = ProcessRequest(request, settings);
+
+            // Note: Current qbit versions return nothing, so we can't do != "Ok." here.
+            if (result == "Fails.")
+            {
+                throw new DownloadClientException("qBittorrent rejected the torrent add request (response: Fails.).");
+            }
+        }
+
+        public void RemoveTorrent(string hash, bool removeData, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/delete")
+                                                .Post()
+                                                .AddFormParameter("hashes", hash);
+
+            if (removeData)
+            {
+                request.AddFormParameter("deleteFiles", "true");
+            }
+
+            ProcessRequest(request, settings);
+        }
+
+        public void SetTorrentLabel(string hash, string label, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/setCategory")
+                                                .Post()
+                                                .AddFormParameter("hashes", hash)
+                                                .AddFormParameter("category", label);
+            ProcessRequest(request, settings);
+        }
+
+        public void AddLabel(string label, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/createCategory")
+                                                .Post()
+                                                .AddFormParameter("category", label);
+            ProcessRequest(request, settings);
+        }
+
+        public Dictionary<string, QBittorrentLabel> GetLabels(QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/categories");
+            return Json.Deserialize<Dictionary<string, QBittorrentLabel>>(ProcessRequest(request, settings));
+        }
+
+        private void AddTorrentSeedingFormParameters(HttpRequestBuilder request, TorrentSeedConfiguration seedConfiguration, bool always = false)
+        {
+            var ratioLimit = seedConfiguration.Ratio.HasValue ? seedConfiguration.Ratio : -2;
+            var seedingTimeLimit = seedConfiguration.SeedTime.HasValue ? (long)seedConfiguration.SeedTime.Value.TotalMinutes : -2;
+
+            if (ratioLimit != -2 || always)
+            {
+                request.AddFormParameter("ratioLimit", ratioLimit);
+            }
+
+            if (seedingTimeLimit != -2 || always)
+            {
+                request.AddFormParameter("seedingTimeLimit", seedingTimeLimit);
+            }
+        }
+
+        private void AddTorrentDownloadFormParameters(HttpRequestBuilder request, QBittorrentSettings settings, string category = null)
+        {
+            var selectedCategory = category ?? settings.MusicCategory;
+            if (selectedCategory.IsNotNullOrWhiteSpace())
+            {
+                request.AddFormParameter("category", selectedCategory);
+            }
+
+            // Avoid extraneous API version check if initial state is ForceStart
+            if ((QBittorrentState)settings.InitialState is QBittorrentState.Start or QBittorrentState.Stop)
+            {
+                var stoppedParameterName = GetApiVersion(settings) >= new Version(2, 11, 0) ? "stopped" : "paused";
+
+                // Note: ForceStart is handled by separate api call
+                if ((QBittorrentState)settings.InitialState == QBittorrentState.Start)
+                {
+                    request.AddFormParameter(stoppedParameterName, false);
+                }
+                else if ((QBittorrentState)settings.InitialState == QBittorrentState.Stop)
+                {
+                    request.AddFormParameter(stoppedParameterName, true);
+                }
+            }
+
+            if (settings.SequentialOrder)
+            {
+                request.AddFormParameter("sequentialDownload", true);
+            }
+
+            if (settings.FirstAndLast)
+            {
+                request.AddFormParameter("firstLastPiecePrio", true);
+            }
+
+            if ((QBittorrentContentLayout)settings.ContentLayout == QBittorrentContentLayout.Original)
+            {
+                request.AddFormParameter("contentLayout", "Original");
+            }
+            else if ((QBittorrentContentLayout)settings.ContentLayout == QBittorrentContentLayout.Subfolder)
+            {
+                request.AddFormParameter("contentLayout", "Subfolder");
+            }
+        }
+
+        public void SetTorrentSeedingConfiguration(string hash, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/setShareLimits")
+                                                .Post()
+                                                .AddFormParameter("hashes", hash);
+
+            AddTorrentSeedingFormParameters(request, seedConfiguration, true);
+
+            try
+            {
+                ProcessRequest(request, settings);
+            }
+            catch (DownloadClientException ex)
+            {
+                // setShareLimits was added in api v2.0.1 so catch it case of the unlikely event that someone has api v2.0
+                if (ex.InnerException is HttpException httpException && httpException.Response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return;
+                }
+
+                throw;
+            }
+        }
+
+        public void MoveTorrentToTopInQueue(string hash, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/topPrio")
+                                                .Post()
+                                                .AddFormParameter("hashes", hash);
+
+            try
+            {
+                ProcessRequest(request, settings);
+            }
+            catch (DownloadClientException ex)
+            {
+                // qBittorrent rejects all Prio commands with 409: Conflict if Options -> BitTorrent -> Torrent Queueing is not enabled
+                if (ex.InnerException is HttpException httpException && httpException.Response.StatusCode == HttpStatusCode.Conflict)
+                {
+                    return;
+                }
+
+                throw;
+            }
+        }
+
+        public void SetForceStart(string hash, bool enabled, QBittorrentSettings settings)
+        {
+            var request = BuildRequest(settings).Resource("/api/v2/torrents/setForceStart")
+                                                .Post()
+                                                .AddFormParameter("hashes", hash)
+                                                .AddFormParameter("value", enabled ? "true" : "false");
+            ProcessRequest(request, settings);
+        }
+
+        private HttpRequestBuilder BuildRequest(QBittorrentSettings settings)
+        {
+            var requestBuilder = new HttpRequestBuilder(settings.UseSsl, settings.Host, settings.Port, settings.UrlBase)
+            {
+                LogResponseContent = true,
+                PostProcess = request => request.StoreRequestCookie = false
+            };
+
+            if (settings.ApiKey.IsNotNullOrWhiteSpace())
+            {
+                requestBuilder.Headers["Authorization"] = $"Bearer {settings.ApiKey}";
+            }
+            else
+            {
+                requestBuilder.NetworkCredential = new BasicNetworkCredential(settings.Username, settings.Password);
+            }
+
+            return requestBuilder;
+        }
+
+        private TResult ProcessRequest<TResult>(HttpRequestBuilder requestBuilder, QBittorrentSettings settings)
+            where TResult : new()
+        {
+            var responseContent = ProcessRequest(requestBuilder, settings);
+
+            return Json.Deserialize<TResult>(responseContent);
+        }
+
+        private string ProcessRequest(HttpRequestBuilder requestBuilder, QBittorrentSettings settings)
+        {
+            if (settings.ApiKey.IsNotNullOrWhiteSpace())
+            {
+                var apiKeyRequest = requestBuilder.Build();
+                apiKeyRequest.LogResponseContent = true;
+
+                try
+                {
+                    return _httpClient.Execute(apiKeyRequest).Content;
+                }
+                catch (HttpException ex)
+                {
+                    if (ex.Response != null && IsAuthenticationFailure(ex.Response.StatusCode))
+                    {
+                        _logger.Debug(ex, "qbitTorrent authentication failed.");
+
+                        throw new DownloadClientAuthenticationException("Failed to authenticate with qBittorrent.", ex);
+                    }
+
+                    throw new DownloadClientException(GetRequestErrorMessage(ex), ex);
+                }
+                catch (WebException ex)
+                {
+                    throw new DownloadClientException("Failed to connect to qBittorrent, please check your settings.", ex);
+                }
+            }
+
+            AuthenticateClient(requestBuilder, settings);
+
+            var request = requestBuilder.Build();
+            request.LogResponseContent = true;
+            request.SuppressHttpErrorStatusCodes = AuthenticationFailureStatusCodes;
+
+            HttpResponse response;
+            try
+            {
+                response = _httpClient.Execute(request);
+
+                if (IsAuthenticationFailure(response.StatusCode))
+                {
+                    _logger.Debug("Authentication required, logging in.");
+
+                    AuthenticateClient(requestBuilder, settings, true);
+
+                    request = requestBuilder.Build();
+
+                    response = _httpClient.Execute(request);
+                }
+            }
+            catch (HttpException ex)
+            {
+                throw new DownloadClientException(GetRequestErrorMessage(ex), ex);
+            }
+            catch (WebException ex)
+            {
+                throw new DownloadClientException("Failed to connect to qBittorrent, please check your settings.", ex);
+            }
+
+            return response.Content;
+        }
+
+        private static bool IsAuthenticationFailure(HttpStatusCode statusCode)
+        {
+            return statusCode == HttpStatusCode.Forbidden || statusCode == HttpStatusCode.Unauthorized;
+        }
+
+        private static string GetRequestErrorMessage(HttpException exception)
+        {
+            var response = exception.Response;
+
+            if (response == null)
+            {
+                return "qBittorrent API request failed.";
+            }
+
+            var message = $"qBittorrent API request failed (HTTP {(int)response.StatusCode} {response.StatusCode}).";
+
+            if (response.Content.IsNullOrWhiteSpace())
+            {
+                return message;
+            }
+
+            var content = response.Content.Trim();
+            if (content.Length > 300)
+            {
+                content = content.Substring(0, 300) + "...";
+            }
+
+            return $"{message} {content}";
+        }
+
+        private void AuthenticateClient(HttpRequestBuilder requestBuilder, QBittorrentSettings settings, bool reauthenticate = false)
+        {
+            if (settings.Username.IsNullOrWhiteSpace() || settings.Password.IsNullOrWhiteSpace())
+            {
+                if (reauthenticate)
+                {
+                    throw new DownloadClientAuthenticationException("Failed to authenticate with qBittorrent.");
+                }
+
+                return;
+            }
+
+            var authKey = string.Format("{0}:{1}:{2}", requestBuilder.BaseUrl, settings.Username, settings.Password);
+
+            var cookies = _authCookieCache.Find(authKey);
+
+            if (cookies == null || reauthenticate)
+            {
+                _authCookieCache.Remove(authKey);
+
+                var authLoginRequest = BuildRequest(settings).Resource("/api/v2/auth/login")
+                                                             .Post()
+                                                             .AddFormParameter("username", settings.Username ?? string.Empty)
+                                                             .AddFormParameter("password", settings.Password ?? string.Empty)
+                                                             .Build();
+
+                HttpResponse response;
+                try
+                {
+                    response = _httpClient.Execute(authLoginRequest);
+                }
+                catch (HttpException ex)
+                {
+                    _logger.Debug("qbitTorrent authentication failed.");
+                    if (ex.Response?.StatusCode == HttpStatusCode.Forbidden ||
+                        ex.Response?.StatusCode == HttpStatusCode.Unauthorized)
+                    {
+                        throw new DownloadClientAuthenticationException("Failed to authenticate with qBittorrent.", ex);
+                    }
+
+                    throw new DownloadClientException("Failed to connect to qBittorrent, please check your settings.", ex);
+                }
+                catch (WebException ex)
+                {
+                    throw new DownloadClientUnavailableException("Failed to connect to qBittorrent, please check your settings.", ex);
+                }
+
+                // qBittorrent <= 5.1 returns "Ok." or "Fails."; qBittorrent 5.2+ returns 204 with an empty body on success.
+                if (response.Content.IsNotNullOrWhiteSpace() && response.Content != "Ok.")
+                {
+                    _logger.Debug("qbitTorrent authentication failed.");
+                    throw new DownloadClientAuthenticationException("Failed to authenticate with qBittorrent.");
+                }
+
+                _logger.Debug("qBittorrent authentication succeeded.");
+
+                cookies = response.GetCookies();
+
+                _authCookieCache.Set(authKey, cookies);
+            }
+
+            requestBuilder.SetCookies(cookies);
+        }
+    }
+}

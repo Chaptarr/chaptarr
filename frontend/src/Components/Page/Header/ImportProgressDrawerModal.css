@@ -1,0 +1,130 @@
+.backdrop {
+  composes: modalBackdrop from '~Components/Modal/Modal.css';
+
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.drawer {
+  width: 420px;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 0;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.headerText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.title {
+  @add-mixin truncate;
+
+  font-weight: 600;
+}
+
+.subtitle {
+  @add-mixin truncate;
+
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--helpTextColor);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.summaryCard {
+  padding: 10px;
+  border: 1px solid var(--borderColor);
+  border-radius: 6px;
+  background-color: var(--pageFooterBackgroud);
+}
+
+.summaryLabel {
+  font-size: 11px;
+  color: var(--helpTextColor);
+}
+
+.summaryValue {
+  margin-top: 6px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.section {
+  margin-top: 16px;
+}
+
+.sectionTitle {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.rowLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--textColor);
+}
+
+.rowCounts {
+  font-size: 12px;
+  color: var(--helpTextColor);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.currentItem {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--borderColor);
+  border-radius: 6px;
+}
+
+.currentItemLabel {
+  font-size: 11px;
+  color: var(--helpTextColor);
+}
+
+.currentItemValue {
+  @add-mixin truncate;
+
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+@media only screen and (max-width: $breakpointMedium) {
+  .backdrop {
+    justify-content: center;
+  }
+
+  .drawer {
+    border-radius: 0;
+    width: 100% !important;
+  }
+}

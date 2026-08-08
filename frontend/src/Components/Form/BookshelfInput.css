@@ -1,0 +1,34 @@
+.bookshelfInputWrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.input {
+  composes: input from '~./TagInput.css';
+  composes: hasButton from '~Components/Form/Input.css';
+}
+
+.manualAddRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.manualAddInput {
+  composes: input;
+  flex: 1;
+}
+
+.relativePath {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  text-align: left;
+  word-break: break-word;
+}
+
+@media only screen and (max-width: $breakpointMedium) {
+  .relativePath {
+    white-space: normal;
+  }
+}

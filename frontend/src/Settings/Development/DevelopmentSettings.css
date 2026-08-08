@@ -1,0 +1,36 @@
+.metadataStatusContainer {
+  flex: 1 1 auto;
+}
+
+.metadataStatusAlert {
+  composes: alert from '~Components/Alert.css';
+  margin: 0;
+}
+
+.metadataStatusHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.metadataStatusTitle {
+  font-weight: bold;
+}
+
+.metadataStatusLines {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metadataStatusLine {
+  word-break: break-word;
+}
+
+.resettingNote {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

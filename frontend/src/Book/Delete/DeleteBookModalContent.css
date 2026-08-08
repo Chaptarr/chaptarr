@@ -1,0 +1,38 @@
+.pathContainer {
+  margin-bottom: 20px;
+}
+
+.pathIcon {
+  margin-right: 8px;
+}
+
+.deleteFilesMessage {
+  margin-top: 20px;
+  color: var(--dangerColor);
+}
+
+.fileList {
+  margin-top: 12px;
+  padding-left: 18px;
+  color: var(--textColor);
+}
+
+.fileListItem {
+  margin-top: 8px;
+}
+
+.filePathList {
+  margin-top: 4px;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+.fileSize {
+  margin-left: 8px;
+  color: var(--disabledColor);
+}
+
+.noFiles {
+  margin-top: 4px;
+  color: var(--disabledColor);
+}

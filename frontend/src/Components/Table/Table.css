@@ -1,0 +1,36 @@
+.tableContainer {
+  &.horizontalScroll {
+    overflow-x: auto;
+  }
+}
+
+.table {
+  max-width: 100%;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.title {
+  text-align: left;
+}
+
+.narrator {
+  text-align: left;
+}
+
+.path {
+  text-align: left;
+}
+
+@media only screen and (max-width: $breakpointMedium) {
+  .tableContainer {
+    min-width: 100%;
+    width: 100%; /* Fix: always use 100% instead of fit-content */
+    overflow-x: auto; /* Add horizontal scroll when content is too wide */
+
+    &.horizontalScroll {
+      overflow-y: hidden;
+      width: 100%;
+    }
+  }
+}

@@ -1,0 +1,66 @@
+.qualityProfile {
+  composes: card from '~Components/Card.css';
+
+  min-height: 150px;
+  padding: 20px;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+
+.qualityProfile:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.nameContainer {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.name {
+  @add-mixin truncate;
+
+  font-size: 18px;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.cloneButton {
+  composes: button from '~Components/Link/IconButton.css';
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--cardAlternateBackgroundColor);
+  cursor: pointer;
+  transition: background-color 0.2s;
+  pointer-events: all;
+  z-index: 1;
+}
+
+.cloneButton:hover {
+  background-color: var(--themeLightColor);
+}
+
+.qualities {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.convertTo {
+  margin-top: 12px;
+  pointer-events: none;
+}
+
+.tooltipLabel {
+  composes: label from '~Components/Label.css';
+
+  margin: 0;
+  border: none;
+}

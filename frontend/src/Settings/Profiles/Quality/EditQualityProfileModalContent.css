@@ -1,0 +1,40 @@
+.formGroupsContainer {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 30px;
+}
+
+.formGroupWrapper {
+  flex: 1 1 calc($formGroupSmallWidth - 100px);
+  min-width: 280px;
+}
+
+.customFormatsSection {
+  margin-top: 10px;
+}
+
+.deleteButtonContainer {
+  display: flex;
+  align-items: center;
+  margin-right: auto;
+}
+
+.deleteButtonWithReason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deleteDisabledReasonIcon {
+  color: var(--helpTextColor);
+}
+
+.conversionSettingsLink {
+  padding-top: 8px;
+}
+
+@media only screen and (max-width: calc($breakpointLarge + 100px)) {
+  .formGroupsContainer {
+    display: block;
+  }
+}

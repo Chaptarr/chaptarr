@@ -1,0 +1,119 @@
+# syntax=docker/dockerfile:1.7
+
+###### node stage ######
+# Use a pinned Node image instead of curl|bash installers.
+FROM node:20.11.1-bookworm-slim AS node
+RUN npm install -g yarn@1.22.22
+
+###### mp4v2 stage ######
+FROM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6a60359c29aff84bfacbd8597a4237038c7ccd7628a2d AS mp4v2
+
+###### deps stage ######
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS deps
+WORKDIR /src
+
+# Copy Node + Yarn from the official Node image (avoids curl|bash installers).
+COPY --from=node /usr/local /usr/local
+
+# Copy only dependency manifests so cache is preserved when code changes
+COPY package.json yarn.lock ./
+
+# Use BuildKit cache mount so tarballs stay on host between builds
+RUN --mount=type=cache,target=/root/.cache/yarn \
+    yarn install --frozen-lockfile
+
+###### dotnet-deps stage ######
+FROM deps AS dotnet-deps
+WORKDIR /src
+
+# Copy only project files first for better layer caching
+COPY src/*/*.csproj ./
+COPY src/Directory.Build.props src/Directory.Build.targets ./src/
+COPY src/Directory.Packages.props ./src/
+COPY src/NuGet.config ./src/
+COPY src/Chaptarr.NoTests.sln ./src/
+
+# Move csproj files to correct structure
+RUN for file in *.csproj; do \
+    dir=$(basename "$file" .csproj | sed 's/Chaptarr/NzbDrone/'); \
+    mkdir -p "src/$dir" && mv "$file" "src/$dir/"; \
+    done
+
+# Restore dependencies with cache
+RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
+    dotnet restore src/Chaptarr.NoTests.sln
+
+###### build stage ######
+FROM dotnet-deps AS build
+WORKDIR /src
+
+# Now bring in all source code
+COPY . .
+
+# Front‑end build
+RUN yarn typecheck
+RUN yarn build
+
+# Back‑end build with NuGet cache (packages already restored)
+RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
+    dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -r linux-x64 --self-contained false -o /app --no-restore /p:EnableWindowsTargeting=true /p:RunAnalyzersDuringBuild=false /p:RunCodeAnalysis=false /p:PublishSingleFile=false
+
+# Copy UI output to final app directory
+RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
+
+###### runtime stage ######
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        php-cli php-mbstring php-xml php-json php-curl php-zip \
+        wget \
+        sqlite3 libsqlite3-0; \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy pinned mp4v2 tools used by m4b-tool for chapter and tag writes. These
+# binaries are musl-linked, so keep their runtime libraries private.
+COPY --from=mp4v2 /usr/local/bin/mp4* /opt/mp4v2/bin/
+COPY --from=mp4v2 /usr/local/lib/libmp4v2* /opt/mp4v2/lib/
+COPY --from=mp4v2 /usr/lib/libstdc++.so.6* /usr/lib/libgcc_s.so.1 /opt/mp4v2/lib/
+COPY --from=mp4v2 /lib/ld-musl-*.so.1 /lib/
+COPY --from=mp4v2 /lib/ld-musl-*.so.1 /opt/mp4v2/lib/
+COPY --from=mp4v2 /lib/libc.musl-*.so.1 /opt/mp4v2/lib/
+RUN set -eux; \
+    for tool in /opt/mp4v2/bin/mp4*; do \
+        name="$(basename "$tool")"; \
+        printf '%s\n' \
+            '#!/bin/sh' \
+            'export LD_LIBRARY_PATH="/opt/mp4v2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' \
+            "exec /opt/mp4v2/bin/${name} \"\$@\"" \
+            > "/usr/local/bin/${name}"; \
+        chmod +x "/usr/local/bin/${name}"; \
+    done; \
+    mp4info --version; \
+    mp4tags --version; \
+    mp4chaps --version
+
+# Download and install m4b-tool
+ARG M4B_TOOL_URL=https://github.com/sandreas/m4b-tool/releases/download/v0.5.2/m4b-tool.phar
+ARG M4B_TOOL_SHA256=a3ea9b81a4e8ce10ecc85c1fc712c982ba2622f2ed0318fb558dadfad4a590fa
+RUN set -eux; \
+    wget -O /usr/local/bin/m4b-tool "$M4B_TOOL_URL"; \
+    echo "${M4B_TOOL_SHA256}  /usr/local/bin/m4b-tool" | sha256sum -c -; \
+    chmod +x /usr/local/bin/m4b-tool; \
+    php /usr/local/bin/m4b-tool --version
+
+RUN useradd -u 99 -g 100 -d /config -s /bin/bash abc \
+    && mkdir -p /config \
+    && chown -R abc:users /config
+
+WORKDIR /app
+COPY --from=build /app .
+
+RUN chown -R abc:users /app
+
+EXPOSE 8789
+USER abc
+CMD ["dotnet", "/app/Chaptarr.dll", "-nobrowser", "-data=/config"]

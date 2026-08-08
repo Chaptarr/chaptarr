@@ -1,0 +1,27 @@
+.modalBody {
+  composes: modalBody from '~Components/Modal/ModalBody.css';
+
+  display: flex;
+  flex-direction: column;
+}
+
+.info {
+  margin-bottom: 20px;
+  color: var(--helpTextColor);
+  font-size: 14px;
+}
+
+.folders {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  margin-bottom: 20px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+}
+
+.skipInfo {
+  margin-top: auto;
+  color: var(--helpTextColor);
+  font-size: 12px;
+  font-style: italic;
+}

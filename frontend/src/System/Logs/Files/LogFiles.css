@@ -1,0 +1,41 @@
+.alertContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.locationInfo {
+  flex: 1;
+  min-width: 200px;
+}
+
+.logLevelContainer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.logLevelDropdown {
+  width: 150px;
+}
+
+.logLevelWarning {
+  color: #f89406;
+  font-size: 12px;
+  margin-left: 10px;
+}
+
+.inlineFormGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.inlineFormGroup .label {
+  margin-bottom: 0;
+  min-width: auto;
+}

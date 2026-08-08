@@ -1,0 +1,81 @@
+.innerContentBody {
+  padding: 0;
+}
+
+.contentContainer {
+  padding: 20px;
+}
+
+.tabList {
+  margin: 0 0 20px;
+  padding: 0;
+  border-bottom: 1px solid var(--lightGray);
+}
+
+.tab {
+  position: relative;
+  bottom: -1px;
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-top: none;
+  list-style: none;
+  cursor: pointer;
+}
+
+.selectedTab {
+  border-bottom: 4px solid var(--linkColor);
+}
+
+.tabContent {
+  margin-top: 20px;
+}
+
+.filterIcon {
+  float: right;
+}
+
+.header {
+  composes: container from '~Components/Swipe/SwipeHeader.css';
+}
+
+.bookNavigationButtons {
+  position: absolute;
+  right: 0;
+  z-index: 1;
+  margin-top: 10px;
+  padding: 30px;
+  white-space: nowrap;
+}
+
+.bookUpButton,
+.bookNavigationButton {
+  composes: button from '~Components/Link/IconButton.css';
+
+  margin-left: 5px;
+  width: 30px;
+  color: #e1e2e3;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--iconButtonHoverLightColor);
+  }
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .contentContainer {
+    padding: 20px 0;
+  }
+
+  .bookNavigationButtons {
+    padding: 15px;
+  }
+
+  .bookNavigationButtons {
+    margin-top: 5px;
+  }
+
+  .bookNavigationButton {
+    display: none;
+  }
+}

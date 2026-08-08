@@ -1,0 +1,13 @@
+.name {
+  @add-mixin truncate;
+  width: 100%;
+}
+
+.foreignId {
+  width: 160px;
+}
+
+.actions {
+  width: 45px;
+  text-align: right;
+}

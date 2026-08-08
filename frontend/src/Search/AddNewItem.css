@@ -1,0 +1,102 @@
+.searchContainer {
+  display: flex;
+  margin-bottom: 10px;
+}
+
+.searchIconContainer {
+  width: 58px;
+  height: 46px;
+  border: 1px solid var(--inputBorderColor);
+  border-right: none;
+  border-radius: 4px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  background-color: var(--searchIconContainerBackgroundColor);
+  text-align: center;
+  line-height: 46px;
+}
+
+.searchInput {
+  composes: input from '~Components/Form/TextInput.css';
+
+  height: 46px;
+  border-radius: 0;
+  font-size: 18px;
+  flex: 1;
+}
+
+.providerSelect {
+  height: 46px;
+  width: 140px;
+  margin-left: 10px;
+  font-size: 18px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 0;
+  background-color: var(--inputBackgroundColor);
+  color: var(--textColor);
+  padding: 0 16px;
+}
+
+.clearLookupButton {
+  border: 1px solid var(--inputBorderColor);
+  border-left: none;
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
+}
+
+.message {
+  margin-top: 30px;
+  text-align: center;
+  font-weight: 300;
+  font-size: $largeFontSize;
+}
+
+.helpText {
+  margin-bottom: 10px;
+  font-size: 24px;
+}
+
+.noResults {
+  margin-bottom: 10px;
+  font-weight: 300;
+  font-size: 30px;
+}
+
+.searchResults {
+  margin-top: 30px;
+}
+
+.filterButtons {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  margin-bottom: 20px;
+  justify-content: center;
+}
+
+.filterButtons button {
+  padding: 8px 16px;
+  border: 1px solid var(--inputBorderColor);
+  background-color: var(--inputBackgroundColor);
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.filterButtons button:hover:not(:disabled) {
+  background-color: var(--inputHoverBackgroundColor);
+  border-color: var(--themeLightColor);
+}
+
+.filterButtons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.activeFilter {
+  background-color: var(--themeLightColor) !important;
+  color: var(--white) !important;
+  border-color: var(--themeLightColor) !important;
+}

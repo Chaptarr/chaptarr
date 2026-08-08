@@ -1,0 +1,89 @@
+.body {
+  composes: modalBody from '~Components/Modal/ModalBody.css';
+
+  flex: 1 1 430px;
+}
+
+.deleteButton {
+  composes: button from '~Components/Link/Button.css';
+
+  margin-right: auto;
+}
+
+.mappingSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 18px 0 22px;
+}
+
+.mappingTitle {
+  font-weight: 600;
+}
+
+.mappingHelp {
+  margin-top: -6px;
+  color: var(--darkGray);
+}
+
+.mappingGridHeader,
+.mappingRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.mappingGridHeader {
+  color: var(--darkGray);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.mappingSide {
+  min-width: 0;
+}
+
+.mappingArrow {
+  padding-top: 8px;
+  color: var(--darkGray);
+  text-align: center;
+}
+
+.pathSuggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pathSuggestion {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  padding: 3px 8px;
+  background-color: var(--inputBackgroundColor, var(--pageBackgroundColor));
+  color: var(--defaultColor);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .mappingGridHeader {
+    display: none;
+  }
+
+  .mappingRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .mappingArrow {
+    display: none;
+  }
+}

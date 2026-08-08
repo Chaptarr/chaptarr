@@ -1,0 +1,17 @@
+.toggleContainer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.icon {
+  margin: 0;
+  line-height: 1;
+}
+
+@media (max-width: 768px) {
+  .toggleContainer {
+    margin-bottom: 16px;
+  }
+}

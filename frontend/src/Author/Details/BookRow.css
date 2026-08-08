@@ -1,0 +1,109 @@
+.title {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  text-align: left;
+}
+
+.narrator {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  text-align: left;
+  
+  width: 150px;
+  min-width: 120px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media only screen and (max-width: 768px) {
+  .narrator {
+    display: none;
+  }
+  
+  .position,
+  .rating,
+  .status {
+    min-width: 60px;
+    width: 80px;
+  }
+  
+  .releaseDate {
+    min-width: 80px;
+    width: 100px;
+  }
+  
+  .pageCount {
+    min-width: 50px;
+    width: 60px;
+  }
+  
+  .duration {
+    min-width: 60px;
+    width: 70px;
+  }
+}
+
+@media only screen and (max-width: 480px) {
+  .position,
+  .rating {
+    display: none;
+  }
+  
+  .status {
+    min-width: 50px;
+    width: 60px;
+  }
+  
+  .pageCount,
+  .duration {
+    min-width: 45px;
+    width: 55px;
+  }
+}
+
+.monitored {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 42px;
+}
+
+.position,
+.rating,
+.status {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  min-width: 80px;
+  width: 100px;
+}
+
+.releaseDate {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  min-width: 100px;  
+  width: 120px;
+}
+
+.pageCount {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  min-width: 60px;
+  width: 80px;
+}
+
+.duration {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  min-width: 70px;
+  width: 90px;
+}
+
+.indexerFlags {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 50px;
+}
+
+.path {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  text-align: left;
+}

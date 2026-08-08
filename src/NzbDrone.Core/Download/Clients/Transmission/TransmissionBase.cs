@@ -1,0 +1,329 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using FluentValidation.Results;
+using NLog;
+using NzbDrone.Common.Disk;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Blocklisting;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.MediaFiles.TorrentInfo;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.RemotePathMappings;
+using NzbDrone.Core.Validation;
+
+namespace NzbDrone.Core.Download.Clients.Transmission
+{
+    public abstract class TransmissionBase : TorrentClientBase<TransmissionSettings>
+    {
+        protected readonly ITransmissionProxy _proxy;
+
+        public TransmissionBase(ITransmissionProxy proxy,
+            ITorrentFileInfoReader torrentFileInfoReader,
+            IHttpClient httpClient,
+            IConfigService configService,
+            IDiskProvider diskProvider,
+            IRemotePathMappingService remotePathMappingService,
+            IBlocklistService blocklistService,
+            Logger logger)
+            : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, blocklistService, logger)
+        {
+            _proxy = proxy;
+        }
+
+        public override IEnumerable<DownloadClientItem> GetItems()
+        {
+            var configFunc = new Lazy<TransmissionConfig>(() => _proxy.GetConfig(Settings));
+            var torrents = _proxy.GetTorrents(Settings);
+
+            var items = new List<DownloadClientItem>();
+            var configuredCategories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
+                .Where(c => c.IsNotNullOrWhiteSpace())
+                .Distinct(StringComparer.InvariantCultureIgnoreCase)
+                .ToList();
+
+            foreach (var torrent in torrents)
+            {
+                var outputPath = new OsPath(torrent.DownloadDir);
+                string matchedCategory = null;
+
+                if (Settings.TvDirectory.IsNotNullOrWhiteSpace())
+                {
+                    if (!new OsPath(Settings.TvDirectory).Contains(outputPath))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (configuredCategories.Any())
+                    {
+                        var directories = outputPath.FullPath.Split('\\', '/');
+                        matchedCategory = configuredCategories.FirstOrDefault(c => directories.Contains(c, StringComparer.InvariantCultureIgnoreCase));
+
+                        if (matchedCategory == null)
+                        {
+                            continue;
+                        }
+                    }
+                }
+
+                outputPath = RemapRemoteToLocal(outputPath);
+
+                var item = new DownloadClientItem();
+                item.DownloadId = torrent.HashString.ToUpper();
+                item.Category = matchedCategory;
+                item.Title = torrent.Name;
+
+                item.DownloadClientInfo = DownloadClientItemClientInfo.FromDownloadClient(this, false);
+
+                item.OutputPath = GetOutputPath(outputPath, torrent);
+                item.TotalSize = torrent.TotalSize;
+                item.RemainingSize = torrent.LeftUntilDone;
+                item.SeedRatio = torrent.DownloadedEver <= 0 ? 0 :
+                    (double)torrent.UploadedEver / torrent.DownloadedEver;
+
+                if (torrent.Eta >= 0)
+                {
+                    try
+                    {
+                        item.RemainingTime = TimeSpan.FromSeconds(torrent.Eta);
+                    }
+                    catch (OverflowException)
+                    {
+                        item.RemainingTime = TimeSpan.FromMilliseconds(torrent.Eta);
+                    }
+                }
+
+                if (!torrent.ErrorString.IsNullOrWhiteSpace())
+                {
+                    item.Status = DownloadItemStatus.Warning;
+                    item.Message = torrent.ErrorString;
+                }
+                else if (torrent.TotalSize == 0)
+                {
+                    item.Status = DownloadItemStatus.Queued;
+                }
+                else if (torrent.LeftUntilDone == 0 && (torrent.Status == TransmissionTorrentStatus.Stopped ||
+                                                        torrent.Status == TransmissionTorrentStatus.Seeding ||
+                                                        torrent.Status == TransmissionTorrentStatus.SeedingWait))
+                {
+                    item.Status = DownloadItemStatus.Completed;
+                }
+                else if (torrent.IsFinished && torrent.Status != TransmissionTorrentStatus.Check &&
+                         torrent.Status != TransmissionTorrentStatus.CheckWait)
+                {
+                    item.Status = DownloadItemStatus.Completed;
+                }
+                else if (torrent.Status == TransmissionTorrentStatus.Queued)
+                {
+                    item.Status = DownloadItemStatus.Queued;
+                }
+                else
+                {
+                    item.Status = DownloadItemStatus.Downloading;
+                }
+
+                item.CanBeRemoved = item.DownloadClientInfo.RemoveCompletedDownloads &&
+                                    HasReachedSeedLimit(torrent, item.SeedRatio, configFunc);
+                item.CanMoveFiles = item.CanBeRemoved && torrent.Status == TransmissionTorrentStatus.Stopped;
+
+                items.Add(item);
+            }
+
+            return items;
+        }
+
+        protected bool HasReachedSeedLimit(TransmissionTorrent torrent, double? ratio, Lazy<TransmissionConfig> config)
+        {
+            var isStopped = torrent.Status == TransmissionTorrentStatus.Stopped;
+            var isSeeding = torrent.Status == TransmissionTorrentStatus.Seeding;
+
+            if (torrent.SeedRatioMode == 1)
+            {
+                if (isStopped && ratio.HasValue && ratio >= torrent.SeedRatioLimit)
+                {
+                    return true;
+                }
+            }
+            else if (torrent.SeedRatioMode == 0)
+            {
+                if (isStopped && config.Value.SeedRatioLimited && ratio >= config.Value.SeedRatioLimit)
+                {
+                    return true;
+                }
+            }
+
+            // Transmission doesn't support SeedTimeLimit, use/abuse seed idle limit, but only if it was set per-torrent.
+            if (torrent.SeedIdleMode == 1)
+            {
+                if ((isStopped || isSeeding) && torrent.SecondsSeeding > torrent.SeedIdleLimit * 60)
+                {
+                    return true;
+                }
+            }
+            else if (torrent.SeedIdleMode == 0)
+            {
+                // The global idle limit is a real idle limit, if it's configured then 'Stopped' is enough.
+                if (isStopped && config.Value.IdleSeedingLimitEnabled)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public override void RemoveItem(DownloadClientItem item, bool deleteData)
+        {
+            _proxy.RemoveTorrent(item.DownloadId.ToLower(), deleteData, Settings);
+        }
+
+        public override DownloadClientInfo GetStatus()
+        {
+            var config = _proxy.GetConfig(Settings);
+            var destDir = config.DownloadDir;
+
+            var configuredCategories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
+                .Where(c => c.IsNotNullOrWhiteSpace())
+                .Distinct(StringComparer.InvariantCultureIgnoreCase)
+                .ToList();
+
+            var outputRootFolders = new List<OsPath>();
+
+            if (configuredCategories.Any())
+            {
+                outputRootFolders.AddRange(configuredCategories.Select(c => new OsPath($"{destDir.TrimEnd('/')}/{c}")));
+            }
+            else
+            {
+                outputRootFolders.Add(new OsPath(destDir));
+            }
+
+            return new DownloadClientInfo
+            {
+                IsLocalhost = Settings.Host == "127.0.0.1" || Settings.Host == "localhost",
+                OutputRootFolders = outputRootFolders.Select(p => RemapRemoteToLocal(p)).Distinct().ToList()
+            };
+        }
+
+        protected override string AddFromMagnetLink(RemoteBook remoteBook, string hash, string magnetLink)
+        {
+            _proxy.AddTorrentFromUrl(magnetLink, GetDownloadDirectory(remoteBook), Settings);
+            _proxy.SetTorrentSeedingConfiguration(hash, remoteBook.SeedConfiguration, Settings);
+
+            var isRecentBook = remoteBook.IsRecentBook();
+
+            if ((isRecentBook && Settings.RecentTvPriority == (int)TransmissionPriority.First) ||
+                (!isRecentBook && Settings.OlderTvPriority == (int)TransmissionPriority.First))
+            {
+                _proxy.MoveTorrentToTopInQueue(hash, Settings);
+            }
+
+            return hash;
+        }
+
+        protected override string AddFromTorrentFile(RemoteBook remoteBook, string hash, string filename, byte[] fileContent)
+        {
+            _proxy.AddTorrentFromData(fileContent, GetDownloadDirectory(remoteBook), Settings);
+            _proxy.SetTorrentSeedingConfiguration(hash, remoteBook.SeedConfiguration, Settings);
+
+            var isRecentBook = remoteBook.IsRecentBook();
+
+            if ((isRecentBook && Settings.RecentTvPriority == (int)TransmissionPriority.First) ||
+                (!isRecentBook && Settings.OlderTvPriority == (int)TransmissionPriority.First))
+            {
+                _proxy.MoveTorrentToTopInQueue(hash, Settings);
+            }
+
+            return hash;
+        }
+
+        protected override void Test(List<ValidationFailure> failures)
+        {
+            failures.AddIfNotNull(TestConnection());
+            if (failures.HasErrors())
+            {
+                return;
+            }
+
+            failures.AddIfNotNull(TestGetTorrents());
+        }
+
+        protected virtual OsPath GetOutputPath(OsPath outputPath, TransmissionTorrent torrent)
+        {
+            return outputPath + torrent.Name.Replace(":", "_");
+        }
+
+        protected string GetDownloadDirectory(RemoteBook remoteBook)
+        {
+            if (Settings.TvDirectory.IsNotNullOrWhiteSpace())
+            {
+                return Settings.TvDirectory;
+            }
+
+            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+
+            if (!category.IsNotNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            var config = _proxy.GetConfig(Settings);
+            var destDir = config.DownloadDir;
+
+            return $"{destDir.TrimEnd('/')}/{category}";
+        }
+
+        protected ValidationFailure TestConnection()
+        {
+            try
+            {
+                return ValidateVersion();
+            }
+            catch (DownloadClientAuthenticationException ex)
+            {
+                _logger.Error(ex, "Unable to authenticate");
+                return new NzbDroneValidationFailure("Username", "Authentication failure")
+                {
+                    DetailedDescription = string.Format("Please verify your username and password. Also verify if the host running Chaptarr isn't blocked from accessing {0} by WhiteList limitations in the {0} configuration.", Name)
+                };
+            }
+            catch (DownloadClientUnavailableException ex)
+            {
+                _logger.Error(ex, ex.Message);
+
+                return new NzbDroneValidationFailure("Host", "Unable to connect to Transmission")
+                {
+                    DetailedDescription = ex.Message
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to test");
+
+                return new NzbDroneValidationFailure(string.Empty, "Unknown exception: " + ex.Message);
+            }
+        }
+
+        protected abstract ValidationFailure ValidateVersion();
+
+        private ValidationFailure TestGetTorrents()
+        {
+            try
+            {
+                _proxy.GetTorrents(Settings);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to get torrents");
+                return new NzbDroneValidationFailure(string.Empty, "Failed to get the list of torrents: " + ex.Message);
+            }
+
+            return null;
+        }
+    }
+}

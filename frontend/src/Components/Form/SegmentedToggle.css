@@ -1,0 +1,67 @@
+.toggleContainer {
+  display: inline-flex;
+  align-items: center;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: stretch;
+  background-color: var(--inputBackgroundColor);
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 999px;
+  overflow: hidden;
+  user-select: none;
+}
+
+.toggle:focus-within {
+  outline: 0;
+  border-color: var(--inputFocusBorderColor);
+  box-shadow: 0 0 8px var(--inputFocusBoxShadowColor);
+}
+
+.option {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--gray);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0 14px;
+  height: 35px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.option:not(:first-child) {
+  border-left: 1px solid var(--inputBorderColor);
+}
+
+.option:hover:not(.active):not(.disabled) {
+  color: var(--textColor);
+}
+
+.option:focus {
+  outline: 0;
+}
+
+.active {
+  background-color: var(--successColor);
+  color: var(--white);
+}
+
+.disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+@media (max-width: 768px) {
+  .option {
+    height: 32px;
+    font-size: 12px;
+  }
+}
+

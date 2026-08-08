@@ -1,0 +1,13 @@
+.torrent {
+  composes: label from '~Components/Label.css';
+
+  border-color: var(--torrentColor);
+  background-color: var(--torrentColor);
+}
+
+.usenet {
+  composes: label from '~Components/Label.css';
+
+  border-color: var(--usenetColor);
+  background-color: var(--usenetColor);
+}

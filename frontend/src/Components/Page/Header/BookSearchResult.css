@@ -1,0 +1,59 @@
+.result {
+  display: flex;
+  padding: 3px;
+  cursor: pointer;
+}
+
+.poster {
+  width: 35px;
+  height: 35px;
+  object-fit: contain;
+}
+
+.titles {
+  flex: 1 1 1px;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  flex: 1 1 1px;
+  margin-left: 5px;
+}
+
+.titleUnmonitored {
+  composes: title;
+
+  color: var(--disabledColor);
+}
+
+.titleText {
+  min-width: 0;
+}
+
+.subtitle {
+  margin-left: 5px;
+  color: var(--disabledColor);
+  font-size: $smallFontSize;
+}
+
+.alternateTitle {
+  composes: title;
+
+  color: var(--disabledColor);
+  font-size: $smallFontSize;
+}
+
+.tagContainer {
+  composes: title;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .titles,
+  .title,
+  .alternateTitle {
+    @add-mixin truncate;
+  }
+}

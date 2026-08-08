@@ -1,0 +1,54 @@
+.filterWarningAlert,
+.bypassModeAlert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+.alertContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.alertTitle {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--defaultColor);
+}
+
+.alertText {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--dimColor);
+}
+
+.filterWarningAlert .alertTitle {
+  color: var(--warningColor);
+}
+
+.bypassModeAlert .alertTitle {
+  color: var(--infoColor);
+}
+
+/* Responsive adjustments */
+@media only screen and (max-width: 768px) {
+  .filterWarningAlert,
+  .bypassModeAlert {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    text-align: center;
+  }
+  
+  .alertContent {
+    order: 1;
+  }
+  
+  /* Button should come after content on mobile */
+  .filterWarningAlert button,
+  .bypassModeAlert button {
+    order: 2;
+    align-self: center;
+  }
+}

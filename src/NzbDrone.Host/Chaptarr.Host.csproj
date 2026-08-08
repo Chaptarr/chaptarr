@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="DryIoc.dll" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" />
+    <PackageReference Include="DryIoc.Microsoft.DependencyInjection" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Chaptarr.Api.V1\Chaptarr.Api.V1.csproj" />
+    <ProjectReference Include="..\NzbDrone.Common\Chaptarr.Common.csproj" />
+    <ProjectReference Include="..\NzbDrone.Core\Chaptarr.Core.csproj" />
+    <ProjectReference Include="..\NzbDrone.SignalR\Chaptarr.SignalR.csproj" />
+    <ProjectReference Include="..\Chaptarr.Http\Chaptarr.Http.csproj" />
+  </ItemGroup>
+  
+  <!-- Copy Tools directory to output -->
+  <ItemGroup>
+    <Content Include="..\..\Tools\**\*" LinkBase="Tools" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

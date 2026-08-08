@@ -1,0 +1,21 @@
+.intro {
+  margin-bottom: 18px;
+}
+
+.inputStack {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.helpText {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--helpTextColor);
+  line-height: 1.4;
+}
+
+.saveError {
+  margin: 0;
+}

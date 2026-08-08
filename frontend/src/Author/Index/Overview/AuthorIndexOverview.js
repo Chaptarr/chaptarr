@@ -1,0 +1,365 @@
+import classNames from 'classnames';
+import PropTypes from 'prop-types';
+import React, { Component } from 'react';
+import TextTruncate from 'react-text-truncate';
+import AuthorPoster from 'Author/AuthorPoster';
+import DeleteAuthorModal from 'Author/Delete/DeleteAuthorModal';
+import EditAuthorModalConnector from 'Author/Edit/EditAuthorModalConnector';
+import AuthorIndexProgressBar from 'Author/Index/ProgressBar/AuthorIndexProgressBar';
+import Icon from 'Components/Icon';
+import IconButton from 'Components/Link/IconButton';
+import Link from 'Components/Link/Link';
+import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
+import { icons } from 'Helpers/Props';
+import dimensions from 'Styles/Variables/dimensions';
+import fonts from 'Styles/Variables/fonts';
+import stripHtml from 'Utilities/String/stripHtml';
+import translate from 'Utilities/String/translate';
+import shouldIgnoreCardSelectionEvent from 'Utilities/Table/shouldIgnoreCardSelectionEvent';
+import AuthorIndexOverviewInfo from './AuthorIndexOverviewInfo';
+import styles from './AuthorIndexOverview.css';
+
+const columnPadding = parseInt(dimensions.authorIndexColumnPadding);
+const columnPaddingSmallScreen = parseInt(dimensions.authorIndexColumnPaddingSmallScreen);
+const defaultFontSize = parseInt(fonts.defaultFontSize);
+const lineHeight = parseFloat(fonts.lineHeight);
+
+// Hardcoded height beased on line-height of 32 + bottom margin of 10.
+// Less side-effecty than using react-measure.
+const titleRowHeight = 42;
+
+function getContentHeight(rowHeight, isSmallScreen) {
+  const padding = isSmallScreen ? columnPaddingSmallScreen : columnPadding;
+
+  return rowHeight - padding;
+}
+
+class AuthorIndexOverview extends Component {
+
+  //
+  // Lifecycle
+
+  constructor(props, context) {
+    super(props, context);
+
+    this.state = {
+      isEditAuthorModalOpen: false,
+      isDeleteAuthorModalOpen: false
+    };
+  }
+
+  //
+  // Listeners
+
+  onEditAuthorPress = () => {
+    this.setState({ isEditAuthorModalOpen: true });
+  };
+
+  onEditAuthorModalClose = () => {
+    this.setState({ isEditAuthorModalOpen: false });
+  };
+
+  onDeleteAuthorPress = () => {
+    this.setState({
+      isEditAuthorModalOpen: false,
+      isDeleteAuthorModalOpen: true
+    });
+  };
+
+  onDeleteAuthorModalClose = () => {
+    this.setState({ isDeleteAuthorModalOpen: false });
+  };
+
+  onChange = ({ value, shiftKey }) => {
+    const {
+      id,
+      onSelectedChange
+    } = this.props;
+
+    onSelectedChange({ id, value, shiftKey });
+  };
+
+  onCardPress = (event) => {
+    const { id, isEditorActive, isSelected } = this.props;
+
+    if (!isEditorActive || shouldIgnoreCardSelectionEvent(event)) {
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      window.open(`${window.Chaptarr.urlBase}/author/${id}`, '_blank');
+      return;
+    }
+
+    event.preventDefault();
+    this.onChange({ value: !isSelected, shiftKey: event.shiftKey });
+  };
+
+  onCardKeyDown = (event) => {
+    const { isEditorActive, isSelected } = this.props;
+
+    if (!isEditorActive || event.target !== event.currentTarget) {
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      this.onChange({ value: !isSelected, shiftKey: event.shiftKey });
+    }
+  };
+
+  //
+  // Render
+
+  render() {
+    const {
+      id,
+      authorName,
+      authorNameLastFirst,
+      overview,
+      monitored,
+      status,
+      titleSlug,
+      nextAiring,
+      statistics = {},
+      images,
+      selectedPosterHash,
+      posterWidth,
+      posterHeight,
+      qualityProfile,
+      overviewOptions,
+      showSearchAction,
+      showRelativeDates,
+      shortDateFormat,
+      longDateFormat,
+      timeFormat,
+      rowHeight,
+      isSmallScreen,
+      isRefreshingAuthor,
+      isSearchingAuthor,
+      onRefreshAuthorPress,
+      onSearchPress,
+      isEditorActive,
+      isSelected,
+      ...otherProps
+    } = this.props;
+
+    const {
+      bookCount = 0,
+      availableBookCount = 0,
+      bookFileCount = 0,
+      totalBookCount = 0,
+      sizeOnDisk = 0
+    } = statistics;
+
+    const {
+      isEditAuthorModalOpen,
+      isDeleteAuthorModalOpen
+    } = this.state;
+
+    const link = `/author/${id}`;
+    const containerClassName = classNames(
+      styles.container,
+      isEditorActive && styles.selectable
+    );
+
+    const elementStyle = {
+      width: `${posterWidth}px`,
+      height: `${posterHeight}px`,
+      objectFit: 'contain'
+    };
+
+    const contentHeight = getContentHeight(rowHeight, isSmallScreen);
+    const overviewHeight = contentHeight - titleRowHeight;
+
+    return (
+      <div
+        className={containerClassName}
+        onClick={this.onCardPress}
+        onKeyDown={this.onCardKeyDown}
+        role={isEditorActive ? 'button' : undefined}
+        tabIndex={isEditorActive ? 0 : undefined}
+        aria-pressed={isEditorActive ? !!isSelected : undefined}
+      >
+        <div className={styles.content}>
+          <div className={styles.posterContainer}>
+            {
+              isEditorActive &&
+                <div className={styles.editorSelect}>
+                  <Icon
+                    className={isSelected ? styles.selected : styles.unselected}
+                    name={isSelected ? icons.CHECK_CIRCLE : icons.CIRCLE_OUTLINE}
+                    size={20}
+                  />
+                </div>
+            }
+
+            {
+              status === 'ended' &&
+                <div
+                  className={styles.ended}
+                  title={translate('Ended')}
+                />
+            }
+
+            <Link
+              className={styles.link}
+              component={isEditorActive ? 'div' : undefined}
+              style={elementStyle}
+              to={isEditorActive ? undefined : link}
+            >
+              <AuthorPoster
+                className={styles.poster}
+                style={elementStyle}
+                images={images}
+                authorId={id}
+                selectedPosterHash={selectedPosterHash}
+                placeholder="/Content/Images/author-placeholder-muted.png"
+                size={250}
+                lazy={false}
+                overflow={true}
+                blurBackground={false}
+              />
+            </Link>
+
+            <AuthorIndexProgressBar
+              monitored={monitored}
+              status={status}
+              bookCount={bookCount}
+              availableBookCount={availableBookCount}
+              bookFileCount={bookFileCount}
+              totalBookCount={totalBookCount}
+              posterWidth={posterWidth}
+              detailedProgressBar={overviewOptions.detailedProgressBar}
+            />
+          </div>
+
+          <div className={styles.info} style={{ maxHeight: contentHeight }}>
+            <div className={styles.titleRow}>
+              <Link
+                className={styles.title}
+                component={isEditorActive ? 'div' : undefined}
+                to={isEditorActive ? undefined : link}
+              >
+                {overviewOptions.showTitle === 'firstLast' ? authorName : authorNameLastFirst}
+              </Link>
+
+              <div
+                className={styles.actions}
+                data-select-exempt="true"
+              >
+                <SpinnerIconButton
+                  name={icons.REFRESH}
+                  title={translate('RefreshAuthor')}
+                  isSpinning={isRefreshingAuthor}
+                  onPress={onRefreshAuthorPress}
+                />
+
+                {
+                  showSearchAction &&
+                    <SpinnerIconButton
+                      className={styles.action}
+                      name={icons.SEARCH}
+                      title={translate('SearchForMonitoredBooks')}
+                      isSpinning={isSearchingAuthor}
+                      onPress={onSearchPress}
+                    />
+                }
+
+                <IconButton
+                  name={icons.EDIT}
+                  title={translate('EditAuthor')}
+                  onPress={this.onEditAuthorPress}
+                />
+              </div>
+            </div>
+
+            <div className={styles.details}>
+
+              <Link
+                className={styles.overview}
+                component={isEditorActive ? 'div' : undefined}
+                to={isEditorActive ? undefined : link}
+              >
+                <TextTruncate
+                  line={Math.floor(overviewHeight / (defaultFontSize * lineHeight))}
+                  text={stripHtml(overview)}
+                />
+              </Link>
+
+              <AuthorIndexOverviewInfo
+                height={overviewHeight}
+                monitored={monitored}
+                nextAiring={nextAiring}
+                bookCount={bookCount}
+                sizeOnDisk={sizeOnDisk}
+                qualityProfile={qualityProfile}
+                showRelativeDates={showRelativeDates}
+                shortDateFormat={shortDateFormat}
+                longDateFormat={longDateFormat}
+                timeFormat={timeFormat}
+                {...overviewOptions}
+                {...otherProps}
+              />
+            </div>
+          </div>
+        </div>
+
+        <EditAuthorModalConnector
+          isOpen={isEditAuthorModalOpen}
+          authorId={id}
+          onModalClose={this.onEditAuthorModalClose}
+          onDeleteAuthorPress={this.onDeleteAuthorPress}
+        />
+
+        <DeleteAuthorModal
+          isOpen={isDeleteAuthorModalOpen}
+          authorId={id}
+          onModalClose={this.onDeleteAuthorModalClose}
+        />
+      </div>
+    );
+  }
+}
+
+AuthorIndexOverview.propTypes = {
+  id: PropTypes.number.isRequired,
+  authorName: PropTypes.string.isRequired,
+  authorNameLastFirst: PropTypes.string.isRequired,
+  overview: PropTypes.string,
+  monitored: PropTypes.bool.isRequired,
+  status: PropTypes.string.isRequired,
+  titleSlug: PropTypes.string.isRequired,
+  nextAiring: PropTypes.string,
+  statistics: PropTypes.object.isRequired,
+  images: PropTypes.arrayOf(PropTypes.object).isRequired,
+  selectedPosterHash: PropTypes.string,
+  posterWidth: PropTypes.number.isRequired,
+  posterHeight: PropTypes.number.isRequired,
+  rowHeight: PropTypes.number.isRequired,
+  qualityProfile: PropTypes.object,
+  overviewOptions: PropTypes.object.isRequired,
+  showSearchAction: PropTypes.bool.isRequired,
+  showRelativeDates: PropTypes.bool.isRequired,
+  shortDateFormat: PropTypes.string.isRequired,
+  longDateFormat: PropTypes.string.isRequired,
+  timeFormat: PropTypes.string.isRequired,
+  isSmallScreen: PropTypes.bool.isRequired,
+  isRefreshingAuthor: PropTypes.bool.isRequired,
+  isSearchingAuthor: PropTypes.bool.isRequired,
+  onRefreshAuthorPress: PropTypes.func.isRequired,
+  onSearchPress: PropTypes.func.isRequired,
+  isEditorActive: PropTypes.bool.isRequired,
+  isSelected: PropTypes.bool,
+  onSelectedChange: PropTypes.func.isRequired
+};
+
+AuthorIndexOverview.defaultProps = {
+  statistics: {
+    bookCount: 0,
+    bookFileCount: 0,
+    totalBookCount: 0
+  }
+};
+
+export default AuthorIndexOverview;

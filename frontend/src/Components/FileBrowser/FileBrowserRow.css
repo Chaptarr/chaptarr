@@ -1,0 +1,10 @@
+.type {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 32px;
+}
+
+.name {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  text-align: left;
+}

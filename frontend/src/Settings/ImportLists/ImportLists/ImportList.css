@@ -1,0 +1,44 @@
+.list {
+  composes: card from '~Components/Card.css';
+
+  width: 290px;
+}
+
+.name {
+  @add-mixin truncate;
+
+  margin-bottom: 4px;
+  font-weight: 300;
+  font-size: 24px;
+}
+
+.nameWithHardcoverAccount {
+  composes: name;
+
+  margin-bottom: 4px;
+}
+
+.hardcoverAccount {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.hardcoverAvatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.hardcoverUsername {
+  @add-mixin truncate;
+}
+
+.enabled {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}

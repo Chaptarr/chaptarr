@@ -1,0 +1,224 @@
+# This file is for unifying the coding style for different editors and IDEs
+# editorconfig.org
+root = true
+
+# NOTE: Requires **VS2019 16.3** or later
+
+# Stylecop.ruleset
+# Description: Rules for Chaptarr
+
+# Code files
+[*.cs]
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+# Sort using and Import directives with System.* appearing first
+dotnet_sort_system_directives_first = true
+
+# Avoid "this." and "Me." if not necessary
+dotnet_style_qualification_for_field = false:warning
+dotnet_style_qualification_for_property = false:warning
+dotnet_style_qualification_for_method = false:warning
+dotnet_style_qualification_for_event = false:warning
+
+# Indentation preferences
+csharp_indent_block_contents = true
+csharp_indent_braces = false
+csharp_indent_case_contents = true
+csharp_indent_case_contents_when_block = true
+csharp_indent_switch_labels = true
+csharp_indent_labels = flush_left
+
+dotnet_naming_style.instance_field_style.capitalization = camel_case
+dotnet_naming_style.instance_field_style.required_prefix = _
+
+# Prefer "var" everywhere
+csharp_style_var_for_built_in_types = true
+csharp_style_var_when_type_is_apparent = true
+csharp_style_var_elsewhere = true
+# Prefer "out" variables to be declared inline
+csharp_style_inlined_variable_declaration = true
+
+# Using directive is unnecessary.
+dotnet_diagnostic.IDE0005.severity = suggestion
+# Use var instead of explicit type
+dotnet_diagnostic.IDE0007.severity = suggestion
+# Inline variable declaration
+dotnet_diagnostic.IDE0018.severity = suggestion
+
+
+# Microsoft Analyzers that fail and need to be sorted thru
+dotnet_diagnostic.ASP0000.severity = suggestion
+dotnet_diagnostic.CA1000.severity = suggestion
+dotnet_diagnostic.CA1001.severity = suggestion
+dotnet_diagnostic.CA1002.severity = suggestion
+dotnet_diagnostic.CA1003.severity = suggestion
+dotnet_diagnostic.CA1008.severity = suggestion
+dotnet_diagnostic.CA1010.severity = suggestion
+dotnet_diagnostic.CA1012.severity = suggestion
+dotnet_diagnostic.CA1014.severity = suggestion
+dotnet_diagnostic.CA1016.severity = suggestion
+dotnet_diagnostic.CA1017.severity = suggestion
+dotnet_diagnostic.CA1018.severity = suggestion
+dotnet_diagnostic.CA1019.severity = suggestion
+dotnet_diagnostic.CA1021.severity = suggestion
+dotnet_diagnostic.CA1024.severity = suggestion
+dotnet_diagnostic.CA1027.severity = suggestion
+dotnet_diagnostic.CA1028.severity = suggestion
+dotnet_diagnostic.CA1030.severity = suggestion
+dotnet_diagnostic.CA1031.severity = suggestion
+dotnet_diagnostic.CA1032.severity = suggestion
+dotnet_diagnostic.CA1033.severity = suggestion
+dotnet_diagnostic.CA1034.severity = suggestion
+dotnet_diagnostic.CA1036.severity = suggestion
+dotnet_diagnostic.CA1040.severity = suggestion
+dotnet_diagnostic.CA1041.severity = suggestion
+dotnet_diagnostic.CA1043.severity = suggestion
+dotnet_diagnostic.CA1044.severity = suggestion
+dotnet_diagnostic.CA1050.severity = suggestion
+dotnet_diagnostic.CA1051.severity = suggestion
+dotnet_diagnostic.CA1052.severity = suggestion
+dotnet_diagnostic.CA1054.severity = suggestion
+dotnet_diagnostic.CA1055.severity = suggestion
+dotnet_diagnostic.CA1056.severity = suggestion
+dotnet_diagnostic.CA1058.severity = suggestion
+dotnet_diagnostic.CA1060.severity = suggestion
+dotnet_diagnostic.CA1061.severity = suggestion
+dotnet_diagnostic.CA1062.severity = suggestion
+dotnet_diagnostic.CA1063.severity = suggestion
+dotnet_diagnostic.CA1064.severity = suggestion
+dotnet_diagnostic.CA1065.severity = suggestion
+dotnet_diagnostic.CA1066.severity = suggestion
+dotnet_diagnostic.CA1067.severity = suggestion
+dotnet_diagnostic.CA1068.severity = suggestion
+dotnet_diagnostic.CA1069.severity = suggestion
+dotnet_diagnostic.CA1200.severity = suggestion
+dotnet_diagnostic.CA1303.severity = suggestion
+dotnet_diagnostic.CA1304.severity = suggestion
+dotnet_diagnostic.CA1305.severity = suggestion
+dotnet_diagnostic.CA1307.severity = suggestion
+dotnet_diagnostic.CA1308.severity = suggestion
+dotnet_diagnostic.CA1309.severity = suggestion
+dotnet_diagnostic.CA1310.severity = suggestion
+dotnet_diagnostic.CA1401.severity = suggestion
+dotnet_diagnostic.CA1416.severity = suggestion
+dotnet_diagnostic.CA1507.severity = suggestion
+dotnet_diagnostic.CA1508.severity = suggestion
+dotnet_diagnostic.CA1707.severity = suggestion
+dotnet_diagnostic.CA1708.severity = suggestion
+dotnet_diagnostic.CA1710.severity = suggestion
+dotnet_diagnostic.CA1711.severity = suggestion
+dotnet_diagnostic.CA1712.severity = suggestion
+dotnet_diagnostic.CA1714.severity = suggestion
+dotnet_diagnostic.CA1715.severity = suggestion
+dotnet_diagnostic.CA1716.severity = suggestion
+dotnet_diagnostic.CA1717.severity = suggestion
+dotnet_diagnostic.CA1720.severity = suggestion
+dotnet_diagnostic.CA1721.severity = suggestion
+dotnet_diagnostic.CA1724.severity = suggestion
+dotnet_diagnostic.CA1725.severity = suggestion
+dotnet_diagnostic.CA1801.severity = suggestion
+dotnet_diagnostic.CA1802.severity = suggestion
+dotnet_diagnostic.CA1805.severity = suggestion
+dotnet_diagnostic.CA1806.severity = suggestion
+dotnet_diagnostic.CA1810.severity = suggestion
+dotnet_diagnostic.CA1812.severity = suggestion
+dotnet_diagnostic.CA1813.severity = suggestion
+dotnet_diagnostic.CA1814.severity = suggestion
+dotnet_diagnostic.CA1815.severity = suggestion
+dotnet_diagnostic.CA1816.severity = suggestion
+dotnet_diagnostic.CA1819.severity = suggestion
+dotnet_diagnostic.CA1820.severity = suggestion
+dotnet_diagnostic.CA1821.severity = suggestion
+dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1823.severity = suggestion
+dotnet_diagnostic.CA1824.severity = suggestion
+dotnet_diagnostic.CA1825.severity = suggestion
+dotnet_diagnostic.CA1826.severity = suggestion
+dotnet_diagnostic.CA1827.severity = suggestion
+dotnet_diagnostic.CA1828.severity = suggestion
+dotnet_diagnostic.CA1829.severity = suggestion
+dotnet_diagnostic.CA1834.severity = suggestion
+dotnet_diagnostic.CA2000.severity = suggestion
+dotnet_diagnostic.CA2002.severity = suggestion
+dotnet_diagnostic.CA2007.severity = suggestion
+dotnet_diagnostic.CA2008.severity = suggestion
+dotnet_diagnostic.CA2009.severity = suggestion
+dotnet_diagnostic.CA2010.severity = suggestion
+dotnet_diagnostic.CA2011.severity = suggestion
+dotnet_diagnostic.CA2012.severity = suggestion
+dotnet_diagnostic.CA2013.severity = suggestion
+dotnet_diagnostic.CA2100.severity = suggestion
+dotnet_diagnostic.CA2101.severity = suggestion
+dotnet_diagnostic.CA2119.severity = suggestion
+dotnet_diagnostic.CA2153.severity = suggestion
+dotnet_diagnostic.CA2200.severity = suggestion
+dotnet_diagnostic.CA2201.severity = suggestion
+dotnet_diagnostic.CA2207.severity = suggestion
+dotnet_diagnostic.CA2208.severity = suggestion
+dotnet_diagnostic.CA2211.severity = suggestion
+dotnet_diagnostic.CA2213.severity = suggestion
+dotnet_diagnostic.CA2214.severity = suggestion
+dotnet_diagnostic.CA2215.severity = suggestion
+dotnet_diagnostic.CA2216.severity = suggestion
+dotnet_diagnostic.CA2219.severity = suggestion
+dotnet_diagnostic.CA2225.severity = suggestion
+dotnet_diagnostic.CA2226.severity = suggestion
+dotnet_diagnostic.CA2227.severity = suggestion
+dotnet_diagnostic.CA2229.severity = suggestion
+dotnet_diagnostic.CA2231.severity = suggestion
+dotnet_diagnostic.CA2234.severity = suggestion
+dotnet_diagnostic.CA2235.severity = suggestion
+dotnet_diagnostic.CA2237.severity = suggestion
+dotnet_diagnostic.CA2241.severity = suggestion
+dotnet_diagnostic.CA2242.severity = suggestion
+dotnet_diagnostic.CA2243.severity = suggestion
+dotnet_diagnostic.CA2244.severity = suggestion
+dotnet_diagnostic.CA2245.severity = suggestion
+dotnet_diagnostic.CA2246.severity = suggestion
+dotnet_diagnostic.CA3061.severity = suggestion
+dotnet_diagnostic.CA3075.severity = suggestion
+dotnet_diagnostic.CA3076.severity = suggestion
+dotnet_diagnostic.CA3077.severity = suggestion
+dotnet_diagnostic.CA3147.severity = suggestion
+dotnet_diagnostic.CA5350.severity = suggestion
+dotnet_diagnostic.CA5351.severity = suggestion
+dotnet_diagnostic.CA5359.severity = suggestion
+dotnet_diagnostic.CA5360.severity = suggestion
+dotnet_diagnostic.CA5363.severity = suggestion
+dotnet_diagnostic.CA5364.severity = suggestion
+dotnet_diagnostic.CA5365.severity = suggestion
+dotnet_diagnostic.CA5366.severity = suggestion
+dotnet_diagnostic.CA5368.severity = suggestion
+dotnet_diagnostic.CA5369.severity = suggestion
+dotnet_diagnostic.CA5370.severity = suggestion
+dotnet_diagnostic.CA5371.severity = suggestion
+dotnet_diagnostic.CA5372.severity = suggestion
+dotnet_diagnostic.CA5373.severity = suggestion
+dotnet_diagnostic.CA5374.severity = suggestion
+dotnet_diagnostic.CA5379.severity = suggestion
+dotnet_diagnostic.CA5384.severity = suggestion
+dotnet_diagnostic.CA5385.severity = suggestion
+dotnet_diagnostic.CA5392.severity = suggestion
+dotnet_diagnostic.CA5394.severity = suggestion
+dotnet_diagnostic.CA5397.severity = suggestion
+
+
+
+[*.{js,html,hbs,less,css,ts,tsx}]
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+
+# They have troubles with TABS. Use 2 spaces
+[{package.json,.travis.yml}]
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+indent_style = space
+indent_size = 2

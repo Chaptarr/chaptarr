@@ -1,0 +1,146 @@
+.message {
+  display: flex;
+  border-left: 3px solid var(--infoColor);
+}
+
+.iconContainer,
+.text {
+  display: flex;
+  justify-content: center;
+  flex-direction: column;
+  padding: 2px 0;
+  color: var(--sidebarColor);
+}
+
+.iconContainer {
+  flex: 0 0 25px;
+  margin-left: 24px;
+  padding: 10px 0;
+}
+
+.text {
+  margin-right: 24px;
+  font-size: 13px;
+}
+
+/* Types */
+
+.error {
+  border-left-color: var(--dangerColor);
+}
+
+.info {
+  border-left-color: var(--infoColor);
+}
+
+.success {
+  border-left-color: var(--successColor);
+}
+
+.warning {
+  border-left-color: var(--warningColor);
+}
+
+.importProgress {
+  border-left-color: var(--successColor);
+  background: linear-gradient(to right, 
+    rgba(39, 194, 76, 0.05) 0%, 
+    transparent 100%);
+}
+
+.clickable {
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.clickable::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to right, transparent, var(--tableRowHoverBackgroundColor));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.clickable:hover::before,
+.clickable.hovered::before {
+  opacity: 1;
+}
+
+.clickable:hover {
+  transform: translateX(2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.clickable:focus {
+  outline: 2px solid var(--focusColor);
+  outline-offset: -2px;
+}
+
+.clickable:active {
+  transform: translateX(0);
+  transition: transform 0.1s ease;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.actionContainer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: all 0.3s ease;
+}
+
+.clickable:hover .actionContainer,
+.hovered .actionContainer {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.actionIcon {
+  color: var(--primaryColor);
+  transition: transform 0.3s ease;
+}
+
+.clickable:hover .actionIcon {
+  transform: scale(1.1);
+}
+
+.actionText {
+  font-size: 12px;
+  color: var(--primaryColor);
+  font-weight: 500;
+}
+
+.scanProgress {
+  border-left-color: var(--primaryColor);
+  border-left-width: 4px;
+  transition: border-left-color 0.3s ease;
+}
+
+.paused {
+  border-left-color: var(--warningColor);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}

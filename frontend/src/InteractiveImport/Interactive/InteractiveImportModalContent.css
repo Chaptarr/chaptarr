@@ -1,0 +1,122 @@
+.filterContainer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 15px;
+
+  margin-bottom: 10px;
+}
+
+.filterMenus {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.matchingControl {
+  margin-right: 10px;
+  max-width: 320px;
+}
+
+.filterText {
+  margin-left: 5px;
+}
+
+.loadingContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 30px 0;
+}
+
+.loadingText {
+  margin-top: 10px;
+  color: var(--helpTextColor);
+}
+
+.matchSummary {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.action {
+  min-width: 90px;
+  text-align: center;
+}
+
+.footer {
+  composes: modalFooter from '~Components/Modal/ModalFooter.css';
+
+  justify-content: space-between;
+  padding: 15px 30px;
+}
+
+.leftButtons,
+.rightButtons {
+  display: flex;
+  flex: 1 0 50%;
+  flex-wrap: wrap;
+}
+
+.rightButtons {
+  justify-content: flex-end;
+}
+
+.importMode,
+.bulkSelect {
+  composes: select from '~Components/Form/SelectInput.css';
+
+  margin-right: 10px;
+  width: auto;
+}
+
+.importMode {
+  margin-right: 24px;
+}
+
+.errorMessage {
+  color: var(--dangerColor);
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .filterContainer {
+    flex-direction: column;
+  }
+
+  .filterMenus {
+    justify-content: flex-start;
+  }
+
+  .footer {
+    padding: 15px;
+
+    .leftButtons,
+    .rightButtons {
+      flex-direction: column;
+    }
+
+    .leftButtons {
+      align-items: flex-start;
+    }
+
+    .rightButtons {
+      align-items: flex-end;
+    }
+
+    a,
+    button {
+      margin-left: 0;
+
+      &:first-child {
+        margin-bottom: 5px;
+      }
+    }
+  }
+
+  .matchingControl {
+    margin-right: 0;
+    margin-bottom: 5px;
+  }
+}

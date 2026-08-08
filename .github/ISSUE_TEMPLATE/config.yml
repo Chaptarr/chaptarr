@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Chaptarr Wiki
+    url: https://wiki.chaptarr.com
+    about: Check the wiki for setup guides and FAQs
+  - name: Discord Community
+    url: https://discord.gg/nqFGsGUug2
+    about: Join our Discord for community support and discussions
+  - name: Discussions
+    url: https://github.com/Chaptarr/chaptarr/discussions
+    about: Ask questions and share ideas with the community

@@ -1,0 +1,160 @@
+.palette {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;    /* keep column tops aligned */
+  gap: 12px;
+  padding: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  background: var(--cardBackgroundColor);
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+}
+
+.category {
+  flex: 0 0 180px;            /* predictable column width */
+  min-width: 160px;
+}
+
+.categoryHeader {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--dimColor);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tokens {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.token {
+  display: block;
+  width: 100%;   /* wrapper ensures full width */
+}
+
+.token button {
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--white);
+  color: var(--defaultColor);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: grab;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  width: 100%;
+  text-align: left;
+}
+
+.token:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.token:active {
+  cursor: grabbing;
+  transform: scale(0.98);
+}
+
+/* Color-coded tokens */
+.blue button {
+  background: #3498db;
+  color: white;
+  border-color: #2980b9;
+}
+
+.blue button:hover {
+  background: #2980b9;
+  box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+}
+
+.purple button {
+  background: #9b59b6;
+  color: white;
+  border-color: #8e44ad;
+}
+
+.purple button:hover {
+  background: #8e44ad;
+  box-shadow: 0 2px 8px rgba(155, 89, 182, 0.3);
+}
+
+.green button {
+  background: #27ae60;
+  color: white;
+  border-color: #229954;
+}
+
+.green button:hover {
+  background: #229954;
+  box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
+}
+
+.orange button {
+  background: #e67e22;
+  color: white;
+  border-color: #d35400;
+}
+
+.orange button:hover {
+  background: #d35400;
+  box-shadow: 0 2px 8px rgba(230, 126, 34, 0.3);
+}
+
+.gray button {
+  background: #95a5a6;
+  color: white;
+  border-color: #7f8c8d;
+}
+
+.gray button:hover {
+  background: #7f8c8d;
+  box-shadow: 0 2px 8px rgba(149, 165, 166, 0.3);
+}
+
+/* Special parentheses token */
+.token.gray[title*="()"] {
+  background: #f39c12;
+  border-color: #e67e22;
+  font-weight: bold;
+}
+
+.token.gray[title*="()"]::before {
+  content: "🎯 ";
+  margin-right: 4px;
+}
+
+/* Folder separator special styling */
+.token.gray[title*="Folder"] {
+  background: #34495e;
+  border-color: #2c3e50;
+  position: relative;
+}
+
+.token.gray[title*="Folder"]::after {
+  content: "📁";
+  margin-left: 4px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .palette {
+    padding: 12px;
+    max-height: 400px;
+  }
+  
+  .token {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  
+  .tokens {
+    gap: 6px;
+  }
+}

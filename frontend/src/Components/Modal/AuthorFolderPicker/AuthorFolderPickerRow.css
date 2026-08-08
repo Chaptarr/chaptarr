@@ -1,0 +1,71 @@
+.row {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--borderColor);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.row:hover {
+  background-color: var(--tableRowHoverBackgroundColor);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.selected {
+  background-color: var(--selectedColor) !important;
+}
+
+.folder {
+  display: flex;
+  align-items: center;
+  margin-right: 20px;
+}
+
+.folderName {
+  margin-left: 10px;
+  font-weight: bold;
+  font-size: 16px;
+}
+
+.details {
+  flex: 1 1 auto;
+}
+
+.path {
+  color: var(--dimColor);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.confidence {
+  font-size: 13px;
+}
+
+.confidenceScore {
+  font-weight: bold;
+}
+
+.highConfidence {
+  color: var(--successColor);
+}
+
+.mediumConfidence {
+  color: var(--warningColor);
+}
+
+.lowConfidence {
+  color: var(--dangerColor);
+}
+
+.matchReason {
+  color: var(--dimColor);
+}
+
+.checkIcon {
+  margin-left: auto;
+  color: var(--primaryColor);
+}

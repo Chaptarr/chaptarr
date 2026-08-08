@@ -1,0 +1,112 @@
+# syntax=docker/dockerfile:1.7
+
+###### node stage ######
+# Use a pinned Node image instead of curl|bash installers.
+FROM node:20.11.1-bookworm-slim AS node
+RUN npm install -g yarn@1.22.22 --force
+
+###### mp4v2 stage ######
+FROM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6a60359c29aff84bfacbd8597a4237038c7ccd7628a2d AS mp4v2
+
+###### deps stage ######
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS deps
+WORKDIR /src
+
+# Copy Node + Yarn from the official Node image (avoids curl|bash installers).
+COPY --from=node /usr/local /usr/local
+
+# Speed up dotnet/nuget and avoid flaky HTTP/2
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+    NUGET_XMLDOC_MODE=skip \
+    NUGET_HTTP_TIMEOUT=180 \
+    DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP2ENABLE=false
+
+# Copy only dependency manifests so cache is preserved when code changes
+COPY package.json yarn.lock ./
+
+# Use BuildKit cache mount so tarballs stay on host between builds
+RUN --mount=type=cache,target=/root/.cache/yarn \
+    yarn install --frozen-lockfile
+
+###### build stage ######
+FROM deps AS build
+WORKDIR /src
+
+# Bring in the rest of the project *after* deps are installed
+COPY . .
+
+# Front‑end build
+RUN yarn typecheck
+RUN yarn build
+
+# Back‑end build with NuGet cache (limit to linux-x64 + disable parallel for stability)
+ARG RUNTIME_ID=linux-x64
+RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
+    dotnet restore src/Chaptarr.NoTests.sln -r ${RUNTIME_ID} --disable-parallel --nologo /p:RestoreUseStaticGraphEvaluation=true
+
+RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
+    dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -r ${RUNTIME_ID} --self-contained false -o /app --no-restore /p:EnableWindowsTargeting=true /p:RunAnalyzersDuringBuild=false /p:RunCodeAnalysis=false /p:PublishSingleFile=false --nologo
+
+# Copy UI output to final app directory
+RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
+
+###### runtime stage ######
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        php-cli php-mbstring php-xml php-json php-curl php-zip \
+        wget \
+        gosu \
+        sqlite3 libsqlite3-0; \
+    sqlite3 --version; \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy pinned mp4v2 tools used by m4b-tool for chapter and tag writes. These
+# binaries are musl-linked, so keep their runtime libraries private.
+COPY --from=mp4v2 /usr/local/bin/mp4* /opt/mp4v2/bin/
+COPY --from=mp4v2 /usr/local/lib/libmp4v2* /opt/mp4v2/lib/
+COPY --from=mp4v2 /usr/lib/libstdc++.so.6* /usr/lib/libgcc_s.so.1 /opt/mp4v2/lib/
+COPY --from=mp4v2 /lib/ld-musl-*.so.1 /lib/
+COPY --from=mp4v2 /lib/ld-musl-*.so.1 /opt/mp4v2/lib/
+COPY --from=mp4v2 /lib/libc.musl-*.so.1 /opt/mp4v2/lib/
+RUN set -eux; \
+    for tool in /opt/mp4v2/bin/mp4*; do \
+        name="$(basename "$tool")"; \
+        printf '%s\n' \
+            '#!/bin/sh' \
+            'export LD_LIBRARY_PATH="/opt/mp4v2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' \
+            "exec /opt/mp4v2/bin/${name} \"\$@\"" \
+            > "/usr/local/bin/${name}"; \
+        chmod +x "/usr/local/bin/${name}"; \
+    done; \
+    mp4info --version; \
+    mp4tags --version; \
+    mp4chaps --version
+
+# Download and install m4b-tool
+ARG M4B_TOOL_URL=https://github.com/sandreas/m4b-tool/releases/download/v0.5.2/m4b-tool.phar
+ARG M4B_TOOL_SHA256=a3ea9b81a4e8ce10ecc85c1fc712c982ba2622f2ed0318fb558dadfad4a590fa
+RUN set -eux; \
+    wget -O /usr/local/bin/m4b-tool "$M4B_TOOL_URL"; \
+    echo "${M4B_TOOL_SHA256}  /usr/local/bin/m4b-tool" | sha256sum -c -; \
+    chmod +x /usr/local/bin/m4b-tool; \
+    php /usr/local/bin/m4b-tool --version
+
+# Copy entrypoint script for PUID/PGID support
+COPY docker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+WORKDIR /app
+COPY --from=build /app .
+
+# Set app permissions at build time
+RUN chmod -R 755 /app
+
+EXPOSE 8789
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["dotnet", "/app/Chaptarr.dll", "-nobrowser", "-data=/config"]

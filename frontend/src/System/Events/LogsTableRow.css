@@ -1,0 +1,56 @@
+.level {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 20px;
+}
+
+.logger {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 150px;
+  min-width: 120px;
+  max-width: 200px;
+}
+
+.info {
+  color: #1e90ff;
+}
+
+.debug {
+  color: #808080;
+}
+
+.trace {
+  color: #d3d3d3;
+}
+
+.warn {
+  color: var(--warningColor);
+}
+
+.error {
+  color: var(--dangerColor);
+}
+
+.fatal {
+  color: var(--purple);
+}
+
+.message {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  max-width: 0;
+  min-width: 300px;
+  width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: break-word;
+  text-align: left;
+}
+
+.actions {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 45px;
+}

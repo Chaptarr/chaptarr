@@ -1,0 +1,35 @@
+.inlineForm {
+  margin-top: 5px;
+  padding: 10px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  background-color: var(--modalBackgroundColor);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: var(--infoBackgroundColor);
+  border-radius: 4px;
+}
+
+.infoIcon {
+  margin-right: 8px;
+  color: var(--infoIconColor);
+  flex-shrink: 0;
+}
+
+.infoText {
+  color: var(--darkGray);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.buttons {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+  gap: 10px;
+}

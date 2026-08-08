@@ -1,0 +1,35 @@
+.container {
+  margin-top: 20px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  background-color: var(--inputBackgroundColor);
+}
+
+.number,
+.time,
+.duration,
+.title {
+  padding: 8px;
+}
+
+.number {
+  width: 48px;
+  text-align: right;
+}
+
+.time {
+  width: 175px;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.duration {
+  width: 90px;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.title {
+  min-width: 220px;
+  text-align: left;
+}

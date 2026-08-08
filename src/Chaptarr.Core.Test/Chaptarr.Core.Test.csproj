@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <!-- Disable Chaptarr's implicit test-package group (it currently pulls a coverlet preview chain that fails restore). -->
+    <TestProject>false</TestProject>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NUnit" />
+    <PackageReference Include="NUnit3TestAdapter" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NzbDrone.Core\Chaptarr.Core.csproj" />
+    <ProjectReference Include="..\Chaptarr.Api.V1\Chaptarr.Api.V1.csproj" />
+    <ProjectReference Include="..\NzbDrone.Windows\Chaptarr.Windows.csproj" />
+  </ItemGroup>
+</Project>

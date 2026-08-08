@@ -1,0 +1,190 @@
+import PropTypes from 'prop-types';
+import React, { Component } from 'react';
+import HistoryDetailsConnector from 'Activity/History/Details/HistoryDetailsConnector';
+import HistoryEventTypeCell from 'Activity/History/HistoryEventTypeCell';
+import BookFormats from 'Book/BookFormats';
+import BookQuality from 'Book/BookQuality';
+import Icon from 'Components/Icon';
+import IconButton from 'Components/Link/IconButton';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
+import RelativeDateCellConnector from 'Components/Table/Cells/RelativeDateCellConnector';
+import TableRowCell from 'Components/Table/Cells/TableRowCell';
+import TableRow from 'Components/Table/TableRow';
+import Popover from 'Components/Tooltip/Popover';
+import { icons, kinds, tooltipPositions } from 'Helpers/Props';
+import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
+import translate from 'Utilities/String/translate';
+import styles from './AuthorHistoryRow.css';
+
+function getTitle(eventType) {
+  switch (eventType) {
+    case 'grabbed':
+      return 'Grabbed';
+    case 'downloadImported':
+      return 'Download Completed';
+    case 'bookFileImported':
+      return 'Book Imported';
+    case 'bookFileConverted':
+      return 'Book Converted';
+    case 'bookFileConversionFailed':
+      return 'Book Conversion Failed';
+    case 'downloadFailed':
+      return 'Download Failed';
+    case 'bookFileDeleted':
+      return 'Book File Deleted';
+    case 'bookFileRenamed':
+      return 'Book File Renamed';
+    case 'bookFileRetagged':
+      return 'Book File Tags Updated';
+    case 'bookImportIncomplete':
+      return 'Book Import Incomplete';
+    default:
+      return 'Unknown';
+  }
+}
+
+class AuthorHistoryRow extends Component {
+
+  //
+  // Lifecycle
+
+  constructor(props, context) {
+    super(props, context);
+
+    this.state = {
+      isMarkAsFailedModalOpen: false
+    };
+  }
+
+  //
+  // Listeners
+
+  onMarkAsFailedPress = () => {
+    this.setState({ isMarkAsFailedModalOpen: true });
+  };
+
+  onConfirmMarkAsFailed = () => {
+    this.props.onMarkAsFailedPress(this.props.id);
+    this.setState({ isMarkAsFailedModalOpen: false });
+  };
+
+  onMarkAsFailedModalClose = () => {
+    this.setState({ isMarkAsFailedModalOpen: false });
+  };
+
+  //
+  // Render
+
+  render() {
+    const {
+      eventType,
+      sourceTitle,
+      quality,
+      qualityCutoffNotMet,
+      customFormats,
+      customFormatScore,
+      date,
+      data,
+      book
+    } = this.props;
+
+    const {
+      isMarkAsFailedModalOpen
+    } = this.state;
+
+    const bookTitle = book?.title || sourceTitle || '-';
+
+    return (
+      <TableRow>
+        <HistoryEventTypeCell
+          eventType={eventType}
+          data={data}
+        />
+
+        <TableRowCell key="book">
+          {bookTitle}
+        </TableRowCell>
+
+        <TableRowCell className={styles.sourceTitle}>
+          {sourceTitle}
+        </TableRowCell>
+
+        <TableRowCell>
+          <BookQuality
+            quality={quality}
+            isCutoffNotMet={qualityCutoffNotMet}
+          />
+        </TableRowCell>
+
+        <TableRowCell>
+          <BookFormats formats={customFormats} />
+        </TableRowCell>
+
+        <TableRowCell>
+          {formatCustomFormatScore(customFormatScore, customFormats.length)}
+        </TableRowCell>
+
+        <RelativeDateCellConnector
+          date={date}
+        />
+
+        <TableRowCell className={styles.actions}>
+          <Popover
+            anchor={
+              <Icon
+                name={icons.INFO}
+              />
+            }
+            title={getTitle(eventType)}
+            body={
+              <HistoryDetailsConnector
+                eventType={eventType}
+                sourceTitle={sourceTitle}
+                data={data}
+              />
+            }
+            position={tooltipPositions.LEFT}
+          />
+
+          {
+            eventType === 'grabbed' &&
+              <IconButton
+                title={translate('MarkAsFailed')}
+                name={icons.REMOVE}
+                size={14}
+                onPress={this.onMarkAsFailedPress}
+              />
+          }
+        </TableRowCell>
+
+        <ConfirmModal
+          isOpen={isMarkAsFailedModalOpen}
+          kind={kinds.DANGER}
+          title={translate('MarkAsFailed')}
+          message={translate('MarkAsFailedMessageText', [sourceTitle])}
+          confirmLabel={translate('MarkAsFailed')}
+          onConfirm={this.onConfirmMarkAsFailed}
+          onCancel={this.onMarkAsFailedModalClose}
+        />
+      </TableRow>
+    );
+  }
+}
+
+AuthorHistoryRow.propTypes = {
+  id: PropTypes.number.isRequired,
+  eventType: PropTypes.string.isRequired,
+  sourceTitle: PropTypes.string.isRequired,
+  quality: PropTypes.object.isRequired,
+  qualityCutoffNotMet: PropTypes.bool.isRequired,
+  customFormats: PropTypes.arrayOf(PropTypes.object),
+  customFormatScore: PropTypes.number.isRequired,
+  date: PropTypes.string.isRequired,
+  data: PropTypes.object.isRequired,
+  fullAuthor: PropTypes.bool.isRequired,
+  author: PropTypes.object,
+  book: PropTypes.object,
+  onMarkAsFailedPress: PropTypes.func.isRequired
+};
+
+export default AuthorHistoryRow;

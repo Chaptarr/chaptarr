@@ -1,0 +1,250 @@
+.canvas {
+  flex: 1;
+  background: var(--cardBackgroundColor);
+  border: 2px dashed var(--borderColor);
+  border-radius: 8px;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvasOver {
+  border-color: var(--primaryColor);
+  background: rgba(var(--primaryColorRgb), 0.05);
+}
+
+.canvasHeader {
+  padding: 16px;
+  border-bottom: 1px solid var(--borderColor);
+  background: var(--tableRowEvenBackgroundColor);
+}
+
+.canvasHeader h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--defaultColor);
+}
+
+.instructions {
+  font-size: 12px;
+  color: var(--dimColor);
+}
+
+.canvasContent {
+  flex: 1;
+  padding: 20px;
+  position: relative;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--dimColor);
+  gap: 12px;
+}
+
+.emptyState span {
+  font-size: 14px;
+}
+
+.pathBuilder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 60px;
+  padding: 12px;
+  background: var(--white);
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+}
+
+.dropZone {
+  min-width: 8px;
+  min-height: 40px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.dropZoneVisible {
+  background: rgba(var(--primaryColorRgb), 0.1);
+  border: 2px dashed var(--primaryColor);
+  min-width: 20px;
+}
+
+.dropZoneActive {
+  background: rgba(var(--primaryColorRgb), 0.2);
+  border: 2px solid var(--primaryColor);
+  min-width: 30px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: grab;
+  transition: all 0.2s ease;
+  position: relative;
+  width: auto;
+  max-width: none;
+}
+
+.chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.chip:hover .deleteButton {
+  opacity: 1;
+}
+
+.chip.dragging {
+  cursor: grabbing;
+  z-index: 1000;
+}
+
+.chipContent {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.groupContent {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.deleteButton {
+  opacity: 0;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: white;
+  padding: 0;
+  margin-left: 2px;
+}
+
+.deleteButton:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+/* Color-coded chips */
+.chip.blue {
+  background: #3498db;
+  color: white;
+  border: 1px solid #2980b9;
+}
+
+.chip.purple {
+  background: #9b59b6;
+  color: white;
+  border: 1px solid #8e44ad;
+}
+
+.chip.green {
+  background: #27ae60;
+  color: white;
+  border: 1px solid #229954;
+}
+
+.chip.orange {
+  background: #e67e22;
+  color: white;
+  border: 1px solid #d35400;
+}
+
+.chip.gray {
+  background: #95a5a6;
+  color: white;
+  border: 1px solid #7f8c8d;
+}
+
+.canvasFooter {
+  padding: 12px 16px;
+  border-top: 1px solid var(--borderColor);
+  background: var(--tableRowEvenBackgroundColor);
+}
+
+.colorLegend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 12px;
+  color: white;
+}
+
+.legendItem::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.legendItem.blue {
+  background: #3498db;
+}
+
+.legendItem.purple {
+  background: #9b59b6;
+}
+
+.legendItem.green {
+  background: #27ae60;
+}
+
+.legendItem.orange {
+  background: #e67e22;
+}
+
+.legendItem.gray {
+  background: #95a5a6;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .pathBuilder {
+    padding: 12px;
+    gap: 8px;
+  }
+  
+  .chip {
+    padding: 6px 10px;
+    font-size: 11px;
+    max-width: 150px;
+  }
+  
+  .colorLegend {
+    gap: 8px;
+  }
+  
+  .legendItem {
+    font-size: 10px;
+    padding: 3px 6px;
+  }
+}

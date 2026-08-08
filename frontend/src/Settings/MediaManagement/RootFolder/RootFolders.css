@@ -1,0 +1,49 @@
+.nameHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: left;
+}
+
+.pathHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: left;
+}
+
+.typeHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: left;
+}
+
+.qualityProfileHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: left;
+}
+
+.metadataProfileHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: left;
+}
+
+.freeSpaceHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: right;
+}
+
+.actionsHeader {
+  composes: headerCell from '~Components/Table/TableHeaderCell.css';
+
+  text-align: right;
+}
+
+.addRootFolderContainer {
+  margin-top: 15px;
+}
+
+.addRootFolderIcon {
+  margin-right: 6px;
+}

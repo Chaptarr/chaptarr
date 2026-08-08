@@ -1,0 +1,11 @@
+.space {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 150px;
+}
+
+.location {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  text-align: left;
+}

@@ -1,0 +1,194 @@
+import { createAction } from 'redux-actions';
+import { handleThunks } from 'Store/thunks';
+import createHandleActions from './Creators/createHandleActions';
+import conversion from './Settings/conversion';
+import customFormats from './Settings/customFormats';
+import customFormatSpecifications from './Settings/customFormatSpecifications';
+import delayProfiles from './Settings/delayProfiles';
+import development from './Settings/development';
+import downloadClientOptions from './Settings/downloadClientOptions';
+import downloadClients from './Settings/downloadClients';
+import general from './Settings/general';
+import hardcoverConfig from './Settings/hardcoverConfig';
+import importListExclusions from './Settings/importListExclusions';
+import importLists from './Settings/importLists';
+import indexerFlags from './Settings/indexerFlags';
+import indexerOptions from './Settings/indexerOptions';
+import indexers from './Settings/indexers';
+import languages from './Settings/languages';
+import mediaManagement from './Settings/mediaManagement';
+import metadata from './Settings/metadata';
+import metadataProfiles from './Settings/metadataProfiles';
+import metadataProvider from './Settings/metadataProvider';
+import naming from './Settings/naming';
+import namingExamples from './Settings/namingExamples';
+import notifications from './Settings/notifications';
+import proxies from './Settings/proxies';
+import qualityDefinitions from './Settings/qualityDefinitions';
+import qualityProfiles from './Settings/qualityProfiles';
+import releaseProfiles from './Settings/releaseProfiles';
+import remotePathMappings from './Settings/remotePathMappings';
+import rootFolders from './Settings/rootFolders';
+import ui from './Settings/ui';
+
+export * from './Settings/customFormatSpecifications.js';
+export * from './Settings/conversion';
+export * from './Settings/customFormats';
+export * from './Settings/delayProfiles';
+export * from './Settings/downloadClients';
+export * from './Settings/downloadClientOptions';
+export * from './Settings/general';
+export * from './Settings/hardcoverConfig';
+export * from './Settings/importLists';
+export * from './Settings/importListExclusions';
+export * from './Settings/indexerFlags';
+export * from './Settings/indexerOptions';
+export * from './Settings/indexers';
+export * from './Settings/languages';
+export * from './Settings/metadataProfiles';
+export * from './Settings/mediaManagement';
+export * from './Settings/metadata';
+export * from './Settings/metadataProvider';
+export * from './Settings/naming';
+export * from './Settings/namingExamples';
+export * from './Settings/notifications';
+export * from './Settings/proxies';
+export * from './Settings/qualityDefinitions';
+export * from './Settings/qualityProfiles';
+export * from './Settings/releaseProfiles';
+export * from './Settings/remotePathMappings';
+export * from './Settings/rootFolders';
+export * from './Settings/development';
+export * from './Settings/ui';
+
+//
+// Variables
+
+export const section = 'settings';
+
+//
+// State
+
+export const defaultState = {
+  advancedSettings: false,
+
+  conversion: conversion.defaultState,
+  customFormatSpecifications: customFormatSpecifications.defaultState,
+  customFormats: customFormats.defaultState,
+  delayProfiles: delayProfiles.defaultState,
+  downloadClients: downloadClients.defaultState,
+  downloadClientOptions: downloadClientOptions.defaultState,
+  general: general.defaultState,
+  hardcoverConfig: hardcoverConfig.defaultState,
+  indexerFlags: indexerFlags.defaultState,
+  indexerOptions: indexerOptions.defaultState,
+  indexers: indexers.defaultState,
+  importLists: importLists.defaultState,
+  importListExclusions: importListExclusions.defaultState,
+  languages: languages.defaultState,
+  metadataProfiles: metadataProfiles.defaultState,
+  mediaManagement: mediaManagement.defaultState,
+  metadata: metadata.defaultState,
+  metadataProvider: metadataProvider.defaultState,
+  naming: naming.defaultState,
+  namingExamples: namingExamples.defaultState,
+  notifications: notifications.defaultState,
+  proxies: proxies.defaultState,
+  qualityDefinitions: qualityDefinitions.defaultState,
+  qualityProfiles: qualityProfiles.defaultState,
+  releaseProfiles: releaseProfiles.defaultState,
+  remotePathMappings: remotePathMappings.defaultState,
+  rootFolders: rootFolders.defaultState,
+  development: development.defaultState,
+  ui: ui.defaultState
+};
+
+export const persistState = [
+  'settings.advancedSettings'
+];
+
+//
+// Actions Types
+
+export const TOGGLE_ADVANCED_SETTINGS = 'settings/toggleAdvancedSettings';
+
+//
+// Action Creators
+
+export const toggleAdvancedSettings = createAction(TOGGLE_ADVANCED_SETTINGS);
+
+//
+// Action Handlers
+
+export const actionHandlers = handleThunks({
+  ...conversion.actionHandlers,
+  ...customFormatSpecifications.actionHandlers,
+  ...customFormats.actionHandlers,
+  ...delayProfiles.actionHandlers,
+  ...downloadClients.actionHandlers,
+  ...downloadClientOptions.actionHandlers,
+  ...general.actionHandlers,
+  ...hardcoverConfig.actionHandlers,
+  ...indexerFlags.actionHandlers,
+  ...indexerOptions.actionHandlers,
+  ...indexers.actionHandlers,
+  ...importLists.actionHandlers,
+  ...importListExclusions.actionHandlers,
+  ...languages.actionHandlers,
+  ...metadataProfiles.actionHandlers,
+  ...mediaManagement.actionHandlers,
+  ...metadata.actionHandlers,
+  ...metadataProvider.actionHandlers,
+  ...naming.actionHandlers,
+  ...namingExamples.actionHandlers,
+  ...notifications.actionHandlers,
+  ...proxies.actionHandlers,
+  ...qualityDefinitions.actionHandlers,
+  ...qualityProfiles.actionHandlers,
+  ...releaseProfiles.actionHandlers,
+  ...remotePathMappings.actionHandlers,
+  ...rootFolders.actionHandlers,
+  ...development.actionHandlers,
+  ...ui.actionHandlers
+});
+
+//
+// Reducers
+
+export const reducers = createHandleActions({
+
+  [TOGGLE_ADVANCED_SETTINGS]: (state, { payload }) => {
+    return Object.assign({}, state, { advancedSettings: !state.advancedSettings });
+  },
+
+  ...conversion.reducers,
+  ...customFormatSpecifications.reducers,
+  ...customFormats.reducers,
+  ...delayProfiles.reducers,
+  ...downloadClients.reducers,
+  ...downloadClientOptions.reducers,
+  ...general.reducers,
+  ...hardcoverConfig.reducers,
+  ...indexerFlags.reducers,
+  ...indexerOptions.reducers,
+  ...indexers.reducers,
+  ...importLists.reducers,
+  ...importListExclusions.reducers,
+  ...languages.reducers,
+  ...metadataProfiles.reducers,
+  ...mediaManagement.reducers,
+  ...metadata.reducers,
+  ...metadataProvider.reducers,
+  ...naming.reducers,
+  ...namingExamples.reducers,
+  ...notifications.reducers,
+  ...proxies.reducers,
+  ...qualityDefinitions.reducers,
+  ...qualityProfiles.reducers,
+  ...releaseProfiles.reducers,
+  ...remotePathMappings.reducers,
+  ...rootFolders.reducers,
+  ...development.reducers,
+  ...ui.reducers
+
+}, defaultState, section);

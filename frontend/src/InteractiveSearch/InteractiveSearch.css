@@ -1,0 +1,129 @@
+.filterMenuContainer {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.table {
+  composes: table from '~Components/Table/Table.css';
+
+  max-width: 100%;
+  width: 100%;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+.table th:nth-child(1) {
+  width: 46px;
+}
+
+.table th:nth-child(2) {
+  width: 60px;
+}
+
+.table th:nth-child(3) {
+  width: 76px;
+}
+
+.table th:nth-child(5) {
+  width: 82px;
+}
+
+.table th:nth-child(6) {
+  width: 80px;
+}
+
+.table th:nth-child(7) {
+  width: 68px;
+}
+
+.table th:nth-child(8) {
+  width: 72px;
+}
+
+.table th:nth-child(9) {
+  width: 130px;
+}
+
+.table th:nth-child(10) {
+  width: 70px;
+}
+
+.table th:nth-child(11) {
+  width: 44px;
+}
+
+.table th:nth-child(12),
+.table th:nth-child(13) {
+  width: 36px;
+}
+
+.table th:nth-child(14) {
+  width: 40px;
+}
+
+.filteredMessage {
+  margin-top: 10px;
+}
+
+.blankpad {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  padding-left: 2em;
+}
+
+.formatSection {
+  margin-bottom: 40px;
+}
+
+.formatSection:last-child {
+  margin-bottom: 0;
+}
+
+.formatHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-bottom: 2px solid #337ab7;
+  margin-bottom: 0;
+}
+
+.formatTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+}
+
+.formatCount {
+  font-size: 14px;
+  color: #666;
+  font-weight: normal;
+}
+
+.hiddenResultsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.hiddenResultsTitle {
+  margin: 0;
+}
+
+.hiddenResultsPager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hiddenResultsRange {
+  color: #666;
+  font-size: 12px;
+}

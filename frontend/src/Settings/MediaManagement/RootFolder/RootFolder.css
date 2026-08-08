@@ -1,0 +1,115 @@
+.nameCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 180px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.name {
+  @add-mixin truncate;
+
+  font-weight: 500;
+}
+
+.pathCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  min-width: 260px;
+  max-width: 420px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.path {
+  @add-mixin truncate;
+
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.typeCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 160px;
+  vertical-align: top;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.typeLabels {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metadataProfileCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  min-width: 180px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.qualityProfileCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  min-width: 180px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.profileRow {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
+.profileRow:last-child {
+  margin-bottom: 0;
+}
+
+.profileType {
+  min-width: 76px;
+  color: var(--helpTextColor);
+  font-weight: 500;
+}
+
+.profileValue {
+  @add-mixin truncate;
+  min-width: 0;
+}
+
+.missingProfile {
+  color: var(--dangerColor);
+  font-weight: 500;
+}
+
+.notConfigured {
+  color: var(--helpTextColor);
+}
+
+.freeSpace {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 110px;
+  vertical-align: top;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.actions {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 70px;
+  vertical-align: top;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.actionButton {
+  composes: button from '~Components/Link/IconButton.css';
+
+  margin-left: 10px;
+}

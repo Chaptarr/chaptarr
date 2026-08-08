@@ -1,0 +1,9 @@
+.mediaToggleContainer {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.icon {
+  line-height: 1;
+}

@@ -1,0 +1,72 @@
+.formatActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.existingFormat,
+.addFormat,
+.unavailableFormat {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.existingFormat {
+  color: #37bc9b;
+}
+
+.addFormat {
+  color: var(--disabledColor);
+
+  &:hover {
+    color: #37bc9b;
+  }
+}
+
+.unavailableFormat {
+  color: var(--disabledColor);
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.badge,
+.addBadge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--pageBackground);
+  color: inherit;
+  font-weight: 700;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.instanceList {
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+}
+
+.instanceLink {
+  padding: 4px 0;
+  color: var(--textColor);
+
+  &:hover {
+    color: var(--linkHoverColor);
+  }
+}

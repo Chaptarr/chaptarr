@@ -1,0 +1,149 @@
+.visualBuilder {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--cardBackgroundColor);
+  border: 1px solid var(--borderColor);
+  border-radius: 8px;
+  padding: 16px;
+  min-height: 500px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.pathBuilder {
+  margin-bottom: 12px;
+}
+
+.content {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 350px;
+}
+
+.palette {
+  flex: 0 0 260px;
+  min-width: 260px;
+}
+
+.canvas {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dragOverlay {
+  padding: 4px 8px;
+  background: var(--primaryColor);
+  color: white;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+/* Ensure color classes are exported by CSS Modules */
+.blue {}
+.purple {}
+.green {}
+.orange {}
+.gray {}
+
+/* Drag overlay colors */
+.dragOverlay.blue {
+  background: #3498db;
+  border: 1px solid #2980b9;
+}
+
+.dragOverlay.purple {
+  background: #9b59b6;
+  border: 1px solid #8e44ad;
+}
+
+.dragOverlay.green {
+  background: #27ae60;
+  border: 1px solid #229954;
+}
+
+.dragOverlay.orange {
+  background: #e67e22;
+  border: 1px solid #d35400;
+}
+
+.dragOverlay.gray {
+  background: #95a5a6;
+  border: 1px solid #7f8c8d;
+}
+
+/* Loading and error states */
+.visualBuilder .loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+}
+
+.visualBuilder .error {
+  padding: 20px;
+}
+
+/* Responsive layout */
+@media (max-width: 1024px) {
+  .content {
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  .palette {
+    flex: none;
+    min-width: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .visualBuilder {
+    padding: 16px;
+    gap: 12px;
+  }
+  
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  
+  .content {
+    gap: 12px;
+  }
+  
+  .palette {
+    order: 2;
+  }
+  
+  .canvas {
+    order: 1;
+  }
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .visualBuilder {
+    background: #1a1a1a;
+    border-color: #333;
+  }
+  
+  .dragOverlay {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}

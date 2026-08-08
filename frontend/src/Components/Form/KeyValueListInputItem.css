@@ -1,0 +1,25 @@
+.itemContainer {
+  display: flex;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--inputBorderColor);
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.inputWrapper {
+  flex: 1 0 0;
+}
+
+.buttonWrapper {
+  flex: 0 0 22px;
+}
+
+.keyInput,
+.valueInput {
+  width: 100%;
+  border: none;
+  background-color: var(--inputBackground);
+  color: var(--textColor);
+}

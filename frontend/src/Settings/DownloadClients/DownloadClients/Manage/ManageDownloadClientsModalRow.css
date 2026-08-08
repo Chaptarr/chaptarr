@@ -1,0 +1,12 @@
+.name,
+.enable,
+.tags,
+.priority,
+.protocol,
+.removeCompletedDownloads,
+.removeFailedDownloads,
+.implementation {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  word-break: break-all;
+}

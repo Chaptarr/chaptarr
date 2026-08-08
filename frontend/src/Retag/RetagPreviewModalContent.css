@@ -1,0 +1,46 @@
+.path {
+  margin-left: 5px;
+  font-weight: bold;
+}
+
+.trackFormat {
+  margin-left: 5px;
+  font-family: $monoSpaceFontFamily;
+}
+
+.previews {
+  margin-top: 10px;
+}
+
+.selectAllInputContainer {
+  margin-right: auto;
+  line-height: 30px;
+}
+
+.selectAllInput {
+  composes: input from '~Components/Form/CheckInput.css';
+
+  margin: 0;
+}
+
+.searchForNewBookLabelContainer {
+  display: flex;
+  margin-top: 2px;
+}
+
+.searchForNewBookLabel {
+  margin-right: 8px;
+  font-weight: normal;
+}
+
+.searchForNewBookContainer {
+  composes: container from '~Components/Form/CheckInput.css';
+
+  flex: 0 1 0;
+}
+
+.searchForNewBookInput {
+  composes: input from '~Components/Form/CheckInput.css';
+
+  margin-top: 0;
+}

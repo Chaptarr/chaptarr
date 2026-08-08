@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Chrome, Opera, and Firefox OS -->
+    <meta name="theme-color" content="#3a3f51" />
+    <!-- Windows Phone -->
+    <meta name="msapplication-navbutton-color" content="#3a3f51" />
+    <!-- Android/Apple Phone -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <meta name="description" content="Chaptarr" />
+
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="/Content/Images/Icons/apple-touch-icon.png"
+    />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="/Content/Images/Icons/favicon.svg"
+    />
+    <link rel="manifest" href="/Content/Images/Icons/manifest.json" crossorigin="use-credentials" />
+    <link
+      rel="mask-icon"
+      href="/Content/Images/Icons/safari-pinned-tab.svg"
+      color="#7d1b1b"
+    />
+    <meta
+      name="msapplication-config"
+      content="/Content/Images/Icons/browserconfig.xml"
+    />
+
+    <!-- NOTE: The main UI uses a hashed stylesheet; the login page is intentionally self-styled to avoid hardcoding a build hash here. -->
+    <link rel="stylesheet" type="text/css" href="/Content/Fonts/fonts.css" />
+
+    <title>Login - Chaptarr</title>
+
+    <style>
+      :root {
+        /* Light theme (matches app light theme + auto default) */
+        --page-bg: #f5f7fa;
+        --panel-header-bg: #ca302d;
+        --panel-body-bg: #ffffff;
+        --panel-border: rgba(0, 0, 0, 0.08);
+        --panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+
+        --text: #515253;
+        --muted: #909293;
+
+        --input-bg: #ffffff;
+        --input-text: #333333;
+        --input-border: #dde6e9;
+        --input-border-focus: #66afe9;
+        --input-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
+        --input-shadow-focus: inset 0 1px 1px rgba(0, 0, 0, 0.075),
+          0 0 8px rgba(102, 175, 233, 0.6);
+
+        --primary-bg: #5d9cec;
+        --primary-border: #5899eb;
+        --primary-hover-bg: #4b91ea;
+        --primary-hover-border: #3483e7;
+        --primary-text: #ffffff;
+
+        --secondary-bg: #ffffff;
+        --secondary-border: #eaeaea;
+        --secondary-hover-bg: #f5f5f5;
+        --secondary-hover-border: #d6d6d6;
+        --secondary-text: #515253;
+
+        /* Plex brand-ish */
+        --plex-bg: #e5a00d;
+        --plex-border: #d69600;
+        --plex-hover-bg: #d99000;
+        --plex-hover-border: #c88600;
+        --plex-text: #111111;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          /* Dark theme (matches app dark theme + auto default) */
+          --page-bg: #202020;
+          --panel-header-bg: #2a2a2a;
+          --panel-body-bg: #2a2a2a;
+          --panel-border: rgba(255, 255, 255, 0.10);
+          --panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+
+          --text: #cccccc;
+          --muted: #909293;
+
+          --input-bg: #333333;
+          --input-text: #eeeeee;
+          --input-border: #393f45;
+          --input-border-focus: #66afe9;
+          --input-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.2);
+          --input-shadow-focus: inset 0 1px 1px rgba(0, 0, 0, 0.2),
+            0 0 8px rgba(102, 175, 233, 0.6);
+
+          --primary-bg: #0b8750;
+          --primary-border: #1d563d;
+          --primary-hover-bg: #097948;
+          --primary-hover-border: #1d563d;
+          --primary-text: #ffffff;
+
+          --secondary-bg: #333333;
+          --secondary-border: #393f45;
+          --secondary-hover-bg: #444444;
+          --secondary-hover-border: #5a6265;
+          --secondary-text: #eeeeee;
+        }
+      }
+
+      body {
+        background-color: var(--page-bg);
+        color: var(--text);
+        font-family: "Roboto", "open sans", "Helvetica Neue", Helvetica, Arial,
+          sans-serif;
+      }
+
+      .center {
+        display: flex;
+        justify-content: center;
+      }
+
+      .content {
+        flex: 0 0 325px;
+      }
+
+      .logo {
+        width: 64px;
+        height: 64px;
+      }
+
+      .panel {
+        margin-top: 50px;
+        border-radius: 10px;
+        box-shadow: var(--panel-shadow);
+        border: 1px solid var(--panel-border);
+        overflow: hidden;
+      }
+
+      .panel-header {
+        display: flex;
+        justify-content: center;
+        padding: 10px;
+        background-color: var(--panel-header-bg);
+      }
+
+      .panel-body {
+        padding: 20px;
+        background-color: var(--panel-body-bg);
+      }
+
+      .sign-in {
+        padding: 10px 0;
+        text-align: center;
+        letter-spacing: 0.06em;
+        font-weight: 600;
+      }
+
+      .form-group {
+        margin: 20px 0;
+      }
+
+      .form-input {
+        box-sizing: border-box;
+        padding: 6px 16px;
+        width: 100%;
+        height: 35px;
+        border: 1px solid var(--input-border);
+        border-radius: 4px;
+        box-shadow: var(--input-shadow);
+        background-color: var(--input-bg);
+        color: var(--input-text);
+      }
+
+      .form-input:focus {
+        outline: 0;
+        border-color: var(--input-border-focus);
+        box-shadow: var(--input-shadow-focus);
+      }
+
+      .button {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        margin-top: 20px;
+        padding: 10px 16px;
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid;
+        border-color: var(--primary-border);
+        border-radius: 4px;
+        background-color: var(--primary-bg);
+        color: var(--primary-text);
+        vertical-align: middle;
+        text-align: center;
+        white-space: nowrap;
+        line-height: normal;
+        text-decoration: none;
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      .button:hover {
+        border-color: var(--primary-hover-border);
+        background-color: var(--primary-hover-bg);
+        color: var(--primary-text);
+        text-decoration: none;
+      }
+
+      .button-secondary {
+        border-color: var(--secondary-border);
+        background-color: var(--secondary-bg);
+        color: var(--secondary-text);
+      }
+
+      .button-secondary:hover {
+        border-color: var(--secondary-hover-border);
+        background-color: var(--secondary-hover-bg);
+        color: var(--secondary-text);
+      }
+
+      .button-plex {
+        border-color: var(--plex-border);
+        background-color: var(--plex-bg);
+        color: var(--plex-text);
+      }
+
+      .button-plex:hover {
+        border-color: var(--plex-hover-border);
+        background-color: var(--plex-hover-bg);
+        color: var(--plex-text);
+      }
+
+      .copy {
+        margin-top: 15px;
+        text-align: center;
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      .remember-me-container {
+        display: flex;
+        justify-content: space-between;
+        line-height: 25px;
+      }
+
+      .remember-me {
+        font-size: 14px;
+      }
+
+      .forgot-password {
+        margin-left: auto;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 13px;
+      }
+
+      .forgot-password:focus,
+      .forgot-password:hover {
+        color: var(--text);
+        text-decoration: underline;
+      }
+
+      .forgot-password:visited {
+        color: var(--muted);
+      }
+
+      .login-failed {
+        margin-top: 20px;
+        color: #f05050;
+        font-size: 14px;
+      }
+
+      .sso-container {
+        margin-top: 20px;
+      }
+
+      .sso-note {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+      }
+
+      .toggle-local {
+        margin-top: 10px;
+        text-align: center;
+        font-size: 13px;
+      }
+
+      .toggle-local a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      .toggle-local a:hover {
+        color: var(--text);
+        text-decoration: underline;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media only screen and (min-device-width: 375px) and (max-device-width: 812px) {
+        .form-input {
+          font-size: 16px;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="center">
+      <div class="content">
+        <div class="panel">
+          <div class="panel-header">
+            <img src="/Content/Images/chaptarr-logo.svg" alt="Chaptarr Logo" class="logo" />
+          </div>
+
+          <div class="panel-body">
+            <div class="sign-in">
+              SIGN IN TO CONTINUE
+            </div>
+
+            <form
+              id="local-login-form"
+              role="form"
+              data-parsley-validate=""
+              novalidate=""
+              class="mb-lg"
+              method="POST"
+            >
+              <div class="form-group">
+                <input
+                  type="email"
+                  name="username"
+                  class="form-input"
+                  placeholder="Username"
+                  autocomplete="off"
+                  pattern=".{1,}"
+                  required
+                  title="User name is required"
+                  autoFocus="true"
+                  autoCapitalize="false"
+                />
+              </div>
+
+              <div class="form-group">
+                <input
+                  type="password"
+                  name="password"
+                  class="form-input"
+                  placeholder="Password"
+                  required
+                />
+              </div>
+
+              <div class="remember-me-container">
+                <span class="remember-me">
+                  <input
+                    type="checkbox"
+                    name="rememberMe"
+                    id="rememberMe"
+                    checked="checked"
+                  />
+                  <label for="rememberMe">Remember Me</label>
+                </span>
+
+              </div>
+              <button type="submit" class="button">Login</button>
+
+              <div id="login-failed" class="login-failed hidden">
+                Incorrect Username or Password
+              </div>
+              <div id="sso-failed" class="login-failed hidden"></div>
+            </form>
+
+            <div id="sso-container" class="sso-container hidden">
+              <a id="plex-login" class="button button-plex hidden" href="#">Continue with Plex</a>
+              <a id="oidc-login" class="button hidden" href="#">Continue with SSO</a>
+              <div id="sso-note" class="sso-note hidden">
+                You will be redirected to your identity provider to sign in.
+              </div>
+            </div>
+
+            <div id="local-login-toggle-container" class="toggle-local hidden">
+              <a id="local-login-toggle" href="#">Use a local account instead</a>
+            </div>
+          </div>
+        </div>
+
+        <div id="copy" class="copy hidden">
+          <span>&copy;</span>
+          <span id="year"></span>
+          <span>-</span>
+          <span>Chaptarr</span>
+        </div>
+      </div>
+    </div>
+  </body>
+
+  <script type="text/javascript">
+    var yearSpan = document.getElementById("year");
+    yearSpan.innerHTML = "2017-" + new Date().getFullYear();
+
+    var copyDiv = document.getElementById("copy");
+    copyDiv.classList.remove("hidden");
+
+    var authMethod = "__AUTH_METHOD__";
+    var urlBase = "__URL_BASE__";
+
+    var ssoContainer = document.getElementById("sso-container");
+    var plexLoginLink = document.getElementById("plex-login");
+    var oidcLoginLink = document.getElementById("oidc-login");
+    var localLoginForm = document.getElementById("local-login-form");
+    var ssoNote = document.getElementById("sso-note");
+    var localLoginToggleContainer = document.getElementById("local-login-toggle-container");
+    var localLoginToggle = document.getElementById("local-login-toggle");
+
+    var urlParams = new URLSearchParams(window.location.search);
+    var loginFailed = urlParams.get("loginFailed") === "true";
+    var ssoFailed = urlParams.get("ssoFailed") === "true";
+    var ssoError = urlParams.get("ssoError") || "";
+
+    if (loginFailed) {
+      var loginFailedDiv = document.getElementById("login-failed");
+      loginFailedDiv.classList.remove("hidden");
+    }
+
+    if (ssoFailed) {
+      var ssoFailedDiv = document.getElementById("sso-failed");
+      var message = "SSO sign-in failed.";
+
+      if (ssoError === "oidc_discovery_unreachable") {
+        message =
+          "SSO sign-in failed. Chaptarr could not retrieve the OpenID Connect discovery document from your identity provider. Check DNS/proxy/firewall from the server/container. If you require a proxy, set Chaptarr Proxy Mode to 'Proxy Everything'.";
+      } else if (ssoError === "oidc_backchannel_timeout") {
+        message =
+          "SSO sign-in failed. Chaptarr timed out while contacting your identity provider. Check DNS/proxy/firewall from the server/container. If you require a proxy, set Chaptarr Proxy Mode to 'Proxy Everything'.";
+      } else if (ssoError === "missing_callback_parameters") {
+        message =
+          "SSO sign-in failed. The callback URL was reached without the expected parameters. Check your identity provider flow (Authorization Code) and reverse proxy settings.";
+      } else if (ssoError === "cookie_or_proxy_issue") {
+        message =
+          "SSO sign-in failed. This is often caused by blocked cookies or a reverse proxy misconfiguration.";
+      }
+
+      ssoFailedDiv.textContent = message;
+      ssoFailedDiv.classList.remove("hidden");
+    }
+
+    var returnUrl = urlParams.get("returnUrl") || "/";
+    var showLocalLogin = loginFailed || ssoFailed;
+
+    if (localLoginToggle) {
+      localLoginToggle.addEventListener("click", function (e) {
+        e.preventDefault();
+        localLoginForm.classList.remove("hidden");
+        localLoginToggleContainer.classList.add("hidden");
+      });
+    }
+
+    if (authMethod === "plex") {
+      ssoContainer.classList.remove("hidden");
+      plexLoginLink.classList.remove("hidden");
+      ssoNote.classList.remove("hidden");
+      plexLoginLink.href = urlBase + "/auth/plex?returnUrl=" + encodeURIComponent(returnUrl);
+      ssoNote.textContent = "You will be redirected to Plex to sign in.";
+
+      if (!showLocalLogin) {
+        localLoginForm.classList.add("hidden");
+        localLoginToggleContainer.classList.remove("hidden");
+      }
+    } else if (authMethod === "oidc") {
+      ssoContainer.classList.remove("hidden");
+      oidcLoginLink.classList.remove("hidden");
+      ssoNote.classList.remove("hidden");
+      oidcLoginLink.href = urlBase + "/auth/oidc?returnUrl=" + encodeURIComponent(returnUrl);
+      ssoNote.textContent = "You will be redirected to your identity provider to sign in.";
+
+      if (!showLocalLogin) {
+        localLoginForm.classList.add("hidden");
+        localLoginToggleContainer.classList.remove("hidden");
+      }
+    }
+  </script>
+</html>

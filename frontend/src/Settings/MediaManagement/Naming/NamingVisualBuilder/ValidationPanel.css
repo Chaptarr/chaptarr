@@ -1,0 +1,93 @@
+.panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--cardBackgroundColor);
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  font-size: 12px;
+  margin-top: 16px;
+}
+
+.panel.success {
+  background: rgba(39, 174, 96, 0.1);
+  border-color: #27ae60;
+  color: #27ae60;
+}
+
+.loadingText {
+  color: var(--dimColor);
+}
+
+.errorGroup {
+  margin: 0;
+  width: 100%;
+}
+
+.errorHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.errorType {
+  font-size: 13px;
+}
+
+.errorCount {
+  color: var(--dimColor);
+  font-weight: normal;
+}
+
+.errorList {
+  margin: 0;
+  padding-left: 20px;
+  list-style: none;
+}
+
+.errorItem {
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.errorItem:last-child {
+  margin-bottom: 0;
+}
+
+.errorPath {
+  display: block;
+  font-size: 11px;
+  color: var(--dimColor);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* Error severity styling */
+.errorGroup .errorItem {
+  color: var(--dangerColor);
+}
+
+/* Multiple error groups */
+.panel .errorGroup + .errorGroup {
+  margin-top: 12px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .panel {
+    padding: 10px 12px;
+    font-size: 11px;
+  }
+  
+  .errorHeader {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  
+  .errorList {
+    padding-left: 16px;
+  }
+}

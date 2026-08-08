@@ -1,0 +1,12 @@
+.mediaToggleContainer {
+  display: flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.icon {
+  line-height: 1;
+}
+
+@media (max-width: 768px) {
+}

@@ -1,0 +1,135 @@
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading.Tasks;
+using NLog;
+using NzbDrone.Common.Cache;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
+using NzbDrone.Core.IndexerSearch.Definitions;
+
+namespace NzbDrone.Core.Indexers.Gazelle
+{
+    public class GazelleRequestGenerator : IIndexerRequestGenerator
+    {
+        public GazelleSettings Settings { get; set; }
+
+        public ICached<Dictionary<string, string>> AuthCookieCache { get; set; }
+        public IIndexerHttpClient HttpClient { get; set; }
+        public Logger Logger { get; set; }
+
+        public virtual IndexerPageableRequestChain GetRecentRequests()
+        {
+            var pageableRequests = new IndexerPageableRequestChain();
+
+            pageableRequests.Add(GetRequest(null));
+
+            return pageableRequests;
+        }
+
+        public IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
+        {
+            var pageableRequests = new IndexerPageableRequestChain();
+            pageableRequests.Add(GetRequest(string.Format("&authorname={0}&groupname={1}", searchCriteria.AuthorQuery, searchCriteria.BookQuery)));
+            return pageableRequests;
+        }
+
+        public IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
+        {
+            var pageableRequests = new IndexerPageableRequestChain();
+            pageableRequests.Add(GetRequest(string.Format("&authorname={0}", searchCriteria.AuthorQuery)));
+            return pageableRequests;
+        }
+
+        private IEnumerable<IndexerRequest> GetRequest(string searchParameters)
+        {
+            Authenticate().GetAwaiter().GetResult();
+
+            var filter = "";
+            if (searchParameters == null)
+            {
+            }
+
+            var request = new IndexerRequest($"{Settings.BaseUrl.Trim().TrimEnd('/')}/ajax.php?action=browse&searchstr={searchParameters}{filter}", HttpAccept.Json);
+
+            var cookies = AuthCookieCache.Find(Settings.BaseUrl.Trim().TrimEnd('/'));
+            foreach (var cookie in cookies)
+            {
+                request.HttpRequest.Cookies[cookie.Key] = cookie.Value;
+            }
+
+            yield return request;
+        }
+
+        private async Task<GazelleAuthResponse> GetIndex(Dictionary<string, string> cookies)
+        {
+            var indexRequestBuilder = new HttpRequestBuilder($"{Settings.BaseUrl.Trim().TrimEnd('/')}")
+            {
+                LogResponseContent = true,
+                Method = HttpMethod.Post
+            };
+
+            indexRequestBuilder.SetCookies(cookies);
+            indexRequestBuilder.Resource("ajax.php?action=index");
+
+            var authIndexRequest = indexRequestBuilder
+                .Accept(HttpAccept.Json)
+                .Build();
+
+            var indexResponse = await HttpClient.ExecuteAsync(authIndexRequest);
+
+            var result = Json.Deserialize<GazelleAuthResponse>(indexResponse.Content);
+
+            return result;
+        }
+
+        private async Task Authenticate()
+        {
+            var requestBuilder = new HttpRequestBuilder($"{Settings.BaseUrl.Trim().TrimEnd('/')}")
+            {
+                LogResponseContent = true,
+                Method = HttpMethod.Post
+            };
+
+            requestBuilder.Resource("login.php");
+            requestBuilder.PostProcess += r => r.RequestTimeout = TimeSpan.FromSeconds(15);
+
+            var authKey = Settings.BaseUrl.Trim().TrimEnd('/');
+            var cookies = AuthCookieCache.Find(authKey);
+
+            if (cookies == null)
+            {
+                AuthCookieCache.Remove(authKey);
+                var authLoginRequest = requestBuilder
+                    .AddFormParameter("username", Settings.Username)
+                    .AddFormParameter("password", Settings.Password)
+                    .AddFormParameter("keeplogged", "1")
+                    .SetHeader("Content-Type", "multipart/form-data")
+                    .Accept(HttpAccept.Json)
+                    .Build();
+
+                var response = await HttpClient.ExecuteAsync(authLoginRequest);
+
+                cookies = response.GetCookies();
+
+                AuthCookieCache.Set(authKey, cookies);
+            }
+
+            var index = await GetIndex(cookies);
+
+            if (index == null || index.Status.IsNullOrWhiteSpace() || index.Status != "success")
+            {
+                Logger.Debug("Gazelle authentication failed.");
+                AuthCookieCache.Remove(authKey);
+
+                throw new Exception("Failed to authenticate with Gazelle.");
+            }
+
+            Logger.Debug("Gazelle authentication succeeded.");
+
+            Settings.AuthKey = index.Response.Authkey;
+            Settings.PassKey = index.Response.Passkey;
+        }
+    }
+}

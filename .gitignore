@@ -1,0 +1,144 @@
+# Build outputs
+_output/
+_tests/
+_artifacts/
+_publish-test/
+publish/
+bin/
+obj/
+*.dll
+*.pdb
+*.exe
+
+# Platform builds
+linux-*/
+osx-*/
+win-*/
+
+# Dependencies
+node_modules/
+packages/
+.nuget/
+
+# User-specific files
+*.user
+*.userosscache
+*.sln.docstates
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.dmp
+tmp/
+logs/
+temp/
+_temp/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local config
+config.xml
+appsettings.Development.json
+appsettings.Local.json
+docker-compose.override.yml
+src/postgres.runsettings
+.env
+.env.local
+.env.*.local
+
+# Test artifacts
+test/
+tests/
+TestResults/
+*.coverage
+*.coveragexml
+coverage/
+
+# Backup and obsolete files
+*.old
+*.bak
+*.backup
+*.backup_*
+*.backup-*
+backups/
+*.orig
+.history/
+
+# Build logs
+build.log
+*.build.log
+
+# SQL dumps
+*.sql
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache
+.cache/
+cache/
+__pycache__/
+
+# NuGet
+*.nupkg
+*.snupkg
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# In-place build output in the repo root
+/Chaptarr
+/ServiceInstall
+/ServiceUninstall
+createdump
+libcoreclr.so
+libclrjit.so
+libmscordaccore.so
+libmscordbi.so
+libSystem.IO.Compression.Native.so
+libcoreclrtraceptprovider.so
+libdbgshim.so
+libhostfxr.so
+libhostpolicy.so
+libMonoPosixHelper.so
+libSystem.Security.Cryptography.Native.OpenSsl.so
+de-DE/
+de/
+schemas/
+net6.0-windows/
+
+# Images are ignored globally; allow the required asset locations
+*.png
+*.svg
+Logo/*
+!frontend/src/Content/**/*.png
+!frontend/src/Content/**/*.svg
+!src/NzbDrone.Core/Resources/**/*.png
+!src/NzbDrone.Core/Resources/**/*.svg
+!Logo/**/*.png
+!Logo/**/*.svg
+!Logo/**/*.ico
+
+# Generated docs
+docs/api/
+
+# Bundled tool binaries (see Tools/README.md)
+Tools/ffmpeg/*/
+Tools/ffprobe/*/
+!Tools/README.md

@@ -1,0 +1,39 @@
+.pendingImportStatus {
+  padding: 10px 15px;
+  margin: 10px 0;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.processing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: rgba(33, 150, 243, 0.1);
+  color: #2196f3;
+  padding: 10px;
+  border-radius: 4px;
+}
+
+.message {
+  flex: 1;
+}
+
+.progress {
+  font-weight: bold;
+  margin-left: auto;
+}
+
+.success {
+  background-color: rgba(76, 175, 80, 0.1);
+  color: #4caf50;
+  padding: 10px;
+  border-radius: 4px;
+}
+
+.error {
+  background-color: rgba(244, 67, 54, 0.1);
+  color: #f44336;
+  padding: 10px;
+  border-radius: 4px;
+}

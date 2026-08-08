@@ -1,0 +1,99 @@
+.rootFoldersContainer {
+  margin-top: 20px;
+}
+
+.rootFoldersStack {
+  display: grid;
+  grid-template-columns: repeat(2, 280px);
+  gap: 20px;
+}
+
+.rootFolderColumn {
+  min-width: 0;
+}
+
+.rootFolderCard {
+  composes: card from '~Components/Card.css';
+
+  min-width: 0;
+  width: 280px;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+
+.rootFolderCard:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.rootFolderContent {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+  gap: 12px;
+}
+
+.rootFolderDetails {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 6px;
+}
+
+.rootFolderName {
+  @add-mixin truncate;
+  font-weight: 600;
+
+  font-size: 14px;
+}
+
+.rootFolderPath {
+  @add-mixin truncate;
+  color: var(--helpTextColor);
+  font-weight: 500;
+
+  font-size: 13px;
+}
+
+.rootFolderScope {
+  margin-bottom: 0;
+}
+
+.rootFolderBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rootFolderDefault {
+  align-self: flex-start;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background-color: var(--successColor);
+  color: var(--white);
+  white-space: nowrap;
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.addRootFolderCard {
+  composes: rootFolderCard;
+
+  min-width: 0;
+  width: 280px;
+  border: 2px dashed var(--inputBorderColor);
+}
+
+.addRootFolderCard:hover {
+  border-color: var(--white);
+  background-color: var(--cardBackgroundColor);
+}
+
+.addRootFolderContent {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+  color: var(--helpTextColor);
+  font-size: 16px;
+  gap: 10px;
+}

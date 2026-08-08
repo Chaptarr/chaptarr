@@ -1,0 +1,46 @@
+.profileSection {
+  margin-bottom: 30px;
+}
+
+.profileSectionHeader {
+  margin-bottom: 15px;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.qualityProfiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.addQualityProfile {
+  composes: qualityProfile from '~./QualityProfile.css';
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px;
+  border: 2px dashed var(--inputBorderColor);
+  background-color: var(--cardAlternateBackgroundColor);
+  color: var(--helpTextColor);
+}
+
+.addQualityProfile:hover {
+  border-color: var(--themeLightColor);
+  background-color: var(--cardBackgroundColor);
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-direction: column;
+  gap: 10px;
+}
+
+.addQualityProfileLabel {
+  text-align: center;
+  font-weight: 600;
+}

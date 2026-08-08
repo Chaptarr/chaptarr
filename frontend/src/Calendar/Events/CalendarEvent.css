@@ -1,0 +1,93 @@
+$fullColorGradient: rgba(244, 245, 246, 0.2);
+
+.event {
+  overflow-x: hidden;
+  margin: 4px 2px;
+  padding: 5px;
+  border-bottom: 1px solid var(--calendarBorderColor);
+  border-left: 4px solid var(--calendarBorderColor);
+  font-size: 12px;
+
+  &:global(.colorImpaired) {
+    border-left-width: 5px;
+  }
+}
+
+.info,
+.bookInfo {
+  display: flex;
+}
+
+.authorName,
+.bookTitle {
+  @add-mixin truncate;
+
+  flex: 1 0 1px;
+  margin-right: 10px;
+}
+
+.authorName {
+  color: var(--calendarTextDimAlternate);
+  font-size: $defaultFontSize;
+}
+
+.absoluteEpisodeNumber {
+  margin-left: 3px;
+}
+
+.statusIcon {
+  margin-left: 3px;
+}
+
+/*
+ * Status
+ */
+
+.downloaded {
+  border-left-color: var(--successColor) !important;
+
+  &:global(.colorImpaired) {
+    border-left-color: color(#27c24c saturation(+15%)) !important;
+  }
+}
+
+.downloading {
+  border-left-color: var(--purple) !important;
+
+  &:global(.fullColor) {
+    background-color: rgba(122, 67, 182, 0.4) !important;
+  }
+}
+
+.unmonitored {
+  border-left-color: var(--gray) !important;
+
+  &:global(.fullColor) {
+    background-color: rgba(173, 173, 173, 0.5) !important;
+  }
+
+  &:global(.colorImpaired) {
+    background: repeating-linear-gradient(45deg, var(--colorImpairedGradientDark), var(--colorImpairedGradientDark) 5px, var(--colorImpairedGradient) 5px, var(--colorImpairedGradient) 10px);
+  }
+
+  &:global(.fullColor.colorImpaired) {
+    background: repeating-linear-gradient(45deg, $fullColorGradient, $fullColorGradient 5px, transparent 5px, transparent 10px);
+  }
+}
+
+.missing {
+  border-left-color: var(--dangerColor) !important;
+
+  &:global(.colorImpaired) {
+    border-left-color: color(#f05050 saturation(+15%)) !important;
+    background: repeating-linear-gradient(90deg, var(--colorImpairedGradientDark), var(--colorImpairedGradientDark) 5px, var(--colorImpairedGradient) 5px, var(--colorImpairedGradient) 10px);
+  }
+}
+
+.unreleased {
+  border-left-color: var(--primaryColor) !important;
+
+  &:global(.colorImpaired) {
+    background: repeating-linear-gradient(90deg, var(--colorImpairedGradientDark), var(--colorImpairedGradientDark) 5px, var(--colorImpairedGradient) 5px, var(--colorImpairedGradient) 10px);
+  }
+}

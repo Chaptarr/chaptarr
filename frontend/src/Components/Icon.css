@@ -1,0 +1,39 @@
+.danger {
+  color: var(--dangerColor);
+}
+
+.default {
+  color: inherit;
+}
+
+.disabled {
+  color: var(--disabledColor);
+}
+
+.info {
+  color: var(--infoColor);
+
+  &:global(.darken) {
+    color: color(var(--infoColor) shade(30%));
+  }
+}
+
+.pink {
+  color: var(--pink);
+
+  &:global(.darken) {
+    color: color(var(--pink) shade(30%));
+  }
+}
+
+.success {
+  color: var(--successColor);
+}
+
+.warning {
+  color: var(--warningColor);
+}
+
+.purple {
+  color: var(--purple);
+}

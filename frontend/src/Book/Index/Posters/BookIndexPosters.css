@@ -1,0 +1,10 @@
+.grid {
+  flex: 1 0 auto;
+}
+
+.placeholder {
+  background-color: var(--inputBackgroundColor);
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  opacity: 0.6;
+}

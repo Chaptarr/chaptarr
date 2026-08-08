@@ -1,0 +1,27 @@
+.deleteButton {
+  composes: button from '~Components/Link/Button.css';
+
+  margin-right: auto;
+}
+
+.footerActions {
+  display: flex;
+  align-items: center;
+}
+
+.addCondition {
+  margin-top: 10px;
+}
+
+.addConditionContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  line-height: 1;
+}
+
+.customFormats {
+  display: flex;
+  flex-wrap: wrap;
+}

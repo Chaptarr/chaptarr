@@ -1,0 +1,529 @@
+import $ from 'jquery';
+import { createAction } from 'redux-actions';
+import { filterTypes, sortDirections } from 'Helpers/Props';
+import { setAppValue } from 'Store/Actions/appActions';
+import { createThunk, handleThunks } from 'Store/thunks';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
+import serverSideCollectionHandlers from 'Utilities/serverSideCollectionHandlers';
+import translate from 'Utilities/String/translate';
+import { pingServer, showMessage, hideMessage } from './appActions';
+import { set } from './baseActions';
+import createFetchHandler from './Creators/createFetchHandler';
+import createHandleActions from './Creators/createHandleActions';
+import createRemoveItemHandler from './Creators/createRemoveItemHandler';
+import createServerSideCollectionHandlers from './Creators/createServerSideCollectionHandlers';
+import createClearReducer from './Creators/Reducers/createClearReducer';
+import createSetTableOptionReducer from './Creators/Reducers/createSetTableOptionReducer';
+
+//
+// Variables
+
+export const section = 'system';
+const backupsSection = 'system.backups';
+
+//
+// State
+
+export const defaultState = {
+  status: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    item: {}
+  },
+
+  health: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    items: []
+  },
+
+  diskSpace: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    items: []
+  },
+
+  tasks: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    items: []
+  },
+
+  backups: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    isRestoring: false,
+    restoreError: null,
+    isDeleting: false,
+    deleteError: null,
+    items: []
+  },
+
+  updates: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    items: []
+  },
+
+  logs: {
+    isFetching: false,
+    isPopulated: false,
+    pageSize: 50,
+    sortKey: 'time',
+    sortDirection: sortDirections.DESCENDING,
+    error: null,
+    items: [],
+
+    columns: [
+      {
+        name: 'level',
+        columnLabel: () => translate('Level'),
+        isSortable: false,
+        isVisible: true,
+        isModifiable: false
+      },
+      {
+        name: 'time',
+        label: () => translate('Time'),
+        isSortable: true,
+        isVisible: true,
+        isModifiable: false
+      },
+      {
+        name: 'logger',
+        label: () => translate('Component'),
+        isSortable: false,
+        isVisible: true,
+        isModifiable: false
+      },
+      {
+        name: 'message',
+        label: () => translate('Message'),
+        isVisible: true,
+        isModifiable: false
+      },
+      {
+        name: 'actions',
+        columnLabel: () => translate('Actions'),
+        isSortable: true,
+        isVisible: true,
+        isModifiable: false
+      }
+    ],
+
+    selectedFilterKey: 'all',
+
+    filters: [
+      {
+        key: 'all',
+        label: 'All',
+        filters: []
+      },
+      {
+        key: 'info',
+        label: 'Info',
+        filters: [
+          {
+            key: 'level',
+            value: 'info',
+            type: filterTypes.EQUAL
+          }
+        ]
+      },
+      {
+        key: 'warn',
+        label: 'Warn',
+        filters: [
+          {
+            key: 'level',
+            value: 'warn',
+            type: filterTypes.EQUAL
+          }
+        ]
+      },
+      {
+        key: 'error',
+        label: 'Error',
+        filters: [
+          {
+            key: 'level',
+            value: 'error',
+            type: filterTypes.EQUAL
+          }
+        ]
+      }
+    ]
+  },
+
+  logFiles: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    items: []
+  },
+
+  updateLogFiles: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    items: []
+  },
+
+  statistics: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    item: {
+      totalBooks: 0,
+      audiobookCount: 0,
+      ebookCount: 0,
+      monitoredBooks: 0,
+      audiobooksMonitored: 0,
+      ebooksMonitored: 0,
+      fileCount: 0,
+      totalFileSize: 0,
+      authorCount: 0
+    }
+  }
+};
+
+export const persistState = [
+  'system.logs.pageSize',
+  'system.logs.sortKey',
+  'system.logs.sortDirection',
+  'system.logs.selectedFilterKey'
+];
+
+//
+// Actions Types
+
+export const FETCH_STATUS = 'system/status/fetchStatus';
+export const FETCH_HEALTH = 'system/health/fetchHealth';
+export const FETCH_DISK_SPACE = 'system/diskSpace/fetchDiskSPace';
+
+export const FETCH_TASK = 'system/tasks/fetchTask';
+export const FETCH_TASKS = 'system/tasks/fetchTasks';
+
+export const FETCH_BACKUPS = 'system/backups/fetchBackups';
+export const RESTORE_BACKUP = 'system/backups/restoreBackup';
+export const CLEAR_RESTORE_BACKUP = 'system/backups/clearRestoreBackup';
+export const DELETE_BACKUP = 'system/backups/deleteBackup';
+
+export const FETCH_UPDATES = 'system/updates/fetchUpdates';
+
+export const FETCH_LOGS = 'system/logs/fetchLogs';
+export const GOTO_FIRST_LOGS_PAGE = 'system/logs/gotoLogsFirstPage';
+export const GOTO_PREVIOUS_LOGS_PAGE = 'system/logs/gotoLogsPreviousPage';
+export const GOTO_NEXT_LOGS_PAGE = 'system/logs/gotoLogsNextPage';
+export const GOTO_LAST_LOGS_PAGE = 'system/logs/gotoLogsLastPage';
+export const GOTO_LOGS_PAGE = 'system/logs/gotoLogsPage';
+export const SET_LOGS_SORT = 'system/logs/setLogsSort';
+export const SET_LOGS_FILTER = 'system/logs/setLogsFilter';
+export const SET_LOGS_TABLE_OPTION = 'system/logs/setLogsTableOption';
+export const CLEAR_LOGS_TABLE = 'system/logs/clearLogsTable';
+
+export const FETCH_LOG_FILES = 'system/logFiles/fetchLogFiles';
+export const FETCH_UPDATE_LOG_FILES = 'system/updateLogFiles/fetchUpdateLogFiles';
+
+export const RESTART = 'system/restart';
+export const SHUTDOWN = 'system/shutdown';
+export const TEST_PROXY = 'system/testProxy';
+export const FETCH_SYSTEM_STATISTICS = 'system/fetchSystemStatistics';
+
+//
+// Action Creators
+
+export const fetchStatus = createThunk(FETCH_STATUS);
+export const fetchHealth = createThunk(FETCH_HEALTH);
+export const fetchDiskSpace = createThunk(FETCH_DISK_SPACE);
+
+export const fetchTask = createThunk(FETCH_TASK);
+export const fetchTasks = createThunk(FETCH_TASKS);
+
+export const fetchBackups = createThunk(FETCH_BACKUPS);
+export const restoreBackup = createThunk(RESTORE_BACKUP);
+export const clearRestoreBackup = createAction(CLEAR_RESTORE_BACKUP);
+export const deleteBackup = createThunk(DELETE_BACKUP);
+
+export const fetchUpdates = createThunk(FETCH_UPDATES);
+
+export const fetchLogs = createThunk(FETCH_LOGS);
+export const gotoLogsFirstPage = createThunk(GOTO_FIRST_LOGS_PAGE);
+export const gotoLogsPreviousPage = createThunk(GOTO_PREVIOUS_LOGS_PAGE);
+export const gotoLogsNextPage = createThunk(GOTO_NEXT_LOGS_PAGE);
+export const gotoLogsLastPage = createThunk(GOTO_LAST_LOGS_PAGE);
+export const gotoLogsPage = createThunk(GOTO_LOGS_PAGE);
+export const setLogsSort = createThunk(SET_LOGS_SORT);
+export const setLogsFilter = createThunk(SET_LOGS_FILTER);
+export const setLogsTableOption = createAction(SET_LOGS_TABLE_OPTION);
+export const clearLogsTable = createAction(CLEAR_LOGS_TABLE);
+
+export const fetchLogFiles = createThunk(FETCH_LOG_FILES);
+export const fetchUpdateLogFiles = createThunk(FETCH_UPDATE_LOG_FILES);
+
+export const restart = createThunk(RESTART);
+export const shutdown = createThunk(SHUTDOWN);
+export const testProxySettings = createThunk(TEST_PROXY);
+export const fetchSystemStatistics = createThunk(FETCH_SYSTEM_STATISTICS);
+
+//
+// Action Handlers
+
+export const actionHandlers = handleThunks({
+  [FETCH_STATUS]: createFetchHandler('system.status', '/system/status'),
+  [FETCH_HEALTH]: createFetchHandler('system.health', '/health'),
+  [FETCH_DISK_SPACE]: createFetchHandler('system.diskSpace', '/diskspace'),
+  [FETCH_TASK]: createFetchHandler('system.tasks', '/system/task'),
+  [FETCH_TASKS]: createFetchHandler('system.tasks', '/system/task'),
+
+  [FETCH_BACKUPS]: createFetchHandler(backupsSection, '/system/backup'),
+
+  [RESTORE_BACKUP]: function(getState, payload, dispatch) {
+    const {
+      id,
+      file
+    } = payload;
+
+    dispatch(set({
+      section: backupsSection,
+      isRestoring: true
+    }));
+
+    let ajaxOptions = null;
+
+    if (id) {
+      ajaxOptions = {
+        url: `/system/backup/restore/${id}`,
+        method: 'POST',
+        contentType: 'application/json',
+        dataType: 'json',
+        data: JSON.stringify({
+          id
+        })
+      };
+    } else if (file) {
+      const formData = new FormData();
+      formData.append('restore', file);
+
+      ajaxOptions = {
+        url: '/system/backup/restore/upload',
+        method: 'POST',
+        processData: false,
+        contentType: false,
+        data: formData
+      };
+    } else {
+      dispatch(set({
+        section: backupsSection,
+        isRestoring: false,
+        restoreError: 'Error restoring backup'
+      }));
+    }
+
+    const promise = createAjaxRequest(ajaxOptions).request;
+
+    promise.done((data) => {
+      dispatch(set({
+        section: backupsSection,
+        isRestoring: false,
+        restoreError: null
+      }));
+    });
+
+    promise.fail((xhr) => {
+      dispatch(set({
+        section: backupsSection,
+        isRestoring: false,
+        restoreError: xhr
+      }));
+    });
+  },
+
+  [DELETE_BACKUP]: createRemoveItemHandler(backupsSection, '/system/backup'),
+
+  [FETCH_UPDATES]: createFetchHandler('system.updates', '/update'),
+  [FETCH_LOG_FILES]: createFetchHandler('system.logFiles', '/log/file'),
+  [FETCH_UPDATE_LOG_FILES]: createFetchHandler('system.updateLogFiles', '/log/file/update'),
+
+  ...createServerSideCollectionHandlers(
+    'system.logs',
+    '/log',
+    fetchLogs,
+    {
+      [serverSideCollectionHandlers.FETCH]: FETCH_LOGS,
+      [serverSideCollectionHandlers.FIRST_PAGE]: GOTO_FIRST_LOGS_PAGE,
+      [serverSideCollectionHandlers.PREVIOUS_PAGE]: GOTO_PREVIOUS_LOGS_PAGE,
+      [serverSideCollectionHandlers.NEXT_PAGE]: GOTO_NEXT_LOGS_PAGE,
+      [serverSideCollectionHandlers.LAST_PAGE]: GOTO_LAST_LOGS_PAGE,
+      [serverSideCollectionHandlers.EXACT_PAGE]: GOTO_LOGS_PAGE,
+      [serverSideCollectionHandlers.SORT]: SET_LOGS_SORT,
+      [serverSideCollectionHandlers.FILTER]: SET_LOGS_FILTER
+    }
+  ),
+
+  [RESTART]: function(getState, payload, dispatch) {
+    const promise = createAjaxRequest({
+      url: '/system/restart',
+      method: 'POST'
+    }).request;
+
+    promise.done(() => {
+      dispatch(setAppValue({ isRestarting: true }));
+      dispatch(pingServer());
+    });
+  },
+
+  [SHUTDOWN]: function() {
+    createAjaxRequest({
+      url: '/system/shutdown',
+      method: 'POST'
+    });
+  },
+
+  [FETCH_SYSTEM_STATISTICS]: function(getState, payload, dispatch) {
+    dispatch(set({
+      section: 'system.statistics',
+      isFetching: true
+    }));
+
+    const promise = createAjaxRequest({
+      url: '/system/statistics',
+      data: {
+        mediaType: payload.mediaType || 'all'
+      }
+    }).request;
+
+    promise.done((data) => {
+      dispatch(set({
+        section: 'system.statistics',
+        isFetching: false,
+        isPopulated: true,
+        error: null,
+        item: data
+      }));
+    });
+
+    promise.fail((xhr) => {
+      dispatch(set({
+        section: 'system.statistics',
+        isFetching: false,
+        isPopulated: false,
+        error: xhr.aborted ? null : xhr
+      }));
+    });
+  },
+
+  [TEST_PROXY]: function(getState, payload, dispatch) {
+    const {
+      proxyEnabled,
+      proxyType,
+      proxyHostname,
+      proxyPort,
+      proxyUsername,
+      proxyPassword
+    } = payload;
+
+    const promise = createAjaxRequest({
+      url: '/config/host/test/proxy',
+      method: 'POST',
+      dataType: 'json',
+      data: JSON.stringify({
+        proxyHostname,
+        proxyPort,
+        proxyType,
+        proxyUsername,
+        proxyPassword
+      })
+    }).request;
+
+    const deferred = $.Deferred();
+
+    promise.done((data) => {
+      if (data.isValid) {
+        const messageId = `proxy-test-${Date.now()}`;
+        dispatch(showMessage({
+          id: messageId,
+          message: `Proxy test successful: ${data.message}`,
+          type: 'success'
+        }));
+        
+        // Manually hide after 5 seconds
+        setTimeout(() => {
+          dispatch(hideMessage({ id: messageId }));
+        }, 5000);
+        
+        // Resolve the promise for success
+        deferred.resolve(data);
+      } else {
+        const messageId = `proxy-test-error-${Date.now()}`;
+        dispatch(showMessage({
+          id: messageId,
+          message: `Proxy test failed: ${data.message}`,
+          type: 'error'
+        }));
+        
+        // Manually hide after 8 seconds
+        setTimeout(() => {
+          dispatch(hideMessage({ id: messageId }));
+        }, 8000);
+        
+        // Reject the promise for validation failure
+        deferred.reject({ message: data.message || 'Proxy test failed' });
+      }
+    });
+
+    promise.fail((xhr) => {
+      const messageId = `proxy-test-fail-${Date.now()}`;
+      dispatch(showMessage({
+        id: messageId,
+        message: `Proxy test failed: ${xhr.responseText || 'Connection failed'}`,
+        type: 'error'
+      }));
+      
+      // Manually hide after 8 seconds
+      setTimeout(() => {
+        dispatch(hideMessage({ id: messageId }));
+      }, 8000);
+      
+      // Reject the promise for network failure
+      deferred.reject({ message: xhr.responseText || 'Connection failed' });
+    });
+
+    return deferred.promise();
+  }
+});
+
+//
+// Reducers
+
+export const reducers = createHandleActions({
+
+  [CLEAR_RESTORE_BACKUP]: function(state, { payload }) {
+    return {
+      ...state,
+      backups: {
+        ...state.backups,
+        isRestoring: false,
+        restoreError: null
+      }
+    };
+  },
+
+  [SET_LOGS_TABLE_OPTION]: createSetTableOptionReducer('logs'),
+
+  [CLEAR_LOGS_TABLE]: createClearReducer(section, {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    items: [],
+    totalPages: 0,
+    totalRecords: 0
+  })
+
+}, defaultState, section);

@@ -1,0 +1,16 @@
+/* Import shared styles for consistency between headers and cells */
+.path {
+  composes: path from './BookFileEditorSharedStyles.css';
+}
+
+.size {
+  composes: size from './BookFileEditorSharedStyles.css';
+}
+
+.quality {
+  composes: quality from './BookFileEditorSharedStyles.css';
+}
+
+.dateAdded {
+  composes: dateAdded from './BookFileEditorSharedStyles.css';
+}

@@ -1,0 +1,376 @@
+name: Build Chaptarr
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: osx
+
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        fetch-depth: 0
+
+    - name: Guard (repo) - no merge-conflict markers
+      shell: bash
+      run: |
+        if git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- .; then
+          echo "Merge-conflict markers found in tracked files."
+          exit 1
+        fi
+        python -c "import json; json.load(open('package.json', encoding='utf-8'))"
+
+    - name: Guard (version) - package.json and Directory.Build.props in sync
+      shell: bash
+      run: python3 build-tools/version_guard.py sync
+
+    - name: Guard (version) - no decreases on develop
+      if: github.ref == 'refs/heads/develop' || github.base_ref == 'develop'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          git fetch --no-tags origin "refs/heads/develop:refs/remotes/origin/develop"
+          COMPARE_REF="origin/develop"
+        else
+          COMPARE_REF="${{ github.event.before }}"
+
+          if [[ -z "$COMPARE_REF" || "$COMPARE_REF" == "0000000000000000000000000000000000000000" ]]; then
+            echo "No previous commit available for monotonic version comparison; skipping."
+            exit 0
+          fi
+        fi
+
+        python3 build-tools/version_guard.py monotonic \
+          --compare-ref "$COMPARE_REF" \
+          --event-path "$GITHUB_EVENT_PATH"
+
+    - name: Guard (version) - version-only commits stay pure
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          git fetch --no-tags origin "refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+          COMPARE_REF="origin/${{ github.base_ref }}"
+        else
+          COMPARE_REF="${{ github.event.before }}"
+
+          if [[ -z "$COMPARE_REF" || "$COMPARE_REF" == "0000000000000000000000000000000000000000" ]]; then
+            echo "No previous commit available for version-only commit hygiene; skipping."
+            exit 0
+          fi
+        fi
+
+        python3 build-tools/version_guard.py commit-hygiene --compare-ref "$COMPARE_REF"
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      with:
+        dotnet-version: 10.0.x
+    
+    - name: Download FFmpeg (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        chmod +x ./build-tools/download-ffmpeg.sh
+        ./build-tools/download-ffmpeg.sh ${{ matrix.platform }}
+    
+    - name: Download FFmpeg (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        powershell -ExecutionPolicy Bypass -File ./build-tools/download-ffmpeg.ps1
+    
+    - name: Restore dependencies
+      run: |
+        dotnet restore src/Chaptarr.NoTests.sln
+        dotnet restore src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj
+    
+    - name: Build
+      run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
+    
+    - name: Test
+      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore --verbosity normal
+    
+    - name: Publish
+      run: |
+        dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o ./publish/Chaptarr
+        dotnet publish src/NzbDrone.Update/Chaptarr.Update.csproj -c Release -f net10.0 -o ./publish/Chaptarr/Chaptarr.Update
+    
+    - name: Copy Tools to publish
+      run: |
+        mkdir -p ./publish/Chaptarr/Tools
+        if [ -d "./Tools" ]; then
+          cp -r ./Tools/* ./publish/Chaptarr/Tools/
+        else
+          echo "Warning: Tools directory not found, skipping copy"
+        fi
+      shell: bash
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: chaptarr-${{ matrix.platform }}
+        path: ./publish/
+        retention-days: 7
+        if-no-files-found: error
+
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: chaptarr
+          POSTGRES_PASSWORD: chaptarr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chaptarr"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Install PostgreSQL client
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+
+    - name: Create databases
+      shell: bash
+      env:
+        PGPASSWORD: chaptarr
+      run: |
+        set -euo pipefail
+        psql -h localhost -U chaptarr -d postgres -c 'CREATE DATABASE "chaptarr-main";'
+        psql -h localhost -U chaptarr -d postgres -c 'CREATE DATABASE "chaptarr-log";'
+        psql -h localhost -U chaptarr -d postgres -c 'CREATE DATABASE "chaptarr-cache";'
+
+    - name: Restore dependencies
+      run: dotnet restore src/Chaptarr.NoTests.sln
+
+    - name: Build (migrations smoke)
+      run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
+
+    - name: Smoke - migrate up on fresh PostgreSQL
+      shell: bash
+      env:
+        Chaptarr__Postgres__Host: localhost
+        Chaptarr__Postgres__Port: 5432
+        Chaptarr__Postgres__User: chaptarr
+        Chaptarr__Postgres__Password: chaptarr
+        Chaptarr__Postgres__MainDb: chaptarr-main
+        Chaptarr__Postgres__LogDb: chaptarr-log
+        Chaptarr__Postgres__CacheDb: chaptarr-cache
+        Chaptarr__Server__BindAddress: 127.0.0.1
+        Chaptarr__Server__Port: 8789
+      run: |
+        set -euo pipefail
+
+        DATA_DIR="$(mktemp -d)"
+        echo "Using data dir: $DATA_DIR"
+
+        dotnet run --project src/NzbDrone.Console/Chaptarr.Console.csproj -c Release --no-build --framework net10.0 -- \
+          /nobrowser "/data=$DATA_DIR" > app.log 2>&1 &
+        pid=$!
+
+        ready=""
+        for i in $(seq 1 90); do
+          if curl -fsS "http://127.0.0.1:8789/ping" >/dev/null 2>&1; then
+            ready="yes"
+            break
+          fi
+          sleep 1
+        done
+
+        kill "$pid" >/dev/null 2>&1 || true
+        wait "$pid" >/dev/null 2>&1 || true
+
+        if [ "$ready" != "yes" ]; then
+          echo "Chaptarr failed to start or /ping did not become ready."
+          tail -n 400 app.log || true
+          exit 1
+        fi
+
+        echo "PostgreSQL migrations smoke test passed."
+
+  auto_tag:
+    needs: [build, postgres-migrations]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.auto_tag.outputs.tag }}
+      created: ${{ steps.auto_tag.outputs.created }}
+      at_head: ${{ steps.auto_tag.outputs.at_head }}
+
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        fetch-depth: 0
+
+    - name: Create version tag on develop (if needed)
+      id: auto_tag
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+
+        # Defaults (used by release job conditions)
+        echo "tag=" >> "$GITHUB_OUTPUT"
+        echo "created=false" >> "$GITHUB_OUTPUT"
+        echo "at_head=false" >> "$GITHUB_OUTPUT"
+
+        if [[ "${{ github.event_name }}" != "push" || "${{ github.ref }}" != "refs/heads/develop" ]]; then
+          echo "Not a develop push; skipping auto-tag."
+          exit 0
+        fi
+
+        VERSION="$(python3 -c "import json; print(json.load(open('package.json', encoding='utf-8'))['version'])")"
+        TAG="v${VERSION}"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+        BEFORE_SHA="${{ github.event.before }}"
+        if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+          BEFORE_VERSION="$(git show "${BEFORE_SHA}:package.json" | python3 -c "import json, sys; print(json.load(sys.stdin)['version'])")"
+          if [[ "$BEFORE_VERSION" == "$VERSION" ]]; then
+            echo "Version unchanged ($VERSION); skipping auto-tag."
+            exit 0
+          fi
+        fi
+
+        HEAD_SHA="$(git rev-parse HEAD)"
+
+        # Check for both annotated (^{}) and lightweight tags
+        REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}' || true)"
+        if [[ -z "$REMOTE_SHA" ]]; then
+          REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}' || true)"
+        fi
+        if [[ -n "$REMOTE_SHA" ]]; then
+          if [[ "$REMOTE_SHA" == "$HEAD_SHA" ]]; then
+            echo "Tag $TAG already exists on this commit."
+            echo "at_head=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Tag $TAG already exists but points to $REMOTE_SHA (HEAD is $HEAD_SHA)."
+          echo "Bump the version before tagging a new release."
+          exit 1
+        fi
+
+        echo "Creating tag $TAG"
+        git tag "$TAG"
+        git push origin "$TAG"
+
+        echo "created=true" >> "$GITHUB_OUTPUT"
+        echo "at_head=true" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: [build, postgres-migrations, auto_tag]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || needs.auto_tag.outputs.at_head == 'true'
+    permissions:
+      contents: write
+    
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+    - name: Guard (release) - tag matches versions
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.auto_tag.outputs.tag }}
+      run: python3 build-tools/version_guard.py release-tag --tag "${RELEASE_TAG}"
+
+    - name: Check if release exists
+      id: release_check
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.auto_tag.outputs.tag }}
+      shell: bash
+      run: |
+        TAG="${RELEASE_TAG}"
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Download build artifacts
+      if: steps.release_check.outputs.exists != 'true'
+      uses: actions/download-artifact@v4
+      with:
+        path: release-artifacts
+
+    - name: Package release assets
+      if: steps.release_check.outputs.exists != 'true'
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.auto_tag.outputs.tag }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+
+        TAG="${RELEASE_TAG}"
+        VERSION="${TAG#v}"
+
+        rm -rf release-assets
+        mkdir -p release-assets
+
+        for dir in release-artifacts/chaptarr-*; do
+          name="$(basename "$dir")"
+          platform="${name#chaptarr-}"
+
+          (cd "$dir" && zip -r "../../release-assets/Chaptarr-${VERSION}-${platform}.zip" .)
+        done
+
+        ls -la release-assets
+
+    - name: Create GitHub Release
+      if: steps.release_check.outputs.exists != 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.auto_tag.outputs.tag }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        TAG="${RELEASE_TAG}"
+        echo "Tag: $TAG"
+        ls -la release-assets
+
+        echo "Creating release $TAG"
+        gh release create "$TAG" \
+          release-assets/*.zip \
+          --title "Chaptarr $TAG" \
+          --generate-notes \
+          --verify-tag

@@ -1,0 +1,81 @@
+.controlsContainer {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-bottom: 20px;
+  padding: 0;
+  gap: 10px;
+  position: relative;
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.leftControls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex: 1;
+  min-width: 0; /* Allow shrinking */
+}
+
+.syncAndToggle {
+  display: flex;
+  align-items: flex-start;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.syncIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+
+  color: var(--infoColor);
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.rightControls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto; /* Don't shrink, stay on right */
+}
+
+/* When screen gets very narrow, wrap search bar to next row */
+@media (max-width: 600px) {
+  .topRow {
+    justify-content: space-between;
+  }
+  
+  .leftControls {
+    flex-wrap: wrap;
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .leftControls > *:last-child {
+    /* Search bar takes full width on its own row */
+    width: 100%;
+    order: 2;
+    margin-top: 10px;
+  }
+  
+  .rightControls {
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+}
+
+.rootFolderMessage {
+  width: 100%;
+  margin-top: 15px;
+}

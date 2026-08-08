@@ -1,0 +1,56 @@
+.metadataProfiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.addMetadataProfile {
+  composes: metadataProfile from '~./MetadataProfile.css';
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--cardAlternateBackgroundColor);
+  border: 2px dashed var(--inputBorderColor);
+  color: var(--helpTextColor);
+  min-height: 150px;
+}
+
+.addMetadataProfile:hover {
+  border-color: var(--themeLightColor);
+  background-color: var(--cardBackgroundColor);
+}
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.addText {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.profilesColumns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+}
+
+.profileColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.columnHeader {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--textColor);
+  margin: 0 0 10px 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--inputBorderColor);
+}

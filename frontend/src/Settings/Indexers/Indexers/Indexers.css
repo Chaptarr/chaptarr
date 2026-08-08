@@ -1,0 +1,35 @@
+.indexers {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.section {
+  width: 100%;
+}
+
+.sectionTitle {
+  margin: 14px 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--textColor);
+}
+
+.sectionTitleFirst {
+  margin-top: 0;
+}
+
+.addIndexer {
+  composes: indexer from '~./Indexer.css';
+
+  background-color: var(--cardAlternateBackgroundColor);
+  color: var(--gray);
+  text-align: center;
+}
+
+.center {
+  display: inline-block;
+  padding: 5px 20px 0;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  background-color: var(--cardCenterBackgroundColor);
+}

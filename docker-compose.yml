@@ -1,0 +1,55 @@
+services:
+  chaptarr:
+    image: chaptarr/chaptarr:latest
+    container_name: chaptarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      # Optional: use 002 when multiple containers/users share the same media group.
+      # - UMASK=002
+      - TZ=America/New_York  # Change to your timezone
+      # Optional: Use external PostgreSQL instead of SQLite (create DBs separately)
+      # - Chaptarr__Postgres__Host=postgres
+      # - Chaptarr__Postgres__Port=5432
+      # - Chaptarr__Postgres__User=chaptarr
+      # - Chaptarr__Postgres__Password=changeme
+      # - Chaptarr__Postgres__MainDb=chaptarr-main
+      # - Chaptarr__Postgres__LogDb=chaptarr-log
+      # - Chaptarr__Postgres__CacheDb=chaptarr-cache
+    volumes:
+      # If ./config doesn't exist, Docker will create it as root:root; create it first (or fix ownership) so it matches PUID/PGID.
+      - ./config:/config
+      - /path/to/audiobooks:/audiobooks  # Change to your audiobook path
+      - /path/to/ebooks:/ebooks          # Change to your ebook path
+      - /path/to/downloads:/downloads    # Change to your download path
+    ports:
+      - 8789:8789
+    restart: unless-stopped
+
+# Optional: Add your download client
+  # qbittorrent:
+  #   image: lscr.io/linuxserver/qbittorrent:latest
+  #   container_name: qbittorrent
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #     - TZ=America/New_York
+  #     - WEBUI_PORT=8080
+  #   volumes:
+  #     - ./qbittorrent/config:/config
+  #     - /path/to/downloads:/downloads
+  #   ports:
+  #     - 8080:8080
+  #     - 6881:6881
+  #     - 6881:6881/udp
+  #   restart: unless-stopped
+
+# Optional: Add proxy for MAM
+  # flaresolverr:
+  #   image: ghcr.io/flaresolverr/flaresolverr:latest
+  #   container_name: flaresolverr
+  #   environment:
+  #     - LOG_LEVEL=info
+  #   ports:
+  #     - 8191:8191
+  #   restart: unless-stopped

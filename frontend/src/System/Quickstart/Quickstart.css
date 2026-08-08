@@ -1,0 +1,752 @@
+.progressContainer {
+  position: fixed;
+  top: 60px; /* Account for header height */
+  left: $sidebarWidth; /* Account for sidebar width */
+  right: 0; /* Extend to right edge */
+  z-index: 100;
+  background-color: var(--pageBackground);
+  padding: 15px 30px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  animation: fadeIn 0.3s ease-out;
+}
+
+@media (max-width: $breakpointSmall) {
+  .progressContainer {
+    left: 0; /* No sidebar on mobile */
+  }
+}
+
+/* Spacer to prevent content from hiding under fixed progress bar */
+.progressSpacer {
+  height: 80px; /* Height of progress container + some margin */
+}
+
+.progressBar {
+  width: 100%;
+  height: 4px;
+  background-color: var(--inputBackgroundColor);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.progressFill {
+  height: 100%;
+  background-color: var(--successColor);
+  transition: width 0.5s ease-out;
+  border-radius: 2px;
+}
+
+.progressText {
+  font-size: 14px;
+  color: var(--helpTextColor);
+  text-align: right;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.intro {
+  margin-bottom: 30px;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.intro p {
+  margin-bottom: 10px;
+}
+
+.section {
+  margin-bottom: 40px;
+  opacity: 0;
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+/* Stagger section animations */
+.section:nth-child(1) { animation-delay: 0ms; }
+.section:nth-child(2) { animation-delay: 100ms; }
+.section:nth-child(3) { animation-delay: 200ms; }
+.section:nth-child(4) { animation-delay: 300ms; }
+.section:nth-child(5) { animation-delay: 400ms; }
+.section:nth-child(6) { animation-delay: 500ms; }
+.section:nth-child(7) { animation-delay: 600ms; }
+.section:nth-child(8) { animation-delay: 700ms; }
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--textColor);
+  letter-spacing: -0.02em;
+}
+
+.sectionHeaderButton {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sectionHeaderButton:hover .sectionToggleLabel,
+.sectionHeaderButton:focus .sectionToggleLabel {
+  color: var(--textColor);
+}
+
+.sectionHeaderTitle {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sectionToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 20px;
+  color: var(--helpTextColor);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.sectionBody {
+  display: block;
+}
+
+.sectionBodyCollapsed {
+  display: none;
+}
+
+.quickstartToolbarMessage {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: var(--toolbarColor);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: $toolbarHeight;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sectionDescription {
+  margin-bottom: 20px;
+  color: var(--helpTextColor);
+}
+
+.link {
+  composes: link from '~Components/Link/Link.css';
+
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #e5e5e5;
+  color: var(--textColor);
+  font-size: 21px;
+
+  &:hover {
+    color: #616573;
+    text-decoration: none;
+  }
+}
+
+.checkIcon {
+  margin-left: 10px;
+  color: var(--successColor);
+  opacity: 0;
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.summary {
+  margin-top: 10px;
+  margin-bottom: 30px;
+  color: var(--helpTextColor);
+}
+
+.summary ul {
+  margin-top: 10px;
+  margin-left: 20px;
+}
+
+.summary li {
+  margin-bottom: 5px;
+}
+
+.collapsedSection {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  background-color: var(--inputBackgroundColor);
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.collapsedSection:hover {
+  background-color: var(--inputHoverBackgroundColor);
+}
+
+.collapsedContent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.proxyInfo {
+  color: var(--helpTextColor);
+  font-size: 14px;
+}
+
+.successMessage {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  color: var(--successColor);
+}
+
+.existingProfiles {
+  margin-bottom: 20px;
+}
+
+.existingProfiles h3 {
+  margin-bottom: 10px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.profileSummary {
+  padding: 10px 15px;
+  margin-bottom: 10px;
+  background-color: var(--inputBackgroundColor);
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+}
+
+.criteriaList {
+  margin-top: 5px;
+  font-size: 14px;
+  color: var(--helpTextColor);
+}
+
+.criterionItem {
+  margin-right: 15px;
+}
+
+.addButton {
+  padding: 15px;
+  background-color: var(--inputBackgroundColor);
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.addButton:hover {
+  background-color: var(--inputHoverBackgroundColor);
+  border-color: var(--primaryColor);
+}
+
+.addButtonContent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 16px;
+}
+
+.quickstartList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+@media (max-width: 768px) {
+  .quickstartList {
+    grid-template-columns: 1fr;
+  }
+}
+
+.quickstartCard {
+  padding: 15px;
+  background-color: var(--cardBackgroundColor);
+  border: 1px solid var(--cardBorderColor);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+  animation: fadeInUp 0.4s ease-out;
+  min-height: 120px;
+  max-width: 400px;
+}
+
+.quickstartCard:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+}
+
+.completedCard {
+  border-color: var(--successColor);
+  border-width: 2px;
+  padding: 19px; /* Adjust for thicker border */
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+.quickstartCardContent {
+  display: flex;
+  flex-direction: column;
+}
+
+.quickstartCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.quickstartCardTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.quickstartCardSubtitle {
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: var(--helpTextColor);
+}
+
+.quickstartCardDescription {
+  margin-bottom: 15px;
+  font-size: 14px;
+  color: var(--textColor);
+}
+
+.quickstartCardDescription p {
+  margin-bottom: 8px;
+}
+
+.quickstartCardNote {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--helpTextColor);
+  font-style: italic;
+}
+
+.quickstartCardActions {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Inline row layout for compact, consistent status rows */
+.inlineRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.statusLine {
+  margin-top: 8px;
+  color: var(--helpTextColor);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Compact inline status labels (e.g., VIP, Proxy) */
+.statusLabels {
+  margin-left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Allow actions row to wrap nicely in narrow layouts */
+.cardActionsWrap {
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* Lay out optional connection buttons side by side with spacing */
+.optionalConnectionsRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.optionalConnectionItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hardcoverAvatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+
+.hardcoverButtonContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 180px;
+  min-width: 0;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.hardcoverButtonAvatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.hardcoverButtonUsername {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.quickstartCardButton {
+  padding: 8px 16px;
+  background-color: var(--primaryColor);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  text-decoration: none;
+  text-align: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  display: inline-block;
+}
+
+.quickstartCardButton:hover {
+  background-color: var(--primaryHoverColor);
+  color: white;
+  text-decoration: none;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.quickstartHeaderNextButton {
+  composes: quickstartCardButton;
+
+  flex: 0 0 auto;
+  min-width: 120px;
+}
+
+.quickstartCardAddContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  text-align: center;
+}
+
+.quickstartCardWarning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.statusLabel {
+  margin-left: 10px;
+}
+
+.protocolLabel {
+  margin-right: 10px;
+}
+
+.priorityLabel {
+  margin-left: 5px;
+}
+
+.downloadClientsList {
+  margin-bottom: 20px;
+}
+
+.subsectionHeader {
+  margin-bottom: 15px;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--textColor);
+}
+
+.quickstartMatchingControls {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: 10px;
+}
+
+.quickstartMatchingControl {
+  margin-bottom: 18px;
+}
+
+.quickstartMatchingControl:last-child {
+  margin-bottom: 0;
+}
+
+.quickstartMatchingSelect {
+  max-width: 280px;
+}
+
+.quickstartMatchingHelpText {
+  margin-top: 6px;
+  color: var(--helpTextColor);
+  line-height: 20px;
+}
+
+.quickstartMatchingHelpTextIndented {
+  padding-left: 30px;
+}
+
+.quickstartMatchingActions {
+  margin-top: 28px;
+}
+
+.matchingExamplesContext {
+  margin-top: 14px;
+  color: var(--textColor);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.matchingExamples {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.matchingExample {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+  height: 100%;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  background: var(--inputBackgroundColor);
+}
+
+.matchingExampleSelected {
+  border-color: var(--primaryColor);
+}
+
+.matchingExampleHeader {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--textColor);
+  font-weight: 500;
+}
+
+.matchingExampleField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.matchingExampleField + .matchingExampleField {
+  margin-top: 10px;
+}
+
+.matchingExampleFieldLabel {
+  display: inline-flex;
+  width: fit-content;
+  padding: 1px 7px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 3px;
+  background: var(--inputBackgroundColor);
+  color: var(--textColor);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+}
+
+.matchingExampleFieldAllow .matchingExampleFieldLabel {
+  border-color: var(--primaryColor);
+  color: var(--primaryColor);
+}
+
+.matchingExampleFieldBlock {
+  grid-row: 5;
+  align-self: end;
+  margin-top: 0;
+  padding-top: 14px;
+}
+
+.matchingExampleFieldBlock .matchingExampleFieldLabel {
+  border-color: var(--dangerColor);
+  color: var(--dangerColor);
+}
+
+.matchingExampleTokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.matchingToken {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 3px;
+  color: var(--textColor);
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.matchingToken::before {
+  content: '[';
+  margin-right: 3px;
+  color: var(--helpTextColor);
+}
+
+.matchingToken::after {
+  content: ']';
+  margin-left: 3px;
+  color: var(--helpTextColor);
+}
+
+.matchingTokenTitle {
+  border-bottom: 2px solid var(--successColor);
+}
+
+.matchingTokenAllowed {
+  border-bottom: 2px solid var(--primaryColor);
+}
+
+.matchingTokenConflict {
+  border-bottom: 2px solid var(--dangerColor);
+}
+
+.matchingExampleExplanation {
+  margin-bottom: 12px;
+  color: var(--helpTextColor);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.downloadClientItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  background-color: var(--inputBackgroundColor);
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.downloadClientItem:hover {
+  background-color: var(--inputHoverBackgroundColor);
+  border-color: var(--primaryColor);
+}
+
+.downloadClientInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.downloadClientInfo strong {
+  font-weight: 500;
+  color: var(--textColor);
+}
+
+.enabledLabel {
+  padding: 2px 8px;
+  background-color: var(--successColor);
+  color: white;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.disabledLabel {
+  padding: 2px 8px;
+  background-color: var(--warningColor);
+  color: white;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.clientType {
+  font-size: 14px;
+  color: var(--helpTextColor);
+}
+
+@media only screen and (max-width: $breakpointLarge) {
+  .quickstartMatchingSelect {
+    max-width: 100%;
+  }
+
+  .matchingExamples {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .quickstartHeaderNextButton {
+    min-width: 96px;
+  }
+}

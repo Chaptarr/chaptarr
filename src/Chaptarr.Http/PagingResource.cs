@@ -1,0 +1,77 @@
+using System.Collections.Generic;
+using System.ComponentModel;
+using Chaptarr.Http.REST;
+using NzbDrone.Core.Datastore;
+
+namespace Chaptarr.Http
+{
+    public class PagingRequestResource
+    {
+        [DefaultValue(1)]
+        public int? Page { get; set; }
+        [DefaultValue(10)]
+        public int? PageSize { get; set; }
+        public string SortKey { get; set; }
+        public SortDirection? SortDirection { get; set; }
+    }
+
+    public class PagingResource<TResource>
+    {
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+        public string SortKey { get; set; }
+        public SortDirection SortDirection { get; set; }
+        public int TotalRecords { get; set; }
+        public List<TResource> Records { get; set; }
+
+        public PagingResource()
+        {
+        }
+
+        public PagingResource(PagingRequestResource requestResource)
+        {
+            Page = requestResource.Page ?? 1;
+            PageSize = requestResource.PageSize ?? 10;
+            SortKey = requestResource.SortKey;
+            SortDirection = requestResource.SortDirection ?? SortDirection.Default;
+        }
+    }
+
+    public static class PagingResourceMapper
+    {
+        public static PagingSpec<TModel> MapToPagingSpec<TResource, TModel>(this PagingResource<TResource> pagingResource, string defaultSortKey = "Id", SortDirection defaultSortDirection = SortDirection.Descending)
+        {
+            const int maxPageSize = 1000;
+
+            if (pagingResource.Page < 1)
+            {
+                throw new BadRequestException(new { message = "Page must be >= 1" });
+            }
+
+            if (pagingResource.PageSize < 1 || pagingResource.PageSize > maxPageSize)
+            {
+                throw new BadRequestException(new { message = $"PageSize must be between 1 and {maxPageSize}" });
+            }
+
+            var pagingSpec = new PagingSpec<TModel>
+            {
+                Page = pagingResource.Page,
+                PageSize = pagingResource.PageSize,
+                SortKey = pagingResource.SortKey,
+                SortDirection = pagingResource.SortDirection,
+            };
+
+            if (pagingResource.SortDirection == SortDirection.Default)
+            {
+                pagingSpec.SortDirection = defaultSortDirection;
+            }
+
+            if (pagingResource.SortKey == null)
+            {
+                pagingSpec.SortKey = defaultSortKey;
+            }
+
+            return pagingSpec;
+        }
+    }
+}

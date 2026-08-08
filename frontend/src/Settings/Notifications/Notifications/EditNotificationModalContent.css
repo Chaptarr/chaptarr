@@ -1,0 +1,106 @@
+.deleteButton {
+  composes: button from '~Components/Link/Button.css';
+
+  margin-right: auto;
+}
+
+.message {
+  composes: alert from '~Components/Alert.css';
+
+  margin-bottom: 30px;
+}
+
+.absMappings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.absMappingToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.absMappingTitle {
+  font-weight: 600;
+}
+
+.absMappingHelp {
+  margin-top: 3px;
+  color: var(--darkGray);
+}
+
+.absMappingGridHeader,
+.absMappingRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1.2fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.absMappingGridHeader {
+  color: var(--darkGray);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.absMappingRow {
+  min-height: 34px;
+}
+
+.absMappingSource {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.absMappingBadge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background-color: var(--inputReadOnlyBackgroundColor);
+  color: var(--darkGray);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.absMappingPath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.absMappingArrow {
+  color: var(--darkGray);
+  text-align: center;
+}
+
+.absMappingDestination {
+  min-width: 0;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .absMappingGridHeader {
+    display: none;
+  }
+
+  .absMappingRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .absMappingArrow {
+    display: none;
+  }
+
+  .absMappingPath {
+    white-space: normal;
+    word-break: break-all;
+  }
+}

@@ -1,0 +1,113 @@
+name: Docker Build and Publish
+
+on:
+  workflow_run:
+    workflows: ["Build Chaptarr"]
+    types: [completed]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAMES: robertlordhood/chaptarr chaptarr/chaptarr
+
+jobs:
+  build-and-push:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        ref: ${{ github.event.workflow_run.head_sha }}
+        fetch-depth: 0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+    - name: Check Docker credentials
+      id: check-docker
+      if: github.event.workflow_run.event == 'push'
+      env:
+        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      run: |
+        if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
+          echo "credentials=true" >> "$GITHUB_OUTPUT"
+          echo "Docker credentials are available"
+        else
+          echo "credentials=false" >> "$GITHUB_OUTPUT"
+          echo "Docker credentials are not configured - skipping Docker publish"
+        fi
+        
+    - name: Log in to Docker Hub
+      if: github.event.workflow_run.event == 'push' && steps.check-docker.outputs.credentials == 'true'
+      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Generate Docker tags
+      id: docker-tags
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        sha="${{ github.event.workflow_run.head_sha }}"
+        branch="${{ github.event.workflow_run.head_branch }}"
+        tags=()
+
+        for name in ${IMAGE_NAMES}; do
+          image="${REGISTRY}/${name}"
+
+          if [[ "$branch" == "main" || "$branch" == "develop" ]]; then
+            tags+=("$image:$branch")
+          fi
+
+          if [[ "$branch" == "main" ]]; then
+            tags+=("$image:latest")
+          fi
+
+          while IFS= read -r tag; do
+            version="${tag#v}"
+            tags+=("$image:$version")
+
+            IFS=. read -r major minor patch extra <<< "$version"
+            if [[ -n "${major:-}" && -n "${minor:-}" && -z "${extra:-}" ]]; then
+              tags+=("$image:$major.$minor")
+              if [[ -n "${patch:-}" ]]; then
+                tags+=("$image:$major.$minor.$patch")
+              fi
+            fi
+          done < <(git tag --points-at "$sha" 'v*' | sort -V)
+        done
+
+        if [[ "${#tags[@]}" -eq 0 ]]; then
+          echo "No Docker tags generated for $sha; skipping publish."
+          echo "has_tags=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "has_tags=true" >> "$GITHUB_OUTPUT"
+        {
+          echo 'tags<<EOF'
+          printf '%s\n' "${tags[@]}" | sort -u
+          echo 'EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Build and push Docker image
+      if: steps.docker-tags.outputs.has_tags == 'true'
+      uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+      with:
+        context: .
+        file: ./Dockerfile.cross
+        platforms: linux/amd64,linux/arm64,linux/arm/v7
+        push: ${{ steps.check-docker.outputs.credentials == 'true' && steps.docker-tags.outputs.has_tags == 'true' }}
+        tags: ${{ steps.docker-tags.outputs.tags }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

@@ -1,0 +1,232 @@
+.container {
+  margin: 20px auto 0;
+  max-width: 1100px;
+}
+
+.decision {
+  padding: 4px 0 24px;
+  border-bottom: 1px solid var(--borderColor);
+
+  & + & {
+    padding-top: 24px;
+  }
+
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+
+.decisionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.route {
+  color: var(--textColor);
+  font-weight: 600;
+  font-size: 17px;
+}
+
+.mode {
+  flex-shrink: 0;
+  color: var(--helpTextColor);
+  font-size: 12px;
+}
+
+.summarySection {
+  margin-top: 20px;
+}
+
+.summaryHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+
+  margin-bottom: 8px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.signalList {
+  max-width: 850px;
+}
+
+.signalRow {
+  display: grid;
+  grid-template-columns: 145px minmax(0, 1fr);
+  gap: 12px;
+
+  padding: 5px 0;
+  border-bottom: 1px solid var(--borderColor);
+  line-height: 1.5;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+
+.signalLabel {
+  color: var(--helpTextColor);
+  font-size: 12px;
+}
+
+.signalValues {
+  min-width: 0;
+  overflow-wrap: anywhere;
+
+  font-size: 13px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+
+  color: var(--helpTextColor);
+  font-size: 11px;
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  i {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+}
+
+.supportingDot {
+  background-color: var(--primaryColor);
+}
+
+.conflictingDot {
+  background-color: var(--dangerColor);
+}
+
+.neutralDot {
+  background-color: var(--helpTextColor);
+}
+
+.annotatedEvidence {
+  min-width: 0;
+}
+
+.evidenceFields {
+  margin-bottom: 1px;
+  color: var(--helpTextColor);
+  overflow-wrap: anywhere;
+
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.evidenceText {
+  min-width: 0;
+  color: var(--textColor);
+  overflow-wrap: anywhere;
+
+  font-size: 13px;
+  font-family: monospace;
+  line-height: 1.65;
+}
+
+.unmatchedText {
+  color: var(--helpTextColor);
+}
+
+.supportingText {
+  color: var(--primaryColor);
+  font-weight: 600;
+}
+
+.conflictingText {
+  color: var(--dangerColor);
+  text-decoration: underline;
+  text-decoration-style: wavy;
+
+  font-weight: 600;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+.neutralText {
+  color: var(--helpTextColor);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.decisionDetails {
+  margin-top: 18px;
+  color: var(--helpTextColor);
+  font-size: 12px;
+
+  summary {
+    display: inline-block;
+    color: var(--linkColor);
+    cursor: pointer;
+  }
+}
+
+.decisionDetailsContent {
+  display: grid;
+  gap: 5px;
+
+  margin-top: 8px;
+  padding-left: 14px;
+  border-left: 2px solid var(--borderColor);
+  overflow-wrap: anywhere;
+}
+
+.fileAudit {
+  margin-top: 3px;
+
+  ul {
+    margin: 5px 0 0;
+    padding-left: 20px;
+  }
+}
+
+.unrecordedFiles {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.noExplanation {
+  color: var(--disabledColor);
+  line-height: 1.5;
+}
+
+.blankpad {
+  padding: 30px;
+  text-align: center;
+}
+
+@media only screen and (max-width: 700px) {
+  .decisionHeader {
+    display: block;
+  }
+
+  .mode {
+    margin-top: 4px;
+  }
+
+  .signalRow {
+    display: block;
+  }
+
+  .signalLabel {
+    margin-bottom: 2px;
+  }
+
+}

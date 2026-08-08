@@ -1,0 +1,26 @@
+/* Shared styles for BookFileEditor table headers and cells */
+
+.path {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  flex: 4 0 400px;
+  font-size: 13px;
+  font-family: $monoSpaceFontFamily;
+  text-align: left;
+}
+
+.size {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  width: 100px;
+}
+
+.quality,
+.dateAdded {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  width: 120px;
+}
+
+.mediaType {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+  width: 50px;
+  text-align: center;
+}

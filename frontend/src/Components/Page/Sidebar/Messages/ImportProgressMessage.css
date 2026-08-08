@@ -1,0 +1,174 @@
+.importProgressContainer {
+  padding: 10px 12px;
+  background: rgba(39, 194, 76, 0.02);
+  border-radius: 4px;
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Matched book line */
+.matchedBook {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #5fc3e4; /* Cyan color */
+  animation: flyIn 0.4s ease-out;
+}
+
+.matchedLabel {
+  font-weight: 600;
+}
+
+.matchedIcon {
+  font-size: 14px;
+}
+
+.matchedTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Processing author line */
+.processingAuthor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--sidebarColor);
+}
+
+/* Paused state - yellow/warning color */
+.processingAuthorPaused {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--warningColor);
+}
+
+.processingLabel {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+.authorIcon {
+  font-size: 14px;
+  color: var(--primaryColor);
+}
+
+.authorName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Counter grid - VERTICAL STACK */
+.counterGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.counterBox {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.counterContent {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.counterLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--sidebarColor);
+  opacity: 0.7;
+}
+
+.counterValue {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--sidebarColor);
+  font-family: var(--fontFamilyMono);
+}
+
+/* Mini progress bars at bottom of counter boxes */
+.miniProgressBar {
+  height: 3px;
+  background: rgba(0, 0, 0, 0.2);
+  position: relative;
+}
+
+.miniProgressFill {
+  height: 100%;
+  background: var(--successColor);
+  transition: width 0.3s ease;
+  box-shadow: 0 0 3px rgba(39, 194, 76, 0.4);
+}
+
+/* Main progress bar section */
+.progressBarSection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pauseButton {
+  padding: 4px;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.pauseButton:hover {
+  transform: scale(1.1);
+  color: var(--successColor);
+}
+
+/* Paused state pause button - yellow */
+.pauseButtonPaused {
+  padding: 4px;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  color: var(--warningColor);
+}
+
+.pauseButtonPaused:hover {
+  transform: scale(1.1);
+  color: var(--warningColor);
+}
+
+/* Animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes flyIn {
+  0% {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}

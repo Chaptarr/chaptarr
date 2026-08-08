@@ -1,0 +1,114 @@
+.container {
+  display: flex;
+  align-items: center;
+  margin-right: 10px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  --progress: 0;
+  --progressColor: var(--successColor);
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background-color: rgba(255, 255, 255, 0.12);
+  color: var(--white);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.chip::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 3px;
+  border-radius: 999px;
+  background: conic-gradient(
+    from 180deg,
+    var(--progressColor) calc(var(--progress) * 1%),
+    rgba(255, 255, 255, 0.22) 0
+  );
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.chip:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+.chip:active {
+  background-color: rgba(255, 255, 255, 0.14);
+}
+
+.chipPaused {
+  border-color: rgba(255, 165, 0, 0.35);
+  background-color: rgba(255, 165, 0, 0.18);
+  --progressColor: var(--warningColor);
+}
+
+.chipPaused:hover {
+  border-color: rgba(255, 165, 0, 0.45);
+  background-color: rgba(255, 165, 0, 0.22);
+}
+
+.statusIcon {
+  display: block;
+  opacity: 0.9;
+}
+
+.counts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.countItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.countIcon {
+  opacity: 0.9;
+}
+
+.countLabel {
+  opacity: 0.85;
+}
+
+.countValue {
+  display: inline-block;
+  min-width: 7ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pauseButton {
+  margin-left: 2px;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .container {
+    margin-right: 6px;
+  }
+
+  .chip {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .countLabel {
+    display: none;
+  }
+}

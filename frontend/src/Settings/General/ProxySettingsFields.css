@@ -1,0 +1,60 @@
+.proxyModeContent {
+  flex: 1;
+}
+
+.radioGroup {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+
+.radioOption {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 8px;
+  cursor: pointer;
+  padding: 10px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  background-color: var(--inputBackgroundColor);
+}
+
+.radioOption:hover {
+  background-color: var(--inputHoverBackgroundColor);
+}
+
+.radioInput {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.radioText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.radioLabel {
+  color: var(--textColor);
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.radioDescription {
+  color: var(--darkGray);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .radioGroup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

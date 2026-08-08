@@ -1,0 +1,99 @@
+.pageContentBodyWrapper {
+  display: flex;
+  flex: 1 0 1px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.errorMessage {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 20px;
+}
+
+.contentBody {
+  composes: contentBody from '~Components/Page/PageContentBody.css';
+
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.postersInnerContentBody {
+  composes: innerContentBody from '~Components/Page/PageContentBody.css';
+
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+
+  /* 5px less padding than normal to handle poster's 5px margin */
+  padding: calc($pageContentBodyPadding - 5px);
+  padding-bottom: calc(($pageContentBodyPadding - 5px) + var(--bookIndexFooterPinnedHeight, 0px));
+}
+
+.bannersInnerContentBody {
+  composes: innerContentBody from '~Components/Page/PageContentBody.css';
+
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+
+  /* 5px less padding than normal to handle poster's 5px margin */
+  padding: calc($pageContentBodyPadding - 5px);
+  padding-bottom: calc(($pageContentBodyPadding - 5px) + var(--bookIndexFooterPinnedHeight, 0px));
+}
+
+.tableInnerContentBody {
+  composes: innerContentBody from '~Components/Page/PageContentBody.css';
+
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+
+  padding-bottom: calc($pageContentBodyPadding + var(--bookIndexFooterPinnedHeight, 0px));
+}
+
+.overviewInnerContentBody {
+  composes: innerContentBody from '~Components/Page/PageContentBody.css';
+
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+
+  padding-bottom: calc($pageContentBodyPadding + var(--bookIndexFooterPinnedHeight, 0px));
+}
+
+.contentBodyContainer {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-width: 0;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .pageContentBodyWrapper {
+    flex-basis: auto;
+  }
+
+  .contentBody {
+    flex-basis: 1px;
+  }
+
+  .postersInnerContentBody {
+    padding: calc($pageContentBodyPaddingSmallScreen - 5px);
+    padding-bottom: calc(($pageContentBodyPaddingSmallScreen - 5px) + var(--bookIndexFooterPinnedHeight, 0px));
+  }
+
+  .bannersInnerContentBody {
+    padding: calc($pageContentBodyPaddingSmallScreen - 5px);
+    padding-bottom: calc(($pageContentBodyPaddingSmallScreen - 5px) + var(--bookIndexFooterPinnedHeight, 0px));
+  }
+
+  .tableInnerContentBody {
+    padding-bottom: calc($pageContentBodyPaddingSmallScreen + var(--bookIndexFooterPinnedHeight, 0px));
+  }
+
+  .overviewInnerContentBody {
+    padding-bottom: calc($pageContentBodyPaddingSmallScreen + var(--bookIndexFooterPinnedHeight, 0px));
+  }
+}

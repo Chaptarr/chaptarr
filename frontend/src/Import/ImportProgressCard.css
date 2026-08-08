@@ -1,0 +1,46 @@
+.card {
+  border: 1px solid var(--borderColor, #e0e0e0);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--cardBg, #fff);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stage {
+  font-weight: 600;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px;
+}
+
+.statLabel {
+  color: var(--mutedText, #6b6b6b);
+}
+
+.statValue {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.progressBar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--progressBarBackgroundColor, #ececec);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--primaryColor, #2e7d32);
+  width: 0%;
+  transition: width 0.25s ease-out;
+}
+

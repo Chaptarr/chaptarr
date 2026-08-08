@@ -1,0 +1,119 @@
+.narrator {
+  padding: 10px !important;
+}
+
+.narratorContainer {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.bookCover {
+  flex-shrink: 0;
+  width: 150px;
+  height: 150px;
+  overflow: hidden;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.bookCover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.narratorDetails {
+  flex: 1;
+}
+
+.editionTitle {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 4px;
+  color: var(--defaultColor);
+}
+
+.narratorName {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--defaultColor);
+}
+
+.publisherRow {
+  font-size: 13px;
+  color: var(--defaultColor);
+  margin-bottom: 6px;
+}
+
+.publisherDivider {
+  opacity: 0.7;
+}
+
+.releaseYear {
+  color: var(--defaultColor);
+}
+
+.overview {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--defaultColor);
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rating {
+  color: #f39c12;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.duration {
+  font-size: 13px;
+  color: var(--defaultColor);
+}
+
+.action {
+  text-align: center;
+  width: 150px;
+}
+
+.inLibraryStatus {
+  display: inline-flex;
+  align-items: center;
+  color: var(--successColor);
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.monitoredStatus {
+  color: var(--disabledColor);
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.statusIcon {
+  margin-right: 5px;
+  font-size: 16px;
+}
+
+@media only screen and (max-width: 600px) {
+  .narratorContainer {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .bookCover {
+    width: 82px;
+    height: 122px;
+  }
+
+  .action {
+    width: auto;
+    min-width: 96px;
+  }
+}

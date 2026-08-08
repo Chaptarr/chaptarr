@@ -1,0 +1,52 @@
+.specification {
+  composes: card from '~Components/Card.css';
+
+  position: relative;
+  min-height: 130px;
+  width: 300px;
+}
+
+.underlay {
+  @add-mixin cover;
+}
+
+.overlay {
+  @add-mixin linkOverlay;
+
+  padding: 12px;
+}
+
+.name {
+  text-align: center;
+  font-weight: 300;
+  font-size: 21px;
+}
+
+.description {
+  margin-top: 8px;
+  min-height: 40px;
+  color: var(--gray);
+  text-align: center;
+  line-height: 1.35;
+}
+
+.actions {
+  margin-top: 14px;
+  text-align: center;
+}
+
+.presetsMenu {
+  composes: menu from '~Components/Menu/Menu.css';
+
+  display: inline-block;
+  margin-left: 6px;
+}
+
+.presetsMenuButton {
+  composes: button from '~Components/Link/Button.css';
+
+  &::after {
+    margin-left: 5px;
+    content: '\25BE';
+  }
+}

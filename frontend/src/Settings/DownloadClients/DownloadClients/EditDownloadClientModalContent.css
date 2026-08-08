@@ -1,0 +1,78 @@
+.deleteButton {
+  composes: button from '~Components/Link/Button.css';
+
+  margin-right: auto;
+}
+
+.message {
+  composes: alert from '~Components/Alert.css';
+
+  margin-bottom: 30px;
+}
+
+.linkToggleButton {
+  composes: button from '~Components/Link/Button.css';
+
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.linkToggleMiddleButton {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.linkedPairContainer {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.linkedPairFields {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.linkedPairConnector {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 0 0 0 0;
+}
+
+.linkedPairLine {
+  display: none;
+}
+
+.linkedPairToggle {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+}
+
+.linkedPairHelpText {
+  /* Pull the shared help text up so it sits under the second field like a normal FormInputGroup help block. */
+  margin-top: -14px;
+  margin-bottom: 20px;
+}
+
+/* Bracket-style connector: ⊃ (open to the left). */
+.linkedPairConnector::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 25%;
+  bottom: 25%;
+  width: 50%;
+  border-right: 2px solid var(--borderColor);
+  border-top: 2px solid var(--borderColor);
+  border-bottom: 2px solid var(--borderColor);
+  border-top-right-radius: 2px;
+  border-bottom-right-radius: 2px;
+  opacity: 0.9;
+  pointer-events: none;
+}

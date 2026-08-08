@@ -1,0 +1,37 @@
+.book {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  margin: 2px 4px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  background-color: var(--seasonBackgroundColor);
+  cursor: default;
+}
+
+.info {
+  padding: 0 4px;
+}
+
+.bookType {
+  padding: 0 4px;
+  border-width: 0 1px;
+  border-style: solid;
+  border-color: var(--borderColor);
+  background-color: var(--white);
+  color: var(--defaultColor);
+}
+
+.books {
+  padding: 0 4px;
+  background-color: var(--episodesBackgroundColor);
+  color: var(--defaultColor);
+}
+
+.allBooks {
+  background-color: var(--successColor);
+}
+
+.missingWanted {
+  background-color: var(--dangerColor);
+}

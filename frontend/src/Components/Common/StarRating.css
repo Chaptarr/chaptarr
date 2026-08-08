@@ -1,0 +1,82 @@
+.starRating {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stars {
+  display: flex;
+  align-items: center;
+}
+
+.star {
+  display: inline-block;
+  line-height: 1;
+}
+
+.star.full {
+  color: #ffa500; /* Orange/gold color for filled stars */
+}
+
+.star.half {
+  background: linear-gradient(90deg, #ffa500 50%, #ddd 50%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: #ffa500;
+}
+
+.star.empty {
+  color: #ddd; /* Light gray for empty stars */
+}
+
+.rating {
+  font-size: 0.9em;
+  color: var(--textColor);
+  font-weight: 500;
+}
+
+.voteCount {
+  margin-left: 4px;
+  color: var(--dimColor);
+  font-weight: normal;
+  font-size: 0.85em;
+}
+
+/* Size variations */
+.sizeSmall .star {
+  font-size: 12px;
+}
+
+.sizeSmall .rating {
+  font-size: 11px;
+}
+
+.sizeMedium .star {
+  font-size: 14px;
+}
+
+.sizeMedium .rating {
+  font-size: 12px;
+}
+
+.sizeLarge .star {
+  font-size: 16px;
+}
+
+.sizeLarge .rating {
+  font-size: 14px;
+}
+
+/* Hover effects */
+.starRating:hover .star.full,
+.starRating:hover .star.half {
+  color: #ff8c00;
+}
+
+/* Dark theme support */
+@media (prefers-color-scheme: dark) {
+  .star.empty {
+    color: #555;
+  }
+}

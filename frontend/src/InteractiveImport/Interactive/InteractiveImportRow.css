@@ -1,0 +1,48 @@
+.path {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  text-align: left;
+  word-break: break-all;
+  cursor: pointer;
+}
+
+.action {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  text-align: center;
+  white-space: nowrap;
+}
+
+.quality {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  text-align: center;
+}
+
+.label {
+  composes: label from '~Components/Label.css';
+
+  cursor: pointer;
+}
+
+.reprocessing {
+  composes: loading from '~Components/Loading/LoadingIndicator.css';
+
+  margin-top: 0;
+  text-align: start;
+}
+
+.additionalFile {
+  composes: row from '~Components/Table/TableRow.css';
+
+  color: var(--disabledColor);
+}
+
+.customFormatTooltip {
+  max-width: 250px;
+}
+
+.suggestedValue {
+  color: var(--warningColor);
+  font-style: italic;
+}

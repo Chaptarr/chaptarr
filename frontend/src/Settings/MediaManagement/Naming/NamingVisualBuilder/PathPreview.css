@@ -1,0 +1,92 @@
+.preview {
+  flex: 1;
+  background: var(--cardBackgroundColor);
+  border: 1px solid var(--borderColor);
+  border-radius: 8px;
+  padding: 16px;
+  max-width: 600px;
+}
+
+.previewHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dimColor);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.loader {
+  margin-left: auto;
+}
+
+.previewPath {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 14px;
+  line-height: 1.4;
+  padding: 12px;
+  background: var(--codeBackgroundColor, #f8f9fa);
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  color: var(--defaultColor);
+  word-break: break-all;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.extension {
+  color: var(--dimColor);
+  font-weight: 500;
+}
+
+.segments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 8px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.segment {
+  padding: 2px 4px;
+  border-radius: 2px;
+  background: var(--tableRowEvenBackgroundColor);
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.segment.highlighted {
+  background: var(--primaryColor);
+  color: white;
+  opacity: 1;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .previewPath {
+    background: #1a1a1a;
+    border-color: #333;
+  }
+  
+  .segment {
+    background: #2a2a2a;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .preview {
+    max-width: none;
+    margin: 0 12px;
+  }
+  
+  .previewPath {
+    font-size: 12px;
+    padding: 10px;
+  }
+}

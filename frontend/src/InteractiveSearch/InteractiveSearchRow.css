@@ -1,0 +1,205 @@
+.cell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+}
+
+.rank {
+  composes: cell;
+
+  width: 46px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.protocol {
+  composes: cell;
+
+  width: 60px;
+}
+
+.title {
+  composes: cell;
+
+  min-width: 0;
+  text-align: left;
+}
+
+.titleContent {
+  display: grid;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+
+  column-gap: 10px;
+}
+
+.titleTextBlock {
+  min-width: 0;
+}
+
+.titleLink {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titleMatch {
+  color: var(--primaryColor);
+  font-weight: 600;
+}
+
+.grabError {
+  margin-top: 4px;
+  color: var(--dangerColor);
+  white-space: normal;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.indexer {
+  composes: cell;
+
+  width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quality {
+  composes: cell;
+
+  width: 70px;
+  text-align: center;
+}
+
+.quality {
+  white-space: nowrap;
+}
+
+.customFormatScore {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  width: 44px;
+  font-weight: bold;
+  cursor: default;
+}
+
+.rejected,
+.indexerFlags,
+.download {
+  composes: cell;
+
+  width: 36px;
+  text-align: center;
+}
+
+.download {
+  width: 40px;
+}
+
+.age,
+.size {
+  composes: cell;
+
+  white-space: nowrap;
+}
+
+.age {
+  width: 76px;
+}
+
+.size {
+  width: 80px;
+}
+
+.duration {
+  composes: cell;
+
+  width: 72px;
+  text-align: center;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.narrator {
+  composes: cell;
+
+  overflow: hidden;
+  width: 130px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.narratorContent {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  min-width: 0;
+}
+
+.narratorName {
+  display: block;
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.moreIndicator {
+  opacity: 0.8;
+}
+
+.graphicAudio {
+  composes: cell;
+
+  width: 40px;
+  text-align: center;
+}
+
+.peers {
+  composes: cell;
+
+  width: 68px;
+}
+
+.goldStar {
+  color: #FFD700 !important;
+}
+
+/* Ebook-specific styling removed - now using same styling for all media types */
+
+.preferredRow {
+  background: transparent;
+}
+
+.preferredRow td {
+  border-top-color: rgba(var(--primaryColorRgb), 0.25);
+  border-bottom: 1px solid rgba(var(--primaryColorRgb), 0.22);
+}
+
+.preferredRow td:first-child {
+  border-left: 1px solid rgba(var(--primaryColorRgb), 0.22);
+  box-shadow: inset 3px 0 0 rgba(var(--primaryColorRgb), 0.45);
+}
+
+.preferredRow td:last-child {
+  border-right: 1px solid rgba(var(--primaryColorRgb), 0.22);
+}
+
+.preferredBadge {
+  margin-left: 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(var(--primaryColorRgb), 0.35);
+  border-radius: 999px;
+  background: rgba(var(--primaryColorRgb), 0.06);
+  box-shadow: 0 0 6px rgba(var(--primaryColorRgb), 0.14);
+  color: var(--primaryColor);
+  text-transform: uppercase;
+  white-space: nowrap;
+  letter-spacing: 0.35px;
+  font-weight: 600;
+  font-size: 11px;
+}

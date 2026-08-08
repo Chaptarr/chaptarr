@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+
+    <ApplicationIcon>..\NzbDrone.Host\Chaptarr.ico</ApplicationIcon>
+  </PropertyGroup>
+  <PropertyGroup Condition="!$(RuntimeIdentifier.StartsWith('win'))">
+    <AssemblyName>Chaptarr</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NzbDrone.Host\Chaptarr.Host.csproj" />
+    <ProjectReference Include="..\NzbDrone.Mono\Chaptarr.Mono.csproj" Condition="!$(RuntimeIdentifier.StartsWith('win'))" />
+  </ItemGroup>
+</Project>
