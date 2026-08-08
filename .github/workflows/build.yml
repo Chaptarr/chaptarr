@@ -251,8 +251,8 @@ jobs:
         echo "created=false" >> "$GITHUB_OUTPUT"
         echo "at_head=false" >> "$GITHUB_OUTPUT"
 
-        if [[ "${{ github.event_name }}" != "push" || "${{ github.ref }}" != "refs/heads/develop" ]]; then
-          echo "Not a develop push; skipping auto-tag."
+        if [[ "${{ github.event_name }}" != "push" ]] || [[ "${{ github.ref }}" != "refs/heads/develop" && "${{ github.ref }}" != "refs/heads/main" ]]; then
+          echo "Not a develop or main push; skipping auto-tag."
           exit 0
         fi
 
@@ -280,6 +280,10 @@ jobs:
           if [[ "$REMOTE_SHA" == "$HEAD_SHA" ]]; then
             echo "Tag $TAG already exists on this commit."
             echo "at_head=true" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              echo "Promotion to main: marking release $TAG as stable."
+              gh release edit "$TAG" --prerelease=false --latest
+            fi
             exit 0
           fi
 
@@ -369,8 +373,14 @@ jobs:
         ls -la release-assets
 
         echo "Creating release $TAG"
+        PRERELEASE_FLAG=""
+        if [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          PRERELEASE_FLAG="--prerelease"
+        fi
+
         gh release create "$TAG" \
           release-assets/*.zip \
           --title "Chaptarr $TAG" \
           --generate-notes \
-          --verify-tag
+          --verify-tag \
+          ${PRERELEASE_FLAG}
