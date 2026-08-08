@@ -3,6 +3,7 @@ import React, { Component } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from 'Components/Icon';
 import { icons } from 'Helpers/Props';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
 import AuthorImage from './AuthorImage';
 import styles from './AuthorPoster.css';
 
@@ -266,16 +267,15 @@ class AuthorPoster extends Component {
     
     try {
       // Load image on-demand when user selects it
-      const loadResponse = await fetch(`/api/v1/author/${authorId}/loadImage`, {
+      const loadResult = await createAjaxRequest({
+        url: `/author/${authorId}/loadImage`,
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': window.Chaptarr.apiKey
-        },
-        body: JSON.stringify({
+        dataType: 'json',
+        contentType: 'application/json',
+        data: JSON.stringify({
           ImageUrl: selectedImage.remoteUrl || selectedImage.url
         })
-      });
+      }).request;
       
       // Check if this is still the latest request
       if (seq !== this.requestSeq) {
@@ -283,7 +283,6 @@ class AuthorPoster extends Component {
         return;
       }
       
-      const loadResult = await loadResponse.json();
       console.log(`[AuthorPoster] Load image result for author ${authorId}:`, loadResult);
       
       if (loadResult.status === 'success' && loadResult.localPath) {
@@ -326,22 +325,15 @@ class AuthorPoster extends Component {
         
         // Persist the selection to the server
         try {
-          const persistResponse = await fetch(`/api/v1/author/${authorId}/primaryPhoto`, {
+          await createAjaxRequest({
+            url: `/author/${authorId}/primaryPhoto`,
             method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Api-Key': window.Chaptarr.apiKey
-            },
-            body: JSON.stringify({
+            contentType: 'application/json',
+            data: JSON.stringify({
               PhotoUrl: selectedImage.remoteUrl || selectedImage.url
             })
-          });
-          
-          if (persistResponse.ok) {
-            console.log(`[AuthorPoster] Persisted photo selection for author ${authorId}`);
-          } else {
-            console.warn('[AuthorPoster] Failed to persist photo selection:', await persistResponse.text());
-          }
+          }).request;
+          console.log(`[AuthorPoster] Persisted photo selection for author ${authorId}`);
         } catch (e) {
           console.warn('[AuthorPoster] Failed to persist photo selection:', e);
         }

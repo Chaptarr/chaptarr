@@ -11,6 +11,7 @@ import ModalBody from 'Components/Modal/ModalBody';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import Button from 'Components/Link/Button';
 import { kinds } from 'Helpers/Props';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import TokenPalette from './TokenPalette';
 import NamingCanvas from './NamingCanvas';
@@ -58,7 +59,7 @@ class NamingVisualBuilder extends Component {
     }
   }
 
-  loadPatternFromProps = async () => {
+  loadPatternFromProps = () => {
     const { initialPattern } = this.props;
     
     if (!initialPattern) {
@@ -69,26 +70,28 @@ class NamingVisualBuilder extends Component {
     }
 
     try {
-      const response = await fetch('/api/v1/config/naming-pattern/decompile', {
+      const promise = createAjaxRequest({
+        url: '/config/naming-pattern/decompile',
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Api-Key': window.Chaptarr.apiKey
-        },
-        body: JSON.stringify({ pattern: initialPattern })
-      });
+        dataType: 'json',
+        contentType: 'application/json',
+        data: JSON.stringify({ pattern: initialPattern })
+      }).request;
 
-      if (response.ok) {
-        const { ast } = await response.json();
+      promise.done(({ ast }) => {
         this.setState({ ast });
         this.scheduleValidation();
-      }
+      });
+
+      promise.fail((error) => {
+        console.error('Failed to decompile pattern:', error);
+      });
     } catch (error) {
-      console.error('Failed to decompile pattern:', error);
+      console.error('Failed to create decompile request:', error);
     }
   };
 
-  handleSave = async () => {
+  handleSave = () => {
     const { onSave } = this.props;
     const { ast } = this.state;
 
@@ -99,36 +102,32 @@ class NamingVisualBuilder extends Component {
     }
 
     try {
-      const response = await fetch('/api/v1/config/naming-pattern/compile', {
+      const promise = createAjaxRequest({
+        url: '/config/naming-pattern/compile',
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Api-Key': window.Chaptarr.apiKey
-        },
-        body: JSON.stringify({ ast })
+        dataType: 'json',
+        contentType: 'application/json',
+        data: JSON.stringify({ ast })
+      }).request;
+
+      promise.done(({ pattern }) => {
+        onSave(pattern);
       });
 
-      if (response.ok) {
-        const { pattern } = await response.json();
-        onSave(pattern);
-      } else {
-        let errorMessage = translate('NamingBuilderCompileRequestFailed');
-        try {
-          const error = await response.json();
-          errorMessage = error?.error || errorMessage;
-        } catch (e) {
-          // ignore
-        }
-
+      promise.fail((error) => {
+        console.error('Failed to compile pattern:', error);
         this.setState({
           validation: {
             isValid: false,
-            errors: [{ code: 'VALIDATION_ERROR', message: errorMessage }]
+            errors: [{
+              code: 'EXCEPTION',
+              message: error.status ? translate('NamingBuilderCompileRequestFailed') : translate('NamingBuilderCompileFailed')
+            }]
           }
         });
-      }
+      });
     } catch (error) {
-      console.error('Failed to compile pattern:', error);
+      console.error('Failed to create compile request:', error);
       this.setState({
         validation: {
           isValid: false,
@@ -148,7 +147,7 @@ class NamingVisualBuilder extends Component {
       clearTimeout(this.validationTimeout);
     }
 
-    this.validationTimeout = setTimeout(async () => {
+    this.validationTimeout = setTimeout(() => {
       const clientValidation = validateAst(this.state.ast);
 
       if (!clientValidation.isValid) {
@@ -162,41 +161,35 @@ class NamingVisualBuilder extends Component {
       this.setState({ isValidating: true });
 
       try {
-        const response = await fetch('/api/v1/config/naming-pattern/validate', {
+        const promise = createAjaxRequest({
+          url: '/config/naming-pattern/validate',
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Api-Key': window.Chaptarr.apiKey
-          },
-          body: JSON.stringify({ ast: this.state.ast })
-        });
+          dataType: 'json',
+          contentType: 'application/json',
+          data: JSON.stringify({ ast: this.state.ast })
+        }).request;
 
-        if (response.ok) {
-          const serverValidation = await response.json();
+        promise.done((serverValidation) => {
           const validation = {
             isValid: Boolean(serverValidation.ok),
             errors: serverValidation.errors || []
           };
           this.setState({ validation, isValidating: false });
-          return;
-        }
+        });
 
-        this.setState({
-          validation: {
-            isValid: false,
-            errors: [{ code: 'VALIDATION_ERROR', message: translate('NamingBuilderValidationRequestFailed') }]
-          },
-          isValidating: false
+        promise.fail((error) => {
+          console.error('Validation failed:', error);
+          this.setState({
+            validation: {
+              isValid: false,
+              errors: [{ code: 'VALIDATION_ERROR', message: translate('NamingBuilderValidationFailed') }]
+            },
+            isValidating: false
+          });
         });
       } catch (error) {
-        console.error('Validation failed:', error);
-        this.setState({
-          validation: {
-            isValid: false,
-            errors: [{ code: 'VALIDATION_ERROR', message: translate('NamingBuilderValidationFailed') }]
-          },
-          isValidating: false
-        });
+        console.error('Failed to create validation request:', error);
+        this.setState({ isValidating: false });
       }
     }, 300);
   };

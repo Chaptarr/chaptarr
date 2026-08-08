@@ -4,6 +4,7 @@ import React, { PureComponent } from 'react';
 import { ColorImpairedConsumer } from 'App/ColorImpairedContext';
 import DescriptionList from 'Components/DescriptionList/DescriptionList';
 import DescriptionListItem from 'Components/DescriptionList/DescriptionListItem';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
 import formatBytes from 'Utilities/Number/formatBytes';
 import translate from 'Utilities/String/translate';
 import styles from './AuthorIndexFooter.css';
@@ -54,30 +55,30 @@ class AuthorIndexFooter extends PureComponent {
 
     const authorIds = author.map(a => a.id);
 
-    fetch('/api/v1/author/statistics/aggregate', {
+    const promise = createAjaxRequest({
+      url: '/author/statistics/aggregate',
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': window.Chaptarr.apiKey
-      },
-      body: JSON.stringify({
+      dataType: 'json',
+      contentType: 'application/json',
+      data: JSON.stringify({
         authorIds,
         mediaType: mediaType || 'all'
       })
-    })
-      .then(response => response.json())
-      .then(data => {
-        this.setState({
-          books: data.bookCount || 0,
-          bookFiles: data.fileCount || 0,
-          totalFileSize: data.totalFileSize || 0
-        });
-      })
-      .catch(error => {
-        console.error('Failed to fetch aggregate statistics:', error);
-        // Fallback to client-side calculation on error
-        this.calculateClientSideStats();
+    }).request;
+
+    promise.done((data) => {
+      this.setState({
+        books: data.bookCount || 0,
+        bookFiles: data.fileCount || 0,
+        totalFileSize: data.totalFileSize || 0
       });
+    });
+
+    promise.fail((error) => {
+      console.error('Failed to fetch aggregate statistics:', error);
+      // Fallback to client-side calculation on error
+      this.calculateClientSideStats();
+    });
   }
 
   calculateClientSideStats = () => {
