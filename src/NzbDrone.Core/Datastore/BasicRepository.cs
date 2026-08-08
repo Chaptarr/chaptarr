@@ -320,11 +320,15 @@ namespace NzbDrone.Core.Datastore
                     {
                         // Prefer multi-row when supported; otherwise gracefully fall back to row-by-row in a single transaction
                         int? prevSync = null;
+                        int? prevTempStore = null;
+                        long? prevCacheSize = null;
                         try
                         {
                             try
                             {
                                 prevSync = conn.ExecuteScalar<int>("PRAGMA synchronous");
+                                prevTempStore = conn.ExecuteScalar<int>("PRAGMA temp_store");
+                                prevCacheSize = conn.ExecuteScalar<long>("PRAGMA cache_size");
                                 conn.Execute("PRAGMA temp_store = MEMORY", transaction: tran);
                                 conn.Execute("PRAGMA cache_size = -64000", transaction: tran);
                             }
@@ -425,6 +429,16 @@ namespace NzbDrone.Core.Datastore
                         }
                         finally
                         {
+                            if (prevCacheSize.HasValue)
+                            {
+                                try { conn.Execute($"PRAGMA cache_size = {prevCacheSize.Value}"); } catch { }
+                            }
+
+                            if (prevTempStore.HasValue)
+                            {
+                                try { conn.Execute($"PRAGMA temp_store = {prevTempStore.Value}"); } catch { }
+                            }
+
                             if (prevSync.HasValue)
                             {
                                 try { conn.Execute($"PRAGMA synchronous = {prevSync.Value}"); } catch { }
@@ -607,6 +621,8 @@ namespace NzbDrone.Core.Datastore
                 using (var tran = conn.BeginTransaction(IsolationLevel.ReadCommitted))
                 {
                     int? prevSync = null;
+                    int? prevTempStore = null;
+                    long? prevCacheSize = null;
                     try
                     {
                         if (_database.DatabaseType == DatabaseType.SQLite && models.Count > 0)
@@ -614,6 +630,8 @@ namespace NzbDrone.Core.Datastore
                             try
                             {
                                 prevSync = conn.ExecuteScalar<int>("PRAGMA synchronous", transaction: tran);
+                                prevTempStore = conn.ExecuteScalar<int>("PRAGMA temp_store", transaction: tran);
+                                prevCacheSize = conn.ExecuteScalar<long>("PRAGMA cache_size", transaction: tran);
                                 conn.Execute("PRAGMA temp_store = MEMORY", transaction: tran);
                                 conn.Execute("PRAGMA cache_size = -64000", transaction: tran);
                             }
@@ -628,6 +646,16 @@ namespace NzbDrone.Core.Datastore
                     }
                     finally
                     {
+                        if (prevCacheSize.HasValue)
+                        {
+                            try { conn.Execute($"PRAGMA cache_size = {prevCacheSize.Value}"); } catch { }
+                        }
+
+                        if (prevTempStore.HasValue)
+                        {
+                            try { conn.Execute($"PRAGMA temp_store = {prevTempStore.Value}"); } catch { }
+                        }
+
                         if (prevSync.HasValue)
                         {
                             try { conn.Execute($"PRAGMA synchronous = {prevSync.Value}"); } catch { }
@@ -782,6 +810,8 @@ namespace NzbDrone.Core.Datastore
                 using (var tran = conn.BeginTransaction(IsolationLevel.ReadCommitted))
                 {
                     int? prevSync = null;
+                    int? prevTempStore = null;
+                    long? prevCacheSize = null;
                     try
                     {
                         if (_database.DatabaseType == DatabaseType.SQLite && models.Count > 0)
@@ -789,6 +819,8 @@ namespace NzbDrone.Core.Datastore
                             try
                             {
                                 prevSync = conn.ExecuteScalar<int>("PRAGMA synchronous", transaction: tran);
+                                prevTempStore = conn.ExecuteScalar<int>("PRAGMA temp_store", transaction: tran);
+                                prevCacheSize = conn.ExecuteScalar<long>("PRAGMA cache_size", transaction: tran);
                                 conn.Execute("PRAGMA temp_store = MEMORY", transaction: tran);
                                 conn.Execute("PRAGMA cache_size = -64000", transaction: tran);
                             }
@@ -803,6 +835,16 @@ namespace NzbDrone.Core.Datastore
                     }
                     finally
                     {
+                        if (prevCacheSize.HasValue)
+                        {
+                            try { conn.Execute($"PRAGMA cache_size = {prevCacheSize.Value}"); } catch { }
+                        }
+
+                        if (prevTempStore.HasValue)
+                        {
+                            try { conn.Execute($"PRAGMA temp_store = {prevTempStore.Value}"); } catch { }
+                        }
+
                         if (prevSync.HasValue)
                         {
                             try { conn.Execute($"PRAGMA synchronous = {prevSync.Value}"); } catch { }
