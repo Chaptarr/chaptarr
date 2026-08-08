@@ -22,13 +22,13 @@ class MoreInfo extends Component {
 
           <DescriptionListItemTitle>{translate('Wiki')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://discord.gg/nqFGsGUug2">{translate('Wiki')}</Link>
+            <Link to="https://wiki.chaptarr.com">{translate('Wiki')}</Link>
           </DescriptionListItemDescription>
 
-          <DescriptionListItemTitle>{translate('Reddit')}</DescriptionListItemTitle>
+          {/* <DescriptionListItemTitle>{translate('Reddit')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
             <Link to="https://discord.gg/nqFGsGUug2">{'Chaptarr'}</Link>
-          </DescriptionListItemDescription>
+          </DescriptionListItemDescription> */}
 
           <DescriptionListItemTitle>{translate('Discord')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
@@ -37,12 +37,12 @@ class MoreInfo extends Component {
 
           <DescriptionListItemTitle>{translate('Source')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/robertlordhood/Chaptarr">{'github.com/robertlordhood/Chaptarr'}</Link>
+            <Link to="https://github.com/Chaptarr/chaptarr">{'github.com/Chaptarr/chaptarr'}</Link>
           </DescriptionListItemDescription>
 
           <DescriptionListItemTitle>{translate('FeatureRequests')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/robertlordhood/Chaptarr/issues">{'github.com/robertlordhood/Chaptarr/issues'}</Link>
+            <Link to="https://github.com/Chaptarr/chaptarr/issues">{'github.com/Chaptarr/chaptarr/issues'}</Link>
           </DescriptionListItemDescription>
 
         </DescriptionList>
