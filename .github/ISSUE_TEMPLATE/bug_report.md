@@ -26,7 +26,7 @@ If applicable, add screenshots to help explain your problem.
 **System Information:**
  - OS: [e.g. Ubuntu 22.04, Windows 10, Synology DSM]
  - Chaptarr Version: [e.g. 1.0.0]
- - Installation Method: [Docker/Native]
+ - Installation Method: [Docker / built from source; native installs are not yet supported]
  - Browser: [e.g. Chrome, Firefox]
 
 **Docker Information (if applicable):**

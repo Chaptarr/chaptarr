@@ -12,7 +12,7 @@ Thanks for your interest in contributing to Chaptarr.
   - Steps to reproduce
   - Expected vs actual behavior
   - Logs (from `/config/logs/`)
-  - Your environment (OS, Docker/native, version)
+  - Your environment (OS, Docker or built from source, version)
 
 ### 2. Suggest Features
 - Open a GitHub Issue with the [FEATURE] tag
