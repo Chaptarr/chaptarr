@@ -16,10 +16,6 @@
     <ProjectReference Include="..\NzbDrone.SignalR\Chaptarr.SignalR.csproj" />
     <ProjectReference Include="..\Chaptarr.Http\Chaptarr.Http.csproj" />
   </ItemGroup>
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-      <ProjectReference Include="..\NzbDrone.Windows\Chaptarr.Windows.csproj" />
-  </ItemGroup>
-  
   <!-- Copy Tools directory to output -->
   <ItemGroup>
     <Content Include="..\..\Tools\**\*" LinkBase="Tools" CopyToOutputDirectory="PreserveNewest" />

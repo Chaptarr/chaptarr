@@ -158,7 +158,8 @@ If you experience an error, check folder ownership and permissions, then run com
 ### Building from Source
 Building from source requires the .NET 10 SDK, Node.js, and Yarn.
 
-```cmd
+**Linux / macOS:**
+```bash
 # Clone the repository
 git clone https://github.com/chaptarr/chaptarr.git
 cd chaptarr
@@ -169,11 +170,31 @@ dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.
 # Build the frontend
 yarn install
 yarn build
-xcopy _output\UI _output\publish\UI /E /I
+cp -r _output/UI _output/publish/UI
 
 # Run Chaptarr
+dotnet _output/publish/Chaptarr.dll
+```
+
+**Windows (Command Prompt):**
+```cmd
+:: Clone the repository
+git clone https://github.com/chaptarr/chaptarr.git
+cd chaptarr
+
+:: Build the backend
+dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
+
+:: Build the frontend
+yarn install
+yarn build
+xcopy _output\UI _output\publish\UI /E /I
+
+:: Run Chaptarr
 dotnet _output/publish/Chaptarr.Console.dll
 ```
+
+Note: the assembly is named `Chaptarr.dll` on Linux/macOS and `Chaptarr.Console.dll` on Windows.
 
 ## Documentation
 
