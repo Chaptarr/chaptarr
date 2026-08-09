@@ -39,6 +39,6 @@ Add any other context about the problem here.
 
 **Logs**
 Please include relevant logs from:
-- Chaptarr logs (`/config/logs/`)
+- Chaptarr logs (System → Logs → Files in the UI; `/config/logs/` in Docker)
 - Browser console (F12)
-- Docker logs (`docker logs chaptarr`)
+- Docker logs (`docker logs chaptarr`), if running in Docker

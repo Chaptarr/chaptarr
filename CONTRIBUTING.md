@@ -11,7 +11,7 @@ Thanks for your interest in contributing to Chaptarr.
   - Clear description of the problem
   - Steps to reproduce
   - Expected vs actual behavior
-  - Logs (from `/config/logs/`)
+  - Logs (System → Logs → Files in the UI; `/config/logs/` in Docker)
   - Your environment (OS, Docker or built from source, version)
 
 ### 2. Suggest Features
