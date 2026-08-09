@@ -248,7 +248,8 @@ namespace NzbDrone.Core.Update
                         {
                             "Reduced idle memory usage after large imports.",
                             "Scanning folders with a large number of audiobook files is more efficient, both in Chaptarr and for the metadata server.",
-                            "System page links now point to the project's GitHub and wiki instead of outdated destinations."
+                            "System page links now point to the project's GitHub and wiki instead of outdated destinations.",
+                            "Some Hardcover images are currently caught behind their bot protection, which looks like a misconfiguration on their side. Chaptarr now treats those as simply unavailable and moves on, instead of recording an alarming error."
                         }
                     }
                 }
