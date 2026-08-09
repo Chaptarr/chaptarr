@@ -190,6 +190,23 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void should_map_book_added_timestamp_to_resource()
+        {
+            var added = new DateTime(2026, 8, 8, 12, 0, 0, DateTimeKind.Utc);
+            var book = new Book
+            {
+                Title = "Test",
+                Added = added,
+                Author = new Author(),
+                Editions = new List<Edition>()
+            };
+
+            var resource = book.ToResource();
+
+            Assert.That(resource.Added, Is.EqualTo(added));
+        }
+
+        [Test]
         public void should_round_trip_goodreads_search_edition_identity_on_native_surface()
         {
             var book = new Book
