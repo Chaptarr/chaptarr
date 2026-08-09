@@ -129,6 +129,7 @@ namespace NzbDrone.Core.MediaCover
                 var request = new HttpRequest(currentUrl)
                 {
                     AllowAutoRedirect = false,
+                    LogHttpError = false,
                     RequestTimeout = ImageRequestTimeout,
                     ResponseStream = responseStream
                 };

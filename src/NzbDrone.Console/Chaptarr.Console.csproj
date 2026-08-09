@@ -11,5 +11,6 @@
   <ItemGroup>
     <ProjectReference Include="..\NzbDrone.Host\Chaptarr.Host.csproj" />
     <ProjectReference Include="..\NzbDrone.Mono\Chaptarr.Mono.csproj" Condition="!$(RuntimeIdentifier.StartsWith('win'))" />
+    <ProjectReference Include="..\NzbDrone.Windows\Chaptarr.Windows.csproj" Condition="$(RuntimeIdentifier.StartsWith('win'))" />
   </ItemGroup>
 </Project>

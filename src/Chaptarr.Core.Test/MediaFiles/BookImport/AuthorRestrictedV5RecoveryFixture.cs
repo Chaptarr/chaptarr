@@ -508,6 +508,41 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
+        public void repeated_competing_author_question_should_not_unlock_path_retry()
+        {
+            var v5 = new RecordingV5MatchingService
+            {
+                OnSearch = (_, _, _, _) => new List<V5MatchedAuthor>
+                {
+                    new V5MatchedAuthor { id = "hc:brian-herbert", name = "Brian Herbert" },
+                    new V5MatchedAuthor { id = "hc:frank-herbert", name = "Frank Herbert" }
+                }
+            };
+            var sut = CreateV5SuggestionService(v5);
+            var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["TITLE"] = new List<string> { "Whipping Star" },
+                ["ODD_FIELD"] = new List<string> { "Frank Herbert" }
+            };
+            var questions = new HashSet<string>(StringComparer.Ordinal);
+
+            InvokeV5SuggestionWithPathFallback(
+                sut,
+                tags,
+                "/audiobooks/Brian Herbert/Whipping Star/Whipping Star.m4b",
+                allowPathFallback: true,
+                questions);
+            InvokeV5SuggestionWithPathFallback(
+                sut,
+                tags,
+                "/audiobooks/Brian Herbert/Whipping Star/Whipping Star.m4b",
+                allowPathFallback: true,
+                questions);
+
+            Assert.That(v5.Requests, Has.Count.EqualTo(1));
+        }
+
+        [Test]
         public void v5_suggestion_should_use_path_author_evidence_instead_of_a_comment()
         {
             var v5 = new RecordingV5MatchingService
@@ -534,6 +569,49 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(v5.Requests, Has.Count.EqualTo(2), "The excluded comment must not satisfy the embedded-author check.");
             Assert.That(v5.Requests[0].Tags.Keys, Is.EquivalentTo(new[] { "TITLE", "COMMENT" }));
             Assert.That(v5.Requests[1].Tags["AUTHOR"], Is.EquivalentTo(new[] { "Brian Herbert" }));
+        }
+
+        [Test]
+        public void restricted_recovery_should_gate_each_filename_question_independently()
+        {
+            var v5 = new RecordingV5MatchingService();
+            var sut = CreateV5SuggestionService(v5);
+            var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ARTIST"] = new List<string> { "Test Author" }
+            };
+            var files = new[]
+            {
+                new DiscoveredFileWithMetadata { Path = "/audiobooks/Test Author/Alpha.mp3", AllTags = tags },
+                new DiscoveredFileWithMetadata { Path = "/audiobooks/Test Author/Beta.mp3", AllTags = tags }
+            };
+            var questions = new HashSet<string>(StringComparer.Ordinal);
+            var method = typeof(FileMatchingService).GetMethod(
+                "TryRecoverRestrictedMissViaV5",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+
+            foreach (var file in files.Concat(files))
+            {
+                method.Invoke(sut, new object[]
+                {
+                    file,
+                    tags,
+                    BookMediaType.Audiobook,
+                    false,
+                    true,
+                    questions,
+                    null
+                });
+            }
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(v5.Requests, Has.Count.EqualTo(files.Length));
+                Assert.That(
+                    v5.Requests.Select(request => request.FilePath),
+                    Is.EquivalentTo(files.Select(file => file.Path)));
+            });
         }
 
         [Test]
@@ -582,7 +660,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             FileMatchingService service,
             Dictionary<string, List<string>> tags,
             string path,
-            bool allowPathFallback)
+            bool allowPathFallback,
+            HashSet<string> questionsWithoutSuggestion = null)
         {
             var method = typeof(FileMatchingService).GetMethod(
                 "TryV5SuggestionWithPathFallback",
@@ -594,7 +673,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 tags,
                 BookMediaType.Audiobook,
                 path,
-                allowPathFallback
+                allowPathFallback,
+                questionsWithoutSuggestion ?? new HashSet<string>(StringComparer.Ordinal)
             });
         }
     }
