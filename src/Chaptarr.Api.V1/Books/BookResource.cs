@@ -47,6 +47,7 @@ namespace Chaptarr.Api.V1.Books
         public bool AnyEditionOk { get; set; }
         public Ratings Ratings { get; set; }
         public DateTime? ReleaseDate { get; set; }
+        public DateTime Added { get; set; }
         public int PageCount { get; set; }
         public List<string> Genres { get; set; }
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -212,6 +213,7 @@ namespace Chaptarr.Api.V1.Books
                     ? (selectedEdition.Ratings ?? new Ratings())
                     : (model.Ratings ?? new Ratings()),
                 ReleaseDate = selectedEdition?.ReleaseDate ?? model.ReleaseDate,
+                Added = model.Added,
                 // Don't show page count for audiobooks
                 PageCount = model.MediaType == BookMediaType.Audiobook
                     ? 0
