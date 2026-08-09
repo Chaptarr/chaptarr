@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Threading.Tasks;
 using Chaptarr.Http.Frontend.Mappers;
@@ -9,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
@@ -20,6 +22,8 @@ namespace Chaptarr.Core.Test.MediaCover
     [TestFixture]
     public class MediaCoverProxyRoutingFixture
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
         private class ConfigFileProviderProxy : DispatchProxy
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -34,12 +38,27 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             public bool WriteOversizedResponse { get; set; }
             public byte[] ResponseData { get; set; }
+            public HttpStatusCode? FailureStatusCode { get; set; }
+            public WebExceptionStatus? NetworkFailureStatus { get; set; }
+            public NzbDrone.Common.Http.HttpRequest LastRequest { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name != "Get" || args?[0] is not NzbDrone.Common.Http.HttpRequest request)
                 {
                     throw new NotImplementedException(targetMethod?.Name);
+                }
+
+                LastRequest = request;
+
+                if (FailureStatusCode.HasValue)
+                {
+                    throw new HttpException(request, new NzbDrone.Common.Http.HttpResponse(request, new HttpHeader(), Array.Empty<byte>(), FailureStatusCode.Value));
+                }
+
+                if (NetworkFailureStatus.HasValue)
+                {
+                    throw new WebException("Network failure", NetworkFailureStatus.Value);
                 }
 
                 if (ResponseData != null)
@@ -144,7 +163,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void expired_proxy_mapping_should_return_not_found()
         {
-            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Missing = true });
+            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Missing = true }, Logger);
 
             var result = mapper.GetResponse("/MediaCoverProxy/missing/cover.jpg") as StatusCodeResult;
 
@@ -154,7 +173,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void placeholder_proxy_response_should_return_not_found()
         {
-            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Placeholder = true });
+            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Placeholder = true }, Logger);
 
             var result = mapper.GetResponse("/MediaCoverProxy/placeholder/cover.jpg") as StatusCodeResult;
 
@@ -162,9 +181,43 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
+        public void upstream_http_error_should_return_not_found_without_default_error_logging()
+        {
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var client = (HttpClientProxy)(object)httpClient;
+            client.FailureStatusCode = HttpStatusCode.Forbidden;
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/challenged.jfif");
+            var mapper = new MediaCoverProxyMapper(proxy, Logger);
+
+            var result = mapper.GetResponse(proxyUrl.Substring(config.UrlBase.Length)) as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+            Assert.That(client.LastRequest.LogHttpError, Is.False);
+        }
+
+        [Test]
+        public void upstream_network_failure_should_return_not_found()
+        {
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var client = (HttpClientProxy)(object)httpClient;
+            client.NetworkFailureStatus = WebExceptionStatus.Timeout;
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/timeout.jpg");
+            var mapper = new MediaCoverProxyMapper(proxy, Logger);
+
+            var result = mapper.GetResponse(proxyUrl.Substring(config.UrlBase.Length)) as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+            Assert.That(client.LastRequest.LogHttpError, Is.False);
+        }
+
+        [Test]
         public async Task proxied_image_response_should_enable_private_browser_caching()
         {
-            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub());
+            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub(), Logger);
             var result = mapper.GetResponse("/MediaCoverProxy/found/cover.jpg");
             var services = new ServiceCollection();
             services.AddLogging();

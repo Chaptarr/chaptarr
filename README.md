@@ -50,7 +50,9 @@ Chaptarr is not compatible with Readarr's metadata sources. It uses its own modu
 
 ## Getting Started
 
-### Docker (Recommended)
+> **Docker is currently the only supported way to run Chaptarr.** Chaptarr is developed and tested in Docker. Releases do not include native install packages; earlier zip attachments were incomplete build artifacts and have been withdrawn. Native support (starting with an experimental Windows build) is being worked on.
+
+### Docker
 
 Pull the image:
 ```bash

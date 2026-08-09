@@ -5,6 +5,9 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.StaticFiles;
+using NLog;
+using NzbDrone.Common.Http;
+using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.MediaCover;
 
 namespace Chaptarr.Http.Frontend.Mappers
@@ -15,11 +18,13 @@ namespace Chaptarr.Http.Frontend.Mappers
 
         private readonly IMediaCoverProxy _mediaCoverProxy;
         private readonly IContentTypeProvider _mimeTypeProvider;
+        private readonly Logger _logger;
 
-        public MediaCoverProxyMapper(IMediaCoverProxy mediaCoverProxy)
+        public MediaCoverProxyMapper(IMediaCoverProxy mediaCoverProxy, Logger logger)
         {
             _mediaCoverProxy = mediaCoverProxy;
             _mimeTypeProvider = new FileExtensionContentTypeProvider();
+            _logger = logger;
         }
 
         public string Map(string resourceUrl)
@@ -60,6 +65,22 @@ namespace Chaptarr.Http.Frontend.Mappers
                 // normal author placeholder and never receives the mascot bytes.
                 return new StatusCodeResult((int)HttpStatusCode.NotFound);
             }
+            catch (HttpException e)
+            {
+                LogUnavailableImage(e.Request?.Method?.ToString() ?? "GET",
+                    e.Request?.Url?.ToString() ?? _mediaCoverProxy.GetUrl(hash),
+                    e.Response?.StatusCode);
+
+                return new StatusCodeResult((int)HttpStatusCode.NotFound);
+            }
+            catch (WebException e)
+            {
+                LogUnavailableImage("GET",
+                    _mediaCoverProxy.GetUrl(hash),
+                    (e.Response as HttpWebResponse)?.StatusCode);
+
+                return new StatusCodeResult((int)HttpStatusCode.NotFound);
+            }
 
             if (!_mimeTypeProvider.TryGetContentType(filename, out var contentType))
             {
@@ -67,6 +88,12 @@ namespace Chaptarr.Http.Frontend.Mappers
             }
 
             return new PrivateCacheFileContentResult(imageData, contentType);
+        }
+
+        private void LogUnavailableImage(string method, string url, HttpStatusCode? statusCode)
+        {
+            var status = statusCode.HasValue ? ((int)statusCode.Value).ToString() : "none";
+            _logger.Debug("Remote image unavailable: {0} {1} [{2}]", method, CleanseLogMessage.Cleanse(url), status);
         }
 
         private sealed class PrivateCacheFileContentResult : FileContentResult

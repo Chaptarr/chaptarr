@@ -1,5 +1,6 @@
 import { createAction } from 'redux-actions';
 import { createThunk, handleThunks } from 'Store/thunks';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
 import { set } from '../baseActions';
 import createFetchHandler from '../Creators/createFetchHandler';
 import createHandleActions from '../Creators/createHandleActions';
@@ -67,14 +68,13 @@ export default {
     [TEST_PROXY]: (getState, payload, dispatch) => {
       dispatch(set({ section, isTesting: true }));
 
-      const promise = fetch('/api/v1/settings/proxy/test', {
+      const promise = createAjaxRequest({
+        url: '/settings/proxy/test',
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': window.Chaptarr.apiKey
-        },
-        body: JSON.stringify(payload)
-      });
+        dataType: 'json',
+        contentType: 'application/json',
+        data: JSON.stringify(payload)
+      }).request;
 
       promise.done((data) => {
         dispatch(set({

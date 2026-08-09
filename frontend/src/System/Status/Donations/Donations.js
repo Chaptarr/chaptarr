@@ -19,18 +19,6 @@ class Donations extends Component {
 
           <div className={styles.donationButtons}>
             <Link
-              to="https://github.com/sponsors/robertlordhood"
-              className={styles.donationButton}
-              title={translate('DonationsGitHubSponsorsTitle')}
-            >
-              <div className={styles.buttonContent}>
-                <span className={styles.buttonIcon}>{'💖'}</span>
-                <span className={styles.buttonText}>{translate('DonationsGitHubSponsorsLabel')}</span>
-                <span className={styles.buttonSubtext}>{translate('DonationsGitHubSponsorsSubtext')}</span>
-              </div>
-            </Link>
-
-            <Link
               to="https://ko-fi.com/chaptarr"
               className={styles.donationButton}
               title={translate('DonationsKofiTitle')}

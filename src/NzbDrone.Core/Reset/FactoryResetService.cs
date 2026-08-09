@@ -310,7 +310,12 @@ namespace NzbDrone.Core.Reset
 
         private static void ResetSqliteSchema(string connectionString)
         {
-            using var conn = new SqliteConnection(connectionString);
+            var connectionStringBuilder = new SqliteConnectionStringBuilder(connectionString)
+            {
+                Pooling = false
+            };
+
+            using var conn = new SqliteConnection(connectionStringBuilder.ConnectionString);
             conn.Open();
 
             // Best-effort pragmas; reset should keep moving even if some fail.

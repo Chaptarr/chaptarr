@@ -22,9 +22,9 @@ function UpdateChanges(props: UpdateChangesProps) {
       <ul>
         {uniqueChanges.map((change, index) => {
           const checkChange = change.replace(
-            /#\d{4,5}\b/g,
+            /#\d+\b/g,
             (match) =>
-              `[${match}](https://github.com/robertlordhood/Chaptarr/issues/${match.substring(
+              `[${match}](https://github.com/Chaptarr/chaptarr/issues/${match.substring(
                 1
               )})`
           );

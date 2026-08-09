@@ -15,20 +15,13 @@ class MoreInfo extends Component {
     return (
       <FieldSet legend={translate('MoreInfo')}>
         <DescriptionList>
-          <DescriptionListItemTitle>{translate('HomePage')}</DescriptionListItemTitle>
-          <DescriptionListItemDescription>
-            <Link to="https://discord.gg/nqFGsGUug2">{'chaptarr.com'}</Link>
-          </DescriptionListItemDescription>
-
+          {/* No Home Page entry: chaptarr.com does not serve a site yet; re-add if a landing page ships. */}
           <DescriptionListItemTitle>{translate('Wiki')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://discord.gg/nqFGsGUug2">{translate('Wiki')}</Link>
+            <Link to="https://wiki.chaptarr.com">{translate('Wiki')}</Link>
           </DescriptionListItemDescription>
 
-          <DescriptionListItemTitle>{translate('Reddit')}</DescriptionListItemTitle>
-          <DescriptionListItemDescription>
-            <Link to="https://discord.gg/nqFGsGUug2">{'Chaptarr'}</Link>
-          </DescriptionListItemDescription>
+          {/* No Reddit entry: r/chaptarr is already taken and not affiliated with Chaptarr, and no official subreddit is planned. */}
 
           <DescriptionListItemTitle>{translate('Discord')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
@@ -37,12 +30,12 @@ class MoreInfo extends Component {
 
           <DescriptionListItemTitle>{translate('Source')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/robertlordhood/Chaptarr">{'github.com/robertlordhood/Chaptarr'}</Link>
+            <Link to="https://github.com/Chaptarr/chaptarr">{'github.com/Chaptarr/chaptarr'}</Link>
           </DescriptionListItemDescription>
 
           <DescriptionListItemTitle>{translate('FeatureRequests')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/robertlordhood/Chaptarr/issues">{'github.com/robertlordhood/Chaptarr/issues'}</Link>
+            <Link to="https://github.com/Chaptarr/chaptarr/issues">{'github.com/Chaptarr/chaptarr/issues'}</Link>
           </DescriptionListItemDescription>
 
         </DescriptionList>

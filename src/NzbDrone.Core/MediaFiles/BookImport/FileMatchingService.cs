@@ -655,6 +655,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var result = new FileMatchResult();
+            var v5QuestionsWithoutSuggestion = new HashSet<string>(StringComparer.Ordinal);
 
                 // Grouped matching: one match per physical unit.
                 // Standalone book containers (ebooks) default to one file per unit.
@@ -985,6 +986,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     mediaType,
                                     allowAuthorImport,
                                     usePathAsTagsFallback,
+                                    v5QuestionsWithoutSuggestion,
                                     hardAllowedBookIds);
                                 if (recovery.match != null)
                                 {
@@ -1476,7 +1478,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     {
                         try
                         {
-                            var v5Suggested = TryV5SuggestionWithPathFallback(homogeneousTags, mediaType, representative.Path, usePathAsTagsFallback && !disablePathFallback);
+                            var v5Suggested = TryV5SuggestionWithPathFallback(
+                                homogeneousTags,
+                                mediaType,
+                                representative.Path,
+                                usePathAsTagsFallback && !disablePathFallback,
+                                v5QuestionsWithoutSuggestion);
 
                             if (v5Suggested != null && allowAuthorImport)
                             {
@@ -1794,7 +1801,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                             file.Path,
                                             usePathAsTagsFallback &&
                                             !disablePathFallback &&
-                                            !HasContradictoryFallbackDisposition(rejections));
+                                            !HasContradictoryFallbackDisposition(rejections),
+                                            v5QuestionsWithoutSuggestion);
                                         if (v5Suggested != null)
                                         {
                                             var s = v5Suggested;
@@ -2042,7 +2050,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     subgroupRep.Path,
                                     usePathAsTagsFallback &&
                                     !disablePathFallback &&
-                                    !subgroupHasContradictoryEvidence);
+                                    !subgroupHasContradictoryEvidence,
+                                    v5QuestionsWithoutSuggestion);
                                 if (v5Suggested != null)
                                 {
                                     var s = v5Suggested;
@@ -2243,7 +2252,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             representative.Path,
                             usePathAsTagsFallback &&
                             !disablePathFallback &&
-                            !groupedPathFallbackWasContradictory);
+                            !groupedPathFallbackWasContradictory,
+                            v5QuestionsWithoutSuggestion);
                     }
 
                     // Short-circuit: confirmed v5 author + containment → resolve author folder (≥ 0.98), enqueue import, prune.
@@ -2696,6 +2706,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     mediaType,
                                     allowAuthorImport,
                                     usePathAsTagsFallback,
+                                    v5QuestionsWithoutSuggestion,
                                     hardAllowedBookIds);
                                 if (recovery.match != null)
                                 {
@@ -2793,7 +2804,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                 file.AllTags,
                                 mediaType,
                                 file.Path,
-                                usePathAsTagsFallback && !localPathFallbackWasContradictory);
+                                usePathAsTagsFallback && !localPathFallbackWasContradictory,
+                                v5QuestionsWithoutSuggestion);
                         }
 
                         // Still unmatched — record
@@ -2870,15 +2882,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             Dictionary<string, List<string>> tags,
             BookMediaType mediaType,
             string filePath,
-            bool includeFileNameEvidence)
-        {
-            return TryV5Suggestion(tags, mediaType, filePath, includeFileNameEvidence, out _);
-        }
-
-        private V5SuggestionInfo TryV5Suggestion(
-            Dictionary<string, List<string>> tags,
-            BookMediaType mediaType,
-            string filePath,
             bool includeFileNameEvidence,
             out bool contradictoryAuthorEvidence)
         {
@@ -2931,12 +2934,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             Dictionary<string, List<string>> tags,
             BookMediaType mediaType,
             string filePath,
-            bool allowPathFallback)
+            bool allowPathFallback,
+            HashSet<string> questionsWithoutSuggestion)
         {
-            var suggestion = TryV5Suggestion(tags, mediaType, filePath, allowPathFallback, out var contradictoryAuthorEvidence);
-            if (suggestion != null || !allowPathFallback || contradictoryAuthorEvidence)
+            var suggestion = TryV5SuggestionOnce(
+                tags,
+                mediaType,
+                filePath,
+                allowPathFallback,
+                questionsWithoutSuggestion,
+                out var contradictoryAuthorEvidence,
+                out var questionWasSuppressed);
+            if (suggestion != null)
             {
                 return suggestion;
+            }
+
+            if (questionWasSuppressed || !allowPathFallback || contradictoryAuthorEvidence)
+            {
+                return null;
             }
 
             var pathTags = BuildPathDerivedTags(filePath);
@@ -2947,7 +2963,70 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             var combinedTags = MergeEvidenceTags(tags, pathTags);
             _logger.Debug("[FALLBACK-V5] Retrying V5 suggestion with embedded plus path-derived evidence for '{0}'", Path.GetFileName(filePath));
-            return TryV5Suggestion(combinedTags, mediaType, filePath, includeFileNameEvidence: true);
+            return TryV5SuggestionOnce(
+                combinedTags,
+                mediaType,
+                filePath,
+                includeFileNameEvidence: true,
+                questionsWithoutSuggestion,
+                out _,
+                out _);
+        }
+
+        private V5SuggestionInfo TryV5SuggestionOnce(
+            Dictionary<string, List<string>> tags,
+            BookMediaType mediaType,
+            string filePath,
+            bool includeFileNameEvidence,
+            HashSet<string> questionsWithoutSuggestion,
+            out bool contradictoryAuthorEvidence,
+            out bool questionWasSuppressed)
+        {
+            questionWasSuppressed = false;
+            var transmittedFilePath = includeFileNameEvidence ? filePath : null;
+            var questionKey = BuildV5QuestionKey(tags, mediaType, transmittedFilePath);
+            if (questionKey != null && !questionsWithoutSuggestion.Add(questionKey))
+            {
+                contradictoryAuthorEvidence = false;
+                questionWasSuppressed = true;
+                _logger.Debug("[FALLBACK-V5] Skipping repeated no-suggestion question for '{0}'", Path.GetFileName(filePath));
+                return null;
+            }
+
+            var suggestion = TryV5Suggestion(
+                tags,
+                mediaType,
+                filePath,
+                includeFileNameEvidence,
+                out contradictoryAuthorEvidence);
+            if (suggestion != null && questionKey != null)
+            {
+                questionsWithoutSuggestion.Remove(questionKey);
+            }
+
+            return suggestion;
+        }
+
+        private static string BuildV5QuestionKey(
+            Dictionary<string, List<string>> tags,
+            BookMediaType mediaType,
+            string transmittedFilePath)
+        {
+            var evidenceKey = BookImportUnitGroupingService.BuildIdentityKey(tags);
+            if (string.IsNullOrWhiteSpace(evidenceKey))
+            {
+                return null;
+            }
+
+            var fileNameKey = transmittedFilePath == null
+                ? string.Empty
+                : BookImportUnitGroupingService.NormalizeIdentityValue(Path.GetFileName(transmittedFilePath));
+            if (transmittedFilePath != null && string.IsNullOrWhiteSpace(fileNameKey))
+            {
+                return null;
+            }
+
+            return $"{mediaType}\u001D{evidenceKey}\u001D{fileNameKey}";
         }
 
         private static AuthorSuggestion CreateAuthorSuggestion(V5SuggestionInfo suggestion)
@@ -3041,6 +3120,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             BookMediaType mediaType,
             bool allowAuthorImport,
             bool includeFileNameEvidence,
+            HashSet<string> questionsWithoutSuggestion,
             IReadOnlySet<int> hardAllowedBookIds = null)
         {
             if (file?.Path == null || v5Tags == null || v5Tags.Count == 0)
@@ -3048,7 +3128,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return (null, null, null);
             }
 
-            var v5Suggested = TryV5Suggestion(v5Tags, mediaType, file.Path, includeFileNameEvidence);
+            var v5Suggested = TryV5SuggestionOnce(
+                v5Tags,
+                mediaType,
+                file.Path,
+                includeFileNameEvidence,
+                questionsWithoutSuggestion,
+                out _,
+                out _);
             if (v5Suggested == null)
             {
                 return (null, null, null);

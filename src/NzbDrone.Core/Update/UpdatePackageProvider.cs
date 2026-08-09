@@ -242,13 +242,14 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
-                            "Faster startup times and navigation speeds for most users.",
-                            "Worked to improve reliability for newest and upcoming books on the author list.",
-                            "Worked on 'Search All' for huge wanted lists using insane amounts of RAM."
+                            "Clarified that Docker is currently the only supported way to run Chaptarr. Native installs are being worked on."
                         },
                         Fixed = new List<string>
                         {
-                            "Re-grabbing the same failed downloads."
+                            "Reduced idle memory usage after large imports.",
+                            "Scanning folders with a large number of audiobook files is more efficient, both in Chaptarr and for the metadata server.",
+                            "System page links now point to the project's GitHub and wiki instead of outdated destinations.",
+                            "Some Hardcover images are currently caught behind their bot protection, which looks like a misconfiguration on their side. Chaptarr now treats those as simply unavailable and moves on, instead of recording an alarming error."
                         }
                     }
                 }
