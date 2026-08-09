@@ -242,14 +242,13 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
-                            "Chaptarr is now open source at github.com/Chaptarr/chaptarr.",
-                            "The wiki is being updated and will be available asap."
+                            "Clarified that Docker is currently the only supported way to run Chaptarr. Native installs are being worked on."
                         },
                         Fixed = new List<string>
                         {
-                            "Third-party tools that connect to Chaptarr as Readarr (Unpackerr, Decluttarr, and others) no longer fail with \"PageSize must be between 1 and 1000\".",
-                            "The web interface now works correctly behind a reverse proxy URL Base. Author statistics, the filename builder, proxy testing, and author photo selection no longer break on subpath setups.",
-                            "The proxy Test button no longer hangs without giving a result."
+                            "Reduced idle memory usage after large imports.",
+                            "Scanning folders with a large number of audiobook files is more efficient, both in Chaptarr and for the metadata server.",
+                            "System page links now point to the project's GitHub and wiki instead of outdated destinations."
                         }
                     }
                 }
