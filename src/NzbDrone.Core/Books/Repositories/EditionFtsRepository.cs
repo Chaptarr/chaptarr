@@ -755,7 +755,24 @@ namespace NzbDrone.Core.Books
                 parameters.Add("authorId", authorId.Value);
             }
 
+            // Postgres can only combine OR'd index predicates with a BitmapOr when they sit on the
+            // same relation, so recalling the candidate ids per table keeps the GIN indexes from
+            // migration 013 usable. Scoring still runs over the joined row, so results are unchanged.
             var sql = $@"
+                WITH candidates AS (
+                    SELECT e.""BookId"" AS ""Id""
+                    FROM ""Editions"" e
+                    WHERE to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ to_tsquery('simple', @tsQuery)
+                    UNION
+                    SELECT b.""Id""
+                    FROM ""Books"" b
+                    WHERE to_tsvector('simple', COALESCE(b.""SeriesName"", '')) @@ to_tsquery('simple', @tsQuery)
+                    UNION
+                    SELECT b.""Id""
+                    FROM ""Books"" b
+                    INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
+                    WHERE to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @tsQuery)
+                )
                 SELECT
                     b.""Id"" AS BookId,
                     b.""AuthorId"" AS AuthorId,
@@ -772,11 +789,7 @@ namespace NzbDrone.Core.Books
                 INNER JOIN ""Books"" b ON b.""Id"" = e.""BookId""
                 INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
                 WHERE b.""MediaType"" = @mediaType
-                  AND (
-                    to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ to_tsquery('simple', @tsQuery)
-                    OR to_tsvector('simple', COALESCE(b.""SeriesName"", '')) @@ to_tsquery('simple', @tsQuery)
-                    OR to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @tsQuery)
-                  )
+                  AND b.""Id"" IN (SELECT ""Id"" FROM candidates)
                   {(authorId.HasValue ? "AND b.\"AuthorId\" = @authorId" : string.Empty)}
                 GROUP BY b.""Id"", b.""AuthorId"", a.""Name"", b.""Title"", b.""SeriesName"", b.""SeriesPosition""
                 ORDER BY MatchScore DESC
