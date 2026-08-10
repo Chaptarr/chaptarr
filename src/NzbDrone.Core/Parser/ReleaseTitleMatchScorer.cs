@@ -58,8 +58,6 @@ namespace NzbDrone.Core.Parser
         public string SeriesName { get; set; }
         public string SeriesPosition { get; set; }
         public List<string> PrimaryVariants { get; } = new List<string>();
-        public List<string> FallbackVariants { get; } = new List<string>();
-        public List<string> IdentityVariants { get; } = new List<string>();
         public HashSet<string> PrefixAllowanceTokens { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -194,42 +192,29 @@ namespace NzbDrone.Core.Parser
         private static TitleMatchResult ScoreAgainstBook(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, bool hasAuthorInTitle, Book book, IEnumerable<Book> authorCatalogBooks)
         {
             var context = GetBookTitleMatchContext(book);
-            if (context.PrimaryVariants.Count == 0 && context.FallbackVariants.Count == 0)
+            if (context.PrimaryVariants.Count == 0)
             {
                 return null;
             }
 
             var contradictoryVariants = BuildContradictoryVariants(book, authorCatalogBooks).ToList();
-
-            var bestPrimary = ScoreAgainstVariants(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, context.PrimaryVariants, context, contradictoryVariants, allowAuthorlessExactMatch: false);
-            if (bestPrimary?.IsMatch == true)
-            {
-                return bestPrimary;
-            }
-
-            var bestFallback = ScoreAgainstVariants(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, context.FallbackVariants, context, contradictoryVariants, allowAuthorlessExactMatch: true);
-            if (bestFallback?.IsMatch == true)
-            {
-                return bestFallback;
-            }
-
-            return ChooseBetterResult(bestPrimary, bestFallback);
+            return ScoreAgainstVariants(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, context.PrimaryVariants, context, contradictoryVariants);
         }
 
-        private static TitleMatchResult ScoreAgainstVariants(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, bool hasAuthorInTitle, Book book, IEnumerable<string> variants, BookTitleMatchContext context, IReadOnlyCollection<ContradictoryVariant> contradictoryVariants, bool allowAuthorlessExactMatch)
+        private static TitleMatchResult ScoreAgainstVariants(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, bool hasAuthorInTitle, Book book, IEnumerable<string> variants, BookTitleMatchContext context, IReadOnlyCollection<ContradictoryVariant> contradictoryVariants)
         {
             TitleMatchResult best = null;
 
             foreach (var variant in variants ?? Enumerable.Empty<string>())
             {
-                var candidate = ScoreAgainstTitleVariant(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, variant, context, contradictoryVariants, allowAuthorlessExactMatch);
+                var candidate = ScoreAgainstTitleVariant(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, variant, context, contradictoryVariants);
                 best = ChooseBetterResult(best, candidate);
             }
 
             return best;
         }
 
-        private static TitleMatchResult ScoreAgainstTitleVariant(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, bool hasAuthorInTitle, Book book, string bookTitleVariant, BookTitleMatchContext context, IReadOnlyCollection<ContradictoryVariant> contradictoryVariants, bool allowAuthorlessExactMatch)
+        private static TitleMatchResult ScoreAgainstTitleVariant(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, bool hasAuthorInTitle, Book book, string bookTitleVariant, BookTitleMatchContext context, IReadOnlyCollection<ContradictoryVariant> contradictoryVariants)
         {
             var titleTokens = Tokenize(bookTitleVariant);
             if (titleTokens.Count == 0)
@@ -262,7 +247,7 @@ namespace NzbDrone.Core.Parser
                     MeaningfulLeftovers = leftovers,
                     ProblemCode = ChooseProblemCode(problems),
                     Problems = problems,
-                    IsMatch = (hasAuthorEvidence || allowAuthorlessExactMatch || IsLongAuthorlessYearTitleMatch(releaseTokens, span.Start, span.End, titleTokens, problems)) && problems.Count == 0
+                    IsMatch = (hasAuthorEvidence || IsLongAuthorlessYearTitleMatch(releaseTokens, span.Start, span.End, titleTokens, problems)) && problems.Count == 0
                 };
 
                 best = ChooseBetterResult(best, candidate);
@@ -661,8 +646,7 @@ namespace NzbDrone.Core.Parser
 
             foreach (var otherBook in authorCatalogBooks.Where(book => CanContradict(targetBook, book)))
             {
-                var context = GetBookTitleMatchContext(otherBook);
-                foreach (var variant in context.IdentityVariants)
+                foreach (var variant in GetContradictoryTitleVariants(otherBook))
                 {
                     if (string.IsNullOrWhiteSpace(variant) || !seen.Add(variant))
                     {
@@ -681,6 +665,25 @@ namespace NzbDrone.Core.Parser
                         Tokens = tokens
                     });
                 }
+            }
+
+            return variants;
+        }
+
+        private static IEnumerable<string> GetContradictoryTitleVariants(Book book)
+        {
+            var variants = new List<string>();
+
+            AddTitleVariants(variants, GetPrimaryBookTitle(book));
+            AddTitleVariants(variants, book?.Title);
+            AddTitleVariants(variants, book?.OriginalTitle);
+
+            foreach (var editionTitle in (book?.Editions ?? Enumerable.Empty<Edition>())
+                         .Where(edition => edition != null && !string.IsNullOrWhiteSpace(edition.Title))
+                         .Select(edition => edition.Title.Trim())
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                AddTitleVariants(variants, editionTitle);
             }
 
             return variants;
@@ -881,45 +884,11 @@ namespace NzbDrone.Core.Parser
             var primaryTitle = GetPrimaryBookTitle(book);
 
             AddTitleVariants(context.PrimaryVariants, primaryTitle);
-            foreach (var title in GetKnownSubtitleBaseTitleVariants(book, primaryTitle))
-            {
-                AddTitleVariants(context.PrimaryVariants, title);
-            }
-
-            foreach (var title in GetPrimarySplitBaseTitleVariants(book, primaryTitle))
-            {
-                AddTitleVariants(context.PrimaryVariants, title);
-            }
-
             context.PrimaryTitle = primaryTitle;
 
-            AddIdentityVariant(context, primaryTitle);
-            AddIdentityVariant(context, book?.Title);
-            AddIdentityVariant(context, book?.OriginalTitle);
-
-            var editionTitles = (book?.Editions ?? new List<Edition>())
-                .Where(edition => edition != null && !string.IsNullOrWhiteSpace(edition.Title))
-                .Select(edition => edition.Title.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            foreach (var editionTitle in editionTitles)
+            foreach (var variant in context.PrimaryVariants)
             {
-                AddIdentityVariant(context, editionTitle);
-            }
-
-            var hasManualAddEdition = book?.Editions?.Any(edition => edition?.ManualAdd == true) == true;
-            if (book?.AnyEditionOk == true && !hasManualAddEdition)
-            {
-                foreach (var editionTitle in editionTitles)
-                {
-                    if (string.Equals(editionTitle, primaryTitle, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    AddTitleVariants(context.FallbackVariants, editionTitle);
-                }
+                AddTokens(context.PrefixAllowanceTokens, variant);
             }
 
             AddTokens(context.PrefixAllowanceTokens, book?.SeriesName);
@@ -987,87 +956,11 @@ namespace NzbDrone.Core.Parser
                 .FirstOrDefault();
         }
 
-        internal static IEnumerable<string> GetKnownSubtitleBaseTitleVariants(Book book, string primaryTitle)
-        {
-            if (book == null || string.IsNullOrWhiteSpace(primaryTitle))
-            {
-                yield break;
-            }
-
-            var selectedEdition = GetSelectedEdition(book);
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var candidates = new[]
-            {
-                (Title: book.Title, Subtitle: book.Subtitle),
-                (Title: book.OriginalTitle, Subtitle: book.Subtitle),
-                (Title: book.Title, Subtitle: selectedEdition?.Subtitle),
-                (Title: book.OriginalTitle, Subtitle: selectedEdition?.Subtitle)
-            };
-
-            foreach (var candidate in candidates)
-            {
-                if (IsKnownSubtitleTitleVariant(candidate.Title, candidate.Subtitle, primaryTitle) &&
-                    seen.Add(candidate.Title.Trim()))
-                {
-                    yield return candidate.Title.Trim();
-                }
-            }
-        }
-
-        internal static IEnumerable<string> GetPrimarySplitBaseTitleVariants(Book book, string primaryTitle)
-        {
-            if (book == null || string.IsNullOrWhiteSpace(primaryTitle))
-            {
-                yield break;
-            }
-
-            var splitTitle = primaryTitle.SplitBookTitle(book.Author?.Name).Item1;
-            if (string.IsNullOrWhiteSpace(splitTitle) ||
-                string.Equals(splitTitle, primaryTitle, StringComparison.OrdinalIgnoreCase))
-            {
-                yield break;
-            }
-
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var candidates = new[]
-            {
-                book.Title,
-                book.OriginalTitle
-            };
-
-            foreach (var candidate in candidates)
-            {
-                if (string.IsNullOrWhiteSpace(candidate))
-                {
-                    continue;
-                }
-
-                var trimmed = candidate.Trim();
-                if (TokenizedEquals(splitTitle, trimmed) && seen.Add(trimmed))
-                {
-                    yield return trimmed;
-                }
-            }
-        }
-
         private static string GetSelectedEditionTitle(Book book)
         {
             return GetSelectedEdition(book)?.Title;
         }
 
-        private static void AddIdentityVariant(BookTitleMatchContext context, string title)
-        {
-            if (context == null || string.IsNullOrWhiteSpace(title))
-            {
-                return;
-            }
-
-            foreach (var variant in ExpandTitleMatchVariants(title))
-            {
-                AddVariant(context.IdentityVariants, variant);
-                AddTokens(context.PrefixAllowanceTokens, variant);
-            }
-        }
 
         private static void AddTitleVariants(List<string> variants, string title)
         {

@@ -30,6 +30,7 @@ namespace NzbDrone.Core.DecisionEngine
         private readonly IEnumerable<IDecisionEngineSpecification> _specifications;
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IParsingService _parsingService;
+        private readonly IEditionFtsRepository _editionFtsRepository;
         private readonly IRemoteBookAggregationService _aggregationService;
         private readonly IReleaseNarratorMetadataEnricher _releaseNarratorMetadataEnricher;
         private readonly IConfigService _configService;
@@ -37,6 +38,7 @@ namespace NzbDrone.Core.DecisionEngine
 
         public DownloadDecisionMaker(IEnumerable<IDecisionEngineSpecification> specifications,
             IParsingService parsingService,
+            IEditionFtsRepository editionFtsRepository,
             ICustomFormatCalculationService formatService,
             IRemoteBookAggregationService aggregationService,
             IReleaseNarratorMetadataEnricher releaseNarratorMetadataEnricher,
@@ -45,6 +47,7 @@ namespace NzbDrone.Core.DecisionEngine
         {
             _specifications = specifications;
             _parsingService = parsingService;
+            _editionFtsRepository = editionFtsRepository;
             _formatCalculator = formatService;
             _aggregationService = aggregationService;
             _releaseNarratorMetadataEnricher = releaseNarratorMetadataEnricher;
@@ -99,6 +102,7 @@ namespace NzbDrone.Core.DecisionEngine
                 try
                 {
                     ParsedBookInfo parsedBookInfo = null;
+                    RemoteBook remoteBook = null;
                     var attemptedCriteriaParse = false;
                     var searchDecision = TryBuildSearchCriteriaDecision(report, searchCriteria, releaseSource);
 
@@ -121,91 +125,53 @@ namespace NzbDrone.Core.DecisionEngine
 
                     parsedBookInfo ??= Parser.Parser.ParseBookTitle(report.Title);
 
-                    if (parsedBookInfo == null)
+                    if (parsedBookInfo == null && searchCriteria != null && !attemptedCriteriaParse)
                     {
-                        var hasMamStructuredAuthor = isMamIndexer && !string.IsNullOrWhiteSpace(report.Author);
+                        parsedBookInfo = Parser.Parser.ParseBookTitleWithSearchCriteria(report.Title,
+                                                                                        searchCriteria.Author,
+                                                                                        searchCriteria.Books);
+                    }
 
-                        if (searchCriteria != null)
+                    if (searchCriteria == null)
+                    {
+                        parsedBookInfo ??= new ParsedBookInfo();
+
+                        if (parsedBookInfo.AuthorName.IsNullOrWhiteSpace())
                         {
-                            if (!attemptedCriteriaParse)
-                            {
-                                parsedBookInfo = Parser.Parser.ParseBookTitleWithSearchCriteria(report.Title,
-                                                                                                searchCriteria.Author,
-                                                                                                searchCriteria.Books);
-                            }
-                        }
-                        else if (!hasMamStructuredAuthor)
-                        {
-                            // try parsing fuzzy
-                            parsedBookInfo = _parsingService.ParseBookTitleFuzzy(report.Title);
+                            parsedBookInfo.AuthorName = report.Author;
                         }
 
-                        // Special handling for MAM releases when normal parsing fails.
-                        // MAM already gives us a structured author, so don't first run the
-                        // expensive fuzzy library scan for RSS items.
-                        if (parsedBookInfo == null && hasMamStructuredAuthor)
+                        if (parsedBookInfo.BookTitle.IsNullOrWhiteSpace())
                         {
-                            _logger.Trace("MAM_FALLBACK_PARSING: Normal parsing failed for '{0}', using MAM author '{1}'", report.Title, report.Author);
-
-                            var torrentInfo = report as TorrentInfo;
-                            var fallbackQuality = torrentInfo?.FileType.IsNotNullOrWhiteSpace() == true
-                                ? QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer)
-                                : QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
-
-                            parsedBookInfo = new ParsedBookInfo
-                            {
-                                AuthorName = report.Author,
-                                BookTitle = report.Title,
-                                ReleaseTitle = report.Title,
-                                Quality = fallbackQuality
-                            };
+                            parsedBookInfo.BookTitle = FirstNotBlank(report.Book, report.Title);
                         }
 
+                        if (parsedBookInfo.ReleaseTitle.IsNullOrWhiteSpace())
+                        {
+                            parsedBookInfo.ReleaseTitle = report.Title;
+                        }
+
+                        if (parsedBookInfo.Quality == null || parsedBookInfo.Quality.Quality == Quality.Unknown)
+                        {
+                            parsedBookInfo.Quality = ParseQualityForSearchDecision(report);
+                        }
+
+                        remoteBook = TryMapRssRelease(report, parsedBookInfo);
+                    }
+                    else if (parsedBookInfo != null && !parsedBookInfo.AuthorName.IsNullOrWhiteSpace())
+                    {
+                        remoteBook = _parsingService.Map(parsedBookInfo, searchCriteria);
                     }
 
                     _logger.Trace("MAM_DEBUG_PARSING: Title='{0}', ParsedBookInfo={1}, AuthorName='{2}', BookTitle='{3}'", report.Title, parsedBookInfo != null ? "NOT_NULL" : "NULL", parsedBookInfo?.AuthorName ?? "NULL", parsedBookInfo?.BookTitle ?? "NULL");
 
-                    // Log the report details for MAM releases
                     if (isMamIndexer)
                     {
                         _logger.Trace("MAM_REPORT_DETAILS: Indexer='{0}', Author='{1}', Title='{2}'", report.Indexer, report.Author ?? "NULL", report.Title);
                     }
 
-                    // Special handling for MAM releases: If we have a valid book title but no author name,
-                    // try to use the author from MAM's metadata or fall back to search criteria
-                    if (parsedBookInfo != null && parsedBookInfo.AuthorName.IsNullOrWhiteSpace() &&
-                        isMamIndexer && !string.IsNullOrWhiteSpace(parsedBookInfo.BookTitle))
+                    if (remoteBook != null)
                     {
-                        string authorName = null;
-
-                        if (!string.IsNullOrWhiteSpace(report.Author))
-                        {
-                            authorName = report.Author;
-                            _logger.Trace("MAM_DYNAMIC_AUTHOR: Using MAM author '{0}' for clean title '{1}'", authorName, parsedBookInfo.BookTitle);
-                        }
-
-                        // Fallback to search criteria author if no MAM author available
-                        else if (searchCriteria?.Author != null)
-                        {
-                            authorName = searchCriteria.Author.Name;
-                            _logger.Trace("MAM_FALLBACK_AUTHOR: Using search criteria author '{0}' for clean title '{1}'", authorName, parsedBookInfo.BookTitle);
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(authorName))
-                        {
-                            parsedBookInfo = new ParsedBookInfo
-                            {
-                                AuthorName = authorName,
-                                BookTitle = parsedBookInfo.BookTitle,
-                                Quality = parsedBookInfo.Quality,
-                                ReleaseTitle = parsedBookInfo.ReleaseTitle
-                            };
-                        }
-                    }
-
-                    if (parsedBookInfo != null && !parsedBookInfo.AuthorName.IsNullOrWhiteSpace())
-                    {
-                        var remoteBook = _parsingService.Map(parsedBookInfo, searchCriteria);
                         remoteBook.Release = report;
 
                         _logger.Trace("MAPPING_RESULT: After Map() - Author={0}, Books.Count={1}, ParsedAuthor='{2}'",
@@ -322,14 +288,14 @@ namespace NzbDrone.Core.DecisionEngine
                             parsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
                         }
 
-                        var remoteBook = new RemoteBook
+                        var unparsedRemoteBook = new RemoteBook
                         {
                             Release = report,
                             ParsedBookInfo = parsedBookInfo
                         };
 
                         // Hard filter: Unable to parse is never bypassable once the shared search matcher says no.
-                        decision = new DownloadDecision(remoteBook, new Rejection("Unable to parse release", RejectionType.Permanent, false, "Parsing", 3));
+                        decision = new DownloadDecision(unparsedRemoteBook, new Rejection("Unable to parse release", RejectionType.Permanent, false, "Parsing", 3));
                     }
                 }
                 }
@@ -430,6 +396,126 @@ namespace NzbDrone.Core.DecisionEngine
             remoteBook.CustomFormatScore = qualityProfile?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
 
             return GetDecisionForReport(remoteBook, searchCriteria);
+        }
+
+        private RemoteBook TryMapRssRelease(ReleaseInfo report, ParsedBookInfo parsedBookInfo)
+        {
+            if (_editionFtsRepository is not IStagedEditionFtsRepository ftsRepository)
+            {
+                throw new InvalidOperationException("The configured Edition FTS repository does not support staged book recall.");
+            }
+
+            var tokens = new[]
+                {
+                    report.Title,
+                    report.Author,
+                    report.Book,
+                    parsedBookInfo.AuthorName,
+                    parsedBookInfo.BookTitle
+                }
+                .Where(value => value.IsNotNullOrWhiteSpace())
+                .SelectMany(ReleaseTitleMatchScorer.Tokenize)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (tokens.Count == 0)
+            {
+                return null;
+            }
+
+            var mediaType = QualityMediaTypeHelper.GetKnownMediaType(parsedBookInfo.Quality?.Quality);
+            var mediaTypes = mediaType.HasValue
+                ? new[] { mediaType.Value }
+                : new[] { BookMediaType.Audiobook, BookMediaType.Ebook };
+
+            var recalls = mediaTypes
+                .SelectMany(candidateMediaType => ftsRepository.RecallBooks(
+                    null,
+                    tokens,
+                    candidateMediaType,
+                    limit: 20,
+                    monitoredOnly: true))
+                .GroupBy(candidate => candidate.BookId)
+                .Select(group => group.OrderByDescending(candidate => candidate.MatchScore).First())
+                .ToList();
+
+            if (recalls.Count == 0)
+            {
+                return null;
+            }
+
+            var mapped = _parsingService.Map(parsedBookInfo, 0, recalls.Select(candidate => candidate.BookId));
+            var books = mapped?.Books?
+                .Where(book => book?.Author != null)
+                .ToList() ?? new List<Book>();
+
+            var matches = books
+                .GroupBy(book => new { book.AuthorId, book.MediaType })
+                .Select(group =>
+                {
+                    var candidates = group.ToList();
+                    var author = candidates[0].Author;
+                    var match = ReleaseTitleMatchScorer.FindBestMatch(
+                        report.Title,
+                        author.Name,
+                        candidates,
+                        FirstNotBlank(report.Author, parsedBookInfo.AuthorName),
+                        candidates);
+
+                    return new
+                    {
+                        Author = author,
+                        Match = match,
+                        Identity = match == null
+                            ? null
+                            : ReleaseIdentityEvidence.Analyze(report, author, match.Book, match)
+                    };
+                })
+                .Where(candidate => candidate.Match?.Book != null &&
+                                    candidate.Identity?.HasStructuredAuthorMismatch != true)
+                .ToList();
+
+            if (matches.Count == 0)
+            {
+                return null;
+            }
+
+            var viableMatches = matches
+                .Where(candidate => ReleaseTitleMatchSpecification.IsAcceptedMatch(
+                    candidate.Match,
+                    candidate.Identity,
+                    _configService?.BookMatchingStrictness ?? BookMatchingStrictness.Balanced))
+                .ToList();
+
+            var selected = viableMatches.Count == 1 ? viableMatches[0] : null;
+
+            if (selected == null)
+            {
+                _logger.Debug("RSS FTS recall found {0} proven matches for release '{1}' across {2} monitored author/media candidates", viableMatches.Count, report.Title, matches.Count);
+                return null;
+            }
+
+            parsedBookInfo.BookTitle = FirstNotBlank(
+                selected.Match.PrimaryTitle,
+                ReleaseTitleMatchScorer.GetPrimaryBookTitle(selected.Match.Book),
+                selected.Match.Book.Title,
+                parsedBookInfo.BookTitle);
+            parsedBookInfo.AuthorName = FirstNotBlank(parsedBookInfo.AuthorName, report.Author, selected.Author.Name);
+            parsedBookInfo.ReleaseTitle = FirstNotBlank(parsedBookInfo.ReleaseTitle, report.Title);
+            parsedBookInfo.ReleaseGroup = FirstNotBlank(parsedBookInfo.ReleaseGroup, Parser.Parser.ParseReleaseGroup(report.Title));
+
+            _logger.Trace("RSS FTS mapped '{0}' to monitored book {1} after hydrating {2} shortlisted books",
+                report.Title,
+                selected.Match.Book.Id,
+                books.Count);
+
+            return new RemoteBook
+            {
+                ParsedBookInfo = parsedBookInfo,
+                Author = selected.Author,
+                Books = new List<Book> { selected.Match.Book },
+                SearchCriteriaMatch = selected.Match
+            };
         }
 
         private static void AttachPackDetection(RemoteBook remoteBook, ReleaseInfo report)

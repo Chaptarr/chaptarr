@@ -166,7 +166,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_accept_interactive_search_result_when_release_uses_short_book_title_and_monitored_edition_has_subtitle()
+        public void should_reject_interactive_search_result_when_release_omits_the_monitored_edition_subtitle()
         {
             var author = new Author { Name = "Mitch Albom" };
             var book = new Book
@@ -209,7 +209,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decision = spec.IsSatisfiedBy(remoteBook, criteria);
 
-            Assert.That(decision.Accepted, Is.True);
+            Assert.That(decision.Accepted, Is.False);
         }
 
         [Test]
@@ -440,6 +440,29 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Assert.That(match.ProblemCode, Is.EqualTo(TitleMatchProblemCode.SeriesPositionMismatch));
                 Assert.That(decision.Accepted, Is.EqualTo(expectedAccepted));
             });
+        }
+
+        [Test]
+        public void should_not_ignore_numeric_residue_when_match_has_a_nonnumeric_problem()
+        {
+            var match = new TitleMatchResult
+            {
+                IsMatch = false,
+                ProblemCode = TitleMatchProblemCode.SuspiciousAdjacentNumber,
+                Problems = new List<TitleMatchProblem>
+                {
+                    new TitleMatchProblem { Code = TitleMatchProblemCode.SuspiciousAdjacentNumber, Value = "3" },
+                    new TitleMatchProblem { Code = TitleMatchProblemCode.SiblingTitleContradiction, Value = "Other Title" }
+                }
+            };
+            var identity = new ReleaseIdentityEvidence { HasPositiveIdentityEvidence = true };
+
+            var accepted = ReleaseTitleMatchSpecification.IsAcceptedMatch(
+                match,
+                identity,
+                BookMatchingStrictness.Balanced);
+
+            Assert.That(accepted, Is.False);
         }
 
         [Test]

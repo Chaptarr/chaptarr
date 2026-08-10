@@ -225,7 +225,7 @@ namespace Chaptarr.Core.Test.Parser
         [TestCase("Tuesdays with Morrie")]
         [TestCase("Mitch Albom - Tuesdays with Morrie (2007) MP3")]
         [TestCase("Tuesdays With Morrie - Mitch Albom audiobook")]
-        public void should_match_book_title_when_monitored_edition_adds_subtitle(string releaseTitle)
+        public void should_not_shorten_the_monitored_edition_title_for_release_identity(string releaseTitle)
         {
             var author = new Author { Name = "Mitch Albom" };
             var book = new Book
@@ -252,15 +252,11 @@ namespace Chaptarr.Core.Test.Parser
                 "Mitch Albom",
                 new[] { book });
 
-            Assert.That(result, Is.Not.Null);
-            Assert.That(result.IsMatch, Is.True);
-            Assert.That(result.PrimaryTitle, Is.EqualTo("Tuesdays with Morrie: An Old Man, a Young Man, and Life's Greatest Lesson"));
-            Assert.That(result.MatchedVariant, Is.EqualTo("Tuesdays with Morrie"));
-            Assert.That(result.MeaningfulLeftovers, Is.Empty);
+            Assert.That(result, Is.Null);
         }
 
         [Test]
-        public void should_match_book_title_when_monitored_edition_has_unmapped_marketing_subtitle()
+        public void should_not_drop_an_unmapped_marketing_subtitle_from_release_identity()
         {
             var author = new Author { Name = "A.F. Kay" };
             var book = new Book
@@ -288,11 +284,7 @@ namespace Chaptarr.Core.Test.Parser
                 "A F Kay",
                 new[] { book });
 
-            Assert.That(result, Is.Not.Null);
-            Assert.That(result.IsMatch, Is.True);
-            Assert.That(result.PrimaryTitle, Is.EqualTo("Shade's First Rule: A Fantasy LitRPG Adventure"));
-            Assert.That(result.MatchedVariant, Is.EqualTo("Shade's First Rule"));
-            Assert.That(result.MeaningfulLeftovers, Is.Empty);
+            Assert.That(result, Is.Null);
         }
 
         [Test]
@@ -897,10 +889,10 @@ namespace Chaptarr.Core.Test.Parser
         }
 
         [Test]
-        public void should_fallback_to_sibling_edition_only_when_any_edition_ok_is_enabled()
+        public void should_not_use_sibling_edition_title_for_release_identity_when_any_edition_ok_is_enabled()
         {
             var author = new Author { Name = "J. K. Rowling" };
-            var looseBook = new Book
+            var book = new Book
             {
                 Title = "Harry Potter and the Philosopher's Stone",
                 AnyEditionOk = true,
@@ -912,37 +904,134 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
 
-            var strictBook = new Book
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                "Harry Potter and the Philosopher's Stone",
+                "J. K. Rowling",
+                new[] { book },
+                "J K Rowling",
+                new[] { book });
+
+            Assert.That(result, Is.Null,
+                "AnyEditionOk permits a locally proven edition switch after download; it must not broaden release identity");
+        }
+
+        [Test]
+        public void should_not_let_a_poisoned_sibling_edition_hide_different_book_evidence()
+        {
+            var author = new Author { Name = "Frank Herbert" };
+            var book = new Book
             {
-                Title = "Harry Potter and the Philosopher's Stone",
-                AnyEditionOk = false,
+                Title = "Dune",
+                AnyEditionOk = true,
                 Author = author,
                 Editions = new List<Edition>
                 {
-                    new Edition { Id = 1, Title = "Harry Potter and the Sorcerer's Stone", Monitored = true },
-                    new Edition { Id = 2, Title = "Harry Potter and the Philosopher's Stone" }
+                    new Edition { Id = 1, Title = "Dune", Monitored = true },
+                    new Edition { Id = 2, Title = "Dune Messiah" }
                 }
             };
 
-            var loose = ReleaseTitleMatchScorer.FindBestMatch(
-                "Harry Potter and the Philosopher's Stone",
-                "J. K. Rowling",
-                new[] { looseBook },
-                "J K Rowling",
-                new[] { looseBook });
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                "Frank Herbert - Dune Messiah",
+                "Frank Herbert",
+                new[] { book },
+                "Frank Herbert",
+                new[] { book });
 
-            var strict = ReleaseTitleMatchScorer.FindBestMatch(
-                "Harry Potter and the Philosopher's Stone",
-                "J. K. Rowling",
-                new[] { strictBook },
-                "J K Rowling",
-                new[] { strictBook });
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsMatch, Is.False);
+            Assert.That(result.MatchedVariant, Is.EqualTo("Dune"));
+            Assert.That(result.MeaningfulLeftovers, Is.Not.Empty);
+        }
 
-            Assert.That(loose, Is.Not.Null);
-            Assert.That(loose.IsMatch, Is.True);
-            Assert.That(loose.PrimaryTitle, Is.EqualTo("Harry Potter and the Sorcerer's Stone"));
-            Assert.That(loose.MatchedVariant, Is.EqualTo("Harry Potter and the Philosopher's Stone"));
-            Assert.That(strict, Is.Null);
+        [Test]
+        public void should_use_a_retitled_sibling_work_title_as_contradiction_evidence()
+        {
+            var author = new Author { Name = "Pierce Brown" };
+            var target = new Book
+            {
+                Id = 1,
+                Title = "Red Rising",
+                HardcoverBookId = "hc:target",
+                Author = author,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 1, Title = "Red Rising", Monitored = true }
+                }
+            };
+            var sibling = new Book
+            {
+                Id = 2,
+                Title = "Red Rising: Sons of Ares",
+                HardcoverBookId = "hc:sibling",
+                Author = author,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 2, Title = "Sons of Ares", Monitored = true }
+                }
+            };
+
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                "Pierce Brown - Red Rising: Sons of Ares",
+                "Pierce Brown",
+                new[] { target },
+                "Pierce Brown",
+                new[] { target, sibling });
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsMatch, Is.False);
+            Assert.That(result.ProblemCode, Is.EqualTo(TitleMatchProblemCode.SiblingTitleContradiction));
+            Assert.That(result.MeaningfulLeftovers, Does.Contain("Red Rising: Sons of Ares"));
+        }
+
+        [Test]
+        public void should_not_treat_exact_or_provider_proven_same_work_copies_as_sibling_contradictions()
+        {
+            var author = new Author { Name = "J. K. Rowling" };
+            var target = new Book
+            {
+                Id = 1,
+                Title = "Harry Potter and the Goblet of Fire",
+                HardcoverBookId = "hc:goblet",
+                Author = author,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 1, Title = "Harry Potter and the Goblet of Fire", Monitored = true }
+                }
+            };
+            var exactCopyWithoutProviderIds = new Book
+            {
+                Id = 3,
+                Title = "Harry Potter and the Goblet of Fire",
+                Author = author,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 3, Title = "Harry Potter and the Goblet of Fire", Monitored = true }
+                }
+            };
+
+            var jimDaleCopy = new Book
+            {
+                Id = 2,
+                Title = "Harry Potter and the Goblet of Fire: Jim Dale Edition",
+                HardcoverBookId = "hc:goblet",
+                Author = author,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 2, Title = "Harry Potter and the Goblet of Fire: Jim Dale Edition", Monitored = true }
+                }
+            };
+
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                "J. K. Rowling - Harry Potter and the Goblet of Fire: Jim Dale Edition",
+                "J. K. Rowling",
+                new[] { target },
+                "J. K. Rowling",
+                new[] { target, exactCopyWithoutProviderIds, jimDaleCopy });
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsMatch, Is.True);
+            Assert.That(result.Problems, Is.Empty);
         }
 
         [Test]

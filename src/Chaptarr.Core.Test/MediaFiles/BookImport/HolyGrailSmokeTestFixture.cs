@@ -124,7 +124,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     IEnumerable<string> tokens,
                     BookMediaType mediaType,
                     Action<EditionFtsTraceEvent> trace = null,
-                    int limit = 20)
+                    int limit = 20,
+                    bool monitoredOnly = false)
                 {
                     RecallCalls++;
                     return _recalls.Take(limit).ToList();

@@ -88,10 +88,10 @@ namespace Chaptarr.Core.Test.Parser
         }
 
         [Test]
-        public void should_only_fallback_to_sibling_title_when_any_edition_ok_is_enabled()
+        public void should_not_parse_an_unmonitored_sibling_title_when_any_edition_ok_is_enabled()
         {
             var author = new Author { Name = "J. K. Rowling" };
-            var looseBook = new Book
+            var book = new Book
             {
                 Author = author,
                 Title = "Harry Potter and the Philosopher's Stone",
@@ -103,31 +103,12 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
 
-            var strictBook = new Book
-            {
-                Author = author,
-                Title = "Harry Potter and the Philosopher's Stone",
-                AnyEditionOk = false,
-                Editions = new List<Edition>
-                {
-                    new Edition { Id = 1, Title = "Harry Potter and the Sorcerer's Stone", Monitored = true },
-                    new Edition { Id = 2, Title = "Harry Potter and the Philosopher's Stone" }
-                }
-            };
-
-            var loose = CoreParser.ParseBookTitleWithSearchCriteria(
+            var result = CoreParser.ParseBookTitleWithSearchCriteria(
                 "Harry Potter and the Philosopher's Stone",
                 author,
-                new List<Book> { looseBook });
+                new List<Book> { book });
 
-            var strict = CoreParser.ParseBookTitleWithSearchCriteria(
-                "Harry Potter and the Philosopher's Stone",
-                author,
-                new List<Book> { strictBook });
-
-            Assert.That(loose, Is.Not.Null);
-            Assert.That(loose.BookTitle, Is.EqualTo("Harry Potter and the Sorcerer's Stone"));
-            Assert.That(strict, Is.Null);
+            Assert.That(result, Is.Null);
         }
 
         [Test]

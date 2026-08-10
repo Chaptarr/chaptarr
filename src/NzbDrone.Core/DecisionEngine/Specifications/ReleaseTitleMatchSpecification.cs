@@ -70,14 +70,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.RejectSoftFilter("Title/Author mismatch", "Matching");
             }
 
-            if (!best.IsMatch &&
-                identity.HasPositiveIdentityEvidence &&
-                best.ProblemCode == TitleMatchProblemCode.None)
-            {
-                return Decision.Accept();
-            }
-
-            if (!best.IsMatch && CanIgnoreNumericResidue(best))
+            if (IsAcceptedMatch(best, identity, _configService?.BookMatchingStrictness ?? BookMatchingStrictness.Balanced))
             {
                 return Decision.Accept();
             }
@@ -97,9 +90,15 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             return Decision.Accept();
         }
 
-        private bool CanIgnoreNumericResidue(TitleMatchResult match)
+        internal static bool IsAcceptedMatch(TitleMatchResult match, ReleaseIdentityEvidence identity, BookMatchingStrictness strictness)
         {
-            if ((_configService?.BookMatchingStrictness ?? BookMatchingStrictness.Balanced) == BookMatchingStrictness.Strict ||
+            if (match?.IsMatch == true ||
+                (identity?.HasPositiveIdentityEvidence == true && match?.ProblemCode == TitleMatchProblemCode.None))
+            {
+                return true;
+            }
+
+            if (strictness == BookMatchingStrictness.Strict ||
                 match?.Problems?.Any() != true)
             {
                 return false;

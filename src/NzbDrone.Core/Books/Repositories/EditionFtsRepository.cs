@@ -53,7 +53,8 @@ namespace NzbDrone.Core.Books
             IEnumerable<string> tokens,
             BookMediaType mediaType,
             Action<EditionFtsTraceEvent> trace = null,
-            int limit = 20);
+            int limit = 20,
+            bool monitoredOnly = false);
 
         List<EditionFtsMatch> RankEditions(
             IReadOnlyCollection<BookFtsMatch> recalledBooks,
@@ -616,7 +617,8 @@ namespace NzbDrone.Core.Books
             IEnumerable<string> tokens,
             BookMediaType mediaType,
             Action<EditionFtsTraceEvent> trace = null,
-            int limit = 20)
+            int limit = 20,
+            bool monitoredOnly = false)
         {
             EnsureIndexPopulated();
             if (!FtsTableExists())
@@ -634,8 +636,8 @@ namespace NzbDrone.Core.Books
             }
 
             return _dbType == DatabaseType.PostgreSQL
-                ? RecallBooksPostgres(authorId, terms, mediaType, trace, limit)
-                : RecallBooksSqlite(authorId, terms, mediaType, trace, limit);
+                ? RecallBooksPostgres(authorId, terms, mediaType, trace, limit, monitoredOnly)
+                : RecallBooksSqlite(authorId, terms, mediaType, trace, limit, monitoredOnly);
         }
 
         public List<EditionFtsMatch> RankEditions(
@@ -670,7 +672,8 @@ namespace NzbDrone.Core.Books
             IReadOnlyList<string> terms,
             BookMediaType mediaType,
             Action<EditionFtsTraceEvent> trace,
-            int limit)
+            int limit,
+            bool monitoredOnly)
         {
             var columns = "MatchingTitle SeriesName AuthorName";
             var query = string.Join(" OR ", terms.Select(term => $"{{{columns}}}:{TokenToFtsQueryTerm(term)}"));
@@ -684,7 +687,10 @@ namespace NzbDrone.Core.Books
             });
 
             using var connection = _database.OpenConnection();
-            var parameters = new DynamicParameters();
+            var monitoredBooks = monitoredOnly ? BuildMonitoredBookIds(mediaType) : null;
+            var parameters = monitoredBooks == null
+                ? new DynamicParameters()
+                : new DynamicParameters(monitoredBooks.Parameters);
             parameters.Add("ftsQuery", query);
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
@@ -696,9 +702,11 @@ namespace NzbDrone.Core.Books
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var sql = $@"
                 WITH fts_matches AS MATERIALIZED (
-                    SELECT rowid, bm25(edition_fts) AS bm25_score
+                    SELECT edition_fts.rowid, bm25(edition_fts) AS bm25_score
                     FROM edition_fts
+                    INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid
                     WHERE edition_fts MATCH @ftsQuery
+                      {(monitoredOnly ? "AND selected_editions.Monitored = 1" : string.Empty)}
                 )
                 SELECT
                     b.Id AS BookId,
@@ -712,6 +720,7 @@ namespace NzbDrone.Core.Books
                 INNER JOIN Editions e ON e.Id = fts_matches.rowid
                 INNER JOIN Books b ON b.Id = e.BookId
                 INNER JOIN Authors a ON a.Id = b.AuthorId
+                {(monitoredBooks == null ? string.Empty : $"INNER JOIN ({monitoredBooks.RawSql}) monitored_books ON monitored_books.\"Id\" = b.Id")}
                 WHERE b.MediaType = @mediaType
                   {(authorId.HasValue ? "AND b.AuthorId = @authorId" : string.Empty)}
                 GROUP BY b.Id, b.AuthorId, a.Name, b.Title, b.SeriesName, b.SeriesPosition
@@ -728,7 +737,8 @@ namespace NzbDrone.Core.Books
             IReadOnlyList<string> terms,
             BookMediaType mediaType,
             Action<EditionFtsTraceEvent> trace,
-            int limit)
+            int limit,
+            bool monitoredOnly)
         {
             var query = BuildPostgresTsQuery(terms);
             if (string.IsNullOrWhiteSpace(query))
@@ -746,7 +756,10 @@ namespace NzbDrone.Core.Books
             });
 
             using var connection = _database.OpenConnection();
-            var parameters = new DynamicParameters();
+            var monitoredBooks = monitoredOnly ? BuildMonitoredBookIds(mediaType) : null;
+            var parameters = monitoredBooks == null
+                ? new DynamicParameters()
+                : new DynamicParameters(monitoredBooks.Parameters);
             parameters.Add("tsQuery", query);
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
@@ -763,6 +776,7 @@ namespace NzbDrone.Core.Books
                     SELECT e.""BookId"" AS ""Id""
                     FROM ""Editions"" e
                     WHERE to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ to_tsquery('simple', @tsQuery)
+                      {(monitoredOnly ? "AND e.\"Monitored\" = true" : string.Empty)}
                     UNION
                     SELECT b.""Id""
                     FROM ""Books"" b
@@ -788,7 +802,9 @@ namespace NzbDrone.Core.Books
                 FROM ""Editions"" e
                 INNER JOIN ""Books"" b ON b.""Id"" = e.""BookId""
                 INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
+                {(monitoredBooks == null ? string.Empty : $"INNER JOIN ({monitoredBooks.RawSql}) monitored_books ON monitored_books.\"Id\" = b.\"Id\"")}
                 WHERE b.""MediaType"" = @mediaType
+                  {(monitoredOnly ? "AND e.\"Monitored\" = true" : string.Empty)}
                   AND b.""Id"" IN (SELECT ""Id"" FROM candidates)
                   {(authorId.HasValue ? "AND b.\"AuthorId\" = @authorId" : string.Empty)}
                 GROUP BY b.""Id"", b.""AuthorId"", a.""Name"", b.""Title"", b.""SeriesName"", b.""SeriesPosition""
@@ -799,6 +815,19 @@ namespace NzbDrone.Core.Books
             stopwatch.Stop();
             EmitBookRecallTrace(trace, results, stopwatch.ElapsedMilliseconds);
             return results;
+        }
+
+        private SqlBuilder.Template BuildMonitoredBookIds(BookMediaType mediaType)
+        {
+            var builder = new SqlBuilder(_dbType)
+                .Join<Book, Author>((book, author) => book.AuthorId == author.Id)
+                .Where<Book>(AuthorExtensions.GetBookMonitoringFilter(mediaType, monitored: true));
+
+            return builder.AddTemplate(@"
+                SELECT ""Books"".""Id""
+                FROM ""Books""
+                /**join**/
+                /**where**/");
         }
 
         private List<EditionFtsMatch> RankEditionsSqlite(
