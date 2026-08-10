@@ -98,6 +98,47 @@ Environment variables:
 
 Note: Chaptarr does not create PostgreSQL databases automatically; create the databases and grant the configured user access.
 
+## Building from Source
+Building from source requires the .NET 10 SDK, Node.js, and Yarn.
+
+**Linux / macOS:**
+```bash
+# Clone the repository
+git clone https://github.com/chaptarr/chaptarr.git
+cd chaptarr
+
+# Build the backend
+dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
+
+# Build the frontend
+yarn install
+yarn build
+cp -r _output/UI _output/publish/UI
+
+# Run Chaptarr
+dotnet _output/publish/Chaptarr.dll
+```
+
+**Windows (Command Prompt):**
+```cmd
+:: Clone the repository
+git clone https://github.com/chaptarr/chaptarr.git
+cd chaptarr
+
+:: Build the backend
+dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
+
+:: Build the frontend
+yarn install
+yarn build
+xcopy _output\UI _output\publish\UI /E /I
+
+:: Run Chaptarr
+dotnet _output/publish/Chaptarr.Console.dll
+```
+
+Note: the assembly is named `Chaptarr.dll` on Linux/macOS and `Chaptarr.Console.dll` on Windows.
+
 ### Testing from Unraid
 This process requires the "Docker Compose Manager" plugin.
 
@@ -155,46 +196,6 @@ Chaptarr should now be available at the IP address of your Unraid server on port
 
 If you experience an error, check folder ownership and permissions, then run compose down and rebuild Chaptarr.
 
-### Building from Source
-Building from source requires the .NET 10 SDK, Node.js, and Yarn.
-
-**Linux / macOS:**
-```bash
-# Clone the repository
-git clone https://github.com/chaptarr/chaptarr.git
-cd chaptarr
-
-# Build the backend
-dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
-
-# Build the frontend
-yarn install
-yarn build
-cp -r _output/UI _output/publish/UI
-
-# Run Chaptarr
-dotnet _output/publish/Chaptarr.dll
-```
-
-**Windows (Command Prompt):**
-```cmd
-:: Clone the repository
-git clone https://github.com/chaptarr/chaptarr.git
-cd chaptarr
-
-:: Build the backend
-dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
-
-:: Build the frontend
-yarn install
-yarn build
-xcopy _output\UI _output\publish\UI /E /I
-
-:: Run Chaptarr
-dotnet _output/publish/Chaptarr.Console.dll
-```
-
-Note: the assembly is named `Chaptarr.dll` on Linux/macOS and `Chaptarr.Console.dll` on Windows.
 
 ## Documentation
 
