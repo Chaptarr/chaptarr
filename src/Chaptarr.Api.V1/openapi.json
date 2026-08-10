@@ -13629,6 +13629,10 @@
             "format": "date-time",
             "nullable": true
           },
+          "added": {
+            "type": "string",
+            "format": "date-time"
+          },
           "pageCount": {
             "type": "integer",
             "format": "int32"
@@ -15757,6 +15761,10 @@
             "items": {
               "$ref": "#/components/schemas/MediaCover"
             },
+            "nullable": true
+          },
+          "selectedPosterHash": {
+            "type": "string",
             "nullable": true
           }
         },
