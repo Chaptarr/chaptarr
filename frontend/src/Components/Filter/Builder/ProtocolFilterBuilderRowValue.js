@@ -2,6 +2,7 @@ import React from 'react';
 import FilterBuilderRowValue from './FilterBuilderRowValue';
 
 const protocols = [
+  { id: 'direct', name: 'Direct' },
   { id: 'torrent', name: 'Torrent' },
   { id: 'usenet', name: 'Usenet' }
 ];

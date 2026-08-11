@@ -105,6 +105,12 @@ function EditIndexerModalContent(props) {
   const baseUrl = fields.find((field) => field.name === 'baseUrl')?.value;
   const isNewznabLike = implementationName === 'Newznab' || implementationName === 'Torznab';
   const showProxyWarning = isNewznabLike && looksLikeProwlarrIndexerProxy(baseUrl);
+  const isDirectDownload = protocol?.value === 'direct';
+  const protocolValue = protocol?.value;
+  let protocolLabel = '';
+  if (protocolValue) {
+    protocolLabel = protocolValue === 'direct' ? translate('DirectDownload') : titleCase(protocolValue);
+  }
 
   return (
     <ModalContent onModalClose={onModalClose}>
@@ -135,6 +141,13 @@ function EditIndexerModalContent(props) {
                   </Alert>
               }
 
+              {
+                isDirectDownload && item.message?.message &&
+                  <Alert kind={kinds.INFO}>
+                    {item.message.message}
+                  </Alert>
+              }
+
               <FormGroup>
                 <FormLabel>
                   {translate('Name')}
@@ -156,7 +169,7 @@ function EditIndexerModalContent(props) {
                 <FormInputGroup
                   type={inputTypes.TEXT}
                   name="protocolDisplay"
-                  value={protocol && protocol.value ? titleCase(protocol.value) : ''}
+                  value={protocolLabel}
                   readOnly={true}
                   onChange={onInputChange}
                 />
