@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 const path = require('path');
 const webpack = require('webpack');
 const FileManagerPlugin = require('filemanager-webpack-plugin');
@@ -81,23 +82,36 @@ module.exports = (env) => {
       splitChunks: {
         chunks: 'all',
         cacheGroups: {
+          react: {
+            test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            name: 'vendor-react',
+            chunks: 'all',
+            priority: 20
+          },
+          vendors: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            chunks: 'all',
+            priority: 10
+          },
           lodash: {
             test: /[\\/]node_modules[\\/](lodash|lodash-es)[\\/]/,
             chunks: 'all',
             priority: 15,
             reuseExistingChunk: true
           },
-          defaultVendors: {
+          asyncVendors: {
             test: /[\\/]node_modules[\\/]/,
+            chunks: 'async',
+            minSize: 20000,
             priority: -10,
-            reuseExistingChunk: true,
-            name: 'vendors'
+            reuseExistingChunk: true
           },
           default: {
+            chunks: 'async',
             minChunks: 2,
             priority: -20,
-            reuseExistingChunk: true,
-            name: 'common'
+            reuseExistingChunk: true
           }
         }
       }
@@ -116,6 +130,12 @@ module.exports = (env) => {
         __DEV__: !isProduction,
         'process.env.NODE_ENV': isProduction ? JSON.stringify('production') : JSON.stringify('development')
       }),
+
+      new webpack.IgnorePlugin({ resourceRegExp: /^tough-cookie$/ }),
+      new webpack.IgnorePlugin({ resourceRegExp: /^psl$/ }),
+      new webpack.IgnorePlugin({ resourceRegExp: /^fetch-cookie$/ }),
+
+      process.env.ANALYZER === 'true' ? new BundleAnalyzerPlugin() : null,
 
       new MiniCssExtractPlugin({
         filename: isProduction ? 'Content/styles-[contenthash].css' : 'Content/styles.css',
@@ -179,7 +199,7 @@ module.exports = (env) => {
       // }),
 
       new LiveReloadPlugin()
-    ],
+    ].filter(Boolean),
 
     resolveLoader: {
       modules: [
@@ -208,19 +228,7 @@ module.exports = (env) => {
               loader: 'babel-loader',
               options: {
                 configFile: `${frontendFolder}/babel.config.js`,
-                envName: isProduction ? 'production' : 'development',
-                presets: [
-                  [
-                    '@babel/preset-env',
-                    {
-                      modules: false,
-                      loose: true,
-                      debug: false,
-                      useBuiltIns: 'entry',
-                      corejs: '3.39'
-                    }
-                  ]
-                ]
+                envName: isProduction ? 'production' : 'development'
               }
             }
           ]
