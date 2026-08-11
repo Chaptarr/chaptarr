@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Form from 'Components/Form/Form';
@@ -109,7 +109,7 @@ class AuthorIndexPosterOptionsModalContent extends Component {
       state.showSearchAction = showSearchAction;
     }
 
-    if (!_.isEmpty(state)) {
+    if (!isEmpty(state)) {
       this.setState(state);
     }
   }

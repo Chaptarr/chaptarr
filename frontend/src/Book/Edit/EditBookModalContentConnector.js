@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import pick from 'lodash/pick';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -29,7 +29,7 @@ function createMapStateToProps() {
         error
       } = editionState;
 
-      const bookSettings = _.pick(book, [
+      const bookSettings = pick(book, [
         'monitored',
         'anyEditionOk'
       ]);

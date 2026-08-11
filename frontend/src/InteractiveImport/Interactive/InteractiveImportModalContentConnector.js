@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import forEach from 'lodash/forEach';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -187,7 +187,7 @@ class InteractiveImportModalContentConnector extends Component {
     });
 
     if (promise && promise.done) {
-      promise.done(() => {
+      promise.then(() => {
         this.refetchItems();
       });
     }
@@ -213,7 +213,7 @@ class InteractiveImportModalContentConnector extends Component {
       return;
     }
 
-    _.forEach(this.props.items, (item) => {
+    forEach(this.props.items, (item) => {
       const isSelected = selected.indexOf(item.id) > -1;
 
       if (isSelected) {

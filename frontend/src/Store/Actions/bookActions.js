@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import last from 'lodash/last';
 import moment from 'moment';
 import React from 'react';
 import { createAction } from 'redux-actions';
@@ -716,7 +716,7 @@ export const actionHandlers = handleThunks({
     // Defensive: API expects a boolean, but UI can sometimes pass 0/1/2
     const monitoredBool = coerceMonitoredBoolean(monitored);
 
-    const bookSection = _.last(bookEntity.split('.'));
+    const bookSection = last(bookEntity.split('.'));
 
     dispatch(updateItem({
       id: bookId,

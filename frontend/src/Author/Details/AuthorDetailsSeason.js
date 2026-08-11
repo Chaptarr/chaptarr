@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import uniq from 'lodash/uniq';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
@@ -62,7 +62,7 @@ class AuthorDetailsSeason extends Component {
 
     this.setState({ lastToggledBook: bookId });
 
-    this.props.onMonitorBookPress(_.uniq(bookIds), monitored);
+    this.props.onMonitorBookPress(uniq(bookIds), monitored);
   };
 
   onSelectedChange = ({ id, value, shiftKey = false }) => {

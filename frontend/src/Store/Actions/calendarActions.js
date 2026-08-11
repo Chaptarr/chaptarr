@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import times from 'lodash/times';
 import moment from 'moment';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
@@ -102,7 +102,7 @@ function getDays(start, end) {
   const difference = endTime.diff(startTime, 'days');
 
   // Difference is one less than the number of days we need to account for.
-  return _.times(difference + 1, (i) => {
+  return times(difference + 1, (i) => {
     return startTime.clone().add(i, 'days').toISOString();
   });
 }

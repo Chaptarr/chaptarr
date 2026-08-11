@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import pick from 'lodash/pick';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -22,7 +22,7 @@ function createMapStateToProps() {
     (state, props) => props.downloadId,
     createUISettingsSelector(),
     (authorFromStore, bookFromStore, authorFromItem, bookFromItem, commands, downloadId, uiSettings) => {
-      const result = _.pick(uiSettings, [
+      const result = pick(uiSettings, [
         'showRelativeDates',
         'shortDateFormat',
         'timeFormat'

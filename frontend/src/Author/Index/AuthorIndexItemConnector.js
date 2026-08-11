@@ -1,5 +1,5 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import maxBy from 'lodash/maxBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -74,7 +74,7 @@ function createMapStateToProps() {
       });
 
       const latestBook = author.books && author.books.length > 0 ?
-        _.maxBy(author.books, (book) => book.releaseDate) :
+        maxBy(author.books, (book) => book.releaseDate) :
         null;
 
       // Choose statistics based on selected media type when provided

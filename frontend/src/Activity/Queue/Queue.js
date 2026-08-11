@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
@@ -84,7 +84,7 @@ class Queue extends Component {
       nextState.items = items;
     }
 
-    if (!_.isEmpty(nextState)) {
+    if (!isEmpty(nextState)) {
       this.setState(nextState);
     }
   }

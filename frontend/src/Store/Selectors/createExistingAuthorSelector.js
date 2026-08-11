@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import { createSelector } from 'reselect';
 import createAllAuthorsSelector from './createAllAuthorsSelector';
 
@@ -11,7 +11,7 @@ function createExistingAuthorSelector() {
         return null;
       }
 
-      return _.find(authors, (a) => a.foreignAuthorId === foreignAuthorId) || null;
+      return find(authors, (a) => a.foreignAuthorId === foreignAuthorId) || null;
     }
   );
 }

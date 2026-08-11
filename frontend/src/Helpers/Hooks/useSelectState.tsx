@@ -1,4 +1,4 @@
-import { cloneDeep } from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
 import { useReducer } from 'react';
 import ModelBase from 'App/ModelBase';
 import areAllSelected from 'Utilities/Table/areAllSelected';

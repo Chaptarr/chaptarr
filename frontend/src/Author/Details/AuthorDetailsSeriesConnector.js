@@ -1,5 +1,7 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -28,7 +30,7 @@ function createMapStateToProps() {
     (state, props) => props.selectedMediaType,
     (seriesId, books, author, series, commands, dimensions, uiSettings, hideUnmonitoredMissing, filterValue, selectedMediaType) => {
 
-      const currentSeries = _.find(series.items, { id: seriesId });
+      const currentSeries = find(series.items, { id: seriesId });
       const rootFolderStatus = getAuthorMediaTypeRootFolderStatus(author, selectedMediaType);
       const effectiveMediaType = rootFolderStatus.mediaType;
       const hasRootFolder = rootFolderStatus.hasRootFolder;
@@ -56,7 +58,7 @@ function createMapStateToProps() {
         return acc;
       }, {});
 
-      let booksInSeries = _.filter(books.items, (book) => bookIds.includes(book.id));
+      let booksInSeries = filter(books.items, (book) => bookIds.includes(book.id));
 
       // If the author has no root folder configured for this media type, hide series content on this tab.
       if (!hasRootFolder) {
@@ -153,7 +155,7 @@ function createMapStateToProps() {
           return apos.localeCompare(bpos, undefined, { numeric: true, sensitivity: 'base' });
         });
       } else {
-        sortedBooks = _.orderBy(booksInSeries, series.sortKey, sortDir);
+        sortedBooks = orderBy(booksInSeries, series.sortKey, sortDir);
       }
 
       return {

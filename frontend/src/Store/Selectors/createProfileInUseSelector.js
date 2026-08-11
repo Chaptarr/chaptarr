@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import some from 'lodash/some';
 import { createSelector } from 'reselect';
 import createAllAuthorsSelector from './createAllAuthorsSelector';
 
@@ -25,7 +25,7 @@ function createProfileInUseSelector(profileProp) {
         return item?.[profileProp] === id;
       };
 
-      if (_.some(author, matchesProfile) || _.some(lists, matchesProfile) || _.some(rootFolders, matchesProfile)) {
+      if (some(author, matchesProfile) || some(lists, matchesProfile) || some(rootFolders, matchesProfile)) {
         return true;
       }
 

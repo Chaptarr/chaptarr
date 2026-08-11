@@ -1,4 +1,4 @@
-import { get } from 'lodash';
+import get from 'lodash/get';
 import monitorOptions from 'Utilities/Author/monitorOptions';
 
 export default function migrateAddAuthorDefaults(persistedState) {

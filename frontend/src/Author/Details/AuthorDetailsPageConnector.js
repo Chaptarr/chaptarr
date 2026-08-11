@@ -1,5 +1,5 @@
 import { push } from 'connected-react-router';
-import _ from 'lodash';
+import findIndex from 'lodash/findIndex';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -28,7 +28,7 @@ function createMapStateToProps() {
         items
       } = authors;
 
-      const authorIndex = _.findIndex(items, { id: authorId });
+      const authorIndex = findIndex(items, { id: authorId });
 
       if (authorIndex > -1) {
         return {

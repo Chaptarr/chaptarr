@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import orderBy from 'lodash/orderBy';
 import { sortDirections } from 'Helpers/Props';
 
 function getSortClause(sortKey, sortDirection, sortPredicates) {
@@ -36,7 +36,7 @@ function sortCollection(items, state) {
     orders.push(secondarySortDirection === sortDirections.ASCENDING ? 'asc' : 'desc');
   }
 
-  return _.orderBy(items, clauses, orders);
+  return orderBy(items, clauses, orders);
 }
 
 export default sortCollection;

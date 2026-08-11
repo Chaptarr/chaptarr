@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import pick from 'lodash/pick';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -14,7 +14,7 @@ function createMapStateToProps() {
     createDimensionsSelector(),
     createUISettingsSelector(),
     (calendar, dimensions, uiSettings) => {
-      const result = _.pick(calendar, [
+      const result = pick(calendar, [
         'isFetching',
         'view',
         'time',

@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -53,14 +53,14 @@ class QualityProfileSelectInputConnector extends Component {
       traditional: true
     });
 
-    request.done((profiles) => {
+    request.then((profiles) => {
       this.setState({
         profiles: profiles.sort(sortByName),
         isFetching: false 
       }, this.checkAndSetDefaultValue);
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       console.error('Failed to fetch quality profiles:', xhr);
       this.setState({ isFetching: false });
     });
@@ -108,7 +108,7 @@ class QualityProfileSelectInputConnector extends Component {
 
     const { profiles } = this.state;
     
-    const values = _.map(profiles, (qualityProfile) => {
+    const values = map(profiles, (qualityProfile) => {
       return {
         key: qualityProfile.id.toString(),
         value: qualityProfile.name

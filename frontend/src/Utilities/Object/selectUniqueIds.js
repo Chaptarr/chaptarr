@@ -1,7 +1,8 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
+import uniq from 'lodash/uniq';
 
 function selectUniqueIds(items, idProp) {
-  const ids = _.reduce(items, (result, item) => {
+  const ids = reduce(items, (result, item) => {
     if (item[idProp]) {
       result.push(item[idProp]);
     }
@@ -9,7 +10,7 @@ function selectUniqueIds(items, idProp) {
     return result;
   }, []);
 
-  return _.uniq(ids);
+  return uniq(ids);
 }
 
 export default selectUniqueIds;
