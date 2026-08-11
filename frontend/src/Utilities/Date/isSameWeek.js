@@ -1,11 +1,11 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function isSameWeek(date) {
   if (!date) {
     return false;
   }
 
-  return moment(date).isSame(moment(), 'week');
+  return dayjs(date).isSame(dayjs(), 'week');
 }
 
 export default isSameWeek;

@@ -1,5 +1,5 @@
 import classNames from 'classnames';
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import * as calendarViews from 'Calendar/calendarViews';
@@ -22,11 +22,11 @@ class DayOfWeek extends Component {
     } = this.props;
 
     const highlightToday = view !== calendarViews.MONTH && isTodaysDate;
-    const momentDate = moment(date);
-    let formatedDate = momentDate.format('dddd');
+    const dayjsDate = dayjs(date);
+    let formatedDate = dayjsDate.format('dddd');
 
     if (view === calendarViews.WEEK) {
-      formatedDate = momentDate.format(calendarWeekColumnHeader);
+      formatedDate = dayjsDate.format(calendarWeekColumnHeader);
     } else if (view === calendarViews.FORECAST) {
       formatedDate = getRelativeDate(date, shortDateFormat, showRelativeDates);
     }

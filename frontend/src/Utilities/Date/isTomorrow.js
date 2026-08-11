@@ -1,11 +1,11 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function isTomorrow(date) {
   if (!date) {
     return false;
   }
 
-  return moment(date).isSame(moment().add(1, 'day'), 'day');
+  return dayjs(date).isSame(dayjs().add(1, 'day'), 'day');
 }
 
 export default isTomorrow;

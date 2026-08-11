@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import TextTruncate from 'react-text-truncate';
@@ -314,7 +314,7 @@ class BookDetailsHeader extends Component {
 
                     <span className={styles.sizeOnDisk}>
                       {
-                        moment(releaseDate).format(shortDateFormat)
+                        dayjs(releaseDate).format(shortDateFormat)
                       }
                     </span>
                   </Label>

@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { sortDirections } from 'Helpers/Props';
@@ -151,7 +151,7 @@ export const actionHandlers = handleThunks({
 
     abortCurrentFetchRequest = abortRequest;
 
-    request.done((data) => {
+    request.then((data) => {
       dispatch(batchActions([
         update({ section, data }),
 
@@ -164,7 +164,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }
@@ -177,7 +177,7 @@ export const actionHandlers = handleThunks({
       }));
     });
 
-    request.always(() => {
+    request.finally(() => {
       if (abortCurrentFetchRequest === currentAbortRequest) {
         abortCurrentFetchRequest = null;
       }
@@ -249,7 +249,7 @@ export const actionHandlers = handleThunks({
     abortCurrentRequest = abortRequest;
     currentIds = payload.ids;
 
-    request.done((data) => {
+    request.then((data) => {
       dispatch(batchActions(
         data.map((item) => updateItem({
           section,
@@ -260,7 +260,7 @@ export const actionHandlers = handleThunks({
       ));
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }
@@ -318,7 +318,7 @@ export const reducers = createHandleActions({
 
   [ADD_RECENT_FOLDER]: function(state, { payload }) {
     const folder = payload.folder;
-    const recentFolder = { folder, lastUsed: moment().toISOString() };
+    const recentFolder = { folder, lastUsed: dayjs().toISOString() };
     const recentFolders = [...state.recentFolders];
     const index = recentFolders.findIndex((r) => r.folder === folder);
 

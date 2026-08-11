@@ -1,5 +1,5 @@
 /* eslint max-params: 0 */
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import * as calendarViews from 'Calendar/calendarViews';
@@ -16,14 +16,14 @@ import CalendarHeaderViewButton from './CalendarHeaderViewButton';
 import styles from './CalendarHeader.css';
 
 function getTitle(time, start, end, view, longDateFormat) {
-  const timeMoment = moment(time);
-  const startMoment = moment(start);
-  const endMoment = moment(end);
+  const timeDayjs = dayjs(time);
+  const startDayjs = dayjs(start);
+  const endDayjs = dayjs(end);
 
   if (view === 'day') {
-    return timeMoment.format(longDateFormat);
+    return timeDayjs.format(longDateFormat);
   } else if (view === 'month') {
-    return timeMoment.format('MMMM YYYY');
+    return timeDayjs.format('MMMM YYYY');
   } else if (view === 'agenda') {
     return 'Agenda';
   }
@@ -31,15 +31,15 @@ function getTitle(time, start, end, view, longDateFormat) {
   let startFormat = 'MMM D YYYY';
   let endFormat = 'MMM D YYYY';
 
-  if (startMoment.isSame(endMoment, 'month')) {
+  if (startDayjs.isSame(endDayjs, 'month')) {
     startFormat = 'MMM D';
     endFormat = 'D YYYY';
-  } else if (startMoment.isSame(endMoment, 'year')) {
+  } else if (startDayjs.isSame(endDayjs, 'year')) {
     startFormat = 'MMM D';
     endFormat = 'MMM D YYYY';
   }
 
-  return `${startMoment.format(startFormat)} \u2014 ${endMoment.format(endFormat)}`;
+  return `${startDayjs.format(startFormat)} \u2014 ${endDayjs.format(endFormat)}`;
 }
 
 // TODO Convert to a stateful Component so we can book view internally when changed
