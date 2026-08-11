@@ -7,6 +7,8 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 const LiveReloadPlugin = require('webpack-livereload-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
+const { InjectManifest } = require('workbox-webpack-plugin');
+
 // Temporarily disabled due to ajv compatibility issue in Docker build
 // const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 
@@ -198,7 +200,23 @@ module.exports = (env) => {
       //   }
       // }),
 
-      new LiveReloadPlugin()
+      new LiveReloadPlugin(),
+
+      // Service worker — production only (conflicts with HMR/LiveReload in dev).
+      // InjectManifest bundles frontend/src/sw.js and inlines the precache manifest
+      // so the emitted sw.js can be served at ${urlBase}/sw.js.
+      isProduction
+        ? new InjectManifest({
+            swSrc: path.join(srcFolder, 'sw.js'),
+            swDest: 'sw.js',
+            // Do NOT include large font/image copies that FileManagerPlugin handles
+            // separately — only webpack-emitted JS/CSS chunks go into the manifest.
+            exclude: [
+              /\.(?:png|jpe?g|gif|svg|ico|woff2?|ttf|otf|eot)$/i,
+              /robots\.txt$/,
+            ],
+          })
+        : null
     ].filter(Boolean),
 
     resolveLoader: {

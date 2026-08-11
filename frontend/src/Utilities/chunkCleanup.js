@@ -83,7 +83,12 @@ function handleChunkError() {
   
   // Force a hard reload to bypass cache
   setTimeout(() => {
-    // Clear service worker caches if any
+    // Clear service worker caches if any.
+    // This wipes ALL caches including those managed by the service worker
+    // (precache + runtime).  This is intentional — stale chunks must be
+    // evicted.  The SW self-heals on the next navigation thanks to
+    // skipWaiting + clientsClaim, which re-populates precache and
+    // runtime caches on subsequent fetches.
     if ('caches' in window) {
       caches.keys().then(names => {
         names.forEach(name => {
