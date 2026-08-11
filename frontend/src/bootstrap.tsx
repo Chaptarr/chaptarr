@@ -1,7 +1,9 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { createBrowserHistory } from 'history';
 import React from 'react';
 import { render } from 'react-dom';
 import createAppStore from 'Store/createAppStore';
+import queryClient from 'Store/queryClient';
 import App from './App/App';
 import initializeChunkCleanup from './Utilities/chunkCleanup';
 import checkStorageVersion from './Utilities/versionGate';
@@ -19,7 +21,9 @@ export async function bootstrap() {
   const store = createAppStore(history);
 
   render(
-    <App store={store} history={history} />,
+    <QueryClientProvider client={queryClient}>
+      <App store={store} history={history} />
+    </QueryClientProvider>,
     document.getElementById('root')
   );
 }

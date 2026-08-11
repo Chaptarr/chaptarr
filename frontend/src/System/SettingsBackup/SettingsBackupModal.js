@@ -1,5 +1,5 @@
 import PropTypes from 'prop-types';
-import React, { Component } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Alert from 'Components/Alert';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
@@ -14,6 +14,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds, sizes } from 'Helpers/Props';
+import useApiQuery from 'Store/Hooks/useApiQuery';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import SettingsBackupCategoryPicker, {
@@ -29,105 +30,98 @@ function defaultFileNameUtc() {
   return `chaptarr_settings_${stamp}`;
 }
 
-class SettingsBackupModal extends Component {
-  constructor(props, context) {
-    super(props, context);
+function SettingsBackupModal({ isOpen, onModalClose }) {
+  const resetForm = useCallback(() => ({
+    rootFolder: '/config',
+    fileName: defaultFileNameUtc(),
+    passphrase: '',
+    passphraseConfirm: '',
+    categories: getDefaultSettingsBackupCategories(),
+    overwriteExistingFile: false,
+    isSaving: false,
+    saveError: null,
+    saveResult: null
+  }), []);
 
-    this.state = {
-      locations: [],
-      rootFolder: '/config',
-      fileName: defaultFileNameUtc(),
-      passphrase: '',
-      passphraseConfirm: '',
-      categories: getDefaultSettingsBackupCategories(),
-      overwriteExistingFile: false,
-      isLoadingLocations: false,
-      isSaving: false,
-      saveError: null,
-      saveResult: null
-    };
-  }
+  const [formState, setFormState] = useState(resetForm);
 
-  componentDidUpdate(prevProps) {
-    if (!prevProps.isOpen && this.props.isOpen) {
-      this.loadLocations();
+  // ── Fetch backup locations via react-query (replaces manual loadLocations) ──
+  const {
+    data: locationsData,
+    isLoading: isLoadingLocations,
+    isError: locationsError
+  } = useApiQuery(
+    ['settingsBackup', 'locations'],
+    { url: '/system/settingsbackup/locations' },
+    {
+      // Only fetch when the modal is open; enabled=false suspends the query.
+      enabled: isOpen,
+      // Locations are fetched once per modal open; staleTime keeps cached data
+      // if the user closes and reopens quickly.
+      staleTime: 0,
+      retry: 0,
     }
-  }
+  );
 
-  loadLocations = () => {
-    this.setState({ isLoadingLocations: true });
+  const locations = Array.isArray(locationsData) ? locationsData : [];
+  const firstWritable = locations.find((l) => l && l.writable && l.exists);
+  const { rootFolder, fileName, passphrase, passphraseConfirm, categories, overwriteExistingFile, isSaving, saveError, saveResult } = formState;
 
-    const request = createAjaxRequest({
-      url: '/system/settingsbackup/locations',
-      method: 'GET',
-      dataType: 'json'
-    });
+  // Sync rootFolder from fetched locations (only when locations change or on reset)
+  useEffect(() => {
+    if (locations.length > 0 && rootFolder === '/config') {
+      setFormState((prev) => ({
+        ...prev,
+        rootFolder: firstWritable ? firstWritable.path : '/config'
+      }));
+    }
+  }, [locations, rootFolder, firstWritable]);
 
-    request.request.done((data) => {
-      const locations = Array.isArray(data) ? data : [];
-      const firstWritable = locations.find((l) => l && l.writable && l.exists);
-      const rootFolder = firstWritable ? firstWritable.path : '/config';
+  const onInputChange = useCallback(({ name, value }) => {
+    setFormState((prev) => ({ ...prev, [name]: value }));
+  }, []);
 
-      this.setState({
-        locations,
-        rootFolder,
-        isLoadingLocations: false
-      });
-    });
-
-    request.request.fail(() => {
-      this.setState({ isLoadingLocations: false });
-    });
-  };
-
-  onInputChange = ({ name, value }) => {
-    this.setState({ [name]: value });
-  };
-
-  onToggleCategory = (categoryKey) => {
-    this.setState((state) => ({
+  const onToggleCategory = useCallback((categoryKey) => {
+    setFormState((prev) => ({
       categories: {
-        ...state.categories,
-        [categoryKey]: !state.categories[categoryKey]
+        ...prev.categories,
+        [categoryKey]: !prev.categories[categoryKey]
       }
     }));
-  };
+  }, []);
 
-  onSelectAllCategories = () => {
-    this.setState({ categories: getDefaultSettingsBackupCategories() });
-  };
+  const onSelectAllCategories = useCallback(() => {
+    setFormState((prev) => ({
+      ...prev,
+      categories: getDefaultSettingsBackupCategories()
+    }));
+  }, []);
 
-  onSelectNoCategories = () => {
-    this.setState({ categories: {} });
-  };
+  const onSelectNoCategories = useCallback(() => {
+    setFormState((prev) => ({
+      ...prev,
+      categories: {}
+    }));
+  }, []);
 
-  onSavePress = () => {
-    const {
-      rootFolder,
-      fileName,
-      passphrase,
-      passphraseConfirm,
-      categories,
-      overwriteExistingFile
-    } = this.state;
-
+  const onSavePress = useCallback(() => {
     const selected = toCategoryList(categories);
     if (!selected.length) {
-      this.setState({ saveError: translate('SettingsBackupSelectAtLeastOneCategory') });
+      setFormState((prev) => ({ ...prev, saveError: translate('SettingsBackupSelectAtLeastOneCategory') }));
       return;
     }
 
     if (!passphrase.trim()) {
-      this.setState({ saveError: translate('SettingsBackupPassphraseRequired') });
+      setFormState((prev) => ({ ...prev, saveError: translate('SettingsBackupPassphraseRequired') }));
       return;
     }
 
     if (passphrase !== passphraseConfirm) {
-      this.setState({ saveError: translate('SettingsBackupPassphrasesDoNotMatch') });
+      setFormState((prev) => ({ ...prev, saveError: translate('SettingsBackupPassphrasesDoNotMatch') }));
       return;
     }
 
-    this.setState({ isSaving: true, saveError: null, saveResult: null });
+    setFormState((prev) => ({ ...prev, isSaving: true, saveError: null, saveResult: null }));
 
     const request = createAjaxRequest({
       url: '/system/settingsbackup/create',
@@ -143,200 +137,181 @@ class SettingsBackupModal extends Component {
       })
     });
 
-    request.request.done((data) => {
-      this.setState({
+    request.request.then((data) => {
+      setFormState((prev) => ({
+        ...prev,
         isSaving: false,
         saveResult: data || { path: translate('SettingsBackupCreated') }
-      });
+      }));
     });
 
-    request.request.fail((xhr) => {
+    request.request.catch((xhr) => {
       let errorMessage = translate('SettingsBackupFailedToCreate');
       if (xhr?.responseJSON?.message) {
         errorMessage = xhr.responseJSON.message;
       }
-      this.setState({ isSaving: false, saveError: errorMessage });
+      setFormState((prev) => ({ ...prev, isSaving: false, saveError: errorMessage }));
     });
-  };
+  }, [rootFolder, fileName, passphrase, passphraseConfirm, categories, overwriteExistingFile]);
 
-  onModalClose = () => {
-    this.setState({
-      rootFolder: '/config',
-      fileName: defaultFileNameUtc(),
-      passphrase: '',
-      passphraseConfirm: '',
-      categories: getDefaultSettingsBackupCategories(),
-      overwriteExistingFile: false,
-      isSaving: false,
-      saveError: null,
-      saveResult: null
-    });
+  const handleModalClose = useCallback(() => {
+    setFormState(resetForm());
+    onModalClose();
+  }, [onModalClose, resetForm]);
 
-    this.props.onModalClose();
-  };
+  const locationOptions = locations.map((l) => ({
+    key: l.path,
+    value: l.path
+  }));
 
-  render() {
-    const {
-      isOpen
-    } = this.props;
+  const selectedLocation = locations.find((l) => l.path === rootFolder);
+  const selectedWarning = selectedLocation?.warning;
 
-    const {
-      locations,
-      rootFolder,
-      fileName,
-      passphrase,
-      passphraseConfirm,
-      categories,
-      overwriteExistingFile,
-      isLoadingLocations,
-      isSaving,
-      saveError,
-      saveResult
-    } = this.state;
+  return (
+    <Modal
+      isOpen={isOpen}
+      size={sizes.LARGE}
+    >
+      <ModalContent onModalClose={handleModalClose}>
+        <ModalHeader>
+          {translate('SettingsBackupMySettings')}
+        </ModalHeader>
 
-    const locationOptions = locations.map((l) => ({
-      key: l.path,
-      value: l.path
-    }));
-
-    const selectedLocation = locations.find((l) => l.path === rootFolder);
-    const selectedWarning = selectedLocation?.warning;
-
-    return (
-      <Modal
-        isOpen={isOpen}
-        size={sizes.LARGE}
-      >
-        <ModalContent onModalClose={this.onModalClose}>
-          <ModalHeader>
-            {translate('SettingsBackupMySettings')}
-          </ModalHeader>
-
-          <ModalBody>
-            <Form>
-              <Alert
-                className={styles.intro}
-                kind={kinds.WARNING}
-              >
-                {translate('SettingsBackupScopeWarning')}
-              </Alert>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsBackupSaveLocation')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="rootFolder"
-                  values={locationOptions}
-                  value={rootFolder}
-                  onChange={this.onInputChange}
-                  helpText={selectedWarning || translate('SettingsBackupSaveLocationHelpText')}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsBackupFileName')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.TEXT}
-                  name="fileName"
-                  value={fileName}
-                  placeholder="chaptarr_settings_YYYYMMDD_HHMMSS"
-                  onChange={this.onInputChange}
-                  helpText={translate('SettingsBackupFileNameHelpText')}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsBackupPassphrase')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.PASSWORD}
-                  name="passphrase"
-                  value={passphrase}
-                  onChange={this.onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsBackupConfirmPassphrase')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.PASSWORD}
-                  name="passphraseConfirm"
-                  value={passphraseConfirm}
-                  onChange={this.onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('Categories')}</FormLabel>
-                <SettingsBackupCategoryPicker
-                  categories={categories}
-                  onToggleCategory={this.onToggleCategory}
-                  onSelectAll={this.onSelectAllCategories}
-                  onSelectNone={this.onSelectNoCategories}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsBackupOverwriteExistingFile')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.CHECK}
-                  name="overwriteExistingFile"
-                  value={overwriteExistingFile}
-                  onChange={() => this.setState({ overwriteExistingFile: !overwriteExistingFile })}
-                  helpText={translate('SettingsBackupOverwriteExistingFileHelpText')}
-                />
-              </FormGroup>
-
-              {isLoadingLocations && (
-                <FormGroup>
-                  <LoadingIndicator size={20} />
-                </FormGroup>
-              )}
-
-              {saveError && (
-                <FormGroup>
-                  <Alert
-                    className={styles.statusAlert}
-                    kind={kinds.DANGER}
-                  >
-                    {saveError}
-                  </Alert>
-                </FormGroup>
-              )}
-
-              {saveResult && (
-                <FormGroup>
-                  <Alert
-                    className={styles.statusAlert}
-                    kind={kinds.SUCCESS}
-                  >
-                    <div><strong>{translate('SettingsBackupSavedLabel')}</strong> {saveResult.path}</div>
-                  </Alert>
-                </FormGroup>
-              )}
-            </Form>
-          </ModalBody>
-
-          <ModalFooter>
-            <Button
-              onPress={this.onModalClose}
-              kind={kinds.DEFAULT}
+        <ModalBody>
+          <Form>
+            <Alert
+              className={styles.intro}
+              kind={kinds.WARNING}
             >
-              {translate('Close')}
-            </Button>
+              {translate('SettingsBackupScopeWarning')}
+            </Alert>
 
-            <SpinnerButton
-              kind={kinds.PRIMARY}
-              onPress={this.onSavePress}
-              isDisabled={isSaving}
-              isSpinning={isSaving}
-            >
-              {translate('Backup')}
-            </SpinnerButton>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    );
-  }
+            <FormGroup>
+              <FormLabel>{translate('SettingsBackupSaveLocation')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.SELECT}
+                name="rootFolder"
+                values={locationOptions}
+                value={rootFolder}
+                onChange={onInputChange}
+                helpText={selectedWarning || translate('SettingsBackupSaveLocationHelpText')}
+              />
+            </FormGroup>
+
+            <FormGroup>
+              <FormLabel>{translate('SettingsBackupFileName')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.TEXT}
+                name="fileName"
+                value={fileName}
+                placeholder="chaptarr_settings_YYYYMMDD_HHMMSS"
+                onChange={onInputChange}
+                helpText={translate('SettingsBackupFileNameHelpText')}
+              />
+            </FormGroup>
+
+            <FormGroup>
+              <FormLabel>{translate('SettingsBackupPassphrase')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.PASSWORD}
+                name="passphrase"
+                value={passphrase}
+                onChange={onInputChange}
+              />
+            </FormGroup>
+
+            <FormGroup>
+              <FormLabel>{translate('SettingsBackupConfirmPassphrase')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.PASSWORD}
+                name="passphraseConfirm"
+                value={passphraseConfirm}
+                onChange={onInputChange}
+              />
+            </FormGroup>
+
+            <FormGroup>
+              <FormLabel>{translate('Categories')}</FormLabel>
+              <SettingsBackupCategoryPicker
+                categories={categories}
+                onToggleCategory={onToggleCategory}
+                onSelectAll={onSelectAllCategories}
+                onSelectNone={onSelectNoCategories}
+              />
+            </FormGroup>
+
+            <FormGroup>
+              <FormLabel>{translate('SettingsBackupOverwriteExistingFile')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.CHECK}
+                name="overwriteExistingFile"
+                value={overwriteExistingFile}
+                onChange={() => setFormState((prev) => ({ ...prev, overwriteExistingFile: !prev.overwriteExistingFile }))}
+                helpText={translate('SettingsBackupOverwriteExistingFileHelpText')}
+              />
+            </FormGroup>
+
+            {isLoadingLocations && (
+              <FormGroup>
+                <LoadingIndicator size={20} />
+              </FormGroup>
+            )}
+
+            {locationsError && (
+              <FormGroup>
+                <Alert
+                  className={styles.statusAlert}
+                  kind={kinds.DANGER}
+                >
+                  {translate('SettingsBackupFailedToLoadLocations', { message: 'Network error' })}
+                </Alert>
+              </FormGroup>
+            )}
+
+            {saveError && (
+              <FormGroup>
+                <Alert
+                  className={styles.statusAlert}
+                  kind={kinds.DANGER}
+                >
+                  {saveError}
+                </Alert>
+              </FormGroup>
+            )}
+
+            {saveResult && (
+              <FormGroup>
+                <Alert
+                  className={styles.statusAlert}
+                  kind={kinds.SUCCESS}
+                >
+                  <div><strong>{translate('SettingsBackupSavedLabel')}</strong> {saveResult.path}</div>
+                </Alert>
+              </FormGroup>
+            )}
+          </Form>
+        </ModalBody>
+
+        <ModalFooter>
+          <Button
+            onPress={handleModalClose}
+            kind={kinds.DEFAULT}
+          >
+            {translate('Close')}
+          </Button>
+
+          <SpinnerButton
+            kind={kinds.PRIMARY}
+            onPress={onSavePress}
+            isDisabled={isSaving}
+            isSpinning={isSaving}
+          >
+            {translate('Backup')}
+          </SpinnerButton>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
 }
 
 SettingsBackupModal.propTypes = {
