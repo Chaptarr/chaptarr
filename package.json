@@ -12,9 +12,13 @@
     "lint": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore frontend/",
     "lint-fix": "yarn lint --fix",
     "check-translations": "node frontend/build/check-missing-translation-keys.js",
+    "analyze": "ANALYZER=true webpack --env production --config ./frontend/build/webpack.config.js",
     "stylelint-linux": "stylelint $(find frontend -name '*.css') --config frontend/.stylelintrc",
     "stylelint-windows": "stylelint \"frontend/**/*.css\" --config frontend/.stylelintrc"
   },
+  "sideEffects": [
+    "**/*.css"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/Chaptarr/chaptarr.git"
@@ -145,6 +149,7 @@
     "typescript-plugin-css-modules": "5.0.1",
     "url-loader": "4.1.1",
     "webpack": "5.102.0",
+    "webpack-bundle-analyzer": "5.3.1",
     "webpack-cli": "6.0.1",
     "webpack-livereload-plugin": "3.0.2",
     "worker-loader": "3.0.8"
