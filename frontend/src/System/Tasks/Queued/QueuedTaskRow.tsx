@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { CommandBody } from 'Commands/Command';
@@ -67,9 +67,9 @@ function getFormattedDates(
 ) {
   if (showRelativeDates) {
     return {
-      queuedAt: moment(queued).fromNow(),
-      startedAt: started ? moment(started).fromNow() : '-',
-      endedAt: ended ? moment(ended).fromNow() : '-',
+      queuedAt: dayjs(queued).fromNow(),
+      startedAt: started ? dayjs(started).fromNow() : '-',
+      endedAt: ended ? dayjs(ended).fromNow() : '-',
     };
   }
 

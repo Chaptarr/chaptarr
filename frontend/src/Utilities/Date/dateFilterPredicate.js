@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import * as filterTypes from 'Helpers/Props/filterTypes';
 import isAfter from 'Utilities/Date/isAfter';
 import isBefore from 'Utilities/Date/isBefore';
@@ -10,10 +10,10 @@ export default function(itemValue, filterValue, type) {
 
   switch (type) {
     case filterTypes.LESS_THAN:
-      return moment(itemValue).isBefore(filterValue);
+      return dayjs(itemValue).isBefore(filterValue);
 
     case filterTypes.GREATER_THAN:
-      return moment(itemValue).isAfter(filterValue);
+      return dayjs(itemValue).isAfter(filterValue);
 
     case filterTypes.IN_LAST:
       return (

@@ -1,5 +1,5 @@
 import times from 'lodash/times';
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import * as calendarViews from 'Calendar/calendarViews';
@@ -97,40 +97,40 @@ export const GOTO_CALENDAR_PREVIOUS_RANGE = 'calendar/gotoCalendarPreviousRange'
 // Helpers
 
 function getDays(start, end) {
-  const startTime = moment(start);
-  const endTime = moment(end);
+  const startTime = dayjs(start);
+  const endTime = dayjs(end);
   const difference = endTime.diff(startTime, 'days');
 
   // Difference is one less than the number of days we need to account for.
   return times(difference + 1, (i) => {
-    return startTime.clone().add(i, 'days').toISOString();
+    return startTime.add(i, 'days').toISOString();
   });
 }
 
 function getDates(time, view, firstDayOfWeek, dayCount) {
   const weekName = firstDayOfWeek === 0 ? 'week' : 'isoWeek';
 
-  let start = time.clone().startOf('day');
-  let end = time.clone().endOf('day');
+  let start = dayjs(time).startOf('day');
+  let end = dayjs(time).endOf('day');
 
   if (view === calendarViews.WEEK) {
-    start = time.clone().startOf(weekName);
-    end = time.clone().endOf(weekName);
+    start = dayjs(time).startOf(weekName);
+    end = dayjs(time).endOf(weekName);
   }
 
   if (view === calendarViews.FORECAST) {
-    start = time.clone().subtract(1, 'day').startOf('day');
-    end = time.clone().add(dayCount - 2, 'days').endOf('day');
+    start = dayjs(time).subtract(1, 'day').startOf('day');
+    end = dayjs(time).add(dayCount - 2, 'days').endOf('day');
   }
 
   if (view === calendarViews.MONTH) {
-    start = time.clone().startOf('month').startOf(weekName);
-    end = time.clone().endOf('month').endOf(weekName);
+    start = dayjs(time).startOf('month').startOf(weekName);
+    end = dayjs(time).endOf('month').endOf(weekName);
   }
 
   if (view === calendarViews.AGENDA) {
-    start = time.clone().subtract(1, 'day').startOf('day');
-    end = time.clone().add(1, 'month').endOf('day');
+    start = dayjs(time).subtract(1, 'day').startOf('day');
+    end = dayjs(time).add(1, 'month').endOf('day');
   }
 
   return {
@@ -145,14 +145,14 @@ function getPopulatableRange(startDate, endDate, view) {
   switch (view) {
     case calendarViews.DAY:
       return {
-        start: moment(startDate).subtract(1, 'day').toISOString(),
-        end: moment(endDate).add(1, 'day').toISOString()
+        start: dayjs(startDate).subtract(1, 'day').toISOString(),
+        end: dayjs(endDate).add(1, 'day').toISOString()
       };
     case calendarViews.WEEK:
     case calendarViews.FORECAST:
       return {
-        start: moment(startDate).subtract(1, 'week').toISOString(),
-        end: moment(endDate).add(1, 'week').toISOString()
+        start: dayjs(startDate).subtract(1, 'week').toISOString(),
+        end: dayjs(endDate).add(1, 'week').toISOString()
       };
     default:
       return {
@@ -179,8 +179,8 @@ function isRangePopulated(start, end, state) {
   } = getPopulatableRange(currentStart, currentEnd, currentView);
 
   if (
-    moment(start).isAfter(currentPopulatedStart) &&
-    moment(start).isBefore(currentPopulatedEnd)
+    dayjs(start).isAfter(currentPopulatedStart) &&
+    dayjs(start).isBefore(currentPopulatedEnd)
   ) {
     return true;
   }
@@ -217,7 +217,7 @@ export const actionHandlers = handleThunks({
     } = payload;
 
     const dayCount = state.calendar.dayCount;
-    const dates = getDates(moment(time), view, state.settings.ui.item.firstDayOfWeek, dayCount);
+    const dates = getDates(dayjs(time), view, state.settings.ui.item.firstDayOfWeek, dayCount);
     const { start, end } = getPopulatableRange(dates.start, dates.end, view);
     const isPrePopulated = isRangePopulated(start, end, state.calendar);
 
@@ -245,7 +245,7 @@ export const actionHandlers = handleThunks({
       }
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(batchActions([
         update({ section, data }),
 
@@ -260,7 +260,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(set({
         section,
         isFetching: false,
@@ -302,7 +302,7 @@ export const actionHandlers = handleThunks({
     const state = getState();
     const view = payload.view;
     const time = view === calendarViews.FORECAST || calendarViews.AGENDA ?
-      moment() :
+      dayjs() :
       state.calendar.time;
 
     dispatch(fetchCalendar({ time, view }));
@@ -311,7 +311,7 @@ export const actionHandlers = handleThunks({
   [GOTO_CALENDAR_TODAY]: function(getState, payload, dispatch) {
     const state = getState();
     const view = state.calendar.view;
-    const time = moment();
+    const time = dayjs();
 
     dispatch(fetchCalendar({ time, view }));
   },
@@ -325,7 +325,7 @@ export const actionHandlers = handleThunks({
     } = state.calendar;
 
     const amount = view === calendarViews.FORECAST ? dayCount : 1;
-    const time = moment(state.calendar.time).subtract(amount, viewRanges[view]);
+    const time = dayjs(state.calendar.time).subtract(amount, viewRanges[view]);
 
     dispatch(fetchCalendar({ time, view }));
   },
@@ -339,7 +339,7 @@ export const actionHandlers = handleThunks({
     } = state.calendar;
 
     const amount = view === calendarViews.FORECAST ? dayCount : 1;
-    const time = moment(state.calendar.time).add(amount, viewRanges[view]);
+    const time = dayjs(state.calendar.time).add(amount, viewRanges[view]);
 
     dispatch(fetchCalendar({ time, view }));
   },

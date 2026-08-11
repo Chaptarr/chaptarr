@@ -1,11 +1,11 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function isYesterday(date) {
   if (!date) {
     return false;
   }
 
-  return moment(date).isSame(moment().subtract(1, 'day'), 'day');
+  return dayjs(date).isSame(dayjs().subtract(1, 'day'), 'day');
 }
 
 export default isYesterday;
