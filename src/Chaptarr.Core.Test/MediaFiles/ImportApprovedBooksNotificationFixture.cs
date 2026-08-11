@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using DryIoc;
+using Microsoft.Data.Sqlite;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
@@ -23,6 +26,7 @@ using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.MediaFiles
 {
@@ -36,8 +40,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<BookFile> AddedFiles { get; } = new();
             public List<BookFile> UpdatedFiles { get; } = new();
             public List<BookFile> DeletedFiles { get; } = new();
+            public List<BookFile> FilesByBook { get; } = new();
             public bool ClearEditionOnAdd { get; set; }
+            public bool ThrowOnReplace { get; set; }
+            public Exception ReplaceException { get; set; }
+            public int ReplaceManyCalls { get; private set; }
             public BookFile FileAtPath { get; set; }
+            public string ThrowOnGetFileWithPath { get; set; }
             public List<string> OperationOrder { get; set; }
 
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
@@ -55,6 +64,28 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                     AddedFiles.Add(bookFile);
                 }
+            }
+
+            public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason)
+            {
+                ReplaceManyCalls++;
+
+                if (ReplaceException != null)
+                {
+                    throw ReplaceException;
+                }
+
+                if (ThrowOnReplace)
+                {
+                    throw new InvalidOperationException("synthetic persistence failure");
+                }
+
+                foreach (var replacedFile in replacedFiles ?? new List<BookFile>())
+                {
+                    Delete(replacedFile, reason);
+                }
+
+                AddMany(bookFiles);
             }
 
             public void Update(BookFile bookFile)
@@ -77,7 +108,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) { }
             public List<System.IO.Abstractions.IFileInfo> FilterUnchangedFiles(List<System.IO.Abstractions.IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
             public List<BookFile> GetFilesByAuthor(int authorId) => new();
-            public List<BookFile> GetFilesByBook(int bookId) => new();
+            public List<BookFile> GetFilesByBook(int bookId) => FilesByBook.ToList();
             public List<BookFile> GetFilesByBooks(List<int> bookIds) => new();
             public List<BookFile> GetFilesByEdition(int editionId) => new();
             public List<BookFile> GetUnmappedFiles() => new();
@@ -88,6 +119,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<BookFile> GetFileWithPath(List<string> path) => new();
             public BookFile GetFileWithPath(string path)
             {
+                if (string.Equals(ThrowOnGetFileWithPath, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("synthetic destination lookup failure");
+                }
+
                 return string.Equals(FileAtPath?.Path, path, StringComparison.OrdinalIgnoreCase) ? FileAtPath : null;
             }
             public void UpdateMediaInfo(List<BookFile> bookFiles) { }
@@ -140,6 +176,91 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public BookFile CopyBookFile(BookFile bookFile, LocalBook localBook) => throw new NotImplementedException();
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook) => DestinationPath;
+        }
+
+        private sealed class StubUpgradeMediaFiles : IUpgradeMediaFiles
+        {
+            public int CalibreImportCalls { get; private set; }
+            public int CompleteCalls { get; private set; }
+            public int RollbackCalls { get; private set; }
+            public bool ThrowOnCalibreImport { get; set; }
+            public bool ThrowOnRollback { get; set; }
+            public BookFile ReturnedBookFile { get; private set; }
+
+            public BookFileMoveResult UpgradeBookFile(BookFile bookFile, LocalBook localBook, bool copyOnly = false) => throw new NotImplementedException();
+
+            public CalibreBookFileImport PrepareCalibreImport(BookFile bookFile, RootFolder rootFolder, bool copyOnly = false)
+            {
+                CalibreImportCalls++;
+
+                if (rootFolder?.CalibreSettings == null)
+                {
+                    throw new InvalidOperationException("A Calibre root folder with settings is required.");
+                }
+
+                if (ThrowOnCalibreImport)
+                {
+                    throw new InvalidOperationException("synthetic Calibre import failure");
+                }
+
+                ReturnedBookFile = new BookFile
+                {
+                    Path = "/calibre/Best Served Cold.epub",
+                    Size = bookFile.Size,
+                    Modified = bookFile.Modified,
+                    DateAdded = bookFile.DateAdded,
+                    OriginalFilePath = bookFile.OriginalFilePath,
+                    Quality = bookFile.Quality,
+                    EditionId = bookFile.EditionId,
+                    Edition = bookFile.Edition,
+                    Author = bookFile.Author,
+                    CalibreId = 42,
+                    MediaType = bookFile.MediaType
+                };
+
+                return new CalibreBookFileImport
+                {
+                    BookFile = ReturnedBookFile,
+                    RootFolder = rootFolder,
+                    SourcePath = "/downloads/Best Served Cold.epub",
+                    CopyOnly = copyOnly,
+                    CreatedBook = true
+                };
+            }
+
+            public void CompleteCalibreImport(CalibreBookFileImport import) => CompleteCalls++;
+            public void RollbackCalibreImport(CalibreBookFileImport import)
+            {
+                RollbackCalls++;
+
+                if (ThrowOnRollback)
+                {
+                    throw new InvalidOperationException("synthetic Calibre rollback failure");
+                }
+            }
+        }
+
+        private class RootFolderServiceProxy : DispatchProxy
+        {
+            public RootFolder RootFolder { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IRootFolderService.GetBestRootFolder))
+                {
+                    return RootFolder;
+                }
+
+                throw new NotImplementedException($"Unexpected call to IRootFolderService.{targetMethod?.Name}");
+            }
+        }
+
+        private class ContainerDependencyProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                throw new NotImplementedException($"Container resolution test should not call {targetMethod?.Name}");
+            }
         }
 
         private sealed class CapturingEventAggregator : IEventAggregator
@@ -256,6 +377,26 @@ namespace Chaptarr.Core.Test.MediaFiles
             return DispatchProxy.Create<T, ThrowingProxy<T>>();
         }
 
+        private static SqliteException CreateBookFilesPathUniqueViolation()
+        {
+            using var connection = new SqliteConnection("Data Source=:memory:");
+            connection.Open();
+
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE BookFiles (Path TEXT UNIQUE); INSERT INTO BookFiles VALUES ('same'); INSERT INTO BookFiles VALUES ('same');";
+
+            try
+            {
+                command.ExecuteNonQuery();
+            }
+            catch (SqliteException ex)
+            {
+                return ex;
+            }
+
+            throw new AssertionException("Expected a SQLite unique-path violation.");
+        }
+
         private static (Author Author, Book Book, Edition Edition, string Path) CreateExistingEbookContext(bool monitored = true)
         {
             var qualityProfile = new QualityProfile
@@ -316,7 +457,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             IMoveBookFiles bookFileMover = null,
             StubMetadataTagService metadataTagService = null,
             List<string> operationOrder = null,
-            ImportMode importMode = ImportMode.Copy)
+            ImportMode importMode = ImportMode.Copy,
+            RootFolder rootFolder = null,
+            IUpgradeMediaFiles upgradeMediaFiles = null)
         {
             mediaFileService.OperationOrder = operationOrder;
             eventAggregator.OperationOrder = operationOrder;
@@ -334,6 +477,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             editionServiceProxy.Edition = edition;
             editionServiceProxy.EditionsByBook = editionsByBook?.Any() == true ? editionsByBook.ToList() : new List<Edition> { edition };
             editionServiceProxy.OperationOrder = operationOrder;
+
+            var rootFolderService = DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>();
+            ((RootFolderServiceProxy)(object)rootFolderService).RootFolder = rootFolder;
 
             var service = new ImportApprovedBooks(
                 mediaFileService,
@@ -353,7 +499,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Proxy<ISeriesService>(),
                 Proxy<IQualityProfileService>(),
                 Proxy<IM4bConversionService>(),
-                LogManager.GetLogger("ImportApprovedBooksNotificationFixture"));
+                LogManager.GetLogger("ImportApprovedBooksNotificationFixture"),
+                rootFolderService: rootFolderService,
+                upgradeMediaFiles: upgradeMediaFiles);
 
             var localBook = new LocalBook
             {
@@ -387,6 +535,466 @@ namespace Chaptarr.Core.Test.MediaFiles
                 cancellationToken: CancellationToken.None);
 
             return (results, editionServiceProxy);
+        }
+
+        [Test]
+        public void production_container_rules_should_inject_calibre_routing_dependencies()
+        {
+            using var container = new Container(rules => rules.WithNzbDroneRules());
+            var constructor = typeof(ImportApprovedBooks).GetConstructors().Single();
+
+            foreach (var parameter in constructor.GetParameters())
+            {
+                var dependency = parameter.ParameterType == typeof(Logger)
+                    ? LogManager.GetCurrentClassLogger()
+                    : DispatchProxy.Create(parameter.ParameterType, typeof(ContainerDependencyProxy));
+
+                container.RegisterInstance(parameter.ParameterType, dependency);
+            }
+
+            container.Register<ImportApprovedBooks>();
+            var subject = container.Resolve<ImportApprovedBooks>();
+            var rootFolderService = typeof(ImportApprovedBooks).GetField("_rootFolderService", BindingFlags.Instance | BindingFlags.NonPublic);
+            var upgradeMediaFiles = typeof(ImportApprovedBooks).GetField("_upgradeMediaFiles", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(rootFolderService?.GetValue(subject), Is.Not.Null);
+                Assert.That(upgradeMediaFiles?.GetValue(subject), Is.Not.Null);
+            });
+        }
+
+        [Test]
+        public void should_import_a_new_calibre_book_through_the_calibre_aware_path()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService();
+            var eventAggregator = new CapturingEventAggregator();
+            var mover = new StubMoveBookFiles { DestinationPath = "/ebooks/Riley Sager/Best Served Cold.epub" };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+            var calibreRoot = new RootFolder
+            {
+                Path = "/ebooks",
+                IsCalibreLibrary = true,
+                CalibreSettings = new()
+            };
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                eventAggregator,
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: mover,
+                importMode: ImportMode.Auto,
+                rootFolder: calibreRoot,
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.CompleteCalls, Is.EqualTo(1));
+                Assert.That(mover.MoveCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles.Single(), Is.SameAs(upgradeMediaFiles.ReturnedBookFile));
+                Assert.That(mediaFileService.AddedFiles.Single().CalibreId, Is.EqualTo(42));
+                Assert.That(mediaFileService.AddedFiles.Single().Path, Is.EqualTo("/calibre/Best Served Cold.epub"));
+            });
+        }
+
+        [Test]
+        public void should_fail_closed_for_a_calibre_root_without_settings()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService();
+            var mover = new StubMoveBookFiles { DestinationPath = "/ebooks/Riley Sager/Best Served Cold.epub" };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                new CapturingEventAggregator(),
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: mover,
+                importMode: ImportMode.Auto,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true
+                },
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Skipped));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.EqualTo(1));
+                Assert.That(mover.MoveCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_keep_new_non_calibre_imports_on_the_generic_mover_path()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService();
+            var eventAggregator = new CapturingEventAggregator();
+            var mover = new StubMoveBookFiles { DestinationPath = "/ebooks/Riley Sager/Best Served Cold.epub" };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                eventAggregator,
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: mover,
+                importMode: ImportMode.Auto,
+                rootFolder: new RootFolder { Path = "/ebooks" },
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(mover.MoveCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.Zero);
+            });
+        }
+
+        [Test]
+        public void should_not_move_or_persist_a_new_book_when_calibre_import_fails()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService();
+            var eventAggregator = new CapturingEventAggregator();
+            var mover = new StubMoveBookFiles { DestinationPath = "/ebooks/Riley Sager/Best Served Cold.epub" };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles { ThrowOnCalibreImport = true };
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                eventAggregator,
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: mover,
+                importMode: ImportMode.Auto,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Skipped));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.EqualTo(1));
+                Assert.That(mover.MoveCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_reject_a_tracked_same_book_row_before_calibre_mutation()
+        {
+            var context = CreateExistingEbookContext();
+            var trackedFile = new BookFile
+            {
+                Id = 8007,
+                Path = context.Path,
+                EditionId = context.Edition.Id,
+                Edition = context.Edition,
+                CalibreId = 0,
+                Quality = new QualityModel(Quality.EPUB)
+            };
+            var mediaFileService = new StubMediaFileService { FileAtPath = trackedFile };
+            var mover = new StubMoveBookFiles { DestinationPath = "/calibre/Best Served Cold.epub" };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                new CapturingEventAggregator(),
+                context.Author,
+                context.Book,
+                context.Edition,
+                context.Path,
+                existingFile: false,
+                bookFileMover: mover,
+                importMode: ImportMode.Move,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Rejected));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.Zero);
+                Assert.That(upgradeMediaFiles.CompleteCalls, Is.Zero);
+                Assert.That(upgradeMediaFiles.RollbackCalls, Is.Zero);
+                Assert.That(mover.MoveCalls, Is.Zero);
+                Assert.That(mediaFileService.ReplaceManyCalls, Is.Zero);
+            });
+        }
+
+        [Test]
+        public void should_compensate_and_reject_when_the_calibre_destination_is_already_tracked()
+        {
+            var context = CreateExistingEbookContext();
+            var conflict = new BookFile
+            {
+                Id = 8008,
+                Path = "/calibre/Best Served Cold.epub",
+                EditionId = context.Edition.Id
+            };
+            var mediaFileService = new StubMediaFileService { FileAtPath = conflict };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                new CapturingEventAggregator(),
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: new StubMoveBookFiles(),
+                importMode: ImportMode.Copy,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Rejected));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.RollbackCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.CompleteCalls, Is.Zero);
+                Assert.That(mediaFileService.ReplaceManyCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_compensate_without_shared_replacement_retry_when_calibre_persistence_hits_a_path_race()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService
+            {
+                ReplaceException = CreateBookFilesPathUniqueViolation()
+            };
+            var eventAggregator = new CapturingEventAggregator();
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            Assert.Throws<InvalidOperationException>(() => ImportExistingEbook(
+                mediaFileService,
+                eventAggregator,
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: new StubMoveBookFiles(),
+                importMode: ImportMode.Copy,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(upgradeMediaFiles.RollbackCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.CompleteCalls, Is.Zero);
+                Assert.That(mediaFileService.ReplaceManyCalls, Is.EqualTo(1));
+                Assert.That(mediaFileService.DeletedFiles, Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<TrackImportedEvent>(), Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<BookImportedEvent>(), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_compensate_when_destination_lookup_throws_after_calibre_mutation()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService
+            {
+                ThrowOnGetFileWithPath = "/calibre/Best Served Cold.epub"
+            };
+            var eventAggregator = new CapturingEventAggregator();
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                eventAggregator,
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: new StubMoveBookFiles(),
+                importMode: ImportMode.Move,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Skipped));
+                Assert.That(import.Results.Single().Errors.Single(), Does.Contain("synthetic destination lookup failure"));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.RollbackCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.CompleteCalls, Is.Zero, "move source cleanup must only happen after commit");
+                Assert.That(mediaFileService.ReplaceManyCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles, Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<TrackImportedEvent>(), Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<BookImportedEvent>(), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_surface_persistence_and_calibre_rollback_failures_together()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService { ThrowOnReplace = true };
+            var eventAggregator = new CapturingEventAggregator();
+            var upgradeMediaFiles = new StubUpgradeMediaFiles { ThrowOnRollback = true };
+
+            var exception = Assert.Throws<AggregateException>(() => ImportExistingEbook(
+                mediaFileService,
+                eventAggregator,
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: new StubMoveBookFiles(),
+                importMode: ImportMode.Move,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(exception.ToString(), Does.Contain("synthetic persistence failure"));
+                Assert.That(exception.ToString(), Does.Contain("synthetic Calibre rollback failure"));
+                Assert.That(upgradeMediaFiles.RollbackCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.CompleteCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles, Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<TrackImportedEvent>(), Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<BookImportedEvent>(), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_reject_a_calibre_book_replacement_without_transferring_or_persisting()
+        {
+            var context = CreateExistingEbookContext();
+            var existing = new BookFile
+            {
+                Id = 99,
+                Path = "/ebooks/Riley Sager/Best Served Cold.epub",
+                CalibreId = 7,
+                EditionId = context.Edition.Id,
+                Edition = context.Edition,
+                Quality = new QualityModel(Quality.EPUB)
+            };
+            var mediaFileService = new StubMediaFileService();
+            mediaFileService.FilesByBook.Add(existing);
+            context.Book.BookFiles = new List<BookFile> { existing };
+            var mover = new StubMoveBookFiles { DestinationPath = "/ebooks/Riley Sager/Best Served Cold.epub" };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            var import = ImportExistingEbook(
+                mediaFileService,
+                new CapturingEventAggregator(),
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: mover,
+                importMode: ImportMode.Auto,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Rejected));
+                Assert.That(upgradeMediaFiles.CalibreImportCalls, Is.Zero);
+                Assert.That(mover.MoveCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_compensate_calibre_and_not_persist_when_the_batch_commit_fails()
+        {
+            var context = CreateExistingEbookContext();
+            var mediaFileService = new StubMediaFileService { ThrowOnReplace = true };
+            var eventAggregator = new CapturingEventAggregator();
+            var mover = new StubMoveBookFiles { DestinationPath = "/ebooks/Riley Sager/Best Served Cold.epub" };
+            var upgradeMediaFiles = new StubUpgradeMediaFiles();
+
+            Assert.Throws<InvalidOperationException>(() => ImportExistingEbook(
+                mediaFileService,
+                eventAggregator,
+                context.Author,
+                context.Book,
+                context.Edition,
+                "/downloads/Best Served Cold.epub",
+                existingFile: false,
+                bookFileMover: mover,
+                importMode: ImportMode.Auto,
+                rootFolder: new RootFolder
+                {
+                    Path = "/ebooks",
+                    IsCalibreLibrary = true,
+                    CalibreSettings = new()
+                },
+                upgradeMediaFiles: upgradeMediaFiles));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(upgradeMediaFiles.RollbackCalls, Is.EqualTo(1));
+                Assert.That(upgradeMediaFiles.CompleteCalls, Is.Zero);
+                Assert.That(mover.MoveCalls, Is.Zero);
+                Assert.That(mediaFileService.AddedFiles, Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<TrackImportedEvent>(), Is.Empty);
+                Assert.That(eventAggregator.Events.OfType<BookImportedEvent>(), Is.Empty);
+            });
         }
 
         [TestCase(false, true, ImportResultType.Skipped)]

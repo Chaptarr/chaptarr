@@ -32,11 +32,11 @@ using NzbDrone.Core.MediaFiles.BookImport.Services;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
-    using NzbDrone.Core.Parser;
-    using NzbDrone.Core.Parser.Model;
-    using NzbDrone.Core.Profiles.Qualities;
-    using NzbDrone.Core.Qualities;
-
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport
 {
@@ -62,6 +62,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             public string DestinationPath { get; set; }
             public bool CopyOnly { get; init; }
             public bool DatabaseCommitted { get; set; }
+            public CalibreBookFileImport CalibreImport { get; init; }
             public List<(BookFile OldFile, string BackupPath)> StagedReplacements { get; init; } = new();
             public List<BookFile> DatabaseRowsToReplace { get; } = new();
         }
@@ -80,17 +81,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private readonly IEventAggregator _eventAggregator;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly ISeriesBookLinkService _seriesBookLinkService;
-            private readonly ISeriesService _seriesService;
-            private readonly IQualityProfileService _qualityProfileService;
-            private readonly IM4bConversionService _m4bConversionService;
-            private readonly IConversionTrackingService _conversionTrackingService;
-            private readonly IConversionJobService _conversionJobService;
-            private readonly IDiskProvider _diskProvider;
-            private readonly IConfigService _configService;
-            private readonly IContainmentValidator _containmentValidator;
-            private readonly IMapCoversToLocal _coverMapper;
-            private readonly ICustomFormatCalculationService _customFormatCalculationService;
-            private readonly Logger _logger;
+        private readonly ISeriesService _seriesService;
+        private readonly IQualityProfileService _qualityProfileService;
+        private readonly IM4bConversionService _m4bConversionService;
+        private readonly IConversionTrackingService _conversionTrackingService;
+        private readonly IConversionJobService _conversionJobService;
+        private readonly IDiskProvider _diskProvider;
+        private readonly IConfigService _configService;
+        private readonly IContainmentValidator _containmentValidator;
+        private readonly IMapCoversToLocal _coverMapper;
+        private readonly ICustomFormatCalculationService _customFormatCalculationService;
+        private readonly IRootFolderService _rootFolderService;
+        private readonly IUpgradeMediaFiles _upgradeMediaFiles;
+        private readonly Logger _logger;
 
         public ImportApprovedBooks(
             IMediaFileService mediaFileService,
@@ -106,19 +109,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             NzbDrone.Core.Download.History.IDownloadHistoryService downloadHistoryService,
             IEventAggregator eventAggregator,
             IManageCommandQueue commandQueueManager,
-                ISeriesBookLinkService seriesBookLinkService,
-                ISeriesService seriesService,
-                IQualityProfileService qualityProfileService,
-                IM4bConversionService m4bConversionService,
-                Logger logger,
-                IConversionTrackingService conversionTrackingService = null,
-                IDiskProvider diskProvider = null,
-                IConfigService configService = null,
-                IContainmentValidator containmentValidator = null,
-                IMapCoversToLocal coverMapper = null,
-                ICustomFormatCalculationService customFormatCalculationService = null,
-                IConversionJobService conversionJobService = null)
-            {
+            ISeriesBookLinkService seriesBookLinkService,
+            ISeriesService seriesService,
+            IQualityProfileService qualityProfileService,
+            IM4bConversionService m4bConversionService,
+            Logger logger,
+            IConversionTrackingService conversionTrackingService = null,
+            IDiskProvider diskProvider = null,
+            IConfigService configService = null,
+            IContainmentValidator containmentValidator = null,
+            IMapCoversToLocal coverMapper = null,
+            ICustomFormatCalculationService customFormatCalculationService = null,
+            IConversionJobService conversionJobService = null,
+            IRootFolderService rootFolderService = null,
+            IUpgradeMediaFiles upgradeMediaFiles = null)
+        {
             _mediaFileService = mediaFileService;
             _metadataTagService = metadataTagService;
             _mediaInfoExtractor = mediaInfoExtractor;
@@ -132,19 +137,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             _downloadHistoryService = downloadHistoryService;
             _eventAggregator = eventAggregator;
             _commandQueueManager = commandQueueManager;
-                _seriesBookLinkService = seriesBookLinkService;
-                _seriesService = seriesService;
-                _qualityProfileService = qualityProfileService;
-                _m4bConversionService = m4bConversionService;
-                _conversionTrackingService = conversionTrackingService;
-                _conversionJobService = conversionJobService;
-                _diskProvider = diskProvider;
-                _configService = configService;
-                _containmentValidator = containmentValidator;
-                _coverMapper = coverMapper;
-                _customFormatCalculationService = customFormatCalculationService;
-                _logger = logger;
-            }
+            _seriesBookLinkService = seriesBookLinkService;
+            _seriesService = seriesService;
+            _qualityProfileService = qualityProfileService;
+            _m4bConversionService = m4bConversionService;
+            _conversionTrackingService = conversionTrackingService;
+            _conversionJobService = conversionJobService;
+            _diskProvider = diskProvider;
+            _configService = configService;
+            _containmentValidator = containmentValidator;
+            _coverMapper = coverMapper;
+            _customFormatCalculationService = customFormatCalculationService;
+            _rootFolderService = rootFolderService;
+            _upgradeMediaFiles = upgradeMediaFiles;
+            _logger = logger;
+        }
 
         public List<ImportResult> Import(
             List<ImportDecision<LocalBook>> decisions,
@@ -618,9 +625,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         {
                             RetryPreparedBookFilesAfterPathConflict(bookFilesToAdd, pendingFileCommits, ex);
                         }
-                        catch
+                        catch (Exception ex)
                         {
-                            RollbackPendingFileCommits(pendingFileCommits);
+                            try
+                            {
+                                RollbackPendingFileCommits(pendingFileCommits);
+                            }
+                            catch (Exception rollbackException)
+                            {
+                                throw new AggregateException("BookFile persistence failed and compensation also failed.", ex, rollbackException);
+                            }
+
                             throw;
                         }
 
@@ -1257,10 +1272,26 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         copyOnly = false;
                     }
 
-                    // Upgrade safety: never delete/recycle existing files before the new file is successfully transferred.
-                    // Stage existing files by renaming them out of the way, transfer the new file, then recycle/delete DB records.
+                    var rootFolderPath = author.GetRootFolderForQuality(localBook.Quality.Quality);
+                    var rootFolder = rootFolderPath.IsNotNullOrWhiteSpace()
+                        ? _rootFolderService?.GetBestRootFolder(rootFolderPath)
+                        : null;
+                    var importToCalibre = rootFolder?.IsCalibreLibrary == true;
+                    if (importToCalibre && bookFile.Id > 0)
+                    {
+                        return (new ImportResult(decision, ImportResultType.Rejected, "Calibre clean import requires a new, untracked BookFile."), null);
+                    }
+
+                    if (importToCalibre && filesToReplace.Any())
+                    {
+                        return (new ImportResult(decision, ImportResultType.Rejected, "Calibre book replacement is not supported during clean import."), null);
+                    }
+
+                    // Generic upgrades stage filesystem replacements before transfer. Calibre
+                    // replacements are rejected above because Calibre cannot atomically restore an
+                    // overwritten format after a database failure.
                     var stagedReplacements = new List<(BookFile OldFile, string BackupPath)>();
-                    if (filesToReplace.Any())
+                    if (!importToCalibre && filesToReplace.Any())
                     {
                         var stageStopwatch = Stopwatch.StartNew();
                         foreach (var oldFile in filesToReplace)
@@ -1296,7 +1327,36 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     try
                     {
                         var transferStopwatch = Stopwatch.StartNew();
-                        if (copyOnly)
+                        if (importToCalibre)
+                        {
+                            if (_upgradeMediaFiles == null)
+                            {
+                                throw new InvalidOperationException("Calibre imports require the upgrade media file service.");
+                            }
+
+                            var calibreImport = _upgradeMediaFiles.PrepareCalibreImport(bookFile, rootFolder, copyOnly);
+                            bookFile = calibreImport.BookFile;
+                            pendingFileCommit = new PendingFileCommit
+                            {
+                                BookFile = bookFile,
+                                LocalBook = localBook,
+                                Author = author,
+                                SourcePath = localBook.Path,
+                                DestinationPath = bookFile.Path,
+                                CopyOnly = copyOnly,
+                                CalibreImport = calibreImport
+                            };
+
+                            var existingAtCalibreDestination = _mediaFileService.GetFileWithPath(bookFile.Path);
+                            if (existingAtCalibreDestination?.Id > 0)
+                            {
+                                var conflictCommit = pendingFileCommit;
+                                pendingFileCommit = null;
+                                RollbackPendingFileCommit(conflictCommit);
+                                return (new ImportResult(decision, ImportResultType.Rejected, "Calibre destination path is already tracked."), null);
+                            }
+                        }
+                        else if (copyOnly)
                         {
                             bookFile = _bookFileMover.CopyBookFile(bookFile, localBook);
                         }
@@ -1307,13 +1367,27 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         transferStopwatch.Stop();
                         _logger.Debug("[PERFORMANCE] File transfer took {0}ms", transferStopwatch.ElapsedMilliseconds);
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        if (pendingFileCommit?.CalibreImport != null)
+                        {
+                            var failedCommit = pendingFileCommit;
+                            pendingFileCommit = null;
+                            try
+                            {
+                                RollbackPendingFileCommit(failedCommit);
+                            }
+                            catch (Exception rollbackException)
+                            {
+                                throw new AggregateException("Calibre import failed and compensation also failed.", ex, rollbackException);
+                            }
+                        }
+
                         RollbackStagedReplacements(stagedReplacements);
                         throw;
                     }
 
-                    if (bookFile.Id == 0)
+                    if (bookFile.Id == 0 && pendingFileCommit == null)
                     {
                         pendingFileCommit = new PendingFileCommit
                         {
@@ -1331,7 +1405,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     // If the destination path is already tracked, either include it in the staged
                     // upgrade transaction or preserve the established stale-row adoption path.
-                    bookFile = ResolveBookFilePathConflict(bookFile, localBook, pendingFileCommit);
+                    if (!importToCalibre)
+                    {
+                        bookFile = ResolveBookFilePathConflict(bookFile, localBook, pendingFileCommit);
+                    }
                     if (pendingFileCommit != null)
                     {
                         pendingFileCommit.DestinationPath = bookFile.Path;
@@ -1449,8 +1526,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 if (pendingFileCommit != null && !pendingFileCommit.DatabaseCommitted)
                 {
-                    RollbackPendingFileCommit(pendingFileCommit);
+                    var failedCommit = pendingFileCommit;
                     pendingFileCommit = null;
+                    try
+                    {
+                        RollbackPendingFileCommit(failedCommit);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        throw new AggregateException("Book import failed and compensation also failed.", ex, rollbackException);
+                    }
                 }
 
                 _logger.Error(ex, "[CLEAN-IMPORT] Failed to import file: {0}", localBook.Path);
@@ -3035,6 +3120,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 List<PendingFileCommit> pendingFileCommits,
                 Exception ex)
             {
+                if (pendingFileCommits?.Any(commit => commit?.CalibreImport != null) == true)
+                {
+                    try
+                    {
+                        RollbackPendingFileCommits(pendingFileCommits);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        throw new AggregateException("Calibre import persistence conflicted and compensation also failed.", ex, rollbackException);
+                    }
+
+                    throw new InvalidOperationException("Calibre import persistence conflicted with an existing destination path; the Calibre import was rolled back.", ex);
+                }
+
                 _logger.Warn(ex, "[IMPORT-PATH-CONFLICT] UNIQUE constraint hit during the atomic BookFile swap; refreshing destination rows and retrying once");
 
                 try
@@ -3056,9 +3155,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     _mediaFileService.ReplaceMany(bookFilesToAdd, rowsToReplace, DeleteMediaFileReason.Upgrade);
                 }
-                catch
+                catch (Exception retryException)
                 {
-                    RollbackPendingFileCommits(pendingFileCommits);
+                    try
+                    {
+                        RollbackPendingFileCommits(pendingFileCommits);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        throw new AggregateException("BookFile persistence retry failed and compensation also failed.", retryException, rollbackException);
+                    }
+
                     throw;
                 }
             }
@@ -3179,6 +3286,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             foreach (var commit in pendingFileCommits ?? Enumerable.Empty<PendingFileCommit>())
             {
+                if (commit.CalibreImport != null)
+                {
+                    try
+                    {
+                        _upgradeMediaFiles.CompleteCalibreImport(commit.CalibreImport);
+                    }
+                    catch (Exception ex)
+                    {
+                        // The database and Calibre now agree. Retaining the downloader source is
+                        // safer than turning cleanup trouble into a failed import.
+                        _logger.Error(ex, "[CLEAN-IMPORT] Calibre import committed, but source cleanup failed: {0}", commit.SourcePath);
+                    }
+                }
+
                 foreach (var (oldFile, backupPath) in commit.StagedReplacements)
                 {
                     try
@@ -3227,15 +3348,31 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         {
             foreach (var commit in pendingFileCommits ?? Enumerable.Empty<PendingFileCommit>())
             {
-                TryWriteTags(commit.BookFile, true, "TRANSFER");
+                if (commit.CalibreImport == null)
+                {
+                    TryWriteTags(commit.BookFile, true, "TRANSFER");
+                }
             }
         }
 
         private void RollbackPendingFileCommits(IEnumerable<PendingFileCommit> pendingFileCommits)
         {
+            var failures = new List<Exception>();
             foreach (var commit in (pendingFileCommits ?? Enumerable.Empty<PendingFileCommit>()).Reverse())
             {
-                RollbackPendingFileCommit(commit);
+                try
+                {
+                    RollbackPendingFileCommit(commit);
+                }
+                catch (Exception ex)
+                {
+                    failures.Add(ex);
+                }
+            }
+
+            if (failures.Any())
+            {
+                throw new AggregateException("One or more pending file compensations failed.", failures);
             }
         }
 
@@ -3243,6 +3380,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         {
             if (pendingFileCommit == null)
             {
+                return;
+            }
+
+            if (pendingFileCommit.CalibreImport != null)
+            {
+                try
+                {
+                    _upgradeMediaFiles.RollbackCalibreImport(pendingFileCommit.CalibreImport);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"Failed to compensate Calibre import for '{pendingFileCommit.SourcePath}'.", ex);
+                }
+
                 return;
             }
 

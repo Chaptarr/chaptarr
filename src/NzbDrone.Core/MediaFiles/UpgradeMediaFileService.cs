@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -14,6 +15,18 @@ namespace NzbDrone.Core.MediaFiles
     public interface IUpgradeMediaFiles
     {
         BookFileMoveResult UpgradeBookFile(BookFile bookFile, LocalBook localBook, bool copyOnly = false);
+        CalibreBookFileImport PrepareCalibreImport(BookFile bookFile, RootFolder rootFolder, bool copyOnly = false);
+        void CompleteCalibreImport(CalibreBookFileImport import);
+        void RollbackCalibreImport(CalibreBookFileImport import);
+    }
+
+    public class CalibreBookFileImport
+    {
+        public BookFile BookFile { get; init; }
+        public RootFolder RootFolder { get; init; }
+        public string SourcePath { get; init; }
+        public bool CopyOnly { get; init; }
+        public bool CreatedBook { get; init; }
     }
 
     public class UpgradeMediaFileService : IUpgradeMediaFiles
@@ -134,6 +147,75 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             return moveFileResult;
+        }
+
+        public CalibreBookFileImport PrepareCalibreImport(BookFile bookFile, RootFolder rootFolder, bool copyOnly = false)
+        {
+            if (rootFolder?.IsCalibreLibrary != true || rootFolder.CalibreSettings == null)
+            {
+                throw new InvalidOperationException("A Calibre root folder with settings is required.");
+            }
+
+            if (bookFile.Id != 0 || bookFile.CalibreId != 0)
+            {
+                throw new InvalidOperationException("Only new, untracked Calibre books can be prepared for clean import.");
+            }
+
+            var sourcePath = bookFile.Path;
+            try
+            {
+                bookFile = _calibre.AddAndConvert(bookFile, rootFolder.CalibreSettings);
+            }
+            catch (Exception importException)
+            {
+                // AddAndConvert assigns the Calibre ID before later metadata/conversion work.
+                // Remove a partially-created book rather than leaving an untracked Calibre record.
+                if (bookFile.CalibreId != 0)
+                {
+                    try
+                    {
+                        _calibre.DeleteBook(bookFile, rootFolder.CalibreSettings);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        throw new AggregateException("Calibre import and partial-import rollback both failed.", importException, rollbackException);
+                    }
+                }
+
+                throw;
+            }
+
+            return new CalibreBookFileImport
+            {
+                BookFile = bookFile,
+                RootFolder = rootFolder,
+                SourcePath = sourcePath,
+                CopyOnly = copyOnly,
+                CreatedBook = true
+            };
+        }
+
+        public void CompleteCalibreImport(CalibreBookFileImport import)
+        {
+            if (import?.CopyOnly == false)
+            {
+                _diskProvider.DeleteFile(import.SourcePath);
+            }
+        }
+
+        public void RollbackCalibreImport(CalibreBookFileImport import)
+        {
+            if (import == null)
+            {
+                return;
+            }
+
+            if (!import.CreatedBook)
+            {
+                throw new InvalidOperationException("Only newly-created Calibre books can be rolled back.");
+            }
+
+            _calibre.DeleteBook(import.BookFile, import.RootFolder.CalibreSettings);
         }
     }
 }
