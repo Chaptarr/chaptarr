@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import MiddleTruncate from 'react-middle-truncate';
@@ -71,7 +71,7 @@ class ReleaseProfile extends Component {
       isDeleteReleaseProfileModalOpen
     } = this.state;
 
-    const indexer = indexerId !== 0 && _.find(indexerList, { id: indexerId });
+    const indexer = indexerId !== 0 && find(indexerList, { id: indexerId });
 
     return (
       <Card

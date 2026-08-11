@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -43,7 +43,7 @@ class FileDetailsConnector extends Component {
       error
     } = this.props;
 
-    const item = _.find(items, { id });
+    const item = find(items, { id });
     const errorMessage = getErrorMessage(error, 'Unable to load manual import items');
 
     if (isFetching || !item) {

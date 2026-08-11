@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import intersectionWith from 'lodash/intersectionWith';
+import map from 'lodash/map';
+import orderBy from 'lodash/orderBy';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { bulkDeleteBook } from 'Store/Actions/bookIndexActions';
@@ -10,19 +12,19 @@ function createMapStateToProps() {
     (state) => state.books.items,
     (state) => state.bookFiles.items,
     (bookIds, allBooks, allBookFiles) => {
-      const selectedBook = _.intersectionWith(allBooks, bookIds, (s, id) => {
+      const selectedBook = intersectionWith(allBooks, bookIds, (s, id) => {
         return s.id === id;
       });
 
-      const sortedBook = _.orderBy(selectedBook, 'title');
+      const sortedBook = orderBy(selectedBook, 'title');
 
-      const selectedFiles = _.intersectionWith(allBookFiles, bookIds, (s, id) => {
+      const selectedFiles = intersectionWith(allBookFiles, bookIds, (s, id) => {
         return s.bookId === id;
       });
 
-      const files = _.orderBy(selectedFiles, ['bookId', 'path']);
+      const files = orderBy(selectedFiles, ['bookId', 'path']);
 
-      const book = _.map(sortedBook, (s) => {
+      const book = map(sortedBook, (s) => {
         return {
           title: s.title,
           path: s.path

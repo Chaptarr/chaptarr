@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEqual from 'lodash/isEqual';
 import { createAction } from 'redux-actions';
 import { createThunk, handleThunks } from 'Store/thunks';
 import requestAction from 'Utilities/requestAction';
@@ -44,7 +44,7 @@ export const actionHandlers = handleThunks({
   [FETCH_OPTIONS]: function(getState, payload, dispatch) {
     const subsection = `${section}.${payload.section}`;
 
-    if (lastActions[payload.section] && _.isEqual(payload, lastActions[payload.section].payload)) {
+    if (lastActions[payload.section] && isEqual(payload, lastActions[payload.section].payload)) {
       return;
     }
 
@@ -62,7 +62,7 @@ export const actionHandlers = handleThunks({
 
     const promise = requestAction(payload);
 
-    promise.done((data) => {
+    promise.then((data) => {
       if (lastActions[payload.section]) {
         if (lastActions[payload.section].actionId === actionId) {
           lastActions[payload.section] = null;
@@ -79,7 +79,7 @@ export const actionHandlers = handleThunks({
       }
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       if (lastActions[payload.section]) {
         if (lastActions[payload.section].actionId === actionId) {
           lastActions[payload.section] = null;

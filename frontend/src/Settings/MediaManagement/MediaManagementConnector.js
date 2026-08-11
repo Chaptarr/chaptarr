@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -23,7 +23,7 @@ function createMapStateToProps() {
       return {
         advancedSettings,
         ...sectionSettings,
-        hasPendingChanges: !_.isEmpty(namingSettings.pendingChanges) || sectionSettings.hasPendingChanges,
+        hasPendingChanges: !isEmpty(namingSettings.pendingChanges) || sectionSettings.hasPendingChanges,
         isWindows: systemStatus.isWindows
       };
     }

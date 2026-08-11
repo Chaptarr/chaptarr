@@ -1,5 +1,5 @@
 import classNames from 'classnames';
-import _ from 'lodash';
+import debounce from 'lodash/debounce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Autosuggest from 'react-autosuggest';
@@ -271,7 +271,7 @@ class AuthorSearchInput extends Component {
     this.requestSuggestions(value);
   };
 
-  requestSuggestions = _.debounce((value) => {
+  requestSuggestions = debounce((value) => {
     if (!this.state.loading) {
       return;
     }

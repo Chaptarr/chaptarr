@@ -1,4 +1,8 @@
-import _ from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import find from 'lodash/find';
+import isEmpty from 'lodash/isEmpty';
+import reduceRight from 'lodash/reduceRight';
+import some from 'lodash/some';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -34,7 +38,7 @@ function createQualitiesSelector() {
         return [];
       }
 
-      return _.reduceRight(items.value, (result, { allowed, id, name, quality }) => {
+      return reduceRight(items.value, (result, { allowed, id, name, quality }) => {
         if (allowed) {
           if (id) {
             result.push({
@@ -92,9 +96,9 @@ function createQualityProfileInUseSelector() {
           item?.ebook?.qualityProfileId === id;
       };
 
-      return _.some(authors, matchesQualityProfile) ||
-        _.some(lists, matchesQualityProfile) ||
-        _.some(rootFolders, matchesQualityProfile);
+      return some(authors, matchesQualityProfile) ||
+        some(lists, matchesQualityProfile) ||
+        some(rootFolders, matchesQualityProfile);
     }
   );
 }
@@ -163,7 +167,7 @@ class EditQualityProfileModalContentConnector extends Component {
   ensureCutoff = (qualityProfile) => {
     const cutoff = qualityProfile.cutoff.value;
 
-    const cutoffItem = _.find(qualityProfile.items.value, (i) => {
+    const cutoffItem = find(qualityProfile.items.value, (i) => {
       if (!cutoff) {
         return false;
       }
@@ -173,7 +177,7 @@ class EditQualityProfileModalContentConnector extends Component {
 
     // If the cutoff isn't allowed anymore or there isn't a cutoff set one
     if (!cutoff || !cutoffItem || !cutoffItem.allowed) {
-      const firstAllowed = _.find(qualityProfile.items.value, { allowed: true });
+      const firstAllowed = find(qualityProfile.items.value, { allowed: true });
       let cutoffId = null;
 
       if (firstAllowed) {
@@ -193,7 +197,7 @@ class EditQualityProfileModalContentConnector extends Component {
 
   onCutoffChange = ({ name, value }) => {
     const id = parseInt(value);
-    const item = _.find(this.props.item.items.value, (i) => {
+    const item = find(this.props.item.items.value, (i) => {
       if (i.quality) {
         return i.quality.id === id;
       }
@@ -225,7 +229,7 @@ class EditQualityProfileModalContentConnector extends Component {
       return;
     }
 
-    const qualityProfile = _.cloneDeep(this.props.item);
+    const qualityProfile = cloneDeep(this.props.item);
     const result = applyEasyCustomFormatPreset(
       qualityProfile.formatItems.value,
       value,
@@ -254,9 +258,9 @@ class EditQualityProfileModalContentConnector extends Component {
   };
 
   onQualityProfileItemAllowedChange = (id, allowed) => {
-    const qualityProfile = _.cloneDeep(this.props.item);
+    const qualityProfile = cloneDeep(this.props.item);
     const items = qualityProfile.items.value;
-    const item = _.find(qualityProfile.items.value, (i) => i.quality && i.quality.id === id);
+    const item = find(qualityProfile.items.value, (i) => i.quality && i.quality.id === id);
 
     item.allowed = allowed;
 
@@ -274,9 +278,9 @@ class EditQualityProfileModalContentConnector extends Component {
   };
 
   onQualityProfileFormatItemScoreChange = (id, score) => {
-    const qualityProfile = _.cloneDeep(this.props.item);
+    const qualityProfile = cloneDeep(this.props.item);
     const formatItems = qualityProfile.formatItems.value;
-    const item = _.find(qualityProfile.formatItems.value, (i) => i.format === id);
+    const item = find(qualityProfile.formatItems.value, (i) => i.format === id);
 
     item.score = score;
 
@@ -379,7 +383,7 @@ class EditQualityProfileModalContentConnector extends Component {
     } = this.state;
 
     if (didDrop && dropQualityIndex != null) {
-      const qualityProfile = _.cloneDeep(this.props.item);
+      const qualityProfile = cloneDeep(this.props.item);
       const items = qualityProfile.items.value;
       const [dragGroupIndex, dragItemIndex] = parseIndex(dragQualityIndex);
       const [dropGroupIndex, dropItemIndex] = parseIndex(dropQualityIndex);
@@ -428,7 +432,7 @@ class EditQualityProfileModalContentConnector extends Component {
   // Render
 
   render() {
-    if (_.isEmpty(this.props.item.items) && !this.props.isFetching) {
+    if (isEmpty(this.props.item.items) && !this.props.isFetching) {
       return null;
     }
 

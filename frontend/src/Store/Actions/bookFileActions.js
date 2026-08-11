@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import last from 'lodash/last';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import bookEntities from 'Book/bookEntities';
@@ -139,12 +140,12 @@ export const actionHandlers = handleThunks({
       bookEntity: bookEntity = bookEntities.BOOKS
     } = payload;
 
-    const bookSection = _.last(bookEntity.split('.'));
+    const bookSection = last(bookEntity.split('.'));
     const deletePromise = deleteBookFileHelper(getState, payload, dispatch);
 
-    deletePromise.done(() => {
+    deletePromise.then(() => {
       const books = getState().books.items;
-      const booksWithRemovedFiles = _.filter(books, { bookFileId });
+      const booksWithRemovedFiles = filter(books, { bookFileId });
 
       dispatch(batchActions([
         ...booksWithRemovedFiles.map((book) => {
@@ -173,10 +174,10 @@ export const actionHandlers = handleThunks({
       data: JSON.stringify({ bookFileIds })
     }).request;
 
-    promise.done(() => {
+    promise.then(() => {
       const books = getState().books.items;
       const booksWithRemovedFiles = bookFileIds.reduce((acc, bookFileId) => {
-        acc.push(..._.filter(books, { bookFileId }));
+        acc.push(...filter(books, { bookFileId }));
 
         return acc;
       }, []);
@@ -203,7 +204,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(set({
         section,
         isDeleting: false,
@@ -235,7 +236,7 @@ export const actionHandlers = handleThunks({
       data: JSON.stringify(requestData)
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(batchActions([
         ...bookFileIds.map((id) => {
           const props = {};
@@ -259,7 +260,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(set({
         section,
         isSaving: false,

@@ -81,6 +81,12 @@ module.exports = (env) => {
       splitChunks: {
         chunks: 'all',
         cacheGroups: {
+          lodash: {
+            test: /[\\/]node_modules[\\/](lodash|lodash-es)[\\/]/,
+            chunks: 'all',
+            priority: 15,
+            reuseExistingChunk: true
+          },
           defaultVendors: {
             test: /[\\/]node_modules[\\/]/,
             priority: -10,

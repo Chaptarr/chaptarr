@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import sortBy from 'lodash/sortBy';
 import moment from 'moment';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
@@ -11,11 +12,11 @@ function createCalendarEventsConnector() {
     (state, { date }) => date,
     (state) => state.calendar.items,
     (date, items) => {
-      const filtered = _.filter(items, (item) => {
+      const filtered = filter(items, (item) => {
         return moment(date).isSame(moment(item.releaseDate), 'day');
       });
 
-      return _.sortBy(filtered, (item) => moment(item.releaseDate).unix());
+      return sortBy(filtered, (item) => moment(item.releaseDate).unix());
     }
   );
 }

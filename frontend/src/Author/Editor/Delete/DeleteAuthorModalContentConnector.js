@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import intersectionWith from 'lodash/intersectionWith';
+import map from 'lodash/map';
+import orderBy from 'lodash/orderBy';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { bulkDeleteAuthor } from 'Store/Actions/authorIndexActions';
@@ -10,12 +12,12 @@ function createMapStateToProps() {
     (state, { authorIds }) => authorIds,
     createAllAuthorSelector(),
     (authorIds, allAuthors) => {
-      const selectedAuthor = _.intersectionWith(allAuthors, authorIds, (s, id) => {
+      const selectedAuthor = intersectionWith(allAuthors, authorIds, (s, id) => {
         return s.id === id;
       });
 
-      const sortedAuthor = _.orderBy(selectedAuthor, 'sortName');
-      const author = _.map(sortedAuthor, (s) => {
+      const sortedAuthor = orderBy(selectedAuthor, 'sortName');
+      const author = map(sortedAuthor, (s) => {
         return {
           authorName: s.authorName,
           path: s.path

@@ -1,5 +1,6 @@
 import classNames from 'classnames';
-import _ from 'lodash';
+import find from 'lodash/find';
+import some from 'lodash/some';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import ReactDOM from 'react-dom';
@@ -233,7 +234,7 @@ function hasActiveChildLink(link, pathname) {
     return false;
   }
 
-  return _.some(children, (child) => {
+  return some(children, (child) => {
     return child.to === pathname;
   });
 }
@@ -485,7 +486,7 @@ class PageSidebar extends Component {
           <div className={styles.sidebarContent}>
             {
               links.map((link) => {
-                const childWithStatusComponent = _.find(link.children, (child) => {
+                const childWithStatusComponent = find(link.children, (child) => {
                   return !!child.statusComponent;
                 });
 

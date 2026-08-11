@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -25,7 +25,7 @@ function createMapStateToProps() {
     (state, props) => props.selectedMediaType,
     (author, bookMap, selectedMediaType) => {
       const booksInAuthor = bookMap.hasOwnProperty(author.id) ? bookMap[author.id] : [];
-      const sortedBooks = _.orderBy(
+      const sortedBooks = orderBy(
         booksInAuthor.filter((book) => book.mediaType === selectedMediaType),
         'releaseDate',
         'desc'

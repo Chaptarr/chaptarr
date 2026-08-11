@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Form from 'Components/Form/Form';
@@ -115,7 +115,7 @@ class TagsModalContent extends Component {
               <div className={styles.result}>
                 {
                   authorTags.map((t) => {
-                    const tag = _.find(tagList, { id: t });
+                    const tag = find(tagList, { id: t });
 
                     if (!tag) {
                       return null;
@@ -140,7 +140,7 @@ class TagsModalContent extends Component {
                 {
                   (applyTags === 'add' || applyTags === 'replace') &&
                     tags.map((t) => {
-                      const tag = _.find(tagList, { id: t });
+                      const tag = find(tagList, { id: t });
 
                       if (!tag) {
                         return null;

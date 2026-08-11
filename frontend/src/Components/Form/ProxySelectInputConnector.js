@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -47,7 +47,7 @@ function createMapStateToProps() {
       }
 
       if (isProxyEnabled && proxies && proxies.items && proxies.items.length > 0) {
-        const proxyValues = _.map([...proxies.items].sort(sortByName), (proxy) => {
+        const proxyValues = map([...proxies.items].sort(sortByName), (proxy) => {
           return {
             key: proxy.id,
             value: proxy.name,

@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import pick from 'lodash/pick';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
@@ -8,7 +8,7 @@ function createMapStateToProps() {
   return createSelector(
     createUISettingsSelector(),
     (uiSettings) => {
-      return _.pick(uiSettings, [
+      return pick(uiSettings, [
         'showRelativeDates',
         'shortDateFormat',
         'longDateFormat',
