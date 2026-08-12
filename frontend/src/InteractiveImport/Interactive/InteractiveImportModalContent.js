@@ -217,15 +217,17 @@ class InteractiveImportModalContent extends Component {
 
     // potentially deleting files
     const selectedIds = this.getSelectedIds();
-    const booksImported = mapValues(
-      keyBy(
-        filter(
-          filter(this.props.items, (x) => includes(selectedIds, x.id)),
-          (x) => x.book && x.book.id
+    const booksImported = values(
+      mapValues(
+        keyBy(
+          filter(
+            filter(this.props.items, (x) => includes(selectedIds, x.id)),
+            (x) => x.book && x.book.id
+          ),
+          (x) => x.book.id
         ),
-        (x) => x.book.id
-      ),
-      (x) => x.book
+        (x) => x.book
+      )
     );
 
     this.setState({
