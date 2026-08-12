@@ -2146,26 +2146,65 @@ namespace NzbDrone.Core.Books
                 // (but don't add new authors to reduce repeated searches against api)
                 var requestedMediaType = (mediaType ?? "all").Trim().ToLowerInvariant();
 
-                var rootFolders = _rootFolderService.All();
-                if (requestedMediaType == "audiobook")
-                {
-                    rootFolders = rootFolders.Where(r => r.FolderType == FolderType.Audiobook || r.FolderType == FolderType.Mixed).ToList();
-                }
-                else if (requestedMediaType == "ebook")
-                {
-                    rootFolders = rootFolders.Where(r => r.FolderType == FolderType.Ebook || r.FolderType == FolderType.Mixed).ToList();
-                }
+                // Scope the walk to just the affected authors' own folders. RescanFoldersCommand's
+                // authorIds is only used post-scan to fire "scan completed" notifications - it does
+                // not narrow which folders get walked, so without this every single-author rescan
+                // (e.g. clicking "Rescan Folders" on one author) was silently walking every root
+                // folder in the library, one folder at a time via a blocking Task.Wait, which could
+                // take hours against thousands of author folders and held the shared disk-access
+                // lock the whole time, stalling every other queued command.
+                var folders = GetAuthorScopedRescanFolders(authorIds, requestedMediaType);
 
-                var folders = rootFolders.Select(x => x.Path).ToList();
+                if (folders.Count == 0)
+                {
+                    var rootFolders = _rootFolderService.All();
+                    if (requestedMediaType == "audiobook")
+                    {
+                        rootFolders = rootFolders.Where(r => r.FolderType == FolderType.Audiobook || r.FolderType == FolderType.Mixed).ToList();
+                    }
+                    else if (requestedMediaType == "ebook")
+                    {
+                        rootFolders = rootFolders.Where(r => r.FolderType == FolderType.Ebook || r.FolderType == FolderType.Mixed).ToList();
+                    }
+
+                    folders = rootFolders.Select(x => x.Path).ToList();
+                }
 
                 var command = new RescanFoldersCommand(folders, FilterFilesType.Matched, authorIds)
                 {
                     MediaType = requestedMediaType
                 };
 
-                _logger.Debug("[FLOW-DEBUG] RESCAN-QUEUE: Queueing folder rescan for {0} root folder(s), {1} author(s), mediaType={2}.", folders.Count, authorIds.Count, requestedMediaType);
+                _logger.Debug("[FLOW-DEBUG] RESCAN-QUEUE: Queueing folder rescan for {0} folder(s), {1} author(s), mediaType={2}.", folders.Count, authorIds.Count, requestedMediaType);
                 _commandQueueManager.Push(command);
             }
+        }
+
+        private List<string> GetAuthorScopedRescanFolders(List<int> authorIds, string requestedMediaType)
+        {
+            if (authorIds == null || authorIds.Count == 0)
+            {
+                // No specific authors (e.g. a library-wide refresh) - caller falls back to a full root-folder scan.
+                return new List<string>();
+            }
+
+            var authors = _authorService.GetAuthors(authorIds);
+            var authorFolders = new List<string>();
+
+            foreach (var author in authors)
+            {
+                if (requestedMediaType != "ebook" && !string.IsNullOrWhiteSpace(author.AudiobookPath))
+                {
+                    authorFolders.Add(author.AudiobookPath);
+                }
+
+                if (requestedMediaType != "audiobook" && !string.IsNullOrWhiteSpace(author.EbookPath))
+                {
+                    authorFolders.Add(author.EbookPath);
+                }
+            }
+
+            return authorFolders.Distinct().ToList();
         }
 
         private bool ProcessBulkSync(List<int> authorIds, bool forceRefresh, CancellationToken cancellationToken)
