@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -52,7 +52,7 @@ class MetadataProfileSelectInputConnector extends Component {
       traditional: true
     });
 
-    request.done((profiles) => {
+    request.then((profiles) => {
       this.setState({
         profiles: profiles.sort(sortByName),
         isFetching: false 
@@ -61,7 +61,7 @@ class MetadataProfileSelectInputConnector extends Component {
       setTimeout(() => this.checkAndSetDefaultValue(), 0);
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       console.error('Failed to fetch metadata profiles:', xhr);
       this.setState({ isFetching: false });
     });
@@ -106,7 +106,7 @@ class MetadataProfileSelectInputConnector extends Component {
     const filteredProfiles = profiles.filter((item) => item.name !== metadataProfileNames.NONE);
     const noneProfile = profiles.find((item) => item.name === metadataProfileNames.NONE);
     
-    const values = _.map(filteredProfiles, (metadataProfile) => {
+    const values = map(filteredProfiles, (metadataProfile) => {
       return {
         key: metadataProfile.id.toString(),
         value: metadataProfile.name

@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import TextTruncate from 'react-text-truncate';
@@ -314,9 +314,9 @@ class AddNewBookSearchResult extends Component {
               }
 
               {
-                !!releaseDate && moment(releaseDate).year() > 1 &&
+                !!releaseDate && dayjs(releaseDate).year() > 1 &&
                   <Label size={sizes.LARGE}>
-                    {moment(releaseDate).format('YYYY')}
+                    {dayjs(releaseDate).format('YYYY')}
                   </Label>
               }
 

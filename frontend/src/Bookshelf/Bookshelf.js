@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { CellMeasurer, CellMeasurerCache } from 'react-virtualized';
@@ -135,7 +135,7 @@ class Bookshelf extends Component {
       return;
     }
 
-    const characters = _.reduce(items, (acc, item) => {
+    const characters = reduce(items, (acc, item) => {
       let char = item.sortName.charAt(0);
 
       if (!isNaN(char)) {

@@ -1,5 +1,9 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import findIndex from 'lodash/findIndex';
+import first from 'lodash/first';
+import last from 'lodash/last';
+import orderBy from 'lodash/orderBy';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -121,8 +125,8 @@ function createMapStateToProps() {
     (state) => state.authorDetails.filterValue,
     (authorId, books, series, bookFiles, allAuthors, commands, dimensions, rootFoldersState, hideUnmonitoredMissing = false, globalSelectedMediaType, allBookItems, allBookFileItems, filterValue) => {
       try {
-        const sortedAuthor = _.orderBy(allAuthors, 'sortNameLastFirst');
-        const authorIndex = _.findIndex(sortedAuthor, { id: authorId });
+        const sortedAuthor = orderBy(allAuthors, 'sortNameLastFirst');
+        const authorIndex = findIndex(sortedAuthor, { id: authorId });
         const author = sortedAuthor[authorIndex];
 
         if (!author) {
@@ -165,8 +169,8 @@ function createMapStateToProps() {
 	          bookFilesError
 	        } = bookFiles;
 
-        const previousAuthor = sortedAuthor[authorIndex - 1] || _.last(sortedAuthor);
-        const nextAuthor = sortedAuthor[authorIndex + 1] || _.first(sortedAuthor);
+        const previousAuthor = sortedAuthor[authorIndex - 1] || last(sortedAuthor);
+        const nextAuthor = sortedAuthor[authorIndex + 1] || first(sortedAuthor);
         const isAuthorRefreshing = isCommandExecuting(findCommand(commands, { name: commandNames.REFRESH_AUTHOR, authorId: author.id }));
         const authorRefreshingCommand = findCommand(commands, { name: commandNames.REFRESH_AUTHOR });
         const allAuthorRefreshing = (
@@ -190,7 +194,7 @@ function createMapStateToProps() {
         const isFetching = isBooksFetching || isSeriesFetching || isBookFilesFetching;
         const isPopulated = isBooksPopulated && isSeriesPopulated && isBookFilesPopulated;
 
-        const alternateTitles = _.reduce(author.alternateTitles, (acc, alternateTitle) => {
+        const alternateTitles = reduce(author.alternateTitles, (acc, alternateTitle) => {
           if ((alternateTitle.seasonNumber === -1 || alternateTitle.seasonNumber === undefined) &&
             (alternateTitle.sceneSeasonNumber === -1 || alternateTitle.sceneSeasonNumber === undefined)) {
             acc.push(alternateTitle.title);

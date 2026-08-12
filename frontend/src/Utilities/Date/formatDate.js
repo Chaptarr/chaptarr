@@ -1,11 +1,11 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function formatDate(date, dateFormat) {
   if (!date) {
     return '';
   }
 
-  return moment(date).format(dateFormat);
+  return dayjs(date).format(dateFormat);
 }
 
 export default formatDate;

@@ -1,4 +1,8 @@
-import _ from 'lodash';
+import find from 'lodash/find';
+import groupBy from 'lodash/groupBy';
+import mapValues from 'lodash/mapValues';
+import sortBy from 'lodash/sortBy';
+import values from 'lodash/values';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
@@ -18,7 +22,7 @@ function formatBookFiles(items, book) {
       <b> {book.title} </b>
       <ul>
         {
-          _.sortBy(items, 'path').map((item) => {
+          sortBy(items, 'path').map((item) => {
             return (
               <li key={item.id}>
                 {item.path}
@@ -91,11 +95,7 @@ class ConfirmImportModalContent extends Component {
                   {translate('ConfirmImportExistingPrefix')} <b>{translate('ConfirmImportWillBeDeleted')}</b> {translate('ConfirmImportExistingSuffix')}
                 </Alert>
 
-                { _.chain(items)
-                  .groupBy('bookId')
-                  .mapValues((value, key) => formatBookFiles(value, _.find(books, (a) => a.id === parseInt(key))))
-                  .values()
-                  .value() }
+                { values(mapValues(groupBy(items, 'bookId'), (value, key) => formatBookFiles(value, find(books, (a) => a.id === parseInt(key))))) }
               </div>
           }
         </ModalBody>

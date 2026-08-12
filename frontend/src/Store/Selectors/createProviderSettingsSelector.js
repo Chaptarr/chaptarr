@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import find from 'lodash/find';
+import isArray from 'lodash/isArray';
 import { createSelector } from 'reselect';
 import selectSettings from 'Store/Selectors/selectSettings';
 
@@ -23,7 +24,7 @@ function createProviderSettingsSelector(sectionName) {
       }
 
       if (!id) {
-        const item = _.isArray(section.schema) ? section.selectedSchema : (section.schema || {});
+        const item = isArray(section.schema) ? section.selectedSchema : (section.schema || {});
         const settings = selectSettings(Object.assign({ name: '' }, item), section.pendingChanges, section.saveError);
 
         const isFetching = section.isSchemaFetching ?? section.isFetching ?? false;
@@ -68,7 +69,7 @@ function createProviderSettingsSelector(sectionName) {
         items = []
       } = section;
 
-      const foundItem = _.find(items, { id });
+      const foundItem = find(items, { id });
       
       // Debug logging
       if (id && !foundItem) {

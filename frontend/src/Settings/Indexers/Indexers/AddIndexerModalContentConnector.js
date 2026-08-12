@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -17,8 +17,8 @@ function createMapStateToProps() {
         schema
       } = indexers;
 
-      const usenetIndexers = _.filter(schema, { protocol: 'usenet' });
-      const torrentIndexers = _.filter(schema, { protocol: 'torrent' });
+      const usenetIndexers = filter(schema, { protocol: 'usenet' });
+      const torrentIndexers = filter(schema, { protocol: 'torrent' });
 
       return {
         isSchemaFetching,

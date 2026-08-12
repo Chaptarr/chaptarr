@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import pick from 'lodash/pick';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -42,7 +42,7 @@ function createMapStateToProps() {
         pendingChanges
       } = authorsState;
 
-      const authorSettings = _.pick(author, [
+      const authorSettings = pick(author, [
         'monitored',
         'audiobookMonitorExisting',
         'audiobookMonitorFuture',

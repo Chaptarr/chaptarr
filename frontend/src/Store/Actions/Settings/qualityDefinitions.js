@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import find from 'lodash/find';
+import isEmpty from 'lodash/isEmpty';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { clearPendingChanges, set, update } from 'Store/Actions/baseActions';
@@ -58,7 +60,7 @@ export default {
       const upatedDefinitions = Object.keys(qualityDefinitions.pendingChanges).map((key) => {
         const id = parseInt(key);
         const pendingChanges = qualityDefinitions.pendingChanges[id] || {};
-        const item = _.find(qualityDefinitions.items, { id });
+        const item = find(qualityDefinitions.items, { id });
 
         return Object.assign({}, item, pendingChanges);
       });
@@ -81,7 +83,7 @@ export default {
         dataType: 'json'
       }).request;
 
-      promise.done((data) => {
+      promise.then((data) => {
         dispatch(batchActions([
           set({
             section,
@@ -94,7 +96,7 @@ export default {
         ]));
       });
 
-      promise.fail((xhr) => {
+      promise.catch((xhr) => {
         dispatch(set({
           section,
           isSaving: false,
@@ -111,10 +113,10 @@ export default {
     [SET_QUALITY_DEFINITION_VALUE]: function(state, { payload }) {
       const { id, name, value } = payload;
       const newState = getSectionState(state, section);
-      newState.pendingChanges = _.cloneDeep(newState.pendingChanges);
+      newState.pendingChanges = cloneDeep(newState.pendingChanges);
 
       const pendingState = newState.pendingChanges[id] || {};
-      const currentValue = _.find(newState.items, { id })[name];
+      const currentValue = find(newState.items, { id })[name];
 
       if (currentValue === value) {
         delete pendingState[name];
@@ -122,7 +124,7 @@ export default {
         pendingState[name] = value;
       }
 
-      if (_.isEmpty(pendingState)) {
+      if (isEmpty(pendingState)) {
         delete newState.pendingChanges[id];
       } else {
         newState.pendingChanges[id] = pendingState;

@@ -1,4 +1,17 @@
-import _ from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import difference from 'lodash/difference';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import forEach from 'lodash/forEach';
+import groupBy from 'lodash/groupBy';
+import includes from 'lodash/includes';
+import keyBy from 'lodash/keyBy';
+import map from 'lodash/map';
+import mapValues from 'lodash/mapValues';
+import some from 'lodash/some';
+import union from 'lodash/union';
+import values from 'lodash/values';
+import without from 'lodash/without';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -146,15 +159,20 @@ class InteractiveImportModalContent extends Component {
 
   componentDidUpdate(prevProps) {
     const selectedIds = this.getSelectedIds();
-    const selectedItems = _.filter(this.props.items, (x) => _.includes(selectedIds, x.id));
+    const selectedItems = filter(this.props.items, (x) => includes(selectedIds, x.id));
 
-    const inconsistent = _(selectedItems)
-      .filter((x) => x.book && x.book.id)
-      .map((x) => ({ bookId: x.book.id, editionId: x.editionId }))
-      .groupBy('bookId')
-      .mapValues((book) => _(book).groupBy((x) => x.editionId).values().value().length)
-      .values()
-      .some((x) => x !== undefined && x > 1);
+    const editionsByBook = groupBy(
+      filter(selectedItems, (x) => x.book && x.book.id),
+      (x) => x.book.id
+    );
+    const inconsistent = some(
+      values(
+        mapValues(editionsByBook, (books) =>
+          values(groupBy(books, (x) => x.editionId)).length
+        )
+      ),
+      (x) => x !== undefined && x > 1
+    );
 
     if (inconsistent !== this.state.inconsistentBookReleases) {
       this.setState({ inconsistentBookReleases: inconsistent });
@@ -184,9 +202,9 @@ class InteractiveImportModalContent extends Component {
   onValidRowChange = (id, isValid) => {
     this.setState((state, props) => {
       // make sure to exclude any invalidRows that are no longer present in props
-      const diff = _.difference(state.invalidRowsSelected, _.map(props.items, 'id'));
-      const currentInvalid = _.difference(state.invalidRowsSelected, diff);
-      const newstate = isValid ? _.without(currentInvalid, id) : _.union(currentInvalid, [id]);
+      const diff = difference(state.invalidRowsSelected, map(props.items, 'id'));
+      const currentInvalid = difference(state.invalidRowsSelected, diff);
+      const newstate = isValid ? without(currentInvalid, id) : union(currentInvalid, [id]);
       return { invalidRowsSelected: newstate };
     });
   };
@@ -199,12 +217,18 @@ class InteractiveImportModalContent extends Component {
 
     // potentially deleting files
     const selectedIds = this.getSelectedIds();
-    const booksImported = _(this.props.items)
-      .filter((x) => _.includes(selectedIds, x.id))
-      .filter((x) => x.book && x.book.id)
-      .keyBy((x) => x.book.id)
-      .map((x) => x.book)
-      .value();
+    const booksImported = values(
+      mapValues(
+        keyBy(
+          filter(
+            filter(this.props.items, (x) => includes(selectedIds, x.id)),
+            (x) => x.book && x.book.id
+          ),
+          (x) => x.book.id
+        ),
+        (x) => x.book
+      )
+    );
 
     this.setState({
       booksImported,
@@ -305,7 +329,7 @@ class InteractiveImportModalContent extends Component {
       inconsistentBookReleases
     } = this.state;
 
-    const allColumns = _.cloneDeep(COLUMNS);
+    const allColumns = cloneDeep(COLUMNS);
     const columns = allColumns.map((column) => {
       const showIndexerFlags = items.some((item) => item.indexerFlags);
 
@@ -321,9 +345,9 @@ class InteractiveImportModalContent extends Component {
     });
 
     const selectedIds = this.getSelectedIds();
-    const selectedItem = selectedIds.length ? _.find(items, { id: selectedIds[0] }) : null;
-    const importIdsByBook = _.chain(items).filter((x) => x.book).groupBy((x) => x.book.id).mapValues((x) => x.map((y) => y.id)).value();
-    const editions = _.chain(items).filter((x) => x.book).keyBy((x) => x.book.id).mapValues((x) => ({ matchedEditionId: x.editionId, book: x.book })).values().value();
+    const selectedItem = selectedIds.length ? find(items, { id: selectedIds[0] }) : null;
+    const importIdsByBook = mapValues(groupBy(filter(items, (x) => x.book), (x) => x.book.id), (x) => x.map((y) => y.id));
+    const editions = values(mapValues(keyBy(filter(items, (x) => x.book), (x) => x.book.id), (x) => ({ matchedEditionId: x.editionId, book: x.book })));
     const errorMessage = getErrorMessage(error, 'Unable to load manual import items');
     const isLocalReady = (item) => item.author && item.author.id > 0 && item.book && item.book.id > 0 && item.editionId;
     const readyNowCount = items.filter(isLocalReady).length;

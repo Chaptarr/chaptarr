@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React from 'react';
 import Icon from 'Components/Icon';
@@ -24,7 +24,7 @@ function QueueDetails(props) {
     return (
       <Icon
         name={icons.PENDING}
-        title={translate('ReleaseWillBeProcessedInterp', [moment(estimatedCompletionTime).fromNow()])}
+        title={translate('ReleaseWillBeProcessedInterp', [dayjs(estimatedCompletionTime).fromNow()])}
       />
     );
   }

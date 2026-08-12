@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -113,7 +113,7 @@ function createRemotePathMappingSelector() {
         items
       } = remotePathMappings;
 
-      const mapping = id ? _.find(items, { id }) : newRemotePathMapping;
+      const mapping = id ? find(items, { id }) : newRemotePathMapping;
       const settings = selectSettings(mapping, pendingChanges, saveError);
 
       return {
@@ -277,7 +277,7 @@ class EditRemotePathMappingModalContentConnector extends Component {
       })
     });
 
-    this._testRequest.request.done((result) => {
+    this._testRequest.request.then((result) => {
       this.setState({
         isTesting: false,
         testError: null,
@@ -285,7 +285,7 @@ class EditRemotePathMappingModalContentConnector extends Component {
       });
     });
 
-    this._testRequest.request.fail((xhr) => {
+    this._testRequest.request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }
@@ -313,14 +313,14 @@ class EditRemotePathMappingModalContentConnector extends Component {
       }
     });
 
-    this._suggestionsRequest.request.done((result) => {
+    this._suggestionsRequest.request.then((result) => {
       this.setState({
         downloadClientPathSuggestions: limitPathSuggestions(result.downloadClientPaths),
         chaptarrPathSuggestions: limitPathSuggestions(result.chaptarrPaths)
       });
     });
 
-    this._suggestionsRequest.request.fail((xhr) => {
+    this._suggestionsRequest.request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }

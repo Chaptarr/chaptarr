@@ -1,4 +1,5 @@
-import { get, set } from 'lodash';
+import get from 'lodash/get';
+import set from 'lodash/set';
 
 const TABLES_TO_MIGRATE = ['blocklist', 'history', 'queue.paged', 'wanted.missing', 'wanted.cutoffUnmet'];
 

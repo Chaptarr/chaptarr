@@ -1,5 +1,5 @@
-import _ from 'lodash';
-import moment from 'moment';
+import last from 'lodash/last';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import React from 'react';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
@@ -95,7 +95,7 @@ export const filters = [
       },
       {
         key: 'releaseDate',
-        value: moment(),
+        value: dayjs(),
         type: filterTypes.LESS_THAN
       }
     ]
@@ -662,7 +662,7 @@ export const actionHandlers = handleThunks({
       traditional: true
     });
 
-    request.done((data) => {
+    request.then((data) => {
       // Preserve books for other authors we didn't fetch
       if (payload.hasOwnProperty('authorId')) {
         const oldBooks = getState().books.items;
@@ -682,7 +682,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       dispatch(set({
         section,
         isFetching: false,
@@ -716,7 +716,7 @@ export const actionHandlers = handleThunks({
     // Defensive: API expects a boolean, but UI can sometimes pass 0/1/2
     const monitoredBool = coerceMonitoredBoolean(monitored);
 
-    const bookSection = _.last(bookEntity.split('.'));
+    const bookSection = last(bookEntity.split('.'));
 
     dispatch(updateItem({
       id: bookId,
@@ -731,7 +731,7 @@ export const actionHandlers = handleThunks({
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       const books = Array.isArray(data) ? data : (data && data.books ? data.books : null);
 
       if (books && Array.isArray(books) && books.length) {
@@ -765,7 +765,7 @@ export const actionHandlers = handleThunks({
       }));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(updateItem({
         id: bookId,
         section: bookSection,
@@ -802,7 +802,7 @@ export const actionHandlers = handleThunks({
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       // Handle different response formats - data might be the array directly or wrapped in a response object
       const books = Array.isArray(data) ? data : (data && data.books ? data.books : null);
       
@@ -855,7 +855,7 @@ export const actionHandlers = handleThunks({
       }
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(batchActions(
         bookIds.map((bookId) => {
           return updateItem({

@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import intersectionWith from 'lodash/intersectionWith';
+import map from 'lodash/map';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -13,12 +15,12 @@ function createMapStateToProps() {
     (state, { authorIds }) => authorIds,
     createAllAuthorSelector(),
     (authorIds, allAuthors) => {
-      const author = _.intersectionWith(allAuthors, authorIds, (s, id) => {
+      const author = intersectionWith(allAuthors, authorIds, (s, id) => {
         return s.id === id;
       });
 
-      const sortedAuthor = _.orderBy(author, 'sortName');
-      const authorNames = _.map(sortedAuthor, 'authorName');
+      const sortedAuthor = orderBy(author, 'sortName');
+      const authorNames = map(sortedAuthor, 'authorName');
 
       return {
         authorNames

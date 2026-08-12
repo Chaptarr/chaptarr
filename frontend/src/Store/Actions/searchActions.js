@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import find from 'lodash/find';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { createThunk, handleThunks } from 'Store/thunks';
@@ -159,7 +160,7 @@ function getMediaTypePayload(payload, mediaType, searchForNewBook) {
 
 function postBookForMediaType(itemToAdd, payload, mediaType, searchForNewBook) {
   const mediaPayload = getMediaTypePayload(payload, mediaType, searchForNewBook);
-  const newBook = getNewBook(_.cloneDeep(itemToAdd.book), mediaPayload, mediaType);
+  const newBook = getNewBook(cloneDeep(itemToAdd.book), mediaPayload, mediaType);
 
   return createAjaxRequest({
     url: '/book',
@@ -864,7 +865,7 @@ export const actionHandlers = handleThunks({
 
     const foreignBookId = payload.foreignBookId;
     const items = getState().search.items;
-    const itemToAdd = _.find(items, { foreignId: foreignBookId }) || (payload.book ? {
+    const itemToAdd = find(items, { foreignId: foreignBookId }) || (payload.book ? {
       foreignId: foreignBookId,
       book: payload.book
     } : null);

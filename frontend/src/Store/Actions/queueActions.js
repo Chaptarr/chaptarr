@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import React from 'react';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
@@ -261,7 +261,7 @@ export const actionHandlers = handleThunks({
 
     // If the payload params are empty try to get params from state.
 
-    if (params && !_.isEmpty(params)) {
+    if (params && !isEmpty(params)) {
       dispatch(set({ section: details, params }));
     } else {
       params = getState().queue.details.params;
@@ -270,7 +270,7 @@ export const actionHandlers = handleThunks({
     // Ensure there are params before trying to fetch the queue
     // so we don't make a bad request to the server.
 
-    if (params && !_.isEmpty(params)) {
+    if (params && !isEmpty(params)) {
       fetchQueueDetailsHelper(getState, params, dispatch);
     }
   },
@@ -301,7 +301,7 @@ export const actionHandlers = handleThunks({
       method: 'POST'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(batchActions([
         fetchQueue(),
 
@@ -313,7 +313,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(updateItem({
         section: paged,
         id,
@@ -348,7 +348,7 @@ export const actionHandlers = handleThunks({
       data: JSON.stringify(payload)
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(fetchQueue());
 
       dispatch(batchActions([
@@ -369,7 +369,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(batchActions([
         ...ids.map((id) => {
           return updateItem({
@@ -395,11 +395,11 @@ export const actionHandlers = handleThunks({
       method: 'POST'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(fetchQueue());
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(updateItem({ section: paged, id, isCancellingConversion: false }));
     });
   },
@@ -420,11 +420,11 @@ export const actionHandlers = handleThunks({
       method: 'DELETE'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(fetchQueue());
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(updateItem({ section: paged, id, isRemoving: false }));
     });
   },
@@ -457,14 +457,14 @@ export const actionHandlers = handleThunks({
       data: JSON.stringify({ ids })
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       // Don't use batchActions with thunks
       dispatch(fetchQueue());
 
       dispatch(set({ section: paged, isRemoving: false }));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(batchActions([
         ...ids.map((id) => {
           return updateItem({

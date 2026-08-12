@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -77,11 +77,11 @@ class BookshelfInputConnector extends Component {
     const fields = (props.providerData && props.providerData.fields) || [];
 
     // AudioBookShelf uses 'apiKey' instead of 'accessToken'
-    const apiKeyField = _.find(fields, { name: 'apiKey' });
-    const accessTokenField = _.find(fields, { name: 'accessToken' });
+    const apiKeyField = find(fields, { name: 'apiKey' });
+    const accessTokenField = find(fields, { name: 'accessToken' });
 
     // Goodreads Bookshelves (public) uses 'userId' (no OAuth)
-    const userIdField = _.find(fields, { name: 'userId' });
+    const userIdField = find(fields, { name: 'userId' });
 
     return (apiKeyField && apiKeyField.value) ||
       (accessTokenField && accessTokenField.value) ||

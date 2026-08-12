@@ -1,5 +1,5 @@
 import $ from 'jquery';
-import _ from 'lodash';
+import isEqual from 'lodash/isEqual';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getProviderState from 'Utilities/State/getProviderState';
 import { set } from '../baseActions';
@@ -32,7 +32,7 @@ function createTestProviderHandler(section, url) {
     // If the user is re-testing the same provider without changes
     // force it to be tested.
 
-    if (_.isEqual(testData, lastTestData)) {
+    if (isEqual(testData, lastTestData)) {
       params.forceTest = true;
     }
 

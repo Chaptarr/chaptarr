@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import find from 'lodash/find';
+import map from 'lodash/map';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -93,7 +95,7 @@ class SelectEditionRow extends Component {
 
   onInputChange = ({ name, value }) => {
     const editionId = parseInt(value);
-    const edition = _.find(this.props.editions, { id: editionId });
+    const edition = find(this.props.editions, { id: editionId });
 
     this.props.onEditionSelect(parseInt(name), editionId, edition ? edition.foreignEditionId : undefined);
   };
@@ -113,7 +115,7 @@ class SelectEditionRow extends Component {
 
     const extendedTitle = disambiguation ? `${title} (${disambiguation})` : title;
 
-    const values = _.map(editions, (bookEdition) => {
+    const values = map(editions, (bookEdition) => {
 
       let value = `${bookEdition.title}`;
 
@@ -133,7 +135,7 @@ class SelectEditionRow extends Component {
       };
     });
 
-    const sortedValues = _.orderBy(values, ['value']);
+    const sortedValues = orderBy(values, ['value']);
 
     return (
       <TableRow>

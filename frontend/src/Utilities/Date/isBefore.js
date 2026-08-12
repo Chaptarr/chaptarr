@@ -1,17 +1,17 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function isBefore(date, offsets = {}) {
   if (!date) {
     return false;
   }
 
-  const offsetTime = moment();
+  let offsetTime = dayjs();
 
   Object.keys(offsets).forEach((key) => {
-    offsetTime.add(offsets[key], key);
+    offsetTime = offsetTime.add(offsets[key], key);
   });
 
-  return moment(date).isBefore(offsetTime);
+  return dayjs(date).isBefore(offsetTime);
 }
 
 export default isBefore;

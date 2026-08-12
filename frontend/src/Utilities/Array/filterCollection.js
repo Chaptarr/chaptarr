@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
 import { filterTypePredicates, filterTypes } from 'Helpers/Props';
 import findSelectedFilters from 'Utilities/Filter/findSelectedFilters';
 
@@ -16,7 +16,7 @@ function filterCollection(items, state) {
 
   const selectedFilters = findSelectedFilters(selectedFilterKey, filters, customFilters);
 
-  return _.filter(items, (item) => {
+  return filter(items, (item) => {
     let i = 0;
     let accepted = true;
 

@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import reduceRight from 'lodash/reduceRight';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
@@ -109,7 +109,7 @@ class BookFileEditorTableContent extends Component {
       isConfirmDeleteModalOpen
     } = this.state;
 
-    const qualityOptions = _.reduceRight(qualities, (acc, quality) => {
+    const qualityOptions = reduceRight(qualities, (acc, quality) => {
       acc.push({
         key: quality.id,
         value: quality.name

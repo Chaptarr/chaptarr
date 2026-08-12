@@ -1,11 +1,14 @@
-import _ from 'lodash';
+import get from 'lodash/get';
+import lodashMerge from 'lodash/merge';
+import reduce from 'lodash/reduce';
+import set from 'lodash/set';
 import persistState from 'redux-localstorage';
 import actions from 'Store/Actions';
 import migrate from 'Store/Migrators/migrate';
 
 const columnPaths = [];
 
-const paths = _.reduce([...actions], (acc, action) => {
+const paths = reduce([...actions], (acc, action) => {
   if (action.persistState) {
     action.persistState.forEach((path) => {
       if (typeof path === 'string' && path.toLowerCase().endsWith('columns')) {
@@ -20,8 +23,8 @@ const paths = _.reduce([...actions], (acc, action) => {
 }, []);
 
 function mergeColumns(path, initialState, persistedState, computedState) {
-  const initialColumns = _.get(initialState, path);
-  const persistedColumns = _.get(persistedState, path);
+  const initialColumns = get(initialState, path);
+  const persistedColumns = get(persistedState, path);
 
   if (!Array.isArray(initialColumns) || !Array.isArray(persistedColumns) || !persistedColumns.length) {
     return;
@@ -67,7 +70,7 @@ function mergeColumns(path, initialState, persistedState, computedState) {
     }
   });
 
-  _.set(computedState, path, columns);
+  set(computedState, path, columns);
 }
 
 function slicer(paths_) {
@@ -75,7 +78,7 @@ function slicer(paths_) {
     const subset = {};
 
     paths_.forEach((path) => {
-      _.set(subset, path, _.get(state, path));
+      set(subset, path, get(state, path));
     });
 
     return subset;
@@ -95,7 +98,7 @@ function merge(initialState, persistedState) {
 
   const computedState = {};
 
-  _.merge(computedState, initialState, persistedState);
+  lodashMerge(computedState, initialState, persistedState);
 
   columnPaths.forEach((columnPath) => {
     mergeColumns(columnPath, initialState, persistedState, computedState);

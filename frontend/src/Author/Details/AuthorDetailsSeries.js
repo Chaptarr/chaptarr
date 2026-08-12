@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import uniq from 'lodash/uniq';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Icon from 'Components/Icon';
@@ -100,13 +100,13 @@ class AuthorDetailsSeries extends Component {
 
     this.setState({ lastToggledBook: bookId });
 
-    this.props.onMonitorBookPress(_.uniq(bookIds), monitored);
+    this.props.onMonitorBookPress(uniq(bookIds), monitored);
   };
 
   onMonitorSeriesPress = (monitored, { shiftKey }) => {
     const bookIds = this.props.items.map((book) => book.id);
 
-    this.props.onMonitorBookPress(_.uniq(bookIds), monitored);
+    this.props.onMonitorBookPress(uniq(bookIds), monitored);
   };
 
   //

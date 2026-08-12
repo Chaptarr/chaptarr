@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import debounce from 'lodash/debounce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import FormGroup from 'Components/Form/FormGroup';
@@ -49,7 +49,7 @@ class QualityProfileFormatItems extends Component {
     this.reorderItems();
   };
 
-  reorderItems = _.debounce(() => this.setState({ order: calcOrder(this.props.profileFormatItems) }), 1000);
+  reorderItems = debounce(() => this.setState({ order: calcOrder(this.props.profileFormatItems) }), 1000);
 
   //
   // Render

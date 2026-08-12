@@ -1,4 +1,4 @@
-import { maxBy } from 'lodash';
+import maxBy from 'lodash/maxBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import FormInputGroup from 'Components/Form/FormInputGroup';

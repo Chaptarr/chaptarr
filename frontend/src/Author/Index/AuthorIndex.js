@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import RetagAuthorModal from 'Author/Editor/AudioTags/RetagAuthorModal';
@@ -166,7 +166,7 @@ class AuthorIndex extends Component {
       return;
     }
 
-    const characters = _.reduce(items, (acc, item) => {
+    const characters = reduce(items, (acc, item) => {
       const sortValue = item[sortKey];
       if (!sortValue || typeof sortValue !== 'string') {
         return acc;

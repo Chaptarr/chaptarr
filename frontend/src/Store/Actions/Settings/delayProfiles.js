@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import { createAction } from 'redux-actions';
 import { update } from 'Store/Actions/baseActions';
 import createFetchHandler from 'Store/Actions/Creators/createFetchHandler';
@@ -72,14 +72,14 @@ export default {
       const { id, moveIndex } = payload;
       const moveOrder = moveIndex + 1;
       const delayProfiles = getState().settings.delayProfiles.items;
-      const moving = _.find(delayProfiles, { id });
+      const moving = find(delayProfiles, { id });
 
       // Don't move if the order hasn't changed
       if (moving.order === moveOrder) {
         return;
       }
 
-      const after = moveIndex > 0 ? _.find(delayProfiles, { order: moveIndex }) : null;
+      const after = moveIndex > 0 ? find(delayProfiles, { order: moveIndex }) : null;
       const afterQueryParam = after ? `after=${after.id}` : '';
 
       const promise = createAjaxRequest({

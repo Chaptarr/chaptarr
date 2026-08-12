@@ -1,11 +1,11 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import formatDateTime from 'Utilities/Date/formatDateTime';
 import formatTimeSpan from 'Utilities/Date/formatTimeSpan';
 
 function getUptime(startTime) {
-  return formatTimeSpan(moment().diff(startTime));
+  return formatTimeSpan(dayjs().diff(startTime));
 }
 
 class StartTime extends Component {

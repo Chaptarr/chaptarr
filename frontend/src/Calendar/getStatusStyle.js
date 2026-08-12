@@ -1,8 +1,8 @@
 /* eslint max-params: 0 */
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function getStatusStyle(episodeNumber, downloading, startTime, isMonitored, percentOfBooks) {
-  const currentTime = moment();
+  const currentTime = dayjs();
 
   if (percentOfBooks === 100) {
     return 'downloaded';
