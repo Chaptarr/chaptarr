@@ -137,15 +137,13 @@ function SettingsBackupModal({ isOpen, onModalClose }) {
       })
     });
 
-    request.request.then((data) => {
+    Promise.resolve(request.request).then((data) => {
       setFormState((prev) => ({
         ...prev,
         isSaving: false,
         saveResult: data || { path: translate('SettingsBackupCreated') }
       }));
-    });
-
-    request.request.catch((xhr) => {
+    }).catch((xhr) => {
       let errorMessage = translate('SettingsBackupFailedToCreate');
       if (xhr?.responseJSON?.message) {
         errorMessage = xhr.responseJSON.message;
