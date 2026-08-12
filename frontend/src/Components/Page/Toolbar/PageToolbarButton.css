@@ -2,7 +2,14 @@
   composes: link from '~Components/Link/Link.css';
 
   padding-top: 4px;
-  width: $toolbarButtonWidth;
+  /*
+   * min-width rather than a fixed width: short labels still line up on the
+   * $toolbarButtonWidth grid, but labels that carry a dynamic count (e.g.
+   * "Refresh Files (12 books)" on the Unmapped Files page) would otherwise wrap
+   * onto several overlapping lines inside the fixed 60px box and become unreadable.
+   */
+  min-width: $toolbarButtonWidth;
+  max-width: 130px;
   text-align: center;
 
   &:hover {
@@ -22,7 +29,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 24px;
+  min-height: 24px;
 }
 
 .label {
@@ -30,4 +37,5 @@
   color: var(--toolbarLabelColor);
   font-size: $extraSmallFontSize;
   line-height: calc($extraSmallFontSize + 1px);
+  overflow-wrap: break-word;
 }
