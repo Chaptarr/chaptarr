@@ -8,7 +8,7 @@
     "clean": "npx rimraf ./_output/UI && npx rimraf --glob \"**/*.js.map\"",
     "start": "webpack --watch --config ./frontend/build/webpack.config.js",
     "watch": "webpack --watch --config ./frontend/build/webpack.config.js",
-    "typecheck": "tsc -p frontend/tsconfig.json",
+    "typecheck": "tsc -p frontend/tsconfig.json && tsc -p frontend/tsconfig.sw.json",
     "lint": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore frontend/",
     "lint-fix": "yarn lint --fix",
     "check-translations": "node frontend/build/check-missing-translation-keys.js",
