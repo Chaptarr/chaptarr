@@ -167,7 +167,12 @@ namespace NzbDrone.Core.MediaFiles
 
         private SqlBuilder BuildUnmappedFilesBuilder(string mediaType)
         {
-            var builder = new SqlBuilder(_database.DatabaseType).Select(typeof(BookFile))
+            // Do not call .Select(typeof(BookFile)) here - SqlMapperExtensions.Query<T>(builder)
+            // already adds the SELECT clause for T, so pre-selecting it here duplicated every
+            // column in the projection (SELECT "BookFiles".*, "BookFiles".*), which made Dapper's
+            // generated row deserializer read misaligned columns and throw (surfacing as a
+            // System.Data.DataException / OutOfMemoryException on GET /api/v1/bookFile?unmapped=true).
+            var builder = new SqlBuilder(_database.DatabaseType)
                 .Where<BookFile>(t => t.EditionId == 0);
 
             if (!string.IsNullOrWhiteSpace(mediaType))
