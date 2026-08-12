@@ -65,7 +65,12 @@ namespace NzbDrone.Core.MediaFiles
         public void DeleteTrackFile(Author author, BookFile bookFile)
         {
             var fullPath = bookFile.Path;
-            var rootFolder = _diskProvider.GetParentFolder(author.Path);
+
+            var authorPath = IsNull(bookFile.MediaType) ? author.Path
+                : bookFile.MediaType == "ebook" ? author.EbookRootFolderPath
+                : author.AudiobookRootFolderPath;
+
+            var rootFolder = _diskProvider.GetParentFolder(authorPath);
 
             if (!_diskProvider.FolderExists(rootFolder))
             {
@@ -79,9 +84,9 @@ namespace NzbDrone.Core.MediaFiles
                 throw new NzbDroneClientException(HttpStatusCode.Conflict, "Author's root folder ({0}) is empty.", rootFolder);
             }
 
-            if (_diskProvider.FolderExists(author.Path))
+            if (_diskProvider.FolderExists(authorPath))
             {
-                var subfolder = _diskProvider.GetParentFolder(author.Path).GetRelativePath(_diskProvider.GetParentFolder(fullPath));
+                var subfolder = _diskProvider.GetParentFolder(authorPath).GetRelativePath(_diskProvider.GetParentFolder(fullPath));
                 DeleteTrackFile(bookFile, subfolder);
             }
             else
