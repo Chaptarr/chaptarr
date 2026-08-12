@@ -66,9 +66,12 @@ namespace NzbDrone.Core.MediaFiles
         {
             var fullPath = bookFile.Path;
 
-            var authorPath = IsNull(bookFile.MediaType) ? author.Path
-                : bookFile.MediaType == "ebook" ? author.EbookRootFolderPath
-                : author.AudiobookRootFolderPath;
+            var authorPath = bookFile.MediaType switch
+            {
+                "ebook" => author.EbookRootFolderPath,
+                "audiobook" => author.AudiobookRootFolderPath,
+                _ => author.Path
+            };
 
             var rootFolder = _diskProvider.GetParentFolder(authorPath);
 
