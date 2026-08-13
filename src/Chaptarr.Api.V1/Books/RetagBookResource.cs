@@ -32,6 +32,7 @@ namespace Chaptarr.Api.V1.Books
 
             return new RetagBookResource
             {
+                Id = model.BookFileId,
                 AuthorId = model.AuthorId,
                 BookId = model.BookId,
                 TrackNumbers = model.TrackNumbers.ToList(),

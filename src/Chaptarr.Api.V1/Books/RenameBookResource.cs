@@ -25,6 +25,7 @@ namespace Chaptarr.Api.V1.Books
             return new RenameBookResource
             {
                 AuthorId = model.AuthorId,
+                Id = model.BookFileId,
                 BookId = model.BookId,
                 BookFileId = model.BookFileId,
                 ExistingPath = model.ExistingPath,
