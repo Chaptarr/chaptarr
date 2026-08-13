@@ -48,6 +48,27 @@ function getViewComponent(view) {
   return AuthorIndexTableConnector;
 }
 
+function filterAuthorsByMediaType(items, selectedMediaType) {
+  return items.filter((author) => {
+    if (!author) {
+      return false;
+    }
+
+    const audiobookStatus = getAuthorMediaTypeRootFolderStatus(author, 'audiobook');
+    const ebookStatus = getAuthorMediaTypeRootFolderStatus(author, 'ebook');
+
+    switch (selectedMediaType) {
+      case 'audiobook':
+        return audiobookStatus.hasRootFolder;
+      case 'ebook':
+        return ebookStatus.hasRootFolder;
+      case 'all':
+      default:
+        return audiobookStatus.hasRootFolder || ebookStatus.hasRootFolder;
+    }
+  });
+}
+
 class AuthorIndex extends Component {
 
   //
@@ -79,7 +100,7 @@ class AuthorIndex extends Component {
     this.setSelectedState();
   }
 
-  componentDidUpdate(prevProps) {
+  componentDidUpdate(prevProps, prevState) {
     const {
       items,
       isRefreshingAuthor,
@@ -87,7 +108,8 @@ class AuthorIndex extends Component {
       sortDirection
     } = this.props;
 
-    if (sortKey !== prevProps.sortKey ||
+    if (this.state.selectedMediaType !== prevState.selectedMediaType ||
+        sortKey !== prevProps.sortKey ||
         sortDirection !== prevProps.sortDirection ||
         hasDifferentItemsOrOrder(prevProps.items, items)
     ) {
@@ -120,12 +142,10 @@ class AuthorIndex extends Component {
 
   setSelectedState() {
     const {
-      items
-    } = this.props;
-
-    const {
-      selectedState
+      selectedState,
+      selectedMediaType
     } = this.state;
+    const items = filterAuthorsByMediaType(this.props.items, selectedMediaType);
 
     const newSelectedState = {};
 
@@ -150,15 +170,17 @@ class AuthorIndex extends Component {
       isAllSelected = true;
     }
 
-    this.setState({ selectedState: newSelectedState, allSelected: isAllSelected, allUnselected: isAllUnselected });
+    this.setState({
+      selectedState: newSelectedState,
+      allSelected: isAllSelected,
+      allUnselected: isAllUnselected,
+      lastToggled: null
+    });
   }
 
   setJumpBarItems() {
-    const {
-      items,
-      sortKey,
-      sortDirection
-    } = this.props;
+    const { sortKey, sortDirection } = this.props;
+    const items = filterAuthorsByMediaType(this.props.items, this.state.selectedMediaType);
 
     // Reset if not sorting by sortName
     if (sortKey !== 'sortName' && sortKey !== 'sortNameLastFirst') {
@@ -245,7 +267,8 @@ class AuthorIndex extends Component {
 
   onSelectedChange = ({ id, value, shiftKey = false }) => {
     this.setState((state) => {
-      return toggleSelected(state, this.props.items, id, value, shiftKey);
+      const items = filterAuthorsByMediaType(this.props.items, state.selectedMediaType);
+      return toggleSelected(state, items, id, value, shiftKey);
     });
   };
 
@@ -349,27 +372,7 @@ class AuthorIndex extends Component {
       isStartingRefresh
     } = this.state;
 
-    // Filter items based on selected media type.
-    // The media-type toggle controls which authors are shown based on configured root folders,
-    // not whether they are currently monitored.
-    const filteredItems = items.filter((author) => {
-      if (!author) {
-        return false;
-      }
-
-      const audiobookStatus = getAuthorMediaTypeRootFolderStatus(author, 'audiobook');
-      const ebookStatus = getAuthorMediaTypeRootFolderStatus(author, 'ebook');
-
-      switch (selectedMediaType) {
-        case 'audiobook':
-          return audiobookStatus.hasRootFolder;
-        case 'ebook':
-          return ebookStatus.hasRootFolder;
-        case 'all':
-        default:
-          return audiobookStatus.hasRootFolder || ebookStatus.hasRootFolder;
-      }
-    });
+    const filteredItems = filterAuthorsByMediaType(items, selectedMediaType);
 
     const selectedAuthorIds = this.getSelectedIds();
 
