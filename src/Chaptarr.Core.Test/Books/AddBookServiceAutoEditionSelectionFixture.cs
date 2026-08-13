@@ -175,7 +175,7 @@ namespace Chaptarr.Core.Test.Books
 
             public MetadataProfile Add(MetadataProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
-            public List<MetadataProfile> All() => throw new NotImplementedException();
+            public List<MetadataProfile> All() => _profiles.Values.ToList();
             public void Update(MetadataProfile profile) => throw new NotImplementedException();
             public List<Book> FilterBooks(Author input, int profileId) => throw new NotImplementedException();
         }
@@ -284,6 +284,28 @@ namespace Chaptarr.Core.Test.Books
             return (bool)method.Invoke(service, new object[] { book });
         }
 
+        private static int? InvokeResolveMetadataProfileIdForBookAdd(
+            AddBookService service,
+            BookMediaType profileMediaType,
+            BookMediaType requestedMediaType,
+            int? configuredProfileId,
+            bool isSpecificBookIntent)
+        {
+            var method = typeof(AddBookService).GetMethod("ResolveMetadataProfileIdForBookAdd", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (method == null)
+            {
+                throw new InvalidOperationException("Could not find AddBookService.ResolveMetadataProfileIdForBookAdd via reflection");
+            }
+
+            return (int?)method.Invoke(service, new object[]
+            {
+                profileMediaType,
+                requestedMediaType,
+                configuredProfileId,
+                isSpecificBookIntent
+            });
+        }
+
         private static string InvokeResolveAddHydrationLookupId(AddBookService service, Book book)
         {
             var method = typeof(AddBookService).GetMethod("ResolveAddHydrationLookupId", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -299,6 +321,66 @@ namespace Chaptarr.Core.Test.Books
         {
             var monitored = editions.Where(e => e.Monitored).ToList();
             Assert.That(monitored.Select(e => e.ForeignEditionId), Is.EqualTo(new[] { expectedForeignEditionId }));
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void specific_book_add_should_use_none_metadata_profile_for_requested_media_type(BookMediaType mediaType)
+        {
+            var configuredProfile = new MetadataProfile { Id = 7, Name = "Default" };
+            var noneProfile = new MetadataProfile
+            {
+                Id = 11,
+                Name = MetadataProfileService.NONE_PROFILE_NAME,
+                MinPopularity = MetadataProfileService.NONE_PROFILE_MIN_POPULARITY
+            };
+            var service = BuildService(
+                new StubAuthorService(null),
+                new StubBookService(),
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(configuredProfile, noneProfile));
+
+            var resolvedProfileId = InvokeResolveMetadataProfileIdForBookAdd(
+                service,
+                mediaType,
+                mediaType,
+                configuredProfile.Id,
+                true);
+
+            Assert.That(resolvedProfileId, Is.EqualTo(noneProfile.Id));
+        }
+
+        [Test]
+        public void regular_book_add_should_preserve_configured_metadata_profiles()
+        {
+            var configuredProfile = new MetadataProfile { Id = 7, Name = "Default" };
+            var noneProfile = new MetadataProfile
+            {
+                Id = 11,
+                Name = MetadataProfileService.NONE_PROFILE_NAME,
+                MinPopularity = MetadataProfileService.NONE_PROFILE_MIN_POPULARITY
+            };
+            var service = BuildService(
+                new StubAuthorService(null),
+                new StubBookService(),
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(configuredProfile, noneProfile));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(InvokeResolveMetadataProfileIdForBookAdd(
+                    service,
+                    BookMediaType.Audiobook,
+                    BookMediaType.Audiobook,
+                    configuredProfile.Id,
+                    false), Is.EqualTo(configuredProfile.Id));
+                Assert.That(InvokeResolveMetadataProfileIdForBookAdd(
+                    service,
+                    BookMediaType.Ebook,
+                    BookMediaType.Audiobook,
+                    configuredProfile.Id,
+                    true), Is.EqualTo(configuredProfile.Id));
+            });
         }
 
         [Test]

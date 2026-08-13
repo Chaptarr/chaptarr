@@ -340,11 +340,19 @@ namespace NzbDrone.Core.Books
                                 CreateEbook = book.MediaType == BookMediaType.Ebook,
                                 MonitorNewItems = book.Author.Monitored,
                                 AudiobookQualityProfileId = book.Author.AudiobookQualityProfileId,
-                            EbookQualityProfileId = book.Author.EbookQualityProfileId,
-                                AudiobookMetadataProfileId = book.Author.AudiobookMetadataProfileId,
-                            EbookMetadataProfileId = book.Author.EbookMetadataProfileId,
-                            AudiobookRootFolderPath = book.Author.AudiobookRootFolderPath,
-                            EbookRootFolderPath = book.Author.EbookRootFolderPath,
+                                EbookQualityProfileId = book.Author.EbookQualityProfileId,
+                                AudiobookMetadataProfileId = ResolveMetadataProfileIdForBookAdd(
+                                    BookMediaType.Audiobook,
+                                    book.MediaType,
+                                    book.Author.AudiobookMetadataProfileId,
+                                    isSpecificBookIntent),
+                                EbookMetadataProfileId = ResolveMetadataProfileIdForBookAdd(
+                                    BookMediaType.Ebook,
+                                    book.MediaType,
+                                    book.Author.EbookMetadataProfileId,
+                                    isSpecificBookIntent),
+                                AudiobookRootFolderPath = book.Author.AudiobookRootFolderPath,
+                                EbookRootFolderPath = book.Author.EbookRootFolderPath,
                                 AudiobookTags = book.Author.AudiobookTags,
                                 EbookTags = book.Author.EbookTags,
                                 Tags = book.Author.Tags,
@@ -974,6 +982,31 @@ namespace NzbDrone.Core.Books
             }
 
             return -1;
+        }
+
+        private int? ResolveMetadataProfileIdForBookAdd(
+            BookMediaType profileMediaType,
+            BookMediaType requestedMediaType,
+            int? configuredProfileId,
+            bool isSpecificBookIntent)
+        {
+            if (!isSpecificBookIntent || profileMediaType != requestedMediaType)
+            {
+                return configuredProfileId;
+            }
+
+            var noneProfile = _metadataProfileService.All()
+                .FirstOrDefault(profile => profile.Name == MetadataProfileService.NONE_PROFILE_NAME);
+
+            if (noneProfile == null)
+            {
+                _logger.Warn("Built-in metadata profile '{0}' is unavailable; specific-book add will use configured profile id {1}",
+                    MetadataProfileService.NONE_PROFILE_NAME,
+                    configuredProfileId);
+                return configuredProfileId;
+            }
+
+            return noneProfile.Id;
         }
 
         private bool ShouldHydrateAddPayload(Book book)
