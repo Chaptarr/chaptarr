@@ -430,7 +430,7 @@ namespace NzbDrone.Core.Organizer
 
             // Fall back to SeriesLinks if present (not always loaded during renaming).
             var seriesLinks = edition.Book?.SeriesLinks;
-            var primarySeries = seriesLinks?.OrderBy(x => x.SeriesPosition).FirstOrDefault();
+            var primarySeries = BookSeriesLabel.SelectDisplayLink(seriesLinks);
 
             if (seriesName.IsNullOrWhiteSpace())
             {
