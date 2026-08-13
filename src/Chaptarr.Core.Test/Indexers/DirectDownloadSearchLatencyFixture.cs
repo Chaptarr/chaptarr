@@ -172,7 +172,7 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
-        public async Task grab_time_resolver_should_throw_when_api_key_missing_for_catalog_source()
+        public void grab_time_resolver_should_throw_when_api_key_missing_for_catalog_source()
         {
             var transport = new DirectDownloadTestHttp();
             var resolver = new DirectDownloadGrabUrlResolver(transport.CreateClient());
@@ -231,7 +231,7 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
-        public async Task grab_time_resolver_should_throw_when_no_api_key_and_no_download_link()
+        public void grab_time_resolver_should_throw_when_no_api_key_and_no_download_link()
         {
             var transport = new DirectDownloadTestHttp();
             transport.AddRoute(
@@ -255,7 +255,7 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
-        public async Task grab_time_resolver_should_throw_when_detail_page_has_no_download_links()
+        public void grab_time_resolver_should_throw_when_detail_page_has_no_download_links()
         {
             var transport = new DirectDownloadTestHttp();
             transport.AddRoute(

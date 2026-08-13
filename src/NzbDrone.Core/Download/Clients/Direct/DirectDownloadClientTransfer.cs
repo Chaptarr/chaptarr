@@ -57,7 +57,7 @@ namespace NzbDrone.Core.Download.Clients.Direct
 
                         DeleteIfPresent(state.PartFilePath);
                         var delay = ComputeBackoffDelay(attempt);
-                        state.Message = $"Retrying after error (attempt {attempt}/{MaxAttempts}): {ex.Message}";
+                        state.Message = $"Retrying after error (attempt {attempt}/{MaxAttempts}): {DirectDownloadGrabUrlResolver.RedactApiKeyFromUrl(ex.Message)}";
                         _stateStore.Save(Settings.StagingFolder, Definition.Id, state);
                         await Task.Delay(delay, cancellationToken);
                     }
@@ -81,6 +81,8 @@ namespace NzbDrone.Core.Download.Clients.Direct
             _diskProvider.EnsureFolder(state.OutputDirectory);
             DeleteIfPresent(state.PartFilePath);
 
+            var effectiveUrl = await ResolveEffectiveUrlAsync(state);
+
             long persistedBytes = 0;
             long lastPersistedBytes = 0;
 
@@ -99,7 +101,7 @@ namespace NzbDrone.Core.Download.Clients.Direct
                 _stateStore.Save(Settings.StagingFolder, Definition.Id, state);
             });
 
-            var request = new HttpRequest(state.DownloadUrl)
+            var request = new HttpRequest(effectiveUrl)
             {
                 AllowAutoRedirect = true,
                 RequestTimeout = TimeSpan.FromMinutes(2),
@@ -122,6 +124,31 @@ namespace NzbDrone.Core.Download.Clients.Direct
             }
 
             _diskProvider.MoveFile(state.PartFilePath, state.OutputFilePath, true);
+        }
+
+        /// <summary>
+        /// Returns the URL to use for the HTTP download attempt. When FallbackMode
+        /// is DeferredPlaywright, attempts browser resolution using the durable
+        /// DownloadUrl (original catalog URL) as input. The transient resolved URL
+        /// is returned without overwriting the durable source, so restarts and
+        /// retries always re-resolve from the stable original.
+        /// </summary>
+        private async Task<string> ResolveEffectiveUrlAsync(DirectDownloadClientState state)
+        {
+            if (state.FallbackMode != DirectDownloadFallbackMode.DeferredPlaywright)
+            {
+                return state.DownloadUrl;
+            }
+
+            var browserResolvedUrl = await _browserResolver.TryResolveSlowDownloadUrlAsync(state.DownloadUrl);
+            if (browserResolvedUrl != null)
+            {
+                _logger.Debug("Deferred Playwright resolved transient URL for '{0}'.", state.Title);
+                return browserResolvedUrl;
+            }
+
+            _logger.Warn("Deferred Playwright could not resolve a URL for '{0}', falling back to stored URL.", state.Title);
+            return state.DownloadUrl;
         }
 
         private bool PromoteCompletedFileIfPresent(DirectDownloadClientState state, bool allowOverwriteMessage = false)
@@ -260,12 +287,14 @@ namespace NzbDrone.Core.Download.Clients.Direct
 
         private static string FormatFailureMessage(Exception exception, int finalAttempt, int maxAttempts)
         {
+            var safeMessage = DirectDownloadGrabUrlResolver.RedactApiKeyFromUrl(exception.Message);
+
             if (IsPermanentFailure(exception))
             {
-                return $"Download failed permanently after {finalAttempt} attempt(s): {exception.Message}";
+                return $"Download failed permanently after {finalAttempt} attempt(s): {safeMessage}";
             }
 
-            return $"Download failed after {finalAttempt}/{maxAttempts} attempts: {exception.Message}";
+            return $"Download failed after {finalAttempt}/{maxAttempts} attempts: {safeMessage}";
         }
     }
 }

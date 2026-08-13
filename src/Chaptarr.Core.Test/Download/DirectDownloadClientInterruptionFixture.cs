@@ -120,6 +120,88 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(item.Message, Does.Contain("missing"));
         }
 
+        [Test]
+        public async Task should_complete_deferred_playwright_state_with_browser_fallback_on_restart()
+        {
+            using var scenario = new DirectDownloadClientCancellationScenario();
+            scenario.BrowserResolver.SlowDownloadUrl = "https://slow.example/restart-resolved.epub";
+            scenario.RegisterBinary("https://slow.example/restart-resolved.epub", "application/epub+zip", "restart-fallback-body");
+
+            var downloadId = "DEFERRED-RESTART-INTERRUPT";
+            var stateDir = Path.Combine(scenario.StagingFolder, $"client-42/{downloadId}");
+            Directory.CreateDirectory(stateDir);
+            File.WriteAllText(
+                Path.Combine(stateDir, "direct-download-state.json"),
+                scenario.BuildStateJson(downloadId, DownloadItemStatus.Downloading,
+                    downloadUrl: "https://catalog.example/md5/abc123def456abc123def456abc123de",
+                    fallbackMode: "deferredPlaywright"));
+
+            var client = scenario.BuildClient();
+            await scenario.WaitForStatus(client, downloadId, DownloadItemStatus.Completed);
+
+            Assert.That(scenario.BrowserResolver.ResolveCalls, Is.GreaterThan(0), "Browser should be invoked on restart for DeferredPlaywright state");
+            var item = scenario.WaitForItem(client, downloadId);
+            Assert.That(item.Status, Is.EqualTo(DownloadItemStatus.Completed));
+        }
+
+        [Test]
+        public async Task should_handle_html_response_as_transient_failure_not_permanent()
+        {
+            using var scenario = new DirectDownloadClientCancellationScenario();
+            var attempts = 0;
+            scenario.Transport.AddRoute(
+                url => url == "https://downloads.example/challenge.epub",
+                request =>
+                {
+                    attempts++;
+                    if (attempts <= 2)
+                    {
+                        var headers = new HttpHeader();
+                        headers.ContentType = "text/html; charset=utf-8";
+                        var bytes = System.Text.Encoding.UTF8.GetBytes("<html>DDoS-Guard protection</body></html>");
+                        return Task.FromResult(new HttpResponse(request, headers, bytes, HttpStatusCode.OK));
+                    }
+
+                    var successHeaders = new HttpHeader();
+                    successHeaders.ContentType = "application/epub+zip";
+                    var successBytes = System.Text.Encoding.UTF8.GetBytes("success-after-challenge");
+                    return scenario.WriteBinaryResponse(request, "application/epub+zip", "success-after-challenge");
+                });
+
+            var client = scenario.BuildClient();
+            var downloadId = await client.Download(BuildRemoteBook("https://downloads.example/challenge.epub"), indexer: null);
+
+            await scenario.WaitForStatus(client, downloadId, DownloadItemStatus.Completed, timeoutSeconds: 30);
+
+            var item = scenario.WaitForItem(client, downloadId);
+            Assert.That(item.Status, Is.EqualTo(DownloadItemStatus.Completed));
+            Assert.That(attempts, Is.EqualTo(3));
+        }
+
+        [Test]
+        public async Task should_retry_after_transient_failure_then_fail_permanently_on_html_only_source()
+        {
+            using var scenario = new DirectDownloadClientCancellationScenario();
+            scenario.Transport.AddRoute(
+                url => url == "https://downloads.example/ddos-only.epub",
+                request =>
+                {
+                    var headers = new HttpHeader();
+                    headers.ContentType = "text/html; charset=utf-8";
+                    var bytes = System.Text.Encoding.UTF8.GetBytes("<html>Just a moment... checking your browser</html>");
+                    return Task.FromResult(new HttpResponse(request, headers, bytes, (HttpStatusCode)403));
+                });
+
+            var client = scenario.BuildClient();
+            var downloadId = await client.Download(BuildRemoteBook("https://downloads.example/ddos-only.epub"), indexer: null);
+
+            await scenario.WaitForStatus(client, downloadId, DownloadItemStatus.Failed, timeoutSeconds: 30);
+
+            var item = scenario.WaitForItem(client, downloadId);
+            Assert.That(item.Status, Is.EqualTo(DownloadItemStatus.Failed));
+            Assert.That(item.Message, Does.Contain("3/3"), "Should exhaust all retry attempts");
+        }
+
         private static RemoteBook BuildRemoteBook(string downloadUrl)
         {
             return new RemoteBook
@@ -150,14 +232,16 @@ namespace Chaptarr.Core.Test.Download
                 }
 
                 Transport = new Chaptarr.Core.Test.Indexers.DirectDownloadTestHttp();
+                BrowserResolver = new StubBrowserResolver();
             }
 
             public string StagingFolder { get; }
             public Chaptarr.Core.Test.Indexers.DirectDownloadTestHttp Transport { get; }
+            public StubBrowserResolver BrowserResolver { get; }
 
             public DirectDownloadClient BuildClient()
             {
-                return new DirectDownloadClient(Transport.CreateClient(), new TestDiskProvider(), null, LogManager.GetCurrentClassLogger())
+                return new DirectDownloadClient(Transport.CreateClient(), new TestDiskProvider(), null, LogManager.GetCurrentClassLogger(), browserResolver: BrowserResolver)
                 {
                     Definition = new DownloadClientDefinition
                     {
@@ -167,6 +251,19 @@ namespace Chaptarr.Core.Test.Download
                         Settings = new DirectDownloadClientSettings { StagingFolder = StagingFolder }
                     }
                 };
+            }
+
+            public void RegisterBinary(string url, string contentType, string body)
+            {
+                Transport.AddRoute(candidate => candidate == url, request => WriteBinaryResponse(request, contentType, body));
+            }
+
+            public Task<HttpResponse> WriteBinaryResponse(HttpRequest request, string contentType, string body)
+            {
+                var headers = new HttpHeader();
+                headers.ContentType = contentType;
+                var bytes = System.Text.Encoding.UTF8.GetBytes(body);
+                return WriteResponseAsync(request, headers, bytes);
             }
 
             public DownloadClientItem WaitForItem(DirectDownloadClient client, string downloadId)
@@ -234,11 +331,41 @@ namespace Chaptarr.Core.Test.Download
                 File.WriteAllText(Path.Combine(stateDirectory, "direct-download-state.json"), content);
             }
 
-            public string BuildStateJson(string downloadId, DownloadItemStatus status)
+            public string BuildStateJson(string downloadId, DownloadItemStatus status, string downloadUrl = null, string fallbackMode = null)
             {
+                var url = downloadUrl ?? "https://downloads.example/dune.epub";
+                var mode = fallbackMode ?? "none";
                 var outputPath = Path.Combine(StagingFolder, $"client-42/{downloadId}/Frank Herbert - Dune [epub].epub");
                 var partPath = outputPath + ".part";
-                return $"{{\"downloadId\":\"{downloadId}\",\"title\":\"Frank Herbert - Dune [epub]\",\"downloadUrl\":\"https://downloads.example/dune.epub\",\"status\":{(int)status},\"outputFilePath\":\"{outputPath.Replace("\\", "\\\\")}\",\"partFilePath\":\"{partPath.Replace("\\", "\\\\")}\",\"createdAtUtc\":\"{DateTime.UtcNow:O}\",\"updatedAtUtc\":\"{DateTime.UtcNow:O}\"}}";
+                return $"{{\"downloadId\":\"{downloadId}\",\"title\":\"Frank Herbert - Dune [epub]\",\"downloadUrl\":\"{url}\"," +
+                       $"\"status\":{(int)status},\"fallbackMode\":\"{mode}\"," +
+                       $"\"outputFilePath\":\"{outputPath.Replace("\\", "\\\\")}\",\"partFilePath\":\"{partPath.Replace("\\", "\\\\")}\"," +
+                       $"\"createdAtUtc\":\"{DateTime.UtcNow:O}\",\"updatedAtUtc\":\"{DateTime.UtcNow:O}\"}}";
+            }
+
+            private static async Task<HttpResponse> WriteResponseAsync(HttpRequest request, HttpHeader headers, byte[] bytes)
+            {
+                if (request.ResponseStream != null)
+                {
+                    await request.ResponseStream.WriteAsync(bytes, 0, bytes.Length);
+                }
+
+                return new HttpResponse(request, headers, Array.Empty<byte>(), HttpStatusCode.OK);
+            }
+        }
+
+        public sealed class StubBrowserResolver : IBrowserDownloadResolver
+        {
+            public string SlowDownloadUrl { get; set; }
+            public bool ShouldFail { get; set; }
+            public int ResolveCalls;
+
+            public Task<bool> IsAvailableAsync() => Task.FromResult(!ShouldFail);
+
+            public Task<string> TryResolveSlowDownloadUrlAsync(string infoUrl)
+            {
+                Interlocked.Increment(ref ResolveCalls);
+                return ShouldFail ? Task.FromResult<string>(null) : Task.FromResult(SlowDownloadUrl);
             }
         }
 

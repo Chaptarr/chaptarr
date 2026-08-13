@@ -203,7 +203,7 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
-        public async Task fast_download_api_stops_rotating_on_429_quota_exhausted()
+        public void fast_download_api_stops_rotating_on_429_quota_exhausted()
         {
             var transport = new DirectDownloadTestHttp();
             var md5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

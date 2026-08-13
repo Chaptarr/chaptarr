@@ -73,6 +73,48 @@ namespace NzbDrone.Core.Indexers.DirectDownload
             new(ApiKeyValidationOutcome.TransientFailure, detail ?? "Could not reach the provider API. Try again later.");
     }
 
+    public enum GrabResolutionOutcome
+    {
+        Success,
+        Unavailable,
+        NotApplicable
+    }
+
+    public sealed class GrabResolution
+    {
+        public GrabResolution(GrabResolutionOutcome outcome, string resolvedUrl, string reason)
+        {
+            Outcome = outcome;
+            ResolvedUrl = resolvedUrl;
+            Reason = reason;
+        }
+
+        public GrabResolutionOutcome Outcome { get; }
+
+        /// <summary>
+        /// The resolved download URL when Outcome is Success.
+        /// </summary>
+        public string ResolvedUrl { get; }
+
+        /// <summary>
+        /// Human-readable reason when Outcome is Unavailable.
+        /// Never contains API keys or secrets.
+        /// </summary>
+        public string Reason { get; }
+
+        public static GrabResolution Success(string url) =>
+            new(GrabResolutionOutcome.Success, url, null);
+
+        public static GrabResolution Unavailable(string reason) =>
+            new(GrabResolutionOutcome.Unavailable, null, reason);
+
+        /// <summary>
+        /// Source is not CatalogPage or URL is not an info URL — pass through unchanged.
+        /// </summary>
+        public static GrabResolution NotApplicable(string originalUrl) =>
+            new(GrabResolutionOutcome.NotApplicable, originalUrl, null);
+    }
+
     public sealed class DirectDownloadProbeException : Exception
     {
         public DirectDownloadProbeException(string message)

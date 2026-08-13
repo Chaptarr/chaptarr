@@ -30,18 +30,21 @@ namespace NzbDrone.Core.Download.Clients.Direct
         private readonly IHttpClient _httpClient;
         private readonly DirectDownloadClientStateStore _stateStore;
         private readonly DirectDownloadGrabUrlResolver _grabUrlResolver;
+        private readonly IBrowserDownloadResolver _browserResolver;
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeDownloads = new(StringComparer.OrdinalIgnoreCase);
 
         public DirectDownloadClient(IHttpClient httpClient,
                                     IDiskProvider diskProvider,
                                     IConfigService configService,
                                     Logger logger,
-                                    DirectDownloadGrabUrlResolver grabUrlResolver = null)
+                                    DirectDownloadGrabUrlResolver grabUrlResolver = null,
+                                    IBrowserDownloadResolver browserResolver = null)
             : base(configService, diskProvider, new NoopRemotePathMappingService(), logger)
         {
             _httpClient = httpClient;
             _stateStore = new DirectDownloadClientStateStore(diskProvider, logger);
             _grabUrlResolver = grabUrlResolver;
+            _browserResolver = browserResolver ?? new NullBrowserDownloadResolver();
         }
 
         public override string Name => "Direct Download";
@@ -63,14 +66,61 @@ namespace NzbDrone.Core.Download.Clients.Direct
                 throw new ReleaseDownloadException(remoteBook.Release, "Direct release is missing a stable identifier.");
             }
 
+            if (!IsValidPathSegment(downloadId))
+            {
+                throw new ReleaseDownloadException(remoteBook.Release, "Direct release identifier contains invalid characters.");
+            }
+
             var existing = _stateStore.Find(Settings.StagingFolder, Definition.Id, downloadId);
             if (existing != null)
             {
                 throw new DownloadClientRejectedReleaseException(remoteBook.Release, $"Direct download '{remoteBook.Release.Title}' is already staged.");
             }
 
-            var downloadUrl = remoteBook.Release.DownloadUrl;
-            downloadUrl = await TryResolveGrabUrlAsync(downloadUrl, remoteBook.Release.Source, indexer);
+            var originalUrl = remoteBook.Release.DownloadUrl;
+            var indexerSettings = indexer?.Definition?.Settings as DirectDownloadSettings;
+            var slowFallbackEnabled = indexerSettings?.EnableSlowFallback ?? false;
+
+            // API-only resolution — never invokes Playwright at grab time.
+            var grabResolution = await TryResolveGrabAsync(originalUrl, remoteBook.Release.Source, indexer);
+
+            string resolvedUrl;
+            DirectDownloadFallbackMode fallbackMode;
+
+            switch (grabResolution.Outcome)
+            {
+                case GrabResolutionOutcome.Success:
+                    resolvedUrl = grabResolution.ResolvedUrl;
+                    fallbackMode = DirectDownloadFallbackMode.None;
+                    break;
+
+                case GrabResolutionOutcome.NotApplicable:
+                    // Non-catalog source or URL that doesn't need resolution — pass through.
+                    resolvedUrl = originalUrl;
+                    fallbackMode = DirectDownloadFallbackMode.None;
+                    break;
+
+                case GrabResolutionOutcome.Unavailable:
+                    if (slowFallbackEnabled)
+                    {
+                        // Defer Playwright to background transfer — do not block grab.
+                        resolvedUrl = originalUrl;
+                        fallbackMode = DirectDownloadFallbackMode.DeferredPlaywright;
+                    }
+                    else
+                    {
+                        throw new ReleaseDownloadException(
+                            remoteBook.Release,
+                            $"Direct source could not resolve a download URL via API and browser fallback is disabled. {grabResolution.Reason}");
+                    }
+
+                    break;
+
+                default:
+                    throw new ReleaseDownloadException(
+                        remoteBook.Release,
+                        $"Unexpected grab resolution outcome: {grabResolution.Outcome}");
+            }
 
             var fileName = BuildFileName(remoteBook.Release);
             var downloadDirectory = _stateStore.GetDownloadDirectory(Settings.StagingFolder, Definition.Id, downloadId);
@@ -81,7 +131,9 @@ namespace NzbDrone.Core.Download.Clients.Direct
             {
                 DownloadId = downloadId,
                 Title = remoteBook.Release.Title,
-                DownloadUrl = downloadUrl,
+                DownloadUrl = resolvedUrl,
+                ResolvedUrl = grabResolution.Outcome == GrabResolutionOutcome.Success ? resolvedUrl : null,
+                FallbackMode = fallbackMode,
                 Status = DownloadItemStatus.Queued,
                 OutputFilePath = outputPath,
                 PartFilePath = partPath,
@@ -207,17 +259,16 @@ namespace NzbDrone.Core.Download.Clients.Direct
             Task.Run(() => DownloadInternalAsync(downloadId, cancellationTokenSource.Token)).LogExceptions();
         }
 
-        private async Task<string> TryResolveGrabUrlAsync(string downloadUrl, string source, IIndexer indexer)
+        private async Task<GrabResolution> TryResolveGrabAsync(string downloadUrl, string source, IIndexer indexer)
         {
             if (_grabUrlResolver == null)
             {
-                return downloadUrl;
+                return GrabResolution.NotApplicable(downloadUrl);
             }
 
             var indexerSettings = indexer?.Definition?.Settings as DirectDownloadSettings;
             var apiKey = indexerSettings?.ApiKey;
-            var slowFallbackEnabled = indexerSettings?.EnableSlowFallback ?? false;
-            return await _grabUrlResolver.TryResolveAsync(downloadUrl, apiKey, source, slowFallbackEnabled);
+            return await _grabUrlResolver.TryResolveGrabAsync(downloadUrl, apiKey, source);
         }
 
     }

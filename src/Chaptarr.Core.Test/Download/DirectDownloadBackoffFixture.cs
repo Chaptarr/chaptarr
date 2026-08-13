@@ -288,6 +288,74 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(item.Message, Does.Contain("permanently"));
         }
 
+        [Test]
+        public async Task should_preserve_durable_url_through_deferred_playwright_retries()
+        {
+            using var scenario = new BackoffScenario();
+            scenario.BrowserResolver.SlowDownloadUrl = "https://slow.example/backoff-test.epub";
+
+            var attemptCount = 0;
+            scenario.Transport.AddRoute(
+                url => url == "https://slow.example/backoff-test.epub",
+                request =>
+                {
+                    attemptCount++;
+                    if (attemptCount < 3)
+                    {
+                        throw new WebException("timeout", WebExceptionStatus.Timeout);
+                    }
+
+                    return scenario.WriteBinaryResponse(request, "application/epub+zip", "backoff-success");
+                });
+
+            var catalogUrl = "https://catalog.example/md5/abc123def456abc123def456abc123de";
+            var stateDir = Path.Combine(scenario.StagingFolder, $"client-42/DEFERRED-BACKOFF");
+            Directory.CreateDirectory(stateDir);
+            File.WriteAllText(
+                Path.Combine(stateDir, "direct-download-state.json"),
+                $"{{\"downloadId\":\"DEFERRED-BACKOFF\",\"title\":\"Frank Herbert - Dune [epub]\"," +
+                $"\"downloadUrl\":\"{catalogUrl}\",\"status\":{(int)DownloadItemStatus.Downloading}," +
+                $"\"fallbackMode\":\"deferredPlaywright\"," +
+                $"\"outputFilePath\":\"{Path.Combine(stateDir, "Frank Herbert - Dune [epub].epub").Replace("\\", "\\\\")}\"," +
+                $"\"partFilePath\":\"{Path.Combine(stateDir, "Frank Herbert - Dune [epub].epub.part").Replace("\\", "\\\\")}\"," +
+                $"\"createdAtUtc\":\"{DateTime.UtcNow:O}\",\"updatedAtUtc\":\"{DateTime.UtcNow:O}\"}}");
+
+            var client = scenario.BuildClient();
+
+            await scenario.WaitForStatus(client, "DEFERRED-BACKOFF", DownloadItemStatus.Completed, timeoutSeconds: 30);
+
+            Assert.That(attemptCount, Is.EqualTo(3));
+            Assert.That(scenario.BrowserResolver.ResolveCalls, Is.GreaterThanOrEqualTo(1),
+                "Browser should resolve at least once for deferred playwright state");
+        }
+
+        [Test]
+        public async Task should_fallback_to_stored_url_when_browser_resolver_fails_during_retry()
+        {
+            using var scenario = new BackoffScenario();
+            scenario.BrowserResolver.ShouldFail = true;
+
+            var catalogUrl = "https://catalog.example/md5/abc123def456abc123def456abc123de";
+            scenario.RegisterBinary(catalogUrl, "application/epub+zip", "stored-url-fallback-body");
+
+            var stateDir = Path.Combine(scenario.StagingFolder, $"client-42/DEFERRED-FALLBACK");
+            Directory.CreateDirectory(stateDir);
+            File.WriteAllText(
+                Path.Combine(stateDir, "direct-download-state.json"),
+                $"{{\"downloadId\":\"DEFERRED-FALLBACK\",\"title\":\"Frank Herbert - Dune [epub]\"," +
+                $"\"downloadUrl\":\"{catalogUrl}\",\"status\":{(int)DownloadItemStatus.Downloading}," +
+                $"\"fallbackMode\":\"deferredPlaywright\"," +
+                $"\"outputFilePath\":\"{Path.Combine(stateDir, "Frank Herbert - Dune [epub].epub").Replace("\\", "\\\\")}\"," +
+                $"\"partFilePath\":\"{Path.Combine(stateDir, "Frank Herbert - Dune [epub].epub.part").Replace("\\", "\\\\")}\"," +
+                $"\"createdAtUtc\":\"{DateTime.UtcNow:O}\",\"updatedAtUtc\":\"{DateTime.UtcNow:O}\"}}");
+
+            var client = scenario.BuildClient();
+
+            await scenario.WaitForStatus(client, "DEFERRED-FALLBACK", DownloadItemStatus.Completed, timeoutSeconds: 30);
+
+            Assert.That(File.Exists(Path.Combine(stateDir, "Frank Herbert - Dune [epub].epub")), Is.True);
+        }
+
         private static RemoteBook BuildRemoteBook(string downloadUrl)
         {
             return new RemoteBook
@@ -314,14 +382,16 @@ namespace Chaptarr.Core.Test.Download
                 StagingFolder = Path.Combine(Path.GetTempPath(), "chaptarr-backoff-tests", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(StagingFolder);
                 Transport = new Chaptarr.Core.Test.Indexers.DirectDownloadTestHttp();
+                BrowserResolver = new StubBrowserResolver();
             }
 
             public string StagingFolder { get; }
             public Chaptarr.Core.Test.Indexers.DirectDownloadTestHttp Transport { get; }
+            public StubBrowserResolver BrowserResolver { get; }
 
             public DirectDownloadClient BuildClient()
             {
-                return new DirectDownloadClient(Transport.CreateClient(), new TestDiskProvider(), null, LogManager.GetCurrentClassLogger())
+                return new DirectDownloadClient(Transport.CreateClient(), new TestDiskProvider(), null, LogManager.GetCurrentClassLogger(), browserResolver: BrowserResolver)
                 {
                     Definition = new DownloadClientDefinition
                     {
@@ -416,6 +486,21 @@ namespace Chaptarr.Core.Test.Download
             public override void CopyPermissions(string sourcePath, string targetPath) { }
             public override bool TryCreateHardLink(string source, string destination) => false;
             public override long? GetTotalSize(string path) => null;
+        }
+
+        public sealed class StubBrowserResolver : IBrowserDownloadResolver
+        {
+            public string SlowDownloadUrl { get; set; }
+            public bool ShouldFail { get; set; }
+            public int ResolveCalls;
+
+            public Task<bool> IsAvailableAsync() => Task.FromResult(!ShouldFail);
+
+            public Task<string> TryResolveSlowDownloadUrlAsync(string infoUrl)
+            {
+                System.Threading.Interlocked.Increment(ref ResolveCalls);
+                return ShouldFail ? Task.FromResult<string>(null) : Task.FromResult(SlowDownloadUrl);
+            }
         }
     }
 }

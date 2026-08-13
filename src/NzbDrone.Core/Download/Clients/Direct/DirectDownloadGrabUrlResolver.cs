@@ -46,6 +46,29 @@ namespace NzbDrone.Core.Download.Clients.Direct
             _browserResolver = browserResolver ?? new NullBrowserDownloadResolver();
         }
 
+        public async Task<GrabResolution> TryResolveGrabAsync(string downloadUrl, string apiKey, string source)
+        {
+            if (string.IsNullOrWhiteSpace(downloadUrl))
+            {
+                return GrabResolution.NotApplicable(downloadUrl);
+            }
+
+            if (string.Equals(source, "CatalogPage", StringComparison.OrdinalIgnoreCase))
+            {
+                return await TryResolveCatalogGrabAsync(downloadUrl, apiKey);
+            }
+
+            if (string.Equals(source, "MirrorIndex", StringComparison.OrdinalIgnoreCase))
+            {
+                var mirrorResolved = await TryResolveMirrorAsync(downloadUrl);
+                return mirrorResolved != null
+                    ? GrabResolution.Success(mirrorResolved)
+                    : GrabResolution.NotApplicable(downloadUrl);
+            }
+
+            return GrabResolution.NotApplicable(downloadUrl);
+        }
+
         public async Task<string> TryResolveAsync(string downloadUrl, string apiKey, string source, bool slowFallbackEnabled = false)
         {
             if (string.IsNullOrWhiteSpace(downloadUrl))
@@ -186,7 +209,7 @@ namespace NzbDrone.Core.Download.Clients.Direct
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                return ApiKeyValidationResult.TransientFailure($"Could not validate API key: {ex.Message}");
+                return ApiKeyValidationResult.TransientFailure($"Could not validate API key: {RedactApiKeyFromUrl(ex.Message)}");
             }
         }
 
@@ -220,6 +243,33 @@ namespace NzbDrone.Core.Download.Clients.Direct
 
             // Fallback: scrape the detail page HTML for a public download link
             return await TryScrapeDetailPageForDownloadLinkAsync(infoUri);
+        }
+
+        private async Task<GrabResolution> TryResolveCatalogGrabAsync(string infoUrl, string apiKey)
+        {
+            if (!Uri.TryCreate(infoUrl, UriKind.Absolute, out var infoUri))
+            {
+                return GrabResolution.Unavailable("Source URL is not a valid absolute URI.");
+            }
+
+            var md5 = ExtractMd5FromPath(infoUri.AbsolutePath);
+            if (md5 == null)
+            {
+                return GrabResolution.Unavailable("Source URL does not contain a recognizable file identifier.");
+            }
+
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                return GrabResolution.Unavailable("No API key configured. Configure an API key to enable fast downloads.");
+            }
+
+            var apiResult = await TryResolveViaFastDownloadApiAsync(infoUri, md5, apiKey);
+            if (apiResult != null)
+            {
+                return GrabResolution.Success(apiResult);
+            }
+
+            return GrabResolution.Unavailable("Fast-download API did not return a valid download URL. The source may be temporarily unavailable or the API key may be invalid.");
         }
 
         private async Task<string> TryResolveViaFastDownloadApiAsync(Uri infoUri, string md5, string apiKey)
@@ -516,6 +566,34 @@ namespace NzbDrone.Core.Download.Clients.Direct
             }
 
             return md5;
+        }
+
+        internal static string RedactApiKeyFromUrl(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            var keyIndex = text.IndexOf("key=", StringComparison.OrdinalIgnoreCase);
+            if (keyIndex < 0)
+            {
+                return text;
+            }
+
+            var valueStart = keyIndex + 4;
+            if (valueStart >= text.Length)
+            {
+                return text;
+            }
+
+            var valueEnd = text.IndexOfAny(new[] { '&', ' ', '"', '\'', '#' }, valueStart);
+            if (valueEnd < 0)
+            {
+                valueEnd = text.Length;
+            }
+
+            return string.Concat(text.AsSpan(0, valueStart), "[redacted]", text.AsSpan(valueEnd));
         }
     }
 }

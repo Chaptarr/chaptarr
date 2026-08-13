@@ -38,10 +38,11 @@ namespace Chaptarr.Core.Test.Indexers
         {
             var schema = SchemaBuilder.ToSchema(new DirectDownloadSettings());
 
-            Assert.That(schema.Select(field => field.Name), Is.EqualTo(new[] { "urls", "apiKey" }));
+            Assert.That(schema.Select(field => field.Name), Is.EqualTo(new[] { "urls", "apiKey", "enableSlowFallback" }));
             Assert.That(schema.Single(field => field.Name == "urls").Type, Is.EqualTo("textArea"));
             Assert.That(schema.Single(field => field.Name == "urls").HelpText, Does.Contain("URL per line"));
             Assert.That(schema.Single(field => field.Name == "apiKey").Privacy, Is.EqualTo("apiKey"));
+            Assert.That(schema.Single(field => field.Name == "enableSlowFallback").Type, Is.EqualTo("checkbox"));
         }
 
         [Test]
@@ -70,7 +71,8 @@ namespace Chaptarr.Core.Test.Indexers
             {
                 Settings = new DirectDownloadSettings
                 {
-                    Urls = "https://primary.example\nhttps://secondary.example"
+                    Urls = "https://primary.example\nhttps://secondary.example",
+                    EnableSlowFallback = true
                 }
             };
 

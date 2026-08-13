@@ -22,18 +22,21 @@ namespace NzbDrone.Core.Download.Clients.Direct
         private readonly IDiskProvider _diskProvider;
         private readonly IConfigService _configService;
         private readonly IAppFolderInfo _appFolderInfo;
+        private readonly IBrowserDownloadResolver _browserResolver;
         private readonly Logger _logger;
 
         public InternalDirectClientProvider(IHttpClient httpClient,
                                             IDiskProvider diskProvider,
                                             IConfigService configService,
                                             IAppFolderInfo appFolderInfo,
-                                            Logger logger)
+                                            Logger logger,
+                                            IBrowserDownloadResolver browserResolver = null)
         {
             _httpClient = httpClient;
             _diskProvider = diskProvider;
             _configService = configService;
             _appFolderInfo = appFolderInfo;
+            _browserResolver = browserResolver;
             _logger = logger;
         }
 
@@ -43,8 +46,8 @@ namespace NzbDrone.Core.Download.Clients.Direct
 
             _diskProvider.EnsureFolder(stagingFolder);
 
-            var grabUrlResolver = new DirectDownloadGrabUrlResolver(_httpClient);
-            return new DirectDownloadClient(_httpClient, _diskProvider, _configService, _logger, grabUrlResolver)
+            var grabUrlResolver = new DirectDownloadGrabUrlResolver(_httpClient, _browserResolver);
+            return new DirectDownloadClient(_httpClient, _diskProvider, _configService, _logger, grabUrlResolver, browserResolver: _browserResolver)
             {
                 Definition = new DownloadClientDefinition
                 {

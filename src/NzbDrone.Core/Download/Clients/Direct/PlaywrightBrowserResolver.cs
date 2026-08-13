@@ -93,9 +93,9 @@ namespace NzbDrone.Core.Download.Clients.Direct
                         "a[href*='/slow_download/'], a[href*='/fast_download/'], a[href$='.epub'], a[href$='.pdf']",
                         new() { Timeout = (float)LinkWaitTimeout.TotalMilliseconds });
                 }
-                catch (Microsoft.Playwright.TimeoutException)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.Debug("Browser timed out waiting for download links on {0}", infoUrl);
+                    _logger.Debug("Browser timed out or failed waiting for download links on {0}: {1}", Redact(infoUrl), ex.Message);
                 }
 
                 var content = await page.ContentAsync();
@@ -135,7 +135,7 @@ namespace NzbDrone.Core.Download.Clients.Direct
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "Browser download resolution failed for {0}: {1}", infoUrl, ex.Message);
+                _logger.Warn(ex, "Browser download resolution failed for {0}: {1}", Redact(infoUrl), ex.Message);
                 await CloseSafeAsync(browser, playwright);
                 return null;
             }

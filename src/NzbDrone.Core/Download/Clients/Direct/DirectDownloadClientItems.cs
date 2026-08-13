@@ -68,6 +68,39 @@ namespace NzbDrone.Core.Download.Clients.Direct
             }
         }
 
+        /// <summary>
+        /// Validates that an identifier is safe for use as a single path segment:
+        /// no path separators, no parent-directory references, no null bytes.
+        /// </summary>
+        internal static bool IsValidPathSegment(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return false;
+            }
+
+            foreach (var c in id)
+            {
+                if (c is '/' or '\\' or '\0')
+                {
+                    return false;
+                }
+            }
+
+            if (id == "..")
+            {
+                return false;
+            }
+
+            var trimmed = id.TrimEnd('.');
+            if (trimmed.Length == 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         private void DeleteIfPresent(string path)
         {
             if (path.IsNullOrWhiteSpace())

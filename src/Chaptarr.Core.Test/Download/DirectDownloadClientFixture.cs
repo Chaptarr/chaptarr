@@ -115,6 +115,112 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(redownloadId, Is.EqualTo(downloadId));
         }
 
+        [Test]
+        public async Task should_restart_with_api_resolved_url_from_persisted_state()
+        {
+            using var scenario = new DirectDownloadClientScenario();
+            var downloadId = "RESOLVED-URL-RESTART";
+            var resolvedUrl = "https://cdn.example/resolved-epub-token-abc123.epub";
+            var downloadFolder = Path.Combine(scenario.StagingFolder, $"client-42/{downloadId}");
+            Directory.CreateDirectory(downloadFolder);
+
+            var stateJson = $"{{\"downloadId\":\"{downloadId}\",\"title\":\"Frank Herbert - Dune [epub]\"," +
+                $"\"downloadUrl\":\"{resolvedUrl}\",\"resolvedUrl\":\"{resolvedUrl}\"," +
+                $"\"fallbackMode\":0,\"status\":{(int)DownloadItemStatus.Downloading}," +
+                $"\"outputFilePath\":\"{Path.Combine(downloadFolder, "Frank Herbert - Dune [epub].epub").Replace("\\", "\\\\")}\"," +
+                $"\"partFilePath\":\"{Path.Combine(downloadFolder, "Frank Herbert - Dune [epub].epub.part").Replace("\\", "\\\\")}\"," +
+                $"\"createdAtUtc\":\"{DateTime.UtcNow:O}\",\"updatedAtUtc\":\"{DateTime.UtcNow:O}\"}}";
+            File.WriteAllText(Path.Combine(downloadFolder, "direct-download-state.json"), stateJson);
+
+            scenario.RegisterBinary(resolvedUrl, "application/epub+zip", "resolved-url-body");
+
+            var client = scenario.BuildClient();
+
+            await scenario.WaitForStatus(client, downloadId, DownloadItemStatus.Completed);
+
+            var item = scenario.SingleItem(client, downloadId);
+            Assert.That(item.Status, Is.EqualTo(DownloadItemStatus.Completed));
+            Assert.That(File.ReadAllText(item.OutputPath.FullPath), Is.EqualTo("resolved-url-body"));
+        }
+
+        [Test]
+        public async Task should_clean_stale_part_file_on_restart_with_downloading_state()
+        {
+            using var scenario = new DirectDownloadClientScenario();
+            var downloadId = "STALE-PART-CLEANUP";
+            var downloadFolder = Path.Combine(scenario.StagingFolder, $"client-42/{downloadId}");
+            Directory.CreateDirectory(downloadFolder);
+            File.WriteAllText(Path.Combine(downloadFolder, "Frank Herbert - Dune [epub].epub.part"), "stale-crupt-data-from-crash");
+            File.WriteAllText(Path.Combine(downloadFolder, "direct-download-state.json"), scenario.SerializeState(downloadId, DownloadItemStatus.Downloading));
+            scenario.RegisterBinary("https://downloads.example/dune.epub", "application/epub+zip", "fresh-clean-body");
+
+            var client = scenario.BuildClient();
+
+            await scenario.WaitForStatus(client, downloadId, DownloadItemStatus.Completed);
+
+            var item = scenario.SingleItem(client, downloadId);
+            Assert.That(item.Status, Is.EqualTo(DownloadItemStatus.Completed));
+            Assert.That(File.ReadAllText(item.OutputPath.FullPath), Is.EqualTo("fresh-clean-body"));
+            Assert.That(File.Exists(item.OutputPath.FullPath + ".part"), Is.False, "Stale .part file should be cleaned before new download starts");
+        }
+
+        [Test]
+        public async Task should_isolate_failure_between_two_concurrent_downloads()
+        {
+            using var scenario = new DirectDownloadClientScenario();
+
+            scenario.Transport.AddRoute(
+                url => url == "https://downloads.example/failing.epub",
+                request => throw new WebException("connection refused", WebExceptionStatus.ConnectFailure));
+            scenario.RegisterBinary("https://downloads.example/succeeding.epub", "application/epub+zip", "succeeding-body");
+
+            var client = scenario.BuildClient();
+
+            var failBook = new RemoteBook
+            {
+                Release = new ReleaseInfo
+                {
+                    Guid = "Direct-Isolation-Fail",
+                    Title = "Frank Herbert - Dune [epub]",
+                    Author = "Frank Herbert",
+                    Book = "Dune",
+                    DownloadProtocol = DownloadProtocol.Direct,
+                    DownloadUrl = "https://downloads.example/failing.epub",
+                    InfoUrl = "https://info.example/dune",
+                    Container = "epub",
+                    Size = 9
+                }
+            };
+            var successBook = new RemoteBook
+            {
+                Release = new ReleaseInfo
+                {
+                    Guid = "Direct-Isolation-Success",
+                    Title = "Frank Herbert - Dune [epub]",
+                    Author = "Frank Herbert",
+                    Book = "Dune",
+                    DownloadProtocol = DownloadProtocol.Direct,
+                    DownloadUrl = "https://downloads.example/succeeding.epub",
+                    InfoUrl = "https://info.example/dune",
+                    Container = "epub",
+                    Size = 9
+                }
+            };
+
+            var failId = await client.Download(failBook, indexer: null);
+            var successId = await client.Download(successBook, indexer: null);
+
+            await scenario.WaitForStatus(client, failId, DownloadItemStatus.Failed);
+            await scenario.WaitForStatus(client, successId, DownloadItemStatus.Completed);
+
+            var failedItem = scenario.SingleItem(client, failId);
+            Assert.That(failedItem.Status, Is.EqualTo(DownloadItemStatus.Failed));
+
+            var successItem = scenario.SingleItem(client, successId);
+            Assert.That(successItem.Status, Is.EqualTo(DownloadItemStatus.Completed));
+            Assert.That(File.ReadAllText(successItem.OutputPath.FullPath), Is.EqualTo("succeeding-body"));
+        }
+
         private static RemoteBook BuildRemoteBook(string downloadUrl)
         {
             return new RemoteBook

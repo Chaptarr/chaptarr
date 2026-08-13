@@ -88,7 +88,17 @@ namespace NzbDrone.Core.Download.Clients.Direct
 
         public string GetDownloadDirectory(string stagingFolder, int clientId, string downloadId)
         {
-            return Path.Combine(GetClientRoot(stagingFolder, clientId), downloadId);
+            var clientRoot = GetClientRoot(stagingFolder, clientId);
+            var downloadDir = Path.Combine(clientRoot, downloadId);
+            var normalizedStaging = Path.GetFullPath(clientRoot + Path.DirectorySeparatorChar);
+            var normalizedDownload = Path.GetFullPath(downloadDir + Path.DirectorySeparatorChar);
+
+            if (!normalizedDownload.StartsWith(normalizedStaging, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Download directory escapes the staging folder boundary.");
+            }
+
+            return downloadDir;
         }
 
         private string GetStateFilePath(string stagingFolder, int clientId, string downloadId)

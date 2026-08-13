@@ -74,7 +74,8 @@ namespace Chaptarr.Core.Test.Indexers
         {
             var settings = new DirectDownloadSettings
             {
-                Urls = " https://downloads.example.com/ \r\n\r\nhttps://mirror.example.com\nhttps://downloads.example.com/ "
+                Urls = " https://downloads.example.com/ \r\n\r\nhttps://mirror.example.com\nhttps://downloads.example.com/ ",
+                EnableSlowFallback = true
             };
 
             var result = settings.Validate();
@@ -123,6 +124,74 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(restored.ApiKey, Is.Null);
             Assert.That(restored.Urls, Is.EqualTo("https://downloads.example.com\nhttps://mirror.example.com"));
             Assert.That(restored.BaseUrl, Is.EqualTo("https://downloads.example.com"));
+        }
+
+        [TestCase(null, false, false, Description = "neither API key nor fallback is invalid")]
+        [TestCase("real-key", false, true, Description = "API-only is valid")]
+        [TestCase(null, true, true, Description = "fallback-only is valid")]
+        [TestCase("real-key", true, true, Description = "both configured is valid")]
+        [TestCase("   ", false, false, Description = "whitespace-only API key counts as absent, no fallback is invalid")]
+        [TestCase("\t\n", false, false, Description = "whitespace (tabs/newlines) API key counts as absent, no fallback is invalid")]
+        public void should_validate_api_key_or_fallback_matrix(string apiKey, bool enableSlowFallback, bool expectedValid, string description = null)
+        {
+            var settings = new DirectDownloadSettings
+            {
+                Urls = "https://downloads.example.com",
+                ApiKey = apiKey,
+                EnableSlowFallback = enableSlowFallback
+            };
+
+            var result = settings.Validate();
+
+            Assert.That(result.IsValid, Is.EqualTo(expectedValid),
+                $"Expected valid={expectedValid} for apiKey='{apiKey}', fallback={enableSlowFallback}. Errors: {string.Join("; ", result.Errors.Select(e => e.ErrorMessage))}");
+        }
+
+        [Test]
+        public void should_reject_neither_api_key_nor_fallback_with_specific_error()
+        {
+            var settings = new DirectDownloadSettings
+            {
+                Urls = "https://downloads.example.com",
+                ApiKey = null,
+                EnableSlowFallback = false
+            };
+
+            var result = settings.Validate();
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Errors.Select(e => e.ErrorMessage), Has.Some.Contains("At least one download method is required"));
+        }
+
+        [Test]
+        public void should_not_mask_absent_whitespace_api_key_in_schema()
+        {
+            var schema = SchemaBuilder.ToSchema(new DirectDownloadSettings
+            {
+                Urls = "https://downloads.example.com",
+                ApiKey = "   "
+            });
+
+            var apiKeyField = schema.Single(field => field.Name == "apiKey");
+            Assert.That(apiKeyField.Value, Is.Null, "Whitespace-only API key is absent and must not be masked as a real secret");
+        }
+
+        [Test]
+        public void should_preserve_masked_key_when_whitespace_is_saved()
+        {
+            var settings = new DirectDownloadSettings
+            {
+                Urls = "https://downloads.example.com",
+                ApiKey = "real-secret"
+            };
+
+            SchemaBuilder.ReadFromSchema(new()
+            {
+                new Field { Name = "urls", Value = "https://downloads.example.com" },
+                new Field { Name = "apiKey", Value = "********" }
+            }, settings);
+
+            Assert.That(settings.ApiKey, Is.EqualTo("real-secret"));
         }
     }
 }
