@@ -99,11 +99,7 @@ namespace NzbDrone.Core.MediaFiles
         {
             var renameFiles = files.Where(x => x.CalibreId == 0).ToList();
             EnsurePartNumbers(renameFiles);
-            var baseNamingConfig = _namingConfigService.GetConfig();
-            var audiobookNamingConfig = CloneNamingConfig(baseNamingConfig);
-            audiobookNamingConfig.RenameBooks = true;
-            var ebookNamingConfig = CloneNamingConfig(baseNamingConfig);
-            ebookNamingConfig.EbookRenameBooks = true;
+            var namingConfig = _namingConfigService.GetConfig();
 
             // Pass 1: compute target directories for audiobook files that are part of this rename batch.
             var batchContext = new RenameBatchContext();
@@ -135,7 +131,7 @@ namespace NzbDrone.Core.MediaFiles
                     continue;
                 }
 
-                var newName = _filenameBuilder.BuildBookFileName(author, edition, file, audiobookNamingConfig);
+                var newName = _filenameBuilder.BuildBookFileName(author, edition, file, namingConfig);
                 var authorFolderPath = _authorFolderPathResolver.GetAuthorPath(rootFolderPath, author, mediaType);
                 var newPath = Path.Combine(authorFolderPath, newName + Path.GetExtension(file.Path));
 
@@ -162,10 +158,6 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 var mediaType = GetEffectiveMediaType(file);
-
-                var namingConfig = string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase)
-                    ? ebookNamingConfig
-                    : audiobookNamingConfig;
 
                 var newName = _filenameBuilder.BuildBookFileName(author, book, file, namingConfig);
 
@@ -239,26 +231,6 @@ namespace NzbDrone.Core.MediaFiles
 
             return (files ?? Enumerable.Empty<BookFile>())
                 .Where(f => string.Equals(GetEffectiveMediaType(f), mediaType, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static NamingConfig CloneNamingConfig(NamingConfig source)
-        {
-            return new NamingConfig
-            {
-                Id = source.Id,
-
-                RenameBooks = source.RenameBooks,
-                ReplaceIllegalCharacters = source.ReplaceIllegalCharacters,
-                ColonReplacementFormat = source.ColonReplacementFormat,
-                StandardBookFormat = source.StandardBookFormat,
-                AuthorFolderFormat = source.AuthorFolderFormat,
-
-                EbookRenameBooks = source.EbookRenameBooks,
-                EbookReplaceIllegalCharacters = source.EbookReplaceIllegalCharacters,
-                EbookColonReplacementFormat = source.EbookColonReplacementFormat,
-                EbookStandardBookFormat = source.EbookStandardBookFormat,
-                EbookAuthorFolderFormat = source.EbookAuthorFolderFormat
-            };
         }
 
         private static void EnsurePartNumbers(List<BookFile> files)
@@ -361,7 +333,7 @@ namespace NzbDrone.Core.MediaFiles
                 try
                 {
                     _logger.Debug("Renaming book file: {0}", bookFile);
-                    _bookFileMover.MoveBookFile(bookFile, author, true, batchContext);
+                    _bookFileMover.MoveBookFile(bookFile, author, batchContext);
 
                     _mediaFileService.Update(bookFile);
                     TrackAudiobookFolderMove(batchContext, bookFile, previousPath);

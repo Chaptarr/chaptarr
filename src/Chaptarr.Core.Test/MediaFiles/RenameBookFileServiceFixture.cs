@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using System.Reflection;
@@ -8,6 +9,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.Events;
@@ -99,7 +101,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<int> MovedFileIds { get; } = new();
             public Func<BookFile, string> DestinationFactory { get; set; }
 
-            public BookFile MoveBookFile(BookFile bookFile, Author author, bool forceRename = false, RenameBatchContext renameBatchContext = null)
+            public BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null)
             {
                 MovedFileIds.Add(bookFile.Id);
                 var destination = DestinationFactory?.Invoke(bookFile);
@@ -114,6 +116,49 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile MoveBookFile(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => throw new NotImplementedException();
             public BookFile CopyBookFile(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => throw new NotImplementedException();
             public string GetImportDestinationPath(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => throw new NotImplementedException();
+        }
+
+        private sealed class StubNamingConfigService : INamingConfigService
+        {
+            public NamingConfig Config { get; set; }
+
+            public NamingConfig GetConfig() => Config;
+            public void Save(NamingConfig namingConfig) => throw new NotImplementedException();
+        }
+
+        private sealed class PreviewFileNameBuilder : IBuildFileNames
+        {
+            public string BuildBookFileName(Author author, Edition edition, BookFile bookFile, NamingConfig namingConfig = null, List<CustomFormat> customFormats = null)
+            {
+                var mediaType = bookFile.MediaType ?? NzbDrone.Core.MediaFiles.BookFile.DetermineMediaType(bookFile.Quality);
+                var effectiveConfig = namingConfig.GetForMediaType(mediaType);
+                var fileName = effectiveConfig.RenameBooks
+                    ? $"renamed-{mediaType}"
+                    : Path.GetFileNameWithoutExtension(bookFile.Path);
+
+                return Path.Combine(edition.Title, fileName);
+            }
+
+            public string BuildBookFilePath(Author author, Edition edition, string fileName, string extension) => throw new NotImplementedException();
+            public string BuildBookPath(Author author) => throw new NotImplementedException();
+            public BasicNamingConfig GetBasicNamingConfig(NamingConfig nameSpec) => throw new NotImplementedException();
+            public string GetAuthorFolder(Author author, NamingConfig namingConfig = null, string mediaType = "audiobook") => throw new NotImplementedException();
+        }
+
+        private sealed class PreviewAuthorFolderPathResolver : IAuthorFolderPathResolver
+        {
+            public string GetAuthorPath(string rootFolderPath, Author author, string mediaType)
+            {
+                return Path.Combine(rootFolderPath, author.Name);
+            }
+        }
+
+        private sealed class NonColocatingPlanner : IEbookColocationPlanner
+        {
+            public EbookColocationPlan Plan(BookFile bookFile, Author author, Edition edition, string fileNameOnlyWithExtension, RenameBatchContext batchContext = null)
+            {
+                return EbookColocationPlan.Skipped(EbookColocationSkipReason.RootNotMixedOrDisabled);
+            }
         }
 
         private class ThrowingProxy<T> : DispatchProxy where T : class
@@ -150,19 +195,76 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
         }
 
-        private static RenameBookFileService CreateService(Author author, StubMediaFileService mediaFileService, RecordingMoveBookFiles mover, RecordingEventAggregator eventAggregator)
+        private static RenameBookFileService CreateService(
+            Author author,
+            StubMediaFileService mediaFileService,
+            RecordingMoveBookFiles mover,
+            RecordingEventAggregator eventAggregator,
+            IBuildFileNames fileNameBuilder = null,
+            INamingConfigService namingConfigService = null,
+            IAuthorFolderPathResolver authorFolderPathResolver = null,
+            IEbookColocationPlanner ebookColocationPlanner = null)
         {
             return new RenameBookFileService(
                 new StubAuthorService { Author = author },
                 mediaFileService,
                 mover,
                 eventAggregator,
-                DispatchProxy.Create<IBuildFileNames, ThrowingProxy<IBuildFileNames>>(),
-                DispatchProxy.Create<INamingConfigService, ThrowingProxy<INamingConfigService>>(),
-                DispatchProxy.Create<IAuthorFolderPathResolver, ThrowingProxy<IAuthorFolderPathResolver>>(),
-                DispatchProxy.Create<IEbookColocationPlanner, ThrowingProxy<IEbookColocationPlanner>>(),
+                fileNameBuilder ?? DispatchProxy.Create<IBuildFileNames, ThrowingProxy<IBuildFileNames>>(),
+                namingConfigService ?? DispatchProxy.Create<INamingConfigService, ThrowingProxy<INamingConfigService>>(),
+                authorFolderPathResolver ?? DispatchProxy.Create<IAuthorFolderPathResolver, ThrowingProxy<IAuthorFolderPathResolver>>(),
+                ebookColocationPlanner ?? DispatchProxy.Create<IEbookColocationPlanner, ThrowingProxy<IEbookColocationPlanner>>(),
                 DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
                 LogManager.GetCurrentClassLogger());
+        }
+
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        public void should_honor_media_type_rename_settings_in_organize_preview(bool renameAudiobooks, bool renameEbooks)
+        {
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Joe Abercrombie",
+                AudiobookRootFolderPath = "/audiobooks",
+                EbookRootFolderPath = "/ebooks"
+            };
+
+            var book = new Book { Id = 20, Author = author };
+            var audiobookFile = BookFile(1, "/incoming/original-audio.mp3", Quality.MP3, "audiobook");
+            audiobookFile.Edition = new Edition { Id = 10, Title = "Audio Book", Book = book };
+
+            var ebookFile = BookFile(2, "/incoming/original-ebook.epub", Quality.EPUB, "ebook");
+            ebookFile.Edition = new Edition { Id = 11, Title = "Ebook", Book = book };
+
+            var mediaFileService = new StubMediaFileService
+            {
+                Files = new List<BookFile> { audiobookFile, ebookFile }
+            };
+
+            var namingConfig = NamingConfig.Default;
+            namingConfig.RenameBooks = renameAudiobooks;
+            namingConfig.EbookRenameBooks = renameEbooks;
+
+            var service = CreateService(
+                author,
+                mediaFileService,
+                new RecordingMoveBookFiles(),
+                new RecordingEventAggregator(),
+                new PreviewFileNameBuilder(),
+                new StubNamingConfigService { Config = namingConfig },
+                new PreviewAuthorFolderPathResolver(),
+                new NonColocatingPlanner());
+
+            var previews = service.GetRenamePreviews(author.Id);
+
+            var audiobookPreview = previews.Single(x => x.BookFileId == audiobookFile.Id);
+            var expectedAudiobookName = renameAudiobooks ? "renamed-audiobook.mp3" : "original-audio.mp3";
+            Assert.That(audiobookPreview.NewPath, Is.EqualTo(Path.Combine("/audiobooks", author.Name, "Audio Book", expectedAudiobookName)));
+
+            var ebookPreview = previews.Single(x => x.BookFileId == ebookFile.Id);
+            var expectedEbookName = renameEbooks ? "renamed-ebook.epub" : "original-ebook.epub";
+            Assert.That(ebookPreview.NewPath, Is.EqualTo(Path.Combine("/ebooks", author.Name, "Ebook", expectedEbookName)));
         }
 
         [Test]

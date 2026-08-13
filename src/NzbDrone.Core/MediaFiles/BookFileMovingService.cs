@@ -21,7 +21,7 @@ namespace NzbDrone.Core.MediaFiles
 {
     public interface IMoveBookFiles
     {
-        BookFile MoveBookFile(BookFile bookFile, Author author, bool forceRename = false, RenameBatchContext renameBatchContext = null);
+        BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null);
         BookFile MoveBookFile(BookFile bookFile, LocalBook localBook);
         BookFile CopyBookFile(BookFile bookFile, LocalBook localBook);
         string GetImportDestinationPath(BookFile bookFile, LocalBook localBook);
@@ -32,7 +32,6 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IEditionService _editionService;
         private readonly IUpdateBookFileService _updateBookFileService;
         private readonly IBuildFileNames _buildFileNames;
-        private readonly INamingConfigService _namingConfigService;
         private readonly IEbookColocationPlanner _ebookColocationPlanner;
         private readonly IDiskTransferService _diskTransferService;
         private readonly IDiskProvider _diskProvider;
@@ -48,7 +47,6 @@ namespace NzbDrone.Core.MediaFiles
         public BookFileMovingService(IEditionService editionService,
                                       IUpdateBookFileService updateBookFileService,
                                       IBuildFileNames buildFileNames,
-                                      INamingConfigService namingConfigService,
                                       IEbookColocationPlanner ebookColocationPlanner,
                                       IDiskTransferService diskTransferService,
                                       IDiskProvider diskProvider,
@@ -64,7 +62,6 @@ namespace NzbDrone.Core.MediaFiles
             _editionService = editionService;
             _updateBookFileService = updateBookFileService;
             _buildFileNames = buildFileNames;
-            _namingConfigService = namingConfigService;
             _ebookColocationPlanner = ebookColocationPlanner;
             _diskTransferService = diskTransferService;
             _diskProvider = diskProvider;
@@ -78,7 +75,7 @@ namespace NzbDrone.Core.MediaFiles
             _logger = logger;
         }
 
-        public BookFile MoveBookFile(BookFile bookFile, Author author, bool forceRename = false, RenameBatchContext renameBatchContext = null)
+        public BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null)
         {
             // Prefer the edition already loaded on the BookFile (includes Book/Author/Series context),
             // falling back to a direct lookup when needed.
@@ -97,8 +94,7 @@ namespace NzbDrone.Core.MediaFiles
 
             bookFile.Edition ??= edition;
             var mediaType = GetEffectiveMediaType(bookFile);
-            var namingConfig = forceRename ? GetNamingConfigForOrganize(mediaType) : null;
-            var newFileName = _buildFileNames.BuildBookFileName(author, edition, bookFile, namingConfig);
+            var newFileName = _buildFileNames.BuildBookFileName(author, edition, bookFile);
             var extension = Path.GetExtension(bookFile.Path);
             var fileNameOnly = Path.GetFileName(newFileName) + extension;
 
@@ -133,42 +129,6 @@ namespace NzbDrone.Core.MediaFiles
             _logger.Debug("Renaming book file: {0} to {1}", bookFile, filePath);
 
             return TransferFile(bookFile, author, edition.Book, filePath, TransferMode.Move);
-        }
-
-        private NamingConfig GetNamingConfigForOrganize(string mediaType)
-        {
-            var config = CloneNamingConfig(_namingConfigService.GetConfig());
-
-            if (string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase))
-            {
-                config.EbookRenameBooks = true;
-            }
-            else
-            {
-                config.RenameBooks = true;
-            }
-
-            return config;
-        }
-
-        private static NamingConfig CloneNamingConfig(NamingConfig source)
-        {
-            return new NamingConfig
-            {
-                Id = source.Id,
-
-                RenameBooks = source.RenameBooks,
-                ReplaceIllegalCharacters = source.ReplaceIllegalCharacters,
-                ColonReplacementFormat = source.ColonReplacementFormat,
-                StandardBookFormat = source.StandardBookFormat,
-                AuthorFolderFormat = source.AuthorFolderFormat,
-
-                EbookRenameBooks = source.EbookRenameBooks,
-                EbookReplaceIllegalCharacters = source.EbookReplaceIllegalCharacters,
-                EbookColonReplacementFormat = source.EbookColonReplacementFormat,
-                EbookStandardBookFormat = source.EbookStandardBookFormat,
-                EbookAuthorFolderFormat = source.EbookAuthorFolderFormat
-            };
         }
 
         public BookFile MoveBookFile(BookFile bookFile, LocalBook localBook)

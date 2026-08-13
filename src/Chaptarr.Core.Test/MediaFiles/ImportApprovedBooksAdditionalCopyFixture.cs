@@ -143,7 +143,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public int PreviewCalls { get; private set; }
             public bool TransferFilesOnDisk { get; set; }
 
-            public BookFile MoveBookFile(BookFile bookFile, Author author, bool forceRename = false, RenameBatchContext renameBatchContext = null)
+            public BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null)
             {
                 MoveCalls++;
                 bookFile.Path = DestinationPath ?? bookFile.Path;
