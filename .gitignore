@@ -50,6 +50,10 @@ desktop.ini
 
 # Local config
 config.xml
+# Runtime data directory created when the app is started from a checkout.
+# Root-anchored so source directories named "config" are unaffected.
+/config/
+*.pid
 appsettings.Development.json
 appsettings.Local.json
 docker-compose.override.yml
@@ -84,7 +88,11 @@ build.log
 *.sql
 
 # Databases
+# The -wal/-shm sidecars carry the freshest rows, so ignoring only *.db is not enough.
 *.db
+*.db-wal
+*.db-shm
+*.db-journal
 *.sqlite
 *.sqlite3
 
