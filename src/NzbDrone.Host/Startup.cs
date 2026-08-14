@@ -259,9 +259,9 @@ namespace NzbDrone.Host
             }
 
             app.UseForwardedHeaders();
-            app.UseMiddleware<LoggingMiddleware>();
             app.UsePathBase(new PathString(configFileProvider.UrlBase));
             app.UseMiddleware<ServarrMediaTypeScopeMiddleware>();
+            app.UseMiddleware<LoggingMiddleware>();
             app.UseMiddleware<SecurityHeadersMiddleware>();
             app.UseExceptionHandler(new ExceptionHandlerOptions
             {

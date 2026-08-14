@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Http.Extensions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation;
@@ -113,6 +114,12 @@ namespace Chaptarr.Http.Middleware
 
         private static string GetRequestPathAndQuery(HttpRequest request)
         {
+            var rawTarget = request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget;
+            if (rawTarget.IsNotNullOrWhiteSpace())
+            {
+                return SensitiveDataSanitizer.SanitizeUrl(rawTarget);
+            }
+
             string pathAndQuery;
 
             if (request.QueryString.Value.IsNotNullOrWhiteSpace() && request.QueryString.Value != "?")
