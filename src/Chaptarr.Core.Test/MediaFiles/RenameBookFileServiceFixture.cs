@@ -364,7 +364,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 CanOrganize = true,
                 SourceAuthorFolderPath = sourceAuthorFolder,
                 DestinationAuthorFolderPath = canonicalAuthorFolder,
-                DestinationPath = canonicalAuthorFolder + "/Wild Cards/file.mp3",
+                DestinationPath = Path.Combine(canonicalAuthorFolder, "Wild Cards", "file.mp3"),
                 ShouldUpdateStoredAuthorPath = true
             };
             var mover = new RecordingMoveBookFiles { PlanFactory = (_, _) => plan };
@@ -416,9 +416,10 @@ namespace Chaptarr.Core.Test.MediaFiles
         [Test]
         public void should_remove_only_empty_directories_bounded_by_the_actual_source_author_folder()
         {
-            var sourceAuthorFolder = "/books/George R. R. Martin";
-            var sourceBookFolder = sourceAuthorFolder + "/Wild Cards";
-            var canonicalAuthorFolder = "/books/George R.R. Martin";
+            var rootFolder = @"C:\books".AsOsAgnostic();
+            var sourceAuthorFolder = Path.Combine(rootFolder, "George R. R. Martin");
+            var sourceBookFolder = Path.Combine(sourceAuthorFolder, "Wild Cards");
+            var canonicalAuthorFolder = Path.Combine(rootFolder, "George R.R. Martin");
             var author = new Author
             {
                 Id = 1,
@@ -426,14 +427,14 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Path = sourceAuthorFolder,
                 AudiobookPath = sourceAuthorFolder
             };
-            var file = BookFile(1, sourceBookFolder + "/file.mp3", Quality.MP3, "audiobook");
+            var file = BookFile(1, Path.Combine(sourceBookFolder, "file.mp3"), Quality.MP3, "audiobook");
             var mediaFileService = new StubMediaFileService { Files = new List<BookFile> { file } };
             var plan = new BookFileMovePlan
             {
                 CanOrganize = true,
                 SourceAuthorFolderPath = sourceAuthorFolder,
                 DestinationAuthorFolderPath = canonicalAuthorFolder,
-                DestinationPath = canonicalAuthorFolder + "/Wild Cards/file.mp3",
+                DestinationPath = Path.Combine(canonicalAuthorFolder, "Wild Cards", "file.mp3"),
                 ShouldUpdateStoredAuthorPath = true
             };
             var mover = new RecordingMoveBookFiles { PlanFactory = (_, _) => plan };
@@ -447,7 +448,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(diskProxy.RemovedEmptySubfolders, Is.EqualTo(new[] { sourceBookFolder, sourceAuthorFolder }));
             Assert.That(diskProxy.DeletedFolders, Is.EqualTo(new[] { sourceBookFolder, sourceAuthorFolder }));
-            Assert.That(diskProxy.DeletedFolders, Does.Not.Contain("/books"));
+            Assert.That(diskProxy.DeletedFolders, Does.Not.Contain(rootFolder));
         }
 
         [Test]

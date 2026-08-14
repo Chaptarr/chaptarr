@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using NLog;
@@ -201,21 +202,24 @@ namespace Chaptarr.Core.Test.MediaFiles
         [Test]
         public void should_keep_physical_author_folder_unless_canonical_move_is_requested()
         {
+            var rootFolder = @"C:\books".AsOsAgnostic();
+            var sourceAuthorFolder = Path.Combine(rootFolder, "George R. R. Martin");
+            var canonicalAuthorFolder = Path.Combine(rootFolder, "George R.R. Martin");
             var fileNameBuilder = DispatchProxy.Create<IBuildFileNames, BuildFileNamesProxy>();
             var fileNameProxy = (BuildFileNamesProxy)(object)fileNameBuilder;
             fileNameProxy.AuthorFolderFactory = (_, _) => "George R.R. Martin";
-            fileNameProxy.BookFileNameFactory = (_, _, _, _) => "Wild Cards/file";
+            fileNameProxy.BookFileNameFactory = (_, _, _, _) => Path.Combine("Wild Cards", "file");
             var namingConfigService = DispatchProxy.Create<INamingConfigService, NamingConfigServiceProxy>();
             var service = CreateService(fileNameBuilder, namingConfigService);
             var author = new Author
             {
                 Id = 1,
                 Name = "George R.R. Martin",
-                AudiobookRootFolderPath = "/books"
+                AudiobookRootFolderPath = rootFolder
             };
             var bookFile = new BookFile
             {
-                Path = "/books/George R. R. Martin/Wild Cards/original.mp3",
+                Path = Path.Combine(sourceAuthorFolder, "Wild Cards", "original.mp3"),
                 EditionId = 7,
                 Edition = new Edition
                 {
@@ -231,26 +235,29 @@ namespace Chaptarr.Core.Test.MediaFiles
             var canonical = service.GetOrganizeDestination(bookFile, author, true);
 
             Assert.That(keep.CanOrganize, Is.True);
-            Assert.That(keep.SourceAuthorFolderPath, Is.EqualTo("/books/George R. R. Martin"));
-            Assert.That(keep.DestinationPath, Is.EqualTo("/books/George R. R. Martin/Wild Cards/file.mp3"));
+            Assert.That(keep.SourceAuthorFolderPath, Is.EqualTo(sourceAuthorFolder));
+            Assert.That(keep.DestinationPath, Is.EqualTo(Path.Combine(sourceAuthorFolder, "Wild Cards", "file.mp3")));
             Assert.That(keep.ShouldUpdateStoredAuthorPath, Is.False);
-            Assert.That(canonical.DestinationPath, Is.EqualTo("/books/George R.R. Martin/Wild Cards/file.mp3"));
+            Assert.That(canonical.DestinationPath, Is.EqualTo(Path.Combine(canonicalAuthorFolder, "Wild Cards", "file.mp3")));
             Assert.That(canonical.ShouldUpdateStoredAuthorPath, Is.True);
         }
 
         [Test]
         public void should_let_colocation_override_canonical_ebook_folder_without_updating_stored_path()
         {
+            var rootFolder = @"C:\mixed".AsOsAgnostic();
+            var sourceAuthorFolder = Path.Combine(rootFolder, "George R. R. Martin");
+            var colocatedPath = Path.Combine(sourceAuthorFolder, "Wild Cards", "file.epub");
             var fileNameBuilder = DispatchProxy.Create<IBuildFileNames, BuildFileNamesProxy>();
             var fileNameProxy = (BuildFileNamesProxy)(object)fileNameBuilder;
             fileNameProxy.AuthorFolderFactory = (_, _) => "George R.R. Martin";
-            fileNameProxy.BookFileNameFactory = (_, _, _, _) => "Wild Cards/file";
+            fileNameProxy.BookFileNameFactory = (_, _, _, _) => Path.Combine("Wild Cards", "file");
             var namingConfigService = DispatchProxy.Create<INamingConfigService, NamingConfigServiceProxy>();
             var colocationPlanner = DispatchProxy.Create<IEbookColocationPlanner, ColocatingPlannerProxy>();
             ((ColocatingPlannerProxy)(object)colocationPlanner).PlanResult = new EbookColocationPlan
             {
                 Applies = true,
-                PrimaryPath = "/mixed/George R. R. Martin/Wild Cards/file.epub",
+                PrimaryPath = colocatedPath,
                 ReplicaPaths = new List<string>()
             };
             var service = CreateService(
@@ -261,12 +268,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "George R.R. Martin",
-                EbookRootFolderPath = "/mixed",
-                EbookPath = "/mixed/George R. R. Martin"
+                EbookRootFolderPath = rootFolder,
+                EbookPath = sourceAuthorFolder
             };
             var bookFile = new BookFile
             {
-                Path = "/mixed/George R. R. Martin/Wild Cards/original.epub",
+                Path = Path.Combine(sourceAuthorFolder, "Wild Cards", "original.epub"),
                 EditionId = 7,
                 Edition = new Edition
                 {
@@ -281,8 +288,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             var plan = service.GetOrganizeDestination(bookFile, author, true);
 
             Assert.That(plan.CanOrganize, Is.True);
-            Assert.That(plan.DestinationPath, Is.EqualTo("/mixed/George R. R. Martin/Wild Cards/file.epub"));
-            Assert.That(plan.DestinationAuthorFolderPath, Is.EqualTo("/mixed/George R. R. Martin"));
+            Assert.That(plan.DestinationPath, Is.EqualTo(colocatedPath));
+            Assert.That(plan.DestinationAuthorFolderPath, Is.EqualTo(sourceAuthorFolder));
             Assert.That(plan.ShouldUpdateStoredAuthorPath, Is.False);
         }
 
@@ -315,13 +322,15 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(true, false)]
         public void should_honor_media_type_rename_settings_in_shared_planner(bool renameAudiobooks, bool renameEbooks)
         {
+            var audiobookRoot = @"C:\audiobooks".AsOsAgnostic();
+            var ebookRoot = @"C:\ebooks".AsOsAgnostic();
             var fileNameBuilder = DispatchProxy.Create<IBuildFileNames, BuildFileNamesProxy>();
             var fileNameProxy = (BuildFileNamesProxy)(object)fileNameBuilder;
             fileNameProxy.AuthorFolderFactory = (author, _) => author.Name;
             fileNameProxy.BookFileNameFactory = (_, _, file, config) =>
             {
                 var effective = config.GetForMediaType(file.MediaType);
-                return "Book/" + (effective.RenameBooks ? "renamed" : "original");
+                return Path.Combine("Book", effective.RenameBooks ? "renamed" : "original");
             };
             var namingConfig = NamingConfig.Default;
             namingConfig.RenameBooks = renameAudiobooks;
@@ -333,13 +342,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "Joe Abercrombie",
-                AudiobookRootFolderPath = "/audiobooks",
-                EbookRootFolderPath = "/ebooks"
+                AudiobookRootFolderPath = audiobookRoot,
+                EbookRootFolderPath = ebookRoot
             };
             var book = new Book { Id = 42, AuthorId = author.Id };
             var audiobook = new BookFile
             {
-                Path = "/audiobooks/Joe/Book/original.mp3",
+                Path = Path.Combine(audiobookRoot, "Joe", "Book", "original.mp3"),
                 EditionId = 7,
                 Edition = new Edition { Id = 7, BookId = book.Id, Book = book },
                 Quality = new QualityModel(Quality.MP3),
@@ -347,7 +356,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
             var ebook = new BookFile
             {
-                Path = "/ebooks/Joe/Book/original.epub",
+                Path = Path.Combine(ebookRoot, "Joe", "Book", "original.epub"),
                 EditionId = 8,
                 Edition = new Edition { Id = 8, BookId = book.Id, Book = book },
                 Quality = new QualityModel(Quality.EPUB),
@@ -357,26 +366,28 @@ namespace Chaptarr.Core.Test.MediaFiles
             var audiobookPlan = service.GetOrganizeDestination(audiobook, author, false);
             var ebookPlan = service.GetOrganizeDestination(ebook, author, false);
 
-            Assert.That(audiobookPlan.DestinationPath, Does.EndWith(renameAudiobooks ? "/Book/renamed.mp3" : "/Book/original.mp3"));
-            Assert.That(ebookPlan.DestinationPath, Does.EndWith(renameEbooks ? "/Book/renamed.epub" : "/Book/original.epub"));
+            Assert.That(audiobookPlan.DestinationPath, Does.EndWith(Path.Combine("Book", renameAudiobooks ? "renamed.mp3" : "original.mp3")));
+            Assert.That(ebookPlan.DestinationPath, Does.EndWith(Path.Combine("Book", renameEbooks ? "renamed.epub" : "original.epub")));
         }
 
         [Test]
         public void should_route_managed_import_to_stored_media_author_path()
         {
+            var rootFolder = @"C:\library".AsOsAgnostic();
+            var authorFolder = Path.Combine(rootFolder, "A.F. Kay");
             var fileNameBuilder = DispatchProxy.Create<IBuildFileNames, BuildFileNamesProxy>();
             var fileNameProxy = (BuildFileNamesProxy)(object)fileNameBuilder;
-            fileNameProxy.BookFileNameFactory = (_, _, _, _) => "Book/file";
+            fileNameProxy.BookFileNameFactory = (_, _, _, _) => Path.Combine("Book", "file");
             var namingConfigService = DispatchProxy.Create<INamingConfigService, NamingConfigServiceProxy>();
             var authorPathBuilder = DispatchProxy.Create<IBuildAuthorPaths, AuthorPathBuilderProxy>();
-            ((AuthorPathBuilderProxy)(object)authorPathBuilder).PathFactory = (_, _) => "/library/A.F. Kay";
+            ((AuthorPathBuilderProxy)(object)authorPathBuilder).PathFactory = (_, _) => authorFolder;
             var service = CreateService(fileNameBuilder, namingConfigService, authorPathBuilder: authorPathBuilder);
             var author = new Author
             {
                 Id = 1,
                 Name = "A. F. Kay",
-                AudiobookRootFolderPath = "/library",
-                AudiobookPath = "/library/A.F. Kay"
+                AudiobookRootFolderPath = rootFolder,
+                AudiobookPath = authorFolder
             };
             var book = new Book { Id = 42, AuthorId = author.Id, Author = author };
             var edition = new Edition { Id = 7, BookId = book.Id, Book = book };
@@ -387,7 +398,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
             var localBook = new NzbDrone.Core.Parser.Model.LocalBook
             {
-                Path = "/downloads/file.mp3",
+                Path = Path.Combine(@"C:\downloads".AsOsAgnostic(), "file.mp3"),
                 Author = author,
                 Book = book,
                 Edition = edition,
@@ -396,7 +407,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var destination = service.GetImportDestinationPath(bookFile, localBook);
 
-            Assert.That(destination, Is.EqualTo("/library/A.F. Kay/Book/file.mp3"));
+            Assert.That(destination, Is.EqualTo(Path.Combine(authorFolder, "Book", "file.mp3")));
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
