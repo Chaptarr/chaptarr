@@ -29,6 +29,7 @@ using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
+using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging;
@@ -105,7 +106,6 @@ namespace Chaptarr.Api.V1.Author
         private readonly IEventAggregator _eventAggregator;
 	        private readonly IAppFolderInfo _appFolderInfo;
 	        private readonly IBuildFileNames _fileNameBuilder;
-	        private readonly IIngestQueueRepository _ingestQueue;
 	        private readonly Logger _logger;
 	        private readonly object _importStateLock = new object();
 	        private readonly HashSet<int> _activeImportCommands = new HashSet<int>();
@@ -124,7 +124,6 @@ namespace Chaptarr.Api.V1.Author
                             IEventAggregator eventAggregator,
                             IAppFolderInfo appFolderInfo,
                             IBuildFileNames fileNameBuilder,
-                            IIngestQueueRepository ingestQueue,
                             Logger logger,
                             RecycleBinValidator recycleBinValidator,
                             RootFolderValidator rootFolderValidator,
@@ -153,7 +152,6 @@ namespace Chaptarr.Api.V1.Author
             _eventAggregator = eventAggregator;
             _appFolderInfo = appFolderInfo;
             _fileNameBuilder = fileNameBuilder;
-            _ingestQueue = ingestQueue;
 
             _authorUpdateDebouncer = new Debouncer(FlushPendingAuthorUpdates, TimeSpan.FromMilliseconds(500), executeRestartsTimer: true);
 
@@ -967,39 +965,26 @@ namespace Chaptarr.Api.V1.Author
                     });
                 }
 
-                // Collect folder paths for ingest queue purge
-                var authorFolders = new List<string>();
-                if (!string.IsNullOrWhiteSpace(author.Path))
-                {
-                    authorFolders.Add(author.Path);
-                }
-
-                if (!string.IsNullOrWhiteSpace(author.AudiobookPath))
-                {
-                    authorFolders.Add(author.AudiobookPath);
-                }
-
-                if (!string.IsNullOrWhiteSpace(author.EbookPath))
-                {
-                    authorFolders.Add(author.EbookPath);
-                }
-
-                // Delete author (no file deletion)
-                _authorService.DeleteAuthorForReadd(id);
-
-                // Purge ingest queue so rescan treats files as new
-                foreach (var folder in authorFolders.Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    _ingestQueue.PurgeUnderPath(folder);
-                }
+                // Delete the author metadata but retain the existing BookFile rows. Synchronous
+                // deletion handlers unlink those rows to EditionId=0 without discarding their
+                // stored tags/media evidence; keep only their local row IDs for a targeted retry.
+                var retainedBookFileIds = _authorService.DeleteAuthorForReadd(id) ?? new List<int>();
 
                 // Re-add from scratch
                 var newAuthor = await _authorLibraryService.AddAuthorAsync(foreignAuthorId, config);
 
-                if (newAuthor != null && newAuthor.Id > 0)
+                if (newAuthor != null && newAuthor.Id > 0 && retainedBookFileIds.Any())
                 {
                     _commandQueueManager.Push(
-                        new RefreshAuthorCommand(newAuthor.Id, isNewAuthor: true) { ForceRefresh = true },
+                        new RetryUnmappedMatchCommand
+                        {
+                            MediaType = "all",
+                            UnmappedFiles = new UnmappedFilesSelection
+                            {
+                                Scope = "selected",
+                                BookFileIds = retainedBookFileIds
+                            }
+                        },
                         CommandPriority.Normal,
                         CommandTrigger.Manual);
                 }

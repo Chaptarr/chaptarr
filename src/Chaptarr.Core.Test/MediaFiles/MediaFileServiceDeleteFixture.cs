@@ -73,8 +73,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<BookFile> ReplacementAdditions { get; } = new List<BookFile>();
             public List<BookFile> ReplacementRemovals { get; } = new List<BookFile>();
             public BookFile DeletedSingle { get; private set; }
+            public List<BookFile> UpdatedMany { get; } = new List<BookFile>();
             public Func<int, BookFile> GetByIdHandler { get; set; }
             public Func<IEnumerable<int>, IEnumerable<BookFile>> GetByIdsHandler { get; set; }
+            public Func<int, IEnumerable<BookFile>> GetFilesByEditionHandler { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -87,6 +89,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     case nameof(IMediaFileRepository.DeleteMany):
                         DeletedMany.Clear();
                         DeletedMany.AddRange((IEnumerable<BookFile>)args[0]);
+                        return null;
+
+                    case nameof(IMediaFileRepository.UpdateMany):
+                        UpdatedMany.Clear();
+                        UpdatedMany.AddRange((IEnumerable<BookFile>)args[0]);
                         return null;
 
                     case nameof(IMediaFileRepository.ReplaceMany):
@@ -104,6 +111,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                     case nameof(IMediaFileRepository.UnlinkFilesByBook):
                     case nameof(IMediaFileRepository.DeleteFilesByBook):
                         return null;
+
+                    case nameof(IMediaFileRepository.GetFilesByEdition):
+                        return GetFilesByEditionHandler?.Invoke((int)args[0]) ?? Enumerable.Empty<BookFile>();
 
                     case nameof(IMediaFileRepository.Get):
                         if (args?.Length == 1 && args[0] is int id)
@@ -233,6 +243,36 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { oldFile.Path }));
             Assert.That(events.Events.OfType<BookFileDeletedEvent>().Single().BookFile.Edition.Book.Title, Is.EqualTo("Test Book"));
             Assert.That(events.Events.OfType<BookFilesAddedEvent>().Single().BookFiles, Is.EqualTo(new[] { replacement }));
+        }
+
+        [Test]
+        public void edition_delete_should_retain_book_file_rows_as_unmapped()
+        {
+            var files = new List<BookFile>
+            {
+                new BookFile { Id = 41, EditionId = 100, Path = "/library/Frank Herbert/Book One.m4b" },
+                new BookFile { Id = 42, EditionId = 100, Path = "/library/Frank Herbert/Book Two.m4b" }
+            };
+            var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
+            var repoProxy = (MediaFileRepositoryProxy)(object)repo;
+            repoProxy.GetFilesByEditionHandler = editionId =>
+            {
+                Assert.That(editionId, Is.EqualTo(100));
+                return files;
+            };
+            var sut = new MediaFileService(
+                repo,
+                new RecordingEventAggregator(),
+                new RecordingIngestQueueRepository(),
+                LogManager.GetLogger("test"));
+
+            sut.Handle(new EditionDeletedEvent(new Edition { Id = 100 }));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(repoProxy.UpdatedMany.Select(file => file.Id), Is.EquivalentTo(new[] { 41, 42 }));
+                Assert.That(repoProxy.UpdatedMany, Has.All.Matches<BookFile>(file => file.EditionId == 0));
+            });
         }
 
         [Test]

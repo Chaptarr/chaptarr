@@ -32,7 +32,7 @@ namespace NzbDrone.Core.Books
             // Purge/re-add deliberately retains files, so production must preserve the import
             // history that prevents a still-seeding download from being imported again.
             // The default exists only for lightweight test doubles.
-            void DeleteAuthorForReadd(int authorId)
+            List<int> DeleteAuthorForReadd(int authorId)
             {
                 throw new NotSupportedException();
             }
@@ -308,9 +308,9 @@ namespace NzbDrone.Core.Books
 	            DeleteAuthorsInternal(new List<int> { authorId }, deleteFiles, addImportListExclusion, false);
 	        }
 
-	        public void DeleteAuthorForReadd(int authorId)
+	        public List<int> DeleteAuthorForReadd(int authorId)
 	        {
-	            DeleteAuthorsInternal(new List<int> { authorId }, false, false, true);
+	            return DeleteAuthorsInternal(new List<int> { authorId }, false, false, true);
 	        }
 
 	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
@@ -318,12 +318,13 @@ namespace NzbDrone.Core.Books
 	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false);
 	        }
 
-	        private void DeleteAuthorsInternal(
+	        private List<int> DeleteAuthorsInternal(
 	            List<int> authorIds,
 	            bool deleteFiles,
 	            bool addImportListExclusion,
 	            bool preserveRetainedFileHistory)
 	        {
+	            var retainedBookFileIds = new List<int>();
 	            var distinctIds = (authorIds ?? new List<int>())
 	                .Where(id => id > 0)
 	                .Distinct()
@@ -331,7 +332,7 @@ namespace NzbDrone.Core.Books
 
 	            if (!distinctIds.Any())
 	            {
-	                return;
+	                return retainedBookFileIds;
 	            }
 
 	            _cache.Clear();
@@ -354,10 +355,11 @@ namespace NzbDrone.Core.Books
 	                        .Where(file => file != null && file.Id > 0)
 	                        .ToList()
 	                    : new List<BookFile>();
-	                var retainedBookFileIds = retainedBookFiles
+	                var authorRetainedBookFileIds = retainedBookFiles
 	                    .Select(file => file.Id)
 	                    .Distinct()
 	                    .ToList();
+	                retainedBookFileIds.AddRange(authorRetainedBookFileIds);
 	                var retainedBookFileEditionIds = retainedBookFiles
 	                    .Where(file => !string.IsNullOrWhiteSpace(file.Edition?.ForeignEditionId))
 	                    .GroupBy(file => file.Id)
@@ -368,12 +370,14 @@ namespace NzbDrone.Core.Books
 	                    deleteFiles,
 	                    addImportListExclusion,
 	                    preserveRetainedFileHistory,
-	                    retainedBookFileIds,
+	                    authorRetainedBookFileIds,
 	                    retainedBookFileEditionIds));
 	                _providerAliasService?.DeleteAliases("Author", author.Id);
 	            }
 
 	            _authorRepository.DeleteMany(authors.Select(author => author.Id));
+
+	            return retainedBookFileIds.Distinct().ToList();
 	        }
 
         public Author FindByProviderId(string provider, string providerId)

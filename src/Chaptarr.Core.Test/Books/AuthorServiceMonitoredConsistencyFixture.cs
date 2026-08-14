@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -9,6 +10,7 @@ using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.RootFolders;
 
@@ -120,7 +122,22 @@ namespace Chaptarr.Core.Test.Books
             public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders) => GetBestRootFolder(path, allRootFolders)?.Path;
         }
 
-        private static AuthorService BuildService(StubAuthorRepository repository, IRootFolderService rootFolderService = null, StubEventAggregator eventAggregator = null)
+        private class MediaFileServiceProxy : DispatchProxy
+        {
+            public List<BookFile> Files { get; set; } = new List<BookFile>();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IMediaFileService.GetFilesByAuthor))
+                {
+                    return Files;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IMediaFileService.{targetMethod?.Name}");
+            }
+        }
+
+        private static AuthorService BuildService(StubAuthorRepository repository, IRootFolderService rootFolderService = null, StubEventAggregator eventAggregator = null, IMediaFileService mediaFileService = null)
         {
             return new AuthorService(
                 repository,
@@ -130,7 +147,7 @@ namespace Chaptarr.Core.Test.Books
                 commandQueueManager: null,
                 cacheManager: new CacheManager(),
                 bookRepository: null,
-                mediaFileService: null,
+                mediaFileService: mediaFileService,
                 logger: LogManager.GetCurrentClassLogger());
         }
 
@@ -160,6 +177,49 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repository.Get(first.Id), Is.Null);
             Assert.That(repository.Get(second.Id), Is.Null);
             Assert.That(repository.DeleteManyCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void delete_author_for_readd_should_return_retained_book_file_ids_and_delete_old_author()
+        {
+            var author = new Author { Id = 10, Name = "Frank Herbert" };
+            var repository = new StubAuthorRepository(new Dictionary<int, Author> { { author.Id, author } });
+            var mediaFileService = DispatchProxy.Create<IMediaFileService, MediaFileServiceProxy>();
+            ((MediaFileServiceProxy)(object)mediaFileService).Files = new List<BookFile>
+            {
+                new BookFile
+                {
+                    Id = 41,
+                    EditionId = 101,
+                    Edition = new Edition { Id = 101, ForeignEditionId = "hc:edition:frank-one" }
+                },
+                new BookFile
+                {
+                    Id = 42,
+                    EditionId = 102,
+                    Edition = new Edition { Id = 102, ForeignEditionId = "hc:edition:wrong-brian" }
+                }
+            };
+            AuthorDeletedEvent deletion = null;
+            var events = new StubEventAggregator
+            {
+                OnPublish = published => deletion = published as AuthorDeletedEvent ?? deletion
+            };
+            var service = BuildService(repository, eventAggregator: events, mediaFileService: mediaFileService);
+
+            var retainedIds = service.DeleteAuthorForReadd(author.Id);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(retainedIds, Is.EquivalentTo(new[] { 41, 42 }));
+                Assert.That(repository.Get(author.Id), Is.Null);
+                Assert.That(deletion, Is.Not.Null);
+                Assert.That(deletion.DeleteFiles, Is.False);
+                Assert.That(deletion.PreserveRetainedFileHistory, Is.True);
+                Assert.That(deletion.RetainedBookFileIds, Is.EquivalentTo(retainedIds));
+                Assert.That(deletion.RetainedBookFileEditionIds[41], Is.EqualTo("hc:edition:frank-one"));
+                Assert.That(deletion.RetainedBookFileEditionIds[42], Is.EqualTo("hc:edition:wrong-brian"));
+            });
         }
 
         [Test]
