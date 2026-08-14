@@ -1094,7 +1094,7 @@ namespace NzbDrone.Core.Books
             offset = Math.Max(0, offset);
             pageSize = Math.Clamp(pageSize, 1, 500);
 
-            var allowedSortKeys = new HashSet<string> { "cleantitle", "title", "authortitle", "releasedate", "added", "id" };
+            var allowedSortKeys = new HashSet<string> { "cleantitle", "title", "authortitle", "releasedate", "added", "id", "sizeondisk" };
             if (string.IsNullOrWhiteSpace(sortKey) || !allowedSortKeys.Contains(sortKey.ToLowerInvariant()))
             {
                 sortKey = "title";
@@ -1110,7 +1110,8 @@ namespace NzbDrone.Core.Books
                 ["authortitle"] = "LOWER(\"Authors\".\"Name\")",
                 ["releasedate"] = $"\"{tableName}\".\"ReleaseDate\"",
                 ["added"] = $"\"{tableName}\".\"Added\"",
-                ["id"] = $"\"{tableName}\".\"Id\""
+                ["id"] = $"\"{tableName}\".\"Id\"",
+                ["sizeondisk"] = $"COALESCE((SELECT SUM(bf.\"Size\") FROM \"Editions\" e INNER JOIN \"BookFiles\" bf ON bf.\"EditionId\" = e.\"Id\" WHERE e.\"BookId\" = \"{tableName}\".\"Id\"), 0)"
             };
 
             var normalizedSortKey = sortKey.ToLowerInvariant();

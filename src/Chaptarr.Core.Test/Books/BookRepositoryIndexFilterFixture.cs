@@ -143,6 +143,34 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void paged_books_should_sort_by_size_on_disk()
+        {
+            WithRepository(sut =>
+            {
+                var descending = sut.GetBooksPaged(
+                    offset: 0,
+                    pageSize: 100,
+                    sortKey: "sizeOnDisk",
+                    sortDirection: "DESC",
+                    includeUnmonitored: true);
+
+                // Sizes: book 8 = 789 + 790, book 4 = 456, book 3 = 123, the rest have no files.
+                Assert.That(descending.Records.Select(book => book.Id),
+                    Is.EqualTo(new[] { 8, 4, 3, 7, 6, 5, 2, 1 }));
+
+                var ascending = sut.GetBooksPaged(
+                    offset: 0,
+                    pageSize: 100,
+                    sortKey: "sizeOnDisk",
+                    sortDirection: "ASC",
+                    includeUnmonitored: true);
+
+                Assert.That(ascending.Records.Select(book => book.Id),
+                    Is.EqualTo(new[] { 1, 2, 5, 6, 7, 3, 4, 8 }));
+            });
+        }
+
+        [Test]
         public void find_existing_should_return_partial_results_without_weakening_strict_get()
         {
             WithRepository(sut =>
