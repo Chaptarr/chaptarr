@@ -242,14 +242,17 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
-                            "Clarified that Docker is currently the only supported way to run Chaptarr. Native installs are being worked on."
+                            "Preview Rename (Organize & Rename) now has an option to move the files you select into the author folder that uses Chaptarr's canonical author spelling. It applies only to that run and is off by default. Without it, files are organized inside the discovered author folder they are already in, so the author folders other tools point at, such as Audiobookshelf or Storyteller, stay where they are."
                         },
                         Fixed = new List<string>
                         {
-                            "Reduced idle memory usage after large imports.",
-                            "Scanning folders with a large number of audiobook files is more efficient, both in Chaptarr and for the metadata server.",
-                            "System page links now point to the project's GitHub and wiki instead of outdated destinations.",
-                            "Some Hardcover images are currently caught behind their bot protection, which looks like a misconfiguration on their side. Chaptarr now treats those as simply unavailable and moves on, instead of recording an alarming error."
+                            "Reduced RSS memory use for very large libraries and long Wanted lists.",
+                            "Release matching now only uses the edition title shown on the book, including for books set to Any Edition Ok. This is a trial change to reduce incorrect grabs. If a release you want is skipped, Interactive Search still shows it.",
+                            "Organize no longer renames files when Rename Books is turned off.",
+                            "Shift clicking now selects ranges correctly in Organize, Retag, and the author list.",
+                            "Purge & Re-add, the bottom option when deleting from an author's page, now re-matches that author's files from scratch using the latest metadata. Nothing on disk is moved.",
+                            "Dashboards and other tools running on a different address can reach the API again.",
+                            "API request logging works again behind reverse proxy subpaths, with secrets removed the same way Chaptarr does everywhere else."
                         }
                     }
                 }
