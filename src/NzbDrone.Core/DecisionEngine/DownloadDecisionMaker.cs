@@ -420,6 +420,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (tokens.Count == 0)
             {
+                _logger.Debug("RSS FTS recall skipped for release '{0}': no usable tokens in the release title or feed metadata", report.Title);
                 return null;
             }
 
@@ -441,6 +442,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (recalls.Count == 0)
             {
+                _logger.Debug("RSS FTS recall found no monitored candidates for release '{0}' from {1} token(s)", report.Title, tokens.Count);
                 return null;
             }
 
@@ -477,6 +479,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (matches.Count == 0)
             {
+                _logger.Debug("RSS FTS recall produced no title/author match for release '{0}' across {1} shortlisted monitored book(s)", report.Title, recalls.Count);
                 return null;
             }
 
