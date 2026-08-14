@@ -99,7 +99,7 @@ Environment variables:
 Note: Chaptarr does not create PostgreSQL databases automatically; create the databases and grant the configured user access.
 
 ## Building from Source
-Building from source requires the .NET 10 SDK, Node.js, and Yarn.
+Building from source requires the .NET 10 SDK, Node.js, and Yarn. When running Chaptarr natively, install FFmpeg for your operating system and make sure both `ffmpeg` and `ffprobe` are available on the `PATH` used to start Chaptarr. Normal source builds do not bundle them automatically; the official Docker image already includes them.
 
 **Linux / macOS:**
 ```bash

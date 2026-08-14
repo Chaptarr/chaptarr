@@ -38,6 +38,7 @@ Thanks for your interest in contributing to Chaptarr.
 ### Prerequisites
 - .NET SDK compatible with the repo targets (currently `net10.0`)
 - Node.js + Yarn (see `package.json` `volta` section for recommended versions)
+- FFmpeg and FFprobe on `PATH` when running or testing Chaptarr's native media features
 - Git
 
 ### Building Chaptarr

@@ -702,6 +702,7 @@
   "Exists": "Exists",
   "ExportCustomFormat": "Export Custom Format",
   "External": "External",
+  "ExternalToolsHealthCheckMessage": "Required media tools are unavailable: {0}. Install FFmpeg, including FFprobe, and make sure both are available on Chaptarr's PATH.",
   "ExternalUpdater": "{appName} is configured to use an external update mechanism",
   "ExtraFileExtensionsHelpText": "Comma separated list of extra files to import",
   "ExtraFileExtensionsHelpTextsExamples": "Examples: '.jpg, .png, .cue, .m3u, .opf, .json' or 'jpg,png,cue,m3u,opf,json'",
