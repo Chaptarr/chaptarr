@@ -70,17 +70,11 @@ jobs:
             tags+=("$image:latest")
           fi
 
+          # Exact versions only. No rolling major/minor tags: every Chaptarr release
+          # so far is 0.9.x, so a ":0.9" tag would just be a second "latest" that
+          # also tracks develop. Users pin main, develop, or an exact version.
           while IFS= read -r tag; do
-            version="${tag#v}"
-            tags+=("$image:$version")
-
-            IFS=. read -r major minor patch extra <<< "$version"
-            if [[ -n "${major:-}" && -n "${minor:-}" && -z "${extra:-}" ]]; then
-              tags+=("$image:$major.$minor")
-              if [[ -n "${patch:-}" ]]; then
-                tags+=("$image:$major.$minor.$patch")
-              fi
-            fi
+            tags+=("$image:${tag#v}")
           done < <(git tag --points-at "$sha" 'v*' | sort -V)
         done
 
