@@ -46,7 +46,12 @@ class OrganizePreviewModalContent extends Component {
   // Control
 
   getSelectedIds = () => {
-    return getSelectedIds(this.state.selectedState);
+    const eligibleIds = new Set(
+      this.props.items
+        .filter((item) => item.canOrganize !== false)
+        .map((item) => item.bookFileId)
+    );
+    return getSelectedIds(this.state.selectedState).filter((id) => eligibleIds.has(id));
   };
 
   //
@@ -66,6 +71,10 @@ class OrganizePreviewModalContent extends Component {
     this.props.onOrganizePress(this.getSelectedIds());
   };
 
+  onMoveToCanonicalAuthorFolderChange = ({ value }) => {
+    this.props.onMoveToCanonicalAuthorFolderChange({ value });
+  };
+
   //
   // Render
 
@@ -77,6 +86,8 @@ class OrganizePreviewModalContent extends Component {
       items,
       trackFormat,
       renameBooksEnabled,
+      canMoveToCanonicalAuthorFolder,
+      moveToCanonicalAuthorFolder,
       onModalClose
     } = this.props;
 
@@ -87,6 +98,23 @@ class OrganizePreviewModalContent extends Component {
     } = this.state;
 
     const selectAllValue = getValue(allSelected, allUnselected);
+    const selectedIds = this.getSelectedIds();
+    const selectedIdSet = new Set(selectedIds);
+    const filesByEdition = items.reduce((result, item) => {
+      if (item.canOrganize === false) {
+        return result;
+      }
+
+      const editionFiles = result.get(item.editionId) || [];
+      editionFiles.push(item);
+      result.set(item.editionId, editionFiles);
+      return result;
+    }, new Map());
+    const hasPartiallySelectedEdition = moveToCanonicalAuthorFolder &&
+      Array.from(filesByEdition.values()).some((editionFiles) => {
+        const selectedCount = editionFiles.filter((item) => selectedIdSet.has(item.bookFileId)).length;
+        return selectedCount > 0 && selectedCount < editionFiles.length;
+      });
 
     return (
       <ModalContent onModalClose={onModalClose}>
@@ -105,6 +133,23 @@ class OrganizePreviewModalContent extends Component {
               <div>
                 {translate('ErrorLoadingPreviews')}
               </div>
+          }
+
+          {
+            !isFetching && isPopulated && canMoveToCanonicalAuthorFolder &&
+              <label className={styles.canonicalAuthorFolderOption}>
+                <span className={styles.canonicalAuthorFolderLabel}>
+                  {translate('MoveSelectedFilesToCanonicalAuthorFolder')}
+                </span>
+
+                <CheckInput
+                  containerClassName={styles.canonicalAuthorFolderInputContainer}
+                  className={styles.canonicalAuthorFolderInput}
+                  name="moveToCanonicalAuthorFolder"
+                  value={moveToCanonicalAuthorFolder}
+                  onChange={this.onMoveToCanonicalAuthorFolderChange}
+                />
+              </label>
           }
 
           {
@@ -132,6 +177,13 @@ class OrganizePreviewModalContent extends Component {
                   }
                 </Alert>
 
+                {
+                  hasPartiallySelectedEdition &&
+                    <Alert kind={kinds.WARNING}>
+                      {translate('CanonicalAuthorFolderPartialEditionSelectionWarning')}
+                    </Alert>
+                }
+
                 <div className={styles.previews}>
                   {
                     items.map((item) => {
@@ -141,7 +193,9 @@ class OrganizePreviewModalContent extends Component {
                           id={item.bookFileId}
                           existingPath={item.existingPath}
                           newPath={item.newPath}
-                          isSelected={selectedState[item.bookFileId]}
+                          canOrganize={item.canOrganize !== false}
+                          reason={item.reason}
+                          isSelected={item.canOrganize !== false && selectedState[item.bookFileId]}
                           onSelectedChange={this.onSelectedChange}
                         />
                       );
@@ -172,6 +226,7 @@ class OrganizePreviewModalContent extends Component {
 
           <Button
             kind={kinds.PRIMARY}
+            isDisabled={!selectedIds.length}
             onPress={this.onOrganizePress}
           >
             {translate('Organize')}
@@ -190,6 +245,9 @@ OrganizePreviewModalContent.propTypes = {
   path: PropTypes.string.isRequired,
   trackFormat: PropTypes.string,
   renameBooksEnabled: PropTypes.bool,
+  canMoveToCanonicalAuthorFolder: PropTypes.bool.isRequired,
+  moveToCanonicalAuthorFolder: PropTypes.bool.isRequired,
+  onMoveToCanonicalAuthorFolderChange: PropTypes.func.isRequired,
   onOrganizePress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

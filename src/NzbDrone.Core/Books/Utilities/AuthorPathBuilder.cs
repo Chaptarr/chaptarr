@@ -167,12 +167,14 @@ namespace NzbDrone.Core.Books
 
             // Use the discovered path for the specific media type if available
             if (isEbook && !string.IsNullOrWhiteSpace(author.EbookPath) &&
-                !(author.EbookRootFolderPath.IsNotNullOrWhiteSpace() && author.EbookPath.PathEquals(author.EbookRootFolderPath)))
+                !author.EbookPath.PathEquals(rootFolder) &&
+                rootFolder.IsParentPath(author.EbookPath))
             {
                 return author.EbookPath;
             }
             else if (!isEbook && !string.IsNullOrWhiteSpace(author.AudiobookPath) &&
-                     !(author.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() && author.AudiobookPath.PathEquals(author.AudiobookRootFolderPath)))
+                     !author.AudiobookPath.PathEquals(rootFolder) &&
+                     rootFolder.IsParentPath(author.AudiobookPath))
             {
                 return author.AudiobookPath;
             }

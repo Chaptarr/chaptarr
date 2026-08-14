@@ -184,12 +184,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     DurationSeconds = GetDurationSeconds(path)
                 };
 
-                // Get the author's folder (books are stored under author path)
-                // Use media-type-specific path: audiobooks go to AudiobookPath, ebooks to EbookPath
-                var bookFolder = book.MediaType == 0
-                    ? book.Author?.AudiobookPath
-                    : book.Author?.EbookPath;
-                
                 // Use UpgradeMediaFiles to respect Media Management (rename + move/copy/hardlink)
                 // Determine copyOnly based on context:
                 // - If the file is already under the author's folder, moving is safe (copyOnly=false)

@@ -67,7 +67,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return bookFile;
             }
 
-            public BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null) => throw new NotImplementedException();
+            public BookFileMovePlan GetOrganizeDestination(BookFile bookFile, Author author, bool moveToCanonicalAuthorFolder, RenameBatchContext renameBatchContext = null) => throw new NotImplementedException();
+            public BookFile MoveBookFile(BookFile bookFile, Author author, BookFileMovePlan plan, RenameBatchContext renameBatchContext = null) => throw new NotImplementedException();
             public BookFile CopyBookFile(BookFile bookFile, LocalBook localBook) => throw new NotImplementedException();
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook) => throw new NotImplementedException();
         }

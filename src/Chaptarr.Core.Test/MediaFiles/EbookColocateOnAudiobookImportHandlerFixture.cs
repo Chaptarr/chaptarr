@@ -137,9 +137,18 @@ namespace Chaptarr.Core.Test.MediaFiles
                 _destinationFactory = destinationFactory;
             }
 
-            public BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null)
+            public BookFileMovePlan GetOrganizeDestination(BookFile bookFile, Author author, bool moveToCanonicalAuthorFolder, RenameBatchContext renameBatchContext = null)
             {
-                bookFile.Path = _destinationFactory(bookFile);
+                return new BookFileMovePlan
+                {
+                    CanOrganize = true,
+                    DestinationPath = _destinationFactory(bookFile)
+                };
+            }
+
+            public BookFile MoveBookFile(BookFile bookFile, Author author, BookFileMovePlan plan, RenameBatchContext renameBatchContext = null)
+            {
+                bookFile.Path = plan.DestinationPath;
                 return bookFile;
             }
 

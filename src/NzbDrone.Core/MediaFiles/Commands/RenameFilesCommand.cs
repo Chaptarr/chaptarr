@@ -6,6 +6,7 @@ namespace NzbDrone.Core.MediaFiles.Commands
     public class RenameFilesCommand : Command
     {
         public int AuthorId { get; set; }
+        public bool MoveToCanonicalAuthorFolder { get; set; }
         public List<int> Files { get; set; }
 
         public override bool SendUpdatesToClient => true;
@@ -15,10 +16,11 @@ namespace NzbDrone.Core.MediaFiles.Commands
         {
         }
 
-        public RenameFilesCommand(int authorId, List<int> files)
+        public RenameFilesCommand(int authorId, List<int> files, bool moveToCanonicalAuthorFolder = false)
         {
             AuthorId = authorId;
             Files = files;
+            MoveToCanonicalAuthorFolder = moveToCanonicalAuthorFolder;
         }
     }
 }

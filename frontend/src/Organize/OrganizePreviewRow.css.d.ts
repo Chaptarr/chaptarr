@@ -2,6 +2,7 @@
 // Please do not change this file!
 interface CssExports {
   'path': string;
+  'reason': string;
   'row': string;
   'selectedContainer': string;
 }

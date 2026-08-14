@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
@@ -50,7 +51,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
-            public Author UpdateAuthor(Author author) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author) => Author = author;
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
@@ -83,7 +84,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public List<IFileInfo> FilterUnchangedFiles(List<IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
-            public List<BookFile> GetFilesByBook(int bookId) => throw new NotImplementedException();
+            public List<BookFile> GetFilesByBook(int bookId) => Files
+                .Where(file => (file.Edition?.BookId ?? file.Edition?.Book?.Id ?? 0) == bookId)
+                .ToList();
             public List<BookFile> GetFilesByBooks(List<int> bookIds) => throw new NotImplementedException();
             public List<BookFile> GetFilesByEdition(int editionId) => throw new NotImplementedException();
             public List<BookFile> GetUnmappedFiles() => throw new NotImplementedException();
@@ -100,11 +103,27 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             public List<int> MovedFileIds { get; } = new();
             public Func<BookFile, string> DestinationFactory { get; set; }
+            public Func<BookFile, bool, BookFileMovePlan> PlanFactory { get; set; }
+            public List<bool> CanonicalRequests { get; } = new();
+            public List<BookFileMovePlan> ExecutedPlans { get; } = new();
 
-            public BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null)
+            public BookFileMovePlan GetOrganizeDestination(BookFile bookFile, Author author, bool moveToCanonicalAuthorFolder, RenameBatchContext renameBatchContext = null)
+            {
+                CanonicalRequests.Add(moveToCanonicalAuthorFolder);
+                return PlanFactory?.Invoke(bookFile, moveToCanonicalAuthorFolder) ?? new BookFileMovePlan
+                {
+                    CanOrganize = true,
+                    SourceAuthorFolderPath = "/books/Joe",
+                    DestinationAuthorFolderPath = "/books/Joe",
+                    DestinationPath = DestinationFactory?.Invoke(bookFile) ?? bookFile.Path
+                };
+            }
+
+            public BookFile MoveBookFile(BookFile bookFile, Author author, BookFileMovePlan plan, RenameBatchContext renameBatchContext = null)
             {
                 MovedFileIds.Add(bookFile.Id);
-                var destination = DestinationFactory?.Invoke(bookFile);
+                ExecutedPlans.Add(plan);
+                var destination = plan.DestinationPath;
                 if (destination != null)
                 {
                     bookFile.Path = destination;
@@ -118,49 +137,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string GetImportDestinationPath(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => throw new NotImplementedException();
         }
 
-        private sealed class StubNamingConfigService : INamingConfigService
-        {
-            public NamingConfig Config { get; set; }
-
-            public NamingConfig GetConfig() => Config;
-            public void Save(NamingConfig namingConfig) => throw new NotImplementedException();
-        }
-
-        private sealed class PreviewFileNameBuilder : IBuildFileNames
-        {
-            public string BuildBookFileName(Author author, Edition edition, BookFile bookFile, NamingConfig namingConfig = null, List<CustomFormat> customFormats = null)
-            {
-                var mediaType = bookFile.MediaType ?? NzbDrone.Core.MediaFiles.BookFile.DetermineMediaType(bookFile.Quality);
-                var effectiveConfig = namingConfig.GetForMediaType(mediaType);
-                var fileName = effectiveConfig.RenameBooks
-                    ? $"renamed-{mediaType}"
-                    : Path.GetFileNameWithoutExtension(bookFile.Path);
-
-                return Path.Combine(edition.Title, fileName);
-            }
-
-            public string BuildBookFilePath(Author author, Edition edition, string fileName, string extension) => throw new NotImplementedException();
-            public string BuildBookPath(Author author) => throw new NotImplementedException();
-            public BasicNamingConfig GetBasicNamingConfig(NamingConfig nameSpec) => throw new NotImplementedException();
-            public string GetAuthorFolder(Author author, NamingConfig namingConfig = null, string mediaType = "audiobook") => throw new NotImplementedException();
-        }
-
-        private sealed class PreviewAuthorFolderPathResolver : IAuthorFolderPathResolver
-        {
-            public string GetAuthorPath(string rootFolderPath, Author author, string mediaType)
-            {
-                return Path.Combine(rootFolderPath, author.Name);
-            }
-        }
-
-        private sealed class NonColocatingPlanner : IEbookColocationPlanner
-        {
-            public EbookColocationPlan Plan(BookFile bookFile, Author author, Edition edition, string fileNameOnlyWithExtension, RenameBatchContext batchContext = null)
-            {
-                return EbookColocationPlan.Skipped(EbookColocationSkipReason.RootNotMixedOrDisabled);
-            }
-        }
-
         private class ThrowingProxy<T> : DispatchProxy where T : class
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -171,11 +147,34 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private class DiskProviderProxy : DispatchProxy
         {
+            public HashSet<string> ExistingFolders { get; } = new(PathEqualityComparer.Instance);
+            public List<string> RemovedEmptySubfolders { get; } = new();
+            public List<string> DeletedFolders { get; } = new();
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IDiskProvider.FolderExists))
                 {
-                    return false;
+                    return ExistingFolders.Contains((string)args[0]);
+                }
+
+                if (targetMethod?.Name == nameof(IDiskProvider.RemoveEmptySubfolders))
+                {
+                    RemovedEmptySubfolders.Add((string)args[0]);
+                    return null;
+                }
+
+                if (targetMethod?.Name == nameof(IDiskProvider.GetFiles))
+                {
+                    return Enumerable.Empty<string>();
+                }
+
+                if (targetMethod?.Name == nameof(IDiskProvider.DeleteFolder))
+                {
+                    var folder = (string)args[0];
+                    DeletedFolders.Add(folder);
+                    ExistingFolders.Remove(folder);
+                    return null;
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IDiskProvider.{targetMethod?.Name}");
@@ -200,71 +199,15 @@ namespace Chaptarr.Core.Test.MediaFiles
             StubMediaFileService mediaFileService,
             RecordingMoveBookFiles mover,
             RecordingEventAggregator eventAggregator,
-            IBuildFileNames fileNameBuilder = null,
-            INamingConfigService namingConfigService = null,
-            IAuthorFolderPathResolver authorFolderPathResolver = null,
-            IEbookColocationPlanner ebookColocationPlanner = null)
+            IDiskProvider diskProvider = null)
         {
             return new RenameBookFileService(
                 new StubAuthorService { Author = author },
                 mediaFileService,
                 mover,
                 eventAggregator,
-                fileNameBuilder ?? DispatchProxy.Create<IBuildFileNames, ThrowingProxy<IBuildFileNames>>(),
-                namingConfigService ?? DispatchProxy.Create<INamingConfigService, ThrowingProxy<INamingConfigService>>(),
-                authorFolderPathResolver ?? DispatchProxy.Create<IAuthorFolderPathResolver, ThrowingProxy<IAuthorFolderPathResolver>>(),
-                ebookColocationPlanner ?? DispatchProxy.Create<IEbookColocationPlanner, ThrowingProxy<IEbookColocationPlanner>>(),
-                DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
+                diskProvider ?? DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
                 LogManager.GetCurrentClassLogger());
-        }
-
-        [TestCase(false, true)]
-        [TestCase(true, false)]
-        public void should_honor_media_type_rename_settings_in_organize_preview(bool renameAudiobooks, bool renameEbooks)
-        {
-            var author = new Author
-            {
-                Id = 1,
-                Name = "Joe Abercrombie",
-                AudiobookRootFolderPath = "/audiobooks",
-                EbookRootFolderPath = "/ebooks"
-            };
-
-            var book = new Book { Id = 20, Author = author };
-            var audiobookFile = BookFile(1, "/incoming/original-audio.mp3", Quality.MP3, "audiobook");
-            audiobookFile.Edition = new Edition { Id = 10, Title = "Audio Book", Book = book };
-
-            var ebookFile = BookFile(2, "/incoming/original-ebook.epub", Quality.EPUB, "ebook");
-            ebookFile.Edition = new Edition { Id = 11, Title = "Ebook", Book = book };
-
-            var mediaFileService = new StubMediaFileService
-            {
-                Files = new List<BookFile> { audiobookFile, ebookFile }
-            };
-
-            var namingConfig = NamingConfig.Default;
-            namingConfig.RenameBooks = renameAudiobooks;
-            namingConfig.EbookRenameBooks = renameEbooks;
-
-            var service = CreateService(
-                author,
-                mediaFileService,
-                new RecordingMoveBookFiles(),
-                new RecordingEventAggregator(),
-                new PreviewFileNameBuilder(),
-                new StubNamingConfigService { Config = namingConfig },
-                new PreviewAuthorFolderPathResolver(),
-                new NonColocatingPlanner());
-
-            var previews = service.GetRenamePreviews(author.Id);
-
-            var audiobookPreview = previews.Single(x => x.BookFileId == audiobookFile.Id);
-            var expectedAudiobookName = renameAudiobooks ? "renamed-audiobook.mp3" : "original-audio.mp3";
-            Assert.That(audiobookPreview.NewPath, Is.EqualTo(Path.Combine("/audiobooks", author.Name, "Audio Book", expectedAudiobookName)));
-
-            var ebookPreview = previews.Single(x => x.BookFileId == ebookFile.Id);
-            var expectedEbookName = renameEbooks ? "renamed-ebook.epub" : "original-ebook.epub";
-            Assert.That(ebookPreview.NewPath, Is.EqualTo(Path.Combine("/ebooks", author.Name, "Ebook", expectedEbookName)));
         }
 
         [Test]
@@ -323,6 +266,207 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void should_keep_unprovable_preview_row_visible_but_disabled()
+        {
+            var author = new Author { Id = 1, Name = "Joe Abercrombie" };
+            var file = BookFile(1, "/books/file.epub", Quality.EPUB, "ebook");
+            var mediaFileService = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var mover = new RecordingMoveBookFiles
+            {
+                PlanFactory = (_, _) => BookFileMovePlan.Skipped("The current author folder cannot be determined.")
+            };
+            var service = CreateService(author, mediaFileService, mover, new RecordingEventAggregator());
+
+            var preview = service.GetRenamePreviews(author.Id).Single();
+
+            Assert.That(preview.BookFileId, Is.EqualTo(file.Id));
+            Assert.That(preview.CanOrganize, Is.False);
+            Assert.That(preview.Reason, Is.EqualTo("The current author folder cannot be determined."));
+            Assert.That(preview.NewPath, Is.EqualTo(file.Path));
+        }
+
+        [Test]
+        public void should_expose_real_book_and_edition_ids_and_keep_book_preview_track_in_place()
+        {
+            var author = new Author { Id = 1, Name = "Joe Abercrombie" };
+            var file = BookFile(1, "/books/Joe/Book/file.epub", Quality.EPUB, "ebook");
+            file.EditionId = 22;
+            file.Edition = new Edition
+            {
+                Id = 22,
+                BookId = 21,
+                Book = new Book { Id = 21, AuthorId = author.Id }
+            };
+            var mediaFileService = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var mover = new RecordingMoveBookFiles
+            {
+                PlanFactory = (_, canonical) => new BookFileMovePlan
+                {
+                    CanOrganize = true,
+                    DestinationPath = canonical
+                        ? "/books/Joe Abercrombie/Book/file.epub"
+                        : "/books/Joe/Book/organized.epub"
+                }
+            };
+            var service = CreateService(author, mediaFileService, mover, new RecordingEventAggregator());
+
+            var preview = service.GetRenamePreviews(author.Id, bookId: 21).Single();
+
+            Assert.That(preview.BookId, Is.EqualTo(21));
+            Assert.That(preview.EditionId, Is.EqualTo(22));
+            Assert.That(preview.NewPath, Is.EqualTo("/books/Joe/Book/organized.epub"));
+            Assert.That(mover.CanonicalRequests, Is.EqualTo(new[] { false }));
+        }
+
+        [Test]
+        public void should_request_canonical_destination_for_author_preview_only_when_opted_in()
+        {
+            var author = new Author { Id = 1, Name = "Joe Abercrombie" };
+            var file = BookFile(1, "/books/Joe/Book/file.epub", Quality.EPUB, "ebook");
+            var mediaFileService = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var mover = new RecordingMoveBookFiles
+            {
+                PlanFactory = (bookFile, canonical) => new BookFileMovePlan
+                {
+                    CanOrganize = true,
+                    DestinationPath = canonical
+                        ? "/books/Joe Abercrombie/Book/file.epub"
+                        : "/books/Joe/Book/renamed.epub"
+                }
+            };
+            var service = CreateService(author, mediaFileService, mover, new RecordingEventAggregator());
+
+            var keepPreview = service.GetRenamePreviews(author.Id, "ebook").Single();
+            var canonicalPreview = service.GetRenamePreviews(author.Id, "ebook", true).Single();
+
+            Assert.That(keepPreview.NewPath, Is.EqualTo("/books/Joe/Book/renamed.epub"));
+            Assert.That(canonicalPreview.NewPath, Is.EqualTo("/books/Joe Abercrombie/Book/file.epub"));
+            Assert.That(mover.CanonicalRequests, Is.EqualTo(new[] { false, true }));
+        }
+
+        [Test]
+        public void should_execute_the_exact_precomputed_plan_and_update_applicable_stored_paths()
+        {
+            var sourceAuthorFolder = "/books/George R. R. Martin";
+            var canonicalAuthorFolder = "/books/George R.R. Martin";
+            var author = new Author
+            {
+                Id = 1,
+                Name = "George R.R. Martin",
+                Path = sourceAuthorFolder,
+                AudiobookPath = sourceAuthorFolder,
+                EbookPath = "/ebooks/George R.R. Martin"
+            };
+            var file = BookFile(1, sourceAuthorFolder + "/Wild Cards/file.mp3", Quality.MP3, "audiobook");
+            var mediaFileService = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var plan = new BookFileMovePlan
+            {
+                CanOrganize = true,
+                SourceAuthorFolderPath = sourceAuthorFolder,
+                DestinationAuthorFolderPath = canonicalAuthorFolder,
+                DestinationPath = canonicalAuthorFolder + "/Wild Cards/file.mp3",
+                ShouldUpdateStoredAuthorPath = true
+            };
+            var mover = new RecordingMoveBookFiles { PlanFactory = (_, _) => plan };
+            var service = CreateService(author, mediaFileService, mover, new RecordingEventAggregator());
+
+            service.Execute(new RenameFilesCommand(author.Id, new List<int> { file.Id }, true));
+
+            Assert.That(mover.ExecutedPlans.Single(), Is.SameAs(plan));
+            Assert.That(file.Path, Is.EqualTo(plan.DestinationPath));
+            Assert.That(mediaFileService.Updated.Single(), Is.SameAs(file));
+            Assert.That(mediaFileService.Updated.Single().Path, Is.EqualTo(plan.DestinationPath));
+            Assert.That(author.AudiobookPath, Is.EqualTo(canonicalAuthorFolder));
+            Assert.That(author.Path, Is.EqualTo(canonicalAuthorFolder));
+            Assert.That(author.EbookPath, Is.EqualTo("/ebooks/George R.R. Martin"));
+        }
+
+        [Test]
+        public void should_not_update_ebook_path_when_colocation_overrides_canonical_request()
+        {
+            var sourceAuthorFolder = "/mixed/George R. R. Martin";
+            var author = new Author
+            {
+                Id = 1,
+                Name = "George R.R. Martin",
+                Path = sourceAuthorFolder,
+                EbookPath = sourceAuthorFolder
+            };
+            var file = BookFile(1, sourceAuthorFolder + "/Wild Cards/original.epub", Quality.EPUB, "ebook");
+            var mediaFileService = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var plan = new BookFileMovePlan
+            {
+                CanOrganize = true,
+                SourceAuthorFolderPath = sourceAuthorFolder,
+                DestinationAuthorFolderPath = sourceAuthorFolder,
+                DestinationPath = sourceAuthorFolder + "/Wild Cards/file.epub",
+                ShouldUpdateStoredAuthorPath = false
+            };
+            var mover = new RecordingMoveBookFiles { PlanFactory = (_, _) => plan };
+            var service = CreateService(author, mediaFileService, mover, new RecordingEventAggregator());
+
+            service.Execute(new RenameFilesCommand(author.Id, new List<int> { file.Id }, true));
+
+            Assert.That(mover.CanonicalRequests, Is.EqualTo(new[] { true }));
+            Assert.That(file.Path, Is.EqualTo(plan.DestinationPath));
+            Assert.That(author.EbookPath, Is.EqualTo(sourceAuthorFolder));
+            Assert.That(author.Path, Is.EqualTo(sourceAuthorFolder));
+        }
+
+        [Test]
+        public void should_remove_only_empty_directories_bounded_by_the_actual_source_author_folder()
+        {
+            var sourceAuthorFolder = "/books/George R. R. Martin";
+            var sourceBookFolder = sourceAuthorFolder + "/Wild Cards";
+            var canonicalAuthorFolder = "/books/George R.R. Martin";
+            var author = new Author
+            {
+                Id = 1,
+                Name = "George R.R. Martin",
+                Path = sourceAuthorFolder,
+                AudiobookPath = sourceAuthorFolder
+            };
+            var file = BookFile(1, sourceBookFolder + "/file.mp3", Quality.MP3, "audiobook");
+            var mediaFileService = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var plan = new BookFileMovePlan
+            {
+                CanOrganize = true,
+                SourceAuthorFolderPath = sourceAuthorFolder,
+                DestinationAuthorFolderPath = canonicalAuthorFolder,
+                DestinationPath = canonicalAuthorFolder + "/Wild Cards/file.mp3",
+                ShouldUpdateStoredAuthorPath = true
+            };
+            var mover = new RecordingMoveBookFiles { PlanFactory = (_, _) => plan };
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var diskProxy = (DiskProviderProxy)(object)diskProvider;
+            diskProxy.ExistingFolders.Add(sourceAuthorFolder);
+            diskProxy.ExistingFolders.Add(sourceBookFolder);
+            var service = CreateService(author, mediaFileService, mover, new RecordingEventAggregator(), diskProvider);
+
+            service.Execute(new RenameFilesCommand(author.Id, new List<int> { file.Id }, true));
+
+            Assert.That(diskProxy.RemovedEmptySubfolders, Is.EqualTo(new[] { sourceBookFolder, sourceAuthorFolder }));
+            Assert.That(diskProxy.DeletedFolders, Is.EqualTo(new[] { sourceBookFolder, sourceAuthorFolder }));
+            Assert.That(diskProxy.DeletedFolders, Does.Not.Contain("/books"));
+        }
+
+        [Test]
+        public void should_report_boundary_skips_separately()
+        {
+            var result = new RenameFilesResult
+            {
+                SelectedCount = 2,
+                AttemptedCount = 1,
+                RenamedCount = 1,
+                BoundarySkippedCount = 1
+            };
+
+            var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
+
+            Assert.That(message, Is.EqualTo("Organized 1 of 2 files for Joe Abercrombie; 1 skipped because the current author folder could not be determined."));
+        }
+
+        [Test]
         public void should_format_all_success_message()
         {
             var result = new RenameFilesResult
@@ -334,7 +478,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 10 of 10 files for Joe Abercrombie."));
+            Assert.That(message, Is.EqualTo("Organized 10 of 10 files for Joe Abercrombie."));
         }
 
         [Test]
@@ -350,7 +494,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 5 of 10 files for Joe Abercrombie; 5 skipped because destination already exists."));
+            Assert.That(message, Is.EqualTo("Organized 5 of 10 files for Joe Abercrombie; 5 skipped because destination already exists."));
         }
 
         [Test]
@@ -365,7 +509,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 0 of 1 file for Joe Abercrombie; 1 skipped because destination already exists."));
+            Assert.That(message, Is.EqualTo("Organized 0 of 1 file for Joe Abercrombie; 1 skipped because destination already exists."));
         }
 
         [Test]
@@ -380,7 +524,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 0 of 2 files for Joe Abercrombie; 2 already in place."));
+            Assert.That(message, Is.EqualTo("Organized 0 of 2 files for Joe Abercrombie; 2 already in place."));
         }
 
         [Test]
@@ -395,7 +539,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 0 of 1 file for Joe Abercrombie; 1 already in place."));
+            Assert.That(message, Is.EqualTo("Organized 0 of 1 file for Joe Abercrombie; 1 already in place."));
         }
 
         [Test]
@@ -410,7 +554,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 0 of 1 file for Joe Abercrombie; 1 failed."));
+            Assert.That(message, Is.EqualTo("Organized 0 of 1 file for Joe Abercrombie; 1 failed."));
         }
 
         [Test]
@@ -426,7 +570,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 4 of 10 files for Joe Abercrombie; 5 skipped because destination already exists; 1 not eligible for rename."));
+            Assert.That(message, Is.EqualTo("Organized 4 of 10 files for Joe Abercrombie; 5 skipped because destination already exists; 1 not eligible for organize."));
         }
 
         [Test]
@@ -444,7 +588,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("Renamed 5 of 11 files for Joe Abercrombie; 3 skipped because destination already exists; 2 already in place; 1 failed."));
+            Assert.That(message, Is.EqualTo("Organized 5 of 11 files for Joe Abercrombie; 3 skipped because destination already exists; 2 already in place; 1 failed."));
         }
 
         [Test]
@@ -454,7 +598,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var message = RenameBookFileService.FormatRenameResultMessage(result, "Joe Abercrombie");
 
-            Assert.That(message, Is.EqualTo("No files selected to rename for Joe Abercrombie."));
+            Assert.That(message, Is.EqualTo("No files selected to organize for Joe Abercrombie."));
         }
     }
 }

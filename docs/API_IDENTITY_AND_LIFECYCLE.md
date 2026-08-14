@@ -69,6 +69,30 @@ The payload's `authorProviderIds`, `bookProviderIds`, and `editionProviderIds` a
 
 Files linked before provenance version 1 can return `matchProvenance: null`. Version-1 records remain valid but have no `evidenceValues`; clients must render their semantic signal buckets without inventing token highlights. Clients must show null history as unavailable rather than infer evidence from current tags or the current catalog row.
 
+## Organize Preview
+
+`GET /api/v1/rename` uses local database handles because it previews mutations against files in this Chaptarr instance:
+
+- `authorId` is the local Author handle.
+- `bookId` is the local Book handle accepted by the optional book-scoped query.
+- `RenameBookResource.editionId` is the local Edition handle used to group files that share one physical edition folder.
+- `RenameBookResource.bookFileId` and inherited `id` are both the local BookFile handle used for exact row selection.
+
+`moveToCanonicalAuthorFolder` defaults to `false`. It is supported only for author-scoped previews where `bookId` is omitted. Combining `bookId` with `moveToCanonicalAuthorFolder=true` returns HTTP `400`; clients must not treat the flag as silently ignored.
+
+Execution still accepts the flag with an exact list of selected BookFile handles. This allows an author-scoped preview to move only the rows the user selected, without expanding that selection to every file in the Book or Edition. These local IDs are mutation handles only and must not be cached or treated as provider identity.
+
+The generic `/api/v1/command` OpenAPI schema does not enumerate command-specific fields. A canonical execution request has this shape:
+
+```json
+{
+  "name": "RenameFiles",
+  "authorId": 344,
+  "files": [123, 456],
+  "moveToCanonicalAuthorFolder": true
+}
+```
+
 ## Search and Lookup Behavior
 
 Search results include provider identity fields and, when applicable, an `existingLocalId`. Treat `existingLocalId` as a local database handle only. Treat `providerId` and provider identity arrays as durable semantic identity.

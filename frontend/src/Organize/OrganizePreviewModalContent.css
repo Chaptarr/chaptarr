@@ -12,6 +12,26 @@
   margin-top: 10px;
 }
 
+.canonicalAuthorFolderOption {
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.canonicalAuthorFolderLabel {
+  margin-right: 10px;
+}
+
+.canonicalAuthorFolderInputContainer {
+  line-height: 30px;
+}
+
+.canonicalAuthorFolderInput {
+  composes: input from '~Components/Form/CheckInput.css';
+
+  margin: 0;
+}
+
 .selectAllInputContainer {
   margin-right: auto;
   line-height: 30px;

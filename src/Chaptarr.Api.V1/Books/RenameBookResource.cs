@@ -8,9 +8,12 @@ namespace Chaptarr.Api.V1.Books
     {
         public int AuthorId { get; set; }
         public int BookId { get; set; }
+        public int EditionId { get; set; }
         public int BookFileId { get; set; }
         public string ExistingPath { get; set; }
         public string NewPath { get; set; }
+        public bool CanOrganize { get; set; }
+        public string Reason { get; set; }
     }
 
     public static class RenameBookResourceMapper
@@ -27,9 +30,12 @@ namespace Chaptarr.Api.V1.Books
                 AuthorId = model.AuthorId,
                 Id = model.BookFileId,
                 BookId = model.BookId,
+                EditionId = model.EditionId,
                 BookFileId = model.BookFileId,
                 ExistingPath = model.ExistingPath,
-                NewPath = model.NewPath
+                NewPath = model.NewPath,
+                CanOrganize = model.CanOrganize,
+                Reason = model.Reason
             };
         }
 

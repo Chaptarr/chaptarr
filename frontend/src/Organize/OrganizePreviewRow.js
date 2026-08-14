@@ -13,10 +13,16 @@ class OrganizePreviewRow extends Component {
   componentDidMount() {
     const {
       id,
+      canOrganize,
+      isSelected,
       onSelectedChange
     } = this.props;
 
-    onSelectedChange({ id, value: true });
+    // A preview refetch temporarily unmounts the rows. Only default genuinely
+    // new rows to selected; preserve an explicit selection when they return.
+    if (canOrganize && isSelected == null) {
+      onSelectedChange({ id, value: true });
+    }
   }
 
   //
@@ -39,6 +45,8 @@ class OrganizePreviewRow extends Component {
       id,
       existingPath,
       newPath,
+      canOrganize,
+      reason,
       isSelected
     } = this.props;
 
@@ -48,6 +56,7 @@ class OrganizePreviewRow extends Component {
           containerClassName={styles.selectedContainer}
           name={id.toString()}
           value={isSelected}
+          isDisabled={!canOrganize}
           onChange={this.onSelectedChange}
         />
 
@@ -63,16 +72,33 @@ class OrganizePreviewRow extends Component {
             </span>
           </div>
 
-          <div>
-            <Icon
-              name={icons.ADD}
-              kind={kinds.SUCCESS}
-            />
+          {
+            canOrganize &&
+              <div>
+                <Icon
+                  name={icons.ADD}
+                  kind={kinds.SUCCESS}
+                />
 
-            <span className={styles.path}>
-              {newPath}
-            </span>
-          </div>
+                <span className={styles.path}>
+                  {newPath}
+                </span>
+              </div>
+          }
+
+          {
+            !canOrganize &&
+              <div className={styles.reason}>
+                <Icon
+                  name={icons.WARNING}
+                  kind={kinds.WARNING}
+                />
+
+                <span className={styles.path}>
+                  {reason}
+                </span>
+              </div>
+          }
         </div>
       </div>
     );
@@ -83,6 +109,8 @@ OrganizePreviewRow.propTypes = {
   id: PropTypes.number.isRequired,
   existingPath: PropTypes.string.isRequired,
   newPath: PropTypes.string.isRequired,
+  canOrganize: PropTypes.bool.isRequired,
+  reason: PropTypes.string,
   isSelected: PropTypes.bool,
   onSelectedChange: PropTypes.func.isRequired
 };

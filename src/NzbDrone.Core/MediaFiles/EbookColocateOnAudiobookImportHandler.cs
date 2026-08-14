@@ -109,8 +109,15 @@ namespace NzbDrone.Core.MediaFiles
 
                         var previousPath = ebookFile.Path;
 
-                        // Route through the mover so ebook naming stays consistent, while the folder is clamped to audiobook locations.
-                        _bookFileMover.MoveBookFile(ebookFile, author);
+                        // Route through the shared planner so ebook naming stays consistent, while the folder is clamped to audiobook locations.
+                        var plan = _bookFileMover.GetOrganizeDestination(ebookFile, author, false);
+                        if (!plan.CanOrganize)
+                        {
+                            _logger.Warn("Skipping ebook colocation for {0}: {1}", previousPath, plan.SkipReason);
+                            continue;
+                        }
+
+                        _bookFileMover.MoveBookFile(ebookFile, author, plan);
                         _mediaFileService.Update(ebookFile);
 
                         if (previousPath.PathNotEquals(ebookFile.Path))

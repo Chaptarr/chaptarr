@@ -21,15 +21,15 @@ function createMapStateToProps() {
       props.isPopulated = organizePreview.isPopulated && naming.isPopulated;
       props.error = organizePreview.error || naming.error;
       const effectiveMediaType = (mediaType || '').toLowerCase();
-      props.renameBooksEnabled = effectiveMediaType === 'ebook'
-        ? !!naming.item.ebookRenameBooks
-        : !!naming.item.renameBooks;
-      props.trackFormat = effectiveMediaType === 'ebook'
-        ? (naming.item.ebookStandardBookFormat || naming.item.standardBookFormat)
-        : naming.item.standardBookFormat;
-      props.path = effectiveMediaType === 'ebook'
-        ? (author.ebookPath || author.path)
-        : (author.audiobookPath || author.path);
+      props.renameBooksEnabled = effectiveMediaType === 'ebook' ?
+        !!naming.item.ebookRenameBooks :
+        !!naming.item.renameBooks;
+      props.trackFormat = effectiveMediaType === 'ebook' ?
+        (naming.item.ebookStandardBookFormat || naming.item.standardBookFormat) :
+        naming.item.standardBookFormat;
+      props.path = effectiveMediaType === 'ebook' ?
+        (author.ebookPath || author.path) :
+        (author.audiobookPath || author.path);
 
       return props;
     }
@@ -44,6 +44,14 @@ const mapDispatchToProps = {
 
 class OrganizePreviewModalContentConnector extends Component {
 
+  constructor(props, context) {
+    super(props, context);
+
+    this.state = {
+      moveToCanonicalAuthorFolder: false
+    };
+  }
+
   //
   // Lifecycle
 
@@ -57,7 +65,8 @@ class OrganizePreviewModalContentConnector extends Component {
     this.props.fetchOrganizePreview({
       authorId,
       bookId,
-      mediaType
+      mediaType,
+      moveToCanonicalAuthorFolder: false
     });
 
     this.props.fetchNamingSettings();
@@ -70,19 +79,36 @@ class OrganizePreviewModalContentConnector extends Component {
     this.props.executeCommand({
       name: commandNames.RENAME_FILES,
       authorId: this.props.authorId,
+      moveToCanonicalAuthorFolder: this.state.moveToCanonicalAuthorFolder,
       files
     });
 
     this.props.onModalClose();
   };
 
+  onMoveToCanonicalAuthorFolderChange = ({ value }) => {
+    this.setState({ moveToCanonicalAuthorFolder: value });
+    this.props.fetchOrganizePreview({
+      authorId: this.props.authorId,
+      bookId: this.props.bookId,
+      mediaType: this.props.mediaType,
+      moveToCanonicalAuthorFolder: value
+    });
+  };
+
   //
   // Render
 
   render() {
+    // Book-level previews stay track-in-place; canonical consolidation is an explicit author-level action.
+    const canMoveToCanonicalAuthorFolder = !this.props.bookId;
+
     return (
       <OrganizePreviewModalContent
         {...this.props}
+        canMoveToCanonicalAuthorFolder={canMoveToCanonicalAuthorFolder}
+        moveToCanonicalAuthorFolder={this.state.moveToCanonicalAuthorFolder}
+        onMoveToCanonicalAuthorFolderChange={this.onMoveToCanonicalAuthorFolderChange}
         onOrganizePress={this.onOrganizePress}
       />
     );

@@ -143,7 +143,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             public int PreviewCalls { get; private set; }
             public bool TransferFilesOnDisk { get; set; }
 
-            public BookFile MoveBookFile(BookFile bookFile, Author author, RenameBatchContext renameBatchContext = null)
+            public BookFileMovePlan GetOrganizeDestination(BookFile bookFile, Author author, bool moveToCanonicalAuthorFolder, RenameBatchContext renameBatchContext = null) => throw new NotImplementedException();
+
+            public BookFile MoveBookFile(BookFile bookFile, Author author, BookFileMovePlan plan, RenameBatchContext renameBatchContext = null)
             {
                 MoveCalls++;
                 bookFile.Path = DestinationPath ?? bookFile.Path;

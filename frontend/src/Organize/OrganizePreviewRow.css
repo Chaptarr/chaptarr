@@ -18,3 +18,8 @@
 .path {
   margin-left: 10px;
 }
+
+.reason {
+  margin-top: 5px;
+  color: var(--warningColor);
+}

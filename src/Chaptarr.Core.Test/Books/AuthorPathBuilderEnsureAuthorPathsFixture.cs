@@ -151,5 +151,42 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(author.EbookPath, Is.EqualTo("/media/Alexis Hall"));
             Assert.That(author.Path, Is.EqualTo("/media/Alexis Hall"));
         }
+
+        [Test]
+        public void should_use_stored_media_path_for_import_even_when_folder_does_not_exist_yet()
+        {
+            var builder = new AuthorPathBuilder(
+                new StubBuildFileNames(),
+                new StubRootFolderService(new List<RootFolder> { new RootFolder { Path = "/media", FolderType = FolderType.Mixed } }));
+            var author = new Author
+            {
+                Name = "A. F. Kay",
+                AudiobookRootFolderPath = "/media",
+                AudiobookPath = "/media/A.F. Kay"
+            };
+
+            var path = builder.BuildPathForQuality(author, NzbDrone.Core.Qualities.Quality.MP3, useExistingRelativeFolder: false);
+
+            Assert.That(path, Is.EqualTo("/media/A.F. Kay"));
+        }
+
+        [TestCase("/media")]
+        [TestCase("/other/A.F. Kay")]
+        public void should_fall_back_to_canonical_path_when_stored_media_path_is_unsafe(string storedPath)
+        {
+            var builder = new AuthorPathBuilder(
+                new StubBuildFileNames(),
+                new StubRootFolderService(new List<RootFolder> { new RootFolder { Path = "/media", FolderType = FolderType.Mixed } }));
+            var author = new Author
+            {
+                Name = "A. F. Kay",
+                AudiobookRootFolderPath = "/media",
+                AudiobookPath = storedPath
+            };
+
+            var path = builder.BuildPathForQuality(author, NzbDrone.Core.Qualities.Quality.MP3, useExistingRelativeFolder: false);
+
+            Assert.That(path, Is.EqualTo("/media/A. F. Kay"));
+        }
     }
 }
