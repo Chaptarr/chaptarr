@@ -89,17 +89,10 @@ jobs:
       with:
         dotnet-version: 10.0.x
     
-    - name: Download FFmpeg (Linux/macOS)
-      if: matrix.os != 'windows-latest'
-      run: |
-        chmod +x ./build-tools/download-ffmpeg.sh
-        ./build-tools/download-ffmpeg.sh ${{ matrix.platform }}
-    
-    - name: Download FFmpeg (Windows)
-      if: matrix.os == 'windows-latest'
-      run: |
-        powershell -ExecutionPolicy Bypass -File ./build-tools/download-ffmpeg.ps1
-    
+    # FFmpeg is intentionally not downloaded in this compile/test workflow.
+    # Source builds resolve bundled tools first and then the system PATH; explicit
+    # native packaging owns bundled-tool acquisition and validation.
+
     - name: Restore dependencies
       run: |
         dotnet restore src/Chaptarr.NoTests.sln
@@ -115,16 +108,6 @@ jobs:
       run: |
         dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o ./publish/Chaptarr
         dotnet publish src/NzbDrone.Update/Chaptarr.Update.csproj -c Release -f net10.0 -o ./publish/Chaptarr/Chaptarr.Update
-    
-    - name: Copy Tools to publish
-      run: |
-        mkdir -p ./publish/Chaptarr/Tools
-        if [ -d "./Tools" ]; then
-          cp -r ./Tools/* ./publish/Chaptarr/Tools/
-        else
-          echo "Warning: Tools directory not found, skipping copy"
-        fi
-      shell: bash
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

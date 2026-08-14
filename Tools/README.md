@@ -24,12 +24,31 @@ inside the ffmpeg directory will not be found.
 
 ## Downloading
 
+Normal source builds do not download these binaries. Install FFmpeg through your
+operating system and expose both `ffmpeg` and `ffprobe` on `PATH`, or place
+the binaries in the directories below. Any native archive must include both
+tools for its target runtime rather than silently shipping an incomplete
+package.
+
+The automatic download scripts pin immutable archives and committed SHA-256
+values for Windows x64 (Gyan FFmpeg 8.1.2) and Linux x64/arm64 (John Van
+Sickle FFmpeg 7.0.2). Updating FFmpeg is an explicit source-and-hash change,
+not a rolling `latest` download.
+
 - **Windows**: https://www.gyan.dev/ffmpeg/builds/ — put `ffmpeg.exe` in
   `Tools/ffmpeg/win-x64/` and `ffprobe.exe` in `Tools/ffprobe/win-x64/`
 - **Linux**: https://johnvansickle.com/ffmpeg/ static builds — amd64 goes in
   `linux-x64`, arm64 in `linux-arm64`
-- **macOS**: https://evermeet.cx/ffmpeg/ for `osx-x64`, or a native arm64 build
-  for `osx-arm64`
+- **macOS**: automatic bundling is not currently supported. Install FFmpeg
+  through Homebrew or another trusted package source for normal source builds.
+  Native packages require manually staged, verified binaries for `osx-x64`
+  or `osx-arm64`.
+
+The pinned third-party builds are GPLv3. Chaptarr does not currently publish
+native archives. Before native archives are published, their FFmpeg license,
+build attribution, and corresponding-source distribution must be reviewed and
+shipped with the package; a checksum and a link alone do not settle those
+redistribution obligations.
 
 On Unix systems, make the binaries executable:
 

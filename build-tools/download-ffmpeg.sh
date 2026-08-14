@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Download FFmpeg binaries for all platforms
-# This script should be run during CI/CD build process
+# Download pinned FFmpeg binaries for explicit native packaging or manual staging.
+# Normal source builds and the compile/test CI workflow do not run this script.
 
 # Note: We don't use 'set -e' here because we want to continue even if some downloads fail
 
@@ -13,11 +13,12 @@ if [ "${CHAPTARR_FFMPEG_STRICT:-}" = "1" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]
     STRICT_MODE=1
 fi
 
-echo "Downloading FFmpeg binaries..."
+# Optional filter: an exact RID (linux-x64) or platform (linux). With no
+# filter, download every automatically supported platform. macOS is reported as
+# unsupported only when it is explicitly requested.
+TARGET_PLATFORM="${1:-}"
 
-to_lower() {
-    tr '[:upper:]' '[:lower:]'
-}
+echo "Downloading FFmpeg binaries..."
 
 compute_sha256() {
     local file="$1"
@@ -36,35 +37,12 @@ compute_sha256() {
     return 1
 }
 
-compute_md5() {
+verify_sha256() {
     local file="$1"
-
-    if command -v md5sum >/dev/null 2>&1; then
-        md5sum "$file" | awk '{print $1}'
-        return 0
-    fi
-
-    if command -v md5 >/dev/null 2>&1; then
-        md5 -q "$file"
-        return 0
-    fi
-
-    echo "Error: Missing md5sum/md5 for MD5 verification"
-    return 1
-}
-
-verify_sha256_from_url() {
-    local file="$1"
-    local sha_url="$2"
-
-    local expected
-    if ! expected="$(curl -fsSL --retry 3 --retry-delay 5 "$sha_url" | tr -d '\r\n ')" ; then
-        echo "Error: Failed to download SHA256 checksum from $sha_url"
-        return 1
-    fi
+    local expected="$2"
 
     if ! echo "$expected" | grep -Eq '^[0-9a-fA-F]{64}$'; then
-        echo "Error: Invalid SHA256 checksum format from $sha_url: '$expected'"
+        echo "Error: Invalid committed SHA256 value: '$expected'"
         return 1
     fi
 
@@ -73,7 +51,7 @@ verify_sha256_from_url() {
         return 1
     fi
 
-    if [ "$(echo "$actual" | to_lower)" != "$(echo "$expected" | to_lower)" ]; then
+    if [ "$(echo "$actual" | tr '[:upper:]' '[:lower:]')" != "$(echo "$expected" | tr '[:upper:]' '[:lower:]')" ]; then
         echo "Error: SHA256 mismatch for $file"
         echo "Expected: $expected"
         echo "Actual:   $actual"
@@ -83,63 +61,102 @@ verify_sha256_from_url() {
     return 0
 }
 
-verify_md5_from_url() {
-    local file="$1"
-    local md5_url="$2"
+verify_native_executables() {
+    local platform="$1"
+    local ffmpeg_path="$2"
+    local ffprobe_path="$3"
+    local host
+    host="$(uname -s):$(uname -m)"
 
-    local content
-    if ! content="$(curl -fsSL --retry 3 --retry-delay 5 "$md5_url")" ; then
-        echo "Error: Failed to download MD5 checksum from $md5_url"
+    case "$platform:$host" in
+        linux-x64:Linux:x86_64|linux-x64:Linux:amd64|linux-arm64:Linux:aarch64|linux-arm64:Linux:arm64|win-x64:MINGW*:x86_64|win-x64:MSYS*:x86_64|win-x64:CYGWIN*:x86_64)
+            ;;
+        *)
+            echo "Skipping -version execution for cross-target $platform on $host; archive SHA256 and contents were verified."
+            return 0
+            ;;
+    esac
+
+    local output
+    if ! output="$("$ffmpeg_path" -version 2>&1)" || ! echo "$output" | grep -qi '^ffmpeg version'; then
+        echo "Error: extracted ffmpeg failed its -version check for $platform"
         return 1
     fi
 
-    local expected
-    expected="$(echo "$content" | awk '{print $1}' | tr -d '\r\n ')"
-
-    if ! echo "$expected" | grep -Eq '^[0-9a-fA-F]{32}$'; then
-        echo "Error: Invalid MD5 checksum format from $md5_url: '$expected'"
-        return 1
-    fi
-
-    local actual
-    if ! actual="$(compute_md5 "$file")"; then
-        return 1
-    fi
-
-    if [ "$(echo "$actual" | to_lower)" != "$(echo "$expected" | to_lower)" ]; then
-        echo "Error: MD5 mismatch for $file"
-        echo "Expected: $expected"
-        echo "Actual:   $actual"
+    if ! output="$("$ffprobe_path" -version 2>&1)" || ! echo "$output" | grep -qi '^ffprobe version'; then
+        echo "Error: extracted ffprobe failed its -version check for $platform"
         return 1
     fi
 
     return 0
 }
 
-# Check for required tools
+download_verified_archive() {
+    local archive_path="$1"
+    local archive_url="$2"
+    local expected_sha256="$3"
+
+    local attempt
+    for attempt in 1 2 3; do
+        rm -f "$archive_path"
+
+        if curl -fL --retry 3 --retry-delay 5 "$archive_url" -o "$archive_path" &&
+            verify_sha256 "$archive_path" "$expected_sha256"; then
+            return 0
+        fi
+
+        if [ "$attempt" -lt 3 ]; then
+            echo "Warning: archive/SHA256 validation attempt $attempt failed for $archive_url; retrying in 5 seconds."
+            sleep 5
+        fi
+    done
+
+    rm -f "$archive_path"
+    return 1
+}
+
+# Check only the tools needed by the requested archive type. Unsupported
+# targets should report their own error instead of failing on an unrelated tool.
 check_dependencies() {
     local missing=""
-    
-    if ! command -v curl >/dev/null 2>&1; then
-        missing="$missing curl"
+    local needs_download_tools=0
+    local needs_unzip=0
+    local needs_tar=0
+
+    case "$TARGET_PLATFORM" in
+        "")
+            needs_download_tools=1
+            needs_unzip=1
+            needs_tar=1
+            ;;
+        win|win-x64)
+            needs_download_tools=1
+            needs_unzip=1
+            ;;
+        linux|linux-x64|linux-arm64)
+            needs_download_tools=1
+            needs_tar=1
+            ;;
+    esac
+
+    if [ "$needs_download_tools" -eq 1 ]; then
+        if ! command -v curl >/dev/null 2>&1; then
+            missing="$missing curl"
+        fi
+
+        if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+            missing="$missing sha256sum/shasum"
+        fi
     fi
-    
-    if ! command -v unzip >/dev/null 2>&1; then
+
+    if [ "$needs_unzip" -eq 1 ] && ! command -v unzip >/dev/null 2>&1; then
         missing="$missing unzip"
     fi
-    
-    if ! command -v tar >/dev/null 2>&1; then
+
+    if [ "$needs_tar" -eq 1 ] && ! command -v tar >/dev/null 2>&1; then
         missing="$missing tar"
     fi
 
-    if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-        missing="$missing sha256sum/shasum"
-    fi
-
-    if ! command -v md5sum >/dev/null 2>&1 && ! command -v md5 >/dev/null 2>&1; then
-        missing="$missing md5sum/md5"
-    fi
-    
     if [ -n "$missing" ]; then
         echo "Error: Missing required tools:$missing"
         echo "Please install these tools and try again."
@@ -149,8 +166,9 @@ check_dependencies() {
 
 # Function to download and extract FFmpeg
 download_ffmpeg() {
-    local platform=$1
-    local url=$2
+    local platform="$1"
+    local url="$2"
+    local expected_sha256="$3"
     
     echo "Downloading FFmpeg for $platform..."
     mkdir -p "$TOOLS_DIR/ffmpeg/$platform"
@@ -161,14 +179,8 @@ download_ffmpeg() {
     
     if [[ "$platform" == "win-"* ]]; then
         # Windows downloads
-        if ! curl -fL --retry 3 --retry-delay 5 "$url" -o ffmpeg.zip; then
-            echo "Error: Failed to download FFmpeg for $platform"
-            rm -rf "$temp_dir"
-            return 1
-        fi
-
-        if ! verify_sha256_from_url "ffmpeg.zip" "${url}.sha256"; then
-            echo "Error: FFmpeg checksum verification failed for $platform"
+        if ! download_verified_archive "ffmpeg.zip" "$url" "$expected_sha256"; then
+            echo "Error: Failed to download and verify FFmpeg for $platform"
             rm -rf "$temp_dir"
             return 1
         fi
@@ -182,24 +194,16 @@ download_ffmpeg() {
             fi
         fi
         
-        # Move to final location
-        mv ffmpeg.exe "$TOOLS_DIR/ffmpeg/$platform/" 2>/dev/null || echo "Warning: ffmpeg.exe not found for $platform"
-        mv ffprobe.exe "$TOOLS_DIR/ffmpeg/$platform/" 2>/dev/null || echo "Warning: ffprobe.exe not found for $platform"
-        
-        # Copy to ffprobe directory
-        if [ -f "$TOOLS_DIR/ffmpeg/$platform/ffprobe.exe" ]; then
-            cp "$TOOLS_DIR/ffmpeg/$platform/ffprobe.exe" "$TOOLS_DIR/ffprobe/$platform/"
-        fi
-    else
-        # Unix downloads
-        if ! curl -fL --retry 3 --retry-delay 5 "$url" -o ffmpeg.tar.xz; then
-            echo "Error: Failed to download FFmpeg for $platform"
+        if ! mv ffmpeg.exe "$TOOLS_DIR/ffmpeg/$platform/ffmpeg.exe" ||
+            ! mv ffprobe.exe "$TOOLS_DIR/ffprobe/$platform/ffprobe.exe"; then
+            echo "Error: Failed to install extracted binaries for $platform"
             rm -rf "$temp_dir"
             return 1
         fi
-
-        if ! verify_md5_from_url "ffmpeg.tar.xz" "${url}.md5"; then
-            echo "Error: FFmpeg checksum verification failed for $platform"
+    else
+        # Unix downloads
+        if ! download_verified_archive "ffmpeg.tar.xz" "$url" "$expected_sha256"; then
+            echo "Error: Failed to download and verify FFmpeg for $platform"
             rm -rf "$temp_dir"
             return 1
         fi
@@ -219,12 +223,11 @@ download_ffmpeg() {
         fi
 
         chmod +x "$found_ffmpeg" "$found_ffprobe"
-        mv "$found_ffmpeg" "$TOOLS_DIR/ffmpeg/$platform/ffmpeg"
-        mv "$found_ffprobe" "$TOOLS_DIR/ffmpeg/$platform/ffprobe"
-        
-        # Copy to ffprobe directory
-        if [ -f "$TOOLS_DIR/ffmpeg/$platform/ffprobe" ]; then
-            cp "$TOOLS_DIR/ffmpeg/$platform/ffprobe" "$TOOLS_DIR/ffprobe/$platform/"
+        if ! mv "$found_ffmpeg" "$TOOLS_DIR/ffmpeg/$platform/ffmpeg" ||
+            ! mv "$found_ffprobe" "$TOOLS_DIR/ffprobe/$platform/ffprobe"; then
+            echo "Error: Failed to install extracted binaries for $platform"
+            rm -rf "$temp_dir"
+            return 1
         fi
     fi
 
@@ -247,7 +250,12 @@ download_ffmpeg() {
         rm -rf "$temp_dir"
         return 1
     fi
-    
+
+    if ! verify_native_executables "$platform" "$ffmpeg_target" "$ffprobe_target"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
     rm -rf "$temp_dir"
     echo "Completed download for $platform"
 }
@@ -255,51 +263,64 @@ download_ffmpeg() {
 # Check dependencies first
 check_dependencies
 
-# Optional platform filter: linux, win, osx, or empty for all platforms.
-# In CI each runner passes its own platform so we only download what it needs.
-TARGET_PLATFORM="${1:-}"
-
 should_download() {
     local rid="$1"
     [ -z "$TARGET_PLATFORM" ] && return 0
-    [[ "$rid" == "${TARGET_PLATFORM}-"* ]] && return 0
+    [ "$rid" = "$TARGET_PLATFORM" ] && return 0
+    [[ "$TARGET_PLATFORM" != *-* && "$rid" == "${TARGET_PLATFORM}-"* ]] && return 0
     return 1
 }
 
-# Download for requested platforms (continue even if some fail)
+# Download requested platforms, but report every requested failure explicitly.
 failed_downloads=""
+attempted_downloads=0
 
 # Windows x64
 if should_download "win-x64"; then
+    attempted_downloads=1
     echo "=== Downloading Windows x64 ==="
-    if ! download_ffmpeg "win-x64" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"; then
+    if ! download_ffmpeg "win-x64" "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip" "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"; then
         failed_downloads="$failed_downloads win-x64"
     fi
 fi
 
 # Linux x64
 if should_download "linux-x64"; then
+    attempted_downloads=1
     echo "=== Downloading Linux x64 ==="
-    if ! download_ffmpeg "linux-x64" "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"; then
+    if ! download_ffmpeg "linux-x64" "https://johnvansickle.com/ffmpeg/releases/ffmpeg-7.0.2-amd64-static.tar.xz" "abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67"; then
         failed_downloads="$failed_downloads linux-x64"
     fi
 fi
 
 # Linux ARM64
 if should_download "linux-arm64"; then
+    attempted_downloads=1
     echo "=== Downloading Linux ARM64 ==="
-    if ! download_ffmpeg "linux-arm64" "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"; then
+    if ! download_ffmpeg "linux-arm64" "https://johnvansickle.com/ffmpeg/releases/ffmpeg-7.0.2-arm64-static.tar.xz" "f4149bb2b0784e30e99bdda85471c9b5930d3402014e934a5098b41d0f7201b1"; then
         failed_downloads="$failed_downloads linux-arm64"
     fi
 fi
 
-# macOS (manual)
-if should_download "osx-x64"; then
-    echo "=== macOS x64 ==="
-    mkdir -p "$TOOLS_DIR/ffmpeg/osx-x64"
-    mkdir -p "$TOOLS_DIR/ffprobe/osx-x64"
-    echo "macOS FFmpeg/FFprobe are not downloaded automatically."
-    echo "Download manually from https://evermeet.cx/ffmpeg/ and place binaries under Tools/ffmpeg/osx-x64/"
+# macOS has no automatic source in this script. Do not create empty tool
+# directories or report success: native packaging must be given real binaries.
+case "$TARGET_PLATFORM" in
+    osx|osx-x64|osx-arm64)
+        for mac_rid in osx-x64 osx-arm64; do
+            if should_download "$mac_rid"; then
+                attempted_downloads=1
+                echo "=== $mac_rid ==="
+                echo "Error: automatic FFmpeg/FFprobe acquisition is not supported for $mac_rid."
+                echo "Install both tools on PATH for a source build, or place verified binaries under Tools/ before native packaging."
+                failed_downloads="$failed_downloads $mac_rid"
+            fi
+        done
+        ;;
+esac
+
+if [ -n "$TARGET_PLATFORM" ] && [ "$attempted_downloads" -eq 0 ]; then
+    echo "Error: no automatic FFmpeg source is configured for '$TARGET_PLATFORM'."
+    failed_downloads="$failed_downloads $TARGET_PLATFORM"
 fi
 
 echo ""
