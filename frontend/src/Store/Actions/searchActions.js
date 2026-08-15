@@ -886,24 +886,35 @@ export const actionHandlers = handleThunks({
     const requestedMediaType = (payload.mediaType || '').toLowerCase();
 
     if (requestedMediaType === 'both') {
-      const first = postBookForMediaType(itemToAdd, payload, 'audiobook', false);
-
-      first.done((audiobookData) => {
-        const audiobookUpdate = getBookUpdateActions(itemToAdd, audiobookData, 'audiobook');
-        const currentItem = audiobookUpdate.updatedItem;
-
-        dispatch(batchActions([
-          ...audiobookUpdate.actions,
-          set({
-            section,
-            addedMediaTypes: getAddedMediaTypes(getState(), 'audiobook')
-          })
-        ]));
-
+      const addEbook = (currentItem, audiobookError = null) => {
         const second = postBookForMediaType(currentItem, payload, 'ebook', payload.searchForNewBook);
 
         second.done((ebookData) => {
           const ebookUpdate = getBookUpdateActions(currentItem, ebookData, 'ebook');
+
+          if (audiobookError) {
+            const error = getAjaxErrorMessage(audiobookError);
+
+            dispatch(batchActions([
+              ...ebookUpdate.actions,
+              showMessage({
+                id: `book-add-audiobook-failed-${Date.now()}`,
+                name: 'BookAddAudiobookFailed',
+                message: `eBook added, but audiobook failed: ${error}. The modal is still open so you can retry audiobook.`,
+                type: 'warning',
+                hideAfter: 14
+              }),
+              set({
+                section,
+                isAdding: false,
+                isAdded: false,
+                addError: audiobookError,
+                addFailedMediaType: 'audiobook',
+                addedMediaTypes: getAddedMediaTypes(getState(), 'ebook')
+              })
+            ]));
+            return;
+          }
 
           dispatch(batchActions([
             ...ebookUpdate.actions,
@@ -918,48 +929,56 @@ export const actionHandlers = handleThunks({
           ]));
         });
 
-        second.fail((xhr) => {
-          const error = getAjaxErrorMessage(xhr);
+        second.fail((ebookError) => {
+          const error = getAjaxErrorMessage(ebookError);
+          const audiobookMessage = audiobookError ?
+            `Audiobook failed: ${getAjaxErrorMessage(audiobookError)}. ` :
+            'Audiobook added, but ';
 
           dispatch(batchActions([
             showMessage({
               id: `book-add-ebook-failed-${Date.now()}`,
               name: 'BookAddEbookFailed',
-              message: `Audiobook added, but eBook failed: ${error}. The modal is still open so you can retry eBook.`,
-              type: 'warning',
+              message: `${audiobookMessage}eBook failed: ${error}. The modal is still open so you can retry.`,
+              type: audiobookError ? 'error' : 'warning',
               hideAfter: 14
             }),
             set({
               section,
               isAdding: false,
               isAdded: false,
-              addError: xhr,
-              addFailedMediaType: 'ebook',
-              addedMediaTypes: getAddedMediaTypes(getState(), 'audiobook')
+              addError: audiobookError || ebookError,
+              addFailedMediaType: audiobookError ? 'audiobook' : 'ebook',
+              addedMediaTypes: audiobookError ?
+                getAddedMediaTypes(getState()) :
+                getAddedMediaTypes(getState(), 'audiobook')
             })
           ]));
         });
+      };
+
+      const first = postBookForMediaType(itemToAdd, payload, 'audiobook', payload.searchForNewBook);
+
+      first.done((audiobookData) => {
+        const audiobookUpdate = getBookUpdateActions(itemToAdd, audiobookData, 'audiobook');
+        const currentItem = audiobookUpdate.updatedItem;
+
+        dispatch(batchActions([
+          ...audiobookUpdate.actions,
+          set({
+            section,
+            addedMediaTypes: getAddedMediaTypes(getState(), 'audiobook')
+          })
+        ]));
+
+        addEbook(currentItem);
       });
 
       first.fail((xhr) => {
-        const error = getAjaxErrorMessage(xhr);
-
-        dispatch(batchActions([
-          showMessage({
-            id: `book-add-audiobook-failed-${Date.now()}`,
-            name: 'BookAddAudiobookFailed',
-            message: `Audiobook failed: ${error}. The modal is still open so you can retry.`,
-            type: 'error',
-            hideAfter: 14
-          }),
-          set({
-            section,
-            isAdding: false,
-            isAdded: false,
-            addError: xhr,
-            addFailedMediaType: 'audiobook'
-          })
-        ]));
+        // Still attempt the eBook request. If the author was queued because metadata is
+        // not available yet, this merges the second media type and its search intent
+        // into the same pending author import.
+        addEbook(itemToAdd, xhr);
       });
 
       return;

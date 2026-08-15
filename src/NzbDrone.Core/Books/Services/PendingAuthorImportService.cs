@@ -100,30 +100,15 @@ namespace NzbDrone.Core.Books.Services
                     }
                     updated = true;
                 }
-                else if (config.CreateAudiobook && existing.HasAudiobook() && config.AudiobookBooksToMonitor?.Any() == true)
+                else if (config.CreateAudiobook && existing.HasAudiobook() && TryMergeProviderIds(
+                        existing.AudiobookBooksToMonitor,
+                        config.AudiobookBooksToMonitor,
+                        nameof(existing.AudiobookBooksToMonitor),
+                        providerId,
+                        out var audiobookBooksToMonitor))
                 {
-                    try
-                    {
-                        var existingBooks = string.IsNullOrWhiteSpace(existing.AudiobookBooksToMonitor)
-                            ? new List<string>()
-                            : JsonConvert.DeserializeObject<List<string>>(existing.AudiobookBooksToMonitor) ?? new List<string>();
-
-                        var merged = existingBooks
-                            .Concat(config.AudiobookBooksToMonitor)
-                            .Where(x => !string.IsNullOrWhiteSpace(x))
-                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .ToList();
-
-                        if (merged.Count != existingBooks.Count)
-                        {
-                            existing.AudiobookBooksToMonitor = JsonConvert.SerializeObject(merged);
-                            updated = true;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warn(ex, "Failed to merge AudiobookBooksToMonitor for existing pending import {0}", providerId);
-                    }
+                    existing.AudiobookBooksToMonitor = audiobookBooksToMonitor;
+                    updated = true;
                 }
 
                 // Enable ebook if requested and not already
@@ -143,30 +128,43 @@ namespace NzbDrone.Core.Books.Services
                     }
                     updated = true;
                 }
-                else if (config.CreateEbook && existing.HasEbook() && config.EbookBooksToMonitor?.Any() == true)
+                else if (config.CreateEbook && existing.HasEbook() && TryMergeProviderIds(
+                        existing.EbookBooksToMonitor,
+                        config.EbookBooksToMonitor,
+                        nameof(existing.EbookBooksToMonitor),
+                        providerId,
+                        out var ebookBooksToMonitor))
                 {
-                    try
-                    {
-                        var existingBooks = string.IsNullOrWhiteSpace(existing.EbookBooksToMonitor)
-                            ? new List<string>()
-                            : JsonConvert.DeserializeObject<List<string>>(existing.EbookBooksToMonitor) ?? new List<string>();
+                    existing.EbookBooksToMonitor = ebookBooksToMonitor;
+                    updated = true;
+                }
 
-                        var merged = existingBooks
-                            .Concat(config.EbookBooksToMonitor)
-                            .Where(x => !string.IsNullOrWhiteSpace(x))
-                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .ToList();
+                if (config.CreateAudiobook && TryMergeProviderIds(
+                        existing.AudiobookBooksToSearch,
+                        config.AudiobookBooksToSearch,
+                        nameof(existing.AudiobookBooksToSearch),
+                        providerId,
+                        out var audiobookBooksToSearch))
+                {
+                    existing.AudiobookBooksToSearch = audiobookBooksToSearch;
+                    updated = true;
+                }
 
-                        if (merged.Count != existingBooks.Count)
-                        {
-                            existing.EbookBooksToMonitor = JsonConvert.SerializeObject(merged);
-                            updated = true;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warn(ex, "Failed to merge EbookBooksToMonitor for existing pending import {0}", providerId);
-                    }
+                if (config.CreateEbook && TryMergeProviderIds(
+                        existing.EbookBooksToSearch,
+                        config.EbookBooksToSearch,
+                        nameof(existing.EbookBooksToSearch),
+                        providerId,
+                        out var ebookBooksToSearch))
+                {
+                    existing.EbookBooksToSearch = ebookBooksToSearch;
+                    updated = true;
+                }
+
+                if (config.SearchForMissingBooks == true && !existing.SearchForMissingBooks)
+                {
+                    existing.SearchForMissingBooks = true;
+                    updated = true;
                 }
 
                 // Preserve discovered author folder path if provided and not already set
@@ -223,6 +221,11 @@ namespace NzbDrone.Core.Books.Services
                 {
                     pending.AudiobookBooksToMonitor = JsonConvert.SerializeObject(config.AudiobookBooksToMonitor);
                 }
+
+                if (config.AudiobookBooksToSearch?.Any() == true)
+                {
+                    pending.AudiobookBooksToSearch = JsonConvert.SerializeObject(config.AudiobookBooksToSearch);
+                }
             }
 
             // Set ebook configuration if requested
@@ -239,6 +242,11 @@ namespace NzbDrone.Core.Books.Services
                 if (config.EbookBooksToMonitor?.Any() == true)
                 {
                     pending.EbookBooksToMonitor = JsonConvert.SerializeObject(config.EbookBooksToMonitor);
+                }
+
+                if (config.EbookBooksToSearch?.Any() == true)
+                {
+                    pending.EbookBooksToSearch = JsonConvert.SerializeObject(config.EbookBooksToSearch);
                 }
             }
 
@@ -257,6 +265,49 @@ namespace NzbDrone.Core.Books.Services
             _eventAggregator.PublishEvent(new PendingAuthorImportQueuedEvent(pending));
 
             return Task.FromResult(pending.Id);
+        }
+
+        private bool TryMergeProviderIds(
+            string existingJson,
+            IEnumerable<string> incoming,
+            string fieldName,
+            string providerId,
+            out string mergedJson)
+        {
+            mergedJson = existingJson;
+            var incomingIds = incoming?
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+
+            if (incomingIds?.Any() != true)
+            {
+                return false;
+            }
+
+            try
+            {
+                var existingIds = string.IsNullOrWhiteSpace(existingJson)
+                    ? new List<string>()
+                    : JsonConvert.DeserializeObject<List<string>>(existingJson) ?? new List<string>();
+                var merged = existingIds
+                    .Concat(incomingIds)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (merged.Count == existingIds.Count)
+                {
+                    return false;
+                }
+
+                mergedJson = JsonConvert.SerializeObject(merged);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Failed to merge {0} for existing pending import {1}", fieldName, providerId);
+                return false;
+            }
         }
 
         public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error)

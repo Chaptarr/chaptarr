@@ -41,6 +41,7 @@ namespace NzbDrone.Core.Books
         public int? AudiobookMetadataProfileId { get; set; }
         public string AudiobookRootFolderPath { get; set; }
         public string AudiobookBooksToMonitor { get; set; } // JSON serialized List<string>
+        public string AudiobookBooksToSearch { get; set; } // JSON serialized List<string>
 
         // Ebook configuration
         public int? EbookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
@@ -49,6 +50,7 @@ namespace NzbDrone.Core.Books
         public int? EbookMetadataProfileId { get; set; }
         public string EbookRootFolderPath { get; set; }
         public string EbookBooksToMonitor { get; set; } // JSON serialized List<string>
+        public string EbookBooksToSearch { get; set; } // JSON serialized List<string>
 
         // Common fields
         public string Tags { get; set; } // JSON serialized HashSet<int>

@@ -26,6 +26,7 @@ namespace Chaptarr.Api.V1.PendingImport
         public int? AudiobookMetadataProfileId { get; set; }
         public string AudiobookRootFolderPath { get; set; }
         public List<string> AudiobookBooksToMonitor { get; set; }
+        public List<string> AudiobookBooksToSearch { get; set; }
         
         // Ebook configuration - TRI-STATE MONITORING
         public int? EbookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
@@ -34,6 +35,7 @@ namespace Chaptarr.Api.V1.PendingImport
         public int? EbookMetadataProfileId { get; set; }
         public string EbookRootFolderPath { get; set; }
         public List<string> EbookBooksToMonitor { get; set; }
+        public List<string> EbookBooksToSearch { get; set; }
         
         // Common
         public HashSet<int> Tags { get; set; }
@@ -169,6 +171,15 @@ namespace Chaptarr.Api.V1.PendingImport
                 resource.AudiobookBooksToMonitor = new List<string>();
             }
 
+            if (TryDeserializeJson(model.AudiobookBooksToSearch, out List<string> audiobookBooksToSearch, nameof(model.AudiobookBooksToSearch), model.Id))
+            {
+                resource.AudiobookBooksToSearch = audiobookBooksToSearch ?? new List<string>();
+            }
+            else
+            {
+                resource.AudiobookBooksToSearch = new List<string>();
+            }
+
             if (TryDeserializeJson(model.EbookBooksToMonitor, out List<string> ebookBooks, nameof(model.EbookBooksToMonitor), model.Id))
             {
                 resource.EbookBooksToMonitor = ebookBooks ?? new List<string>();
@@ -176,6 +187,15 @@ namespace Chaptarr.Api.V1.PendingImport
             else
             {
                 resource.EbookBooksToMonitor = new List<string>();
+            }
+
+            if (TryDeserializeJson(model.EbookBooksToSearch, out List<string> ebookBooksToSearch, nameof(model.EbookBooksToSearch), model.Id))
+            {
+                resource.EbookBooksToSearch = ebookBooksToSearch ?? new List<string>();
+            }
+            else
+            {
+                resource.EbookBooksToSearch = new List<string>();
             }
 
             if (TryDeserializeJson(model.Tags, out HashSet<int> tags, nameof(model.Tags), model.Id))
@@ -241,6 +261,16 @@ namespace Chaptarr.Api.V1.PendingImport
             if (resource.EbookBooksToMonitor?.Count > 0)
             {
                 model.EbookBooksToMonitor = JsonConvert.SerializeObject(resource.EbookBooksToMonitor);
+            }
+
+            if (resource.AudiobookBooksToSearch?.Count > 0)
+            {
+                model.AudiobookBooksToSearch = JsonConvert.SerializeObject(resource.AudiobookBooksToSearch);
+            }
+
+            if (resource.EbookBooksToSearch?.Count > 0)
+            {
+                model.EbookBooksToSearch = JsonConvert.SerializeObject(resource.EbookBooksToSearch);
             }
 
             if (resource.Tags?.Count > 0)

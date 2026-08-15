@@ -62,6 +62,28 @@ namespace Chaptarr.Core.Test.IndexerSearch
         }
 
         [Test]
+        public void automatic_book_search_should_allow_selected_monitoring_for_the_book_media_side()
+        {
+            var releaseSearch = new RecordingReleaseSearch();
+            var bookService = CreateBookService(new Book
+            {
+                Id = 44,
+                MediaType = BookMediaType.Audiobook,
+                AudiobookMonitored = true,
+                Author = new Author
+                {
+                    AudiobookMonitorExisting = 2,
+                    AudiobookMonitorFuture = false
+                }
+            });
+            var subject = CreateSubject(releaseSearch, bookService);
+
+            subject.Execute(new BookSearchCommand(new List<int> { 44 }));
+
+            Assert.That(releaseSearch.BookSearchIds, Is.EqualTo(new List<int> { 44 }));
+        }
+
+        [Test]
         public void automatic_book_search_should_allow_future_monitoring_for_the_book_media_side()
         {
             var releaseSearch = new RecordingReleaseSearch();

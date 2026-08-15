@@ -48,41 +48,93 @@ namespace Chaptarr.Core.Test.Books
 
         private class AuthorServiceProxy : DispatchProxy
         {
-            public Author ExistingAuthor { get; set; } = new Author { Id = 42, Name = "Existing Author" };
+            public Author CurrentAuthor { get; set; } = new Author { Id = 42, Name = "Existing Author" };
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IAuthorService.FindByProviderId))
+                switch (targetMethod?.Name)
                 {
-                    return ExistingAuthor;
-                }
+                    case nameof(IAuthorService.FindByProviderId):
+                        return CurrentAuthor;
+                    case nameof(IAuthorService.GetAuthor):
+                        return CurrentAuthor != null && CurrentAuthor.Id == (int)args[0] ? CurrentAuthor : null;
+                    case nameof(IAuthorService.UpdateAuthor):
+                        CurrentAuthor = (Author)args[0];
+                        return CurrentAuthor;
+                    case nameof(IAuthorService.PromoteMediaTypeMonitoringToSelected):
+                        var mediaType = (string)args[1];
+                        if (string.Equals(mediaType, "audiobook", StringComparison.OrdinalIgnoreCase) &&
+                            (CurrentAuthor.AudiobookMonitorExisting ?? 0) <= 0)
+                        {
+                            CurrentAuthor.AudiobookMonitorExisting = 2;
+                        }
+                        else if (string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase) &&
+                                 (CurrentAuthor.EbookMonitorExisting ?? 0) <= 0)
+                        {
+                            CurrentAuthor.EbookMonitorExisting = 2;
+                        }
 
-                throw new NotImplementedException($"Test proxy does not implement IAuthorService.{targetMethod?.Name}");
+                        CurrentAuthor.Monitored = CurrentAuthor.IsMonitoredFromMediaSettings();
+                        return null;
+                    default:
+                        throw new NotImplementedException($"Test proxy does not implement IAuthorService.{targetMethod?.Name}");
+                }
             }
         }
 
-        private class TerminalAuthorLibraryProxy : DispatchProxy
+        private class BookServiceProxy : DispatchProxy
+        {
+            public List<Book> Books { get; set; } = new();
+            public bool IgnoreMonitoringUpdates { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                switch (targetMethod?.Name)
+                {
+                    case nameof(IBookService.GetBooksByAuthor):
+                        return Books;
+                    case nameof(IBookService.GetBooks):
+                        var ids = ((IEnumerable<int>)args[0]).ToHashSet();
+                        return Books.Where(book => ids.Contains(book.Id)).ToList();
+                    case nameof(IBookService.SetMonitoredForMediaType):
+                        if (!IgnoreMonitoringUpdates)
+                        {
+                            var monitoredIds = ((IEnumerable<int>)args[0]).ToHashSet();
+                            var mediaType = (string)args[1];
+                            var monitored = (bool)args[2];
+                            foreach (var book in Books.Where(book => monitoredIds.Contains(book.Id)))
+                            {
+                                book.SetMonitoredForMediaType(mediaType, monitored);
+                            }
+                        }
+
+                        return null;
+                    default:
+                        throw new NotImplementedException($"Test proxy does not implement IBookService.{targetMethod?.Name}");
+                }
+            }
+        }
+
+        private class AuthorLibraryProxy : DispatchProxy
         {
             public AuthorTerminalException Terminal { get; set; }
+            public Author AddedAuthor { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IAuthorLibraryService.AddAuthorAsync))
                 {
-                    return Task.FromException<Author>(Terminal);
+                    if (Terminal != null)
+                    {
+                        return Task.FromException<Author>(Terminal);
+                    }
+
+                    return Task.FromResult(AddedAuthor);
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IAuthorLibraryService.{targetMethod?.Name}");
             }
         }
-        private class ThrowingProxy<T> : DispatchProxy where T : class
-        {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                throw new NotImplementedException($"Test proxy does not implement {typeof(T).Name}.{targetMethod?.Name}");
-            }
-        }
-
         private sealed class RecordingCommandQueue : IManageCommandQueue
         {
             public List<Command> Pushed { get; } = new();
@@ -144,30 +196,29 @@ namespace Chaptarr.Core.Test.Books
             StubPendingAuthorImportService pendingImportService,
             RecordingCommandQueue commandQueue,
             RecordingEventAggregator eventAggregator,
-            bool existingAuthor = true,
-            AuthorTerminalException terminal = null)
+            AuthorTerminalException terminal = null,
+            Author author = null,
+            IBookService bookService = null)
         {
-            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
-            ((AuthorServiceProxy)authorService).ExistingAuthor = existingAuthor
-                ? new Author { Id = 42, Name = "Existing Author" }
-                : null;
+            author ??= new Author { Id = 42, Name = "Existing Author" };
 
-            IAuthorLibraryService authorLibraryService;
-            if (terminal == null)
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)authorService).CurrentAuthor = author;
+
+            var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibraryService).Terminal = terminal;
+            ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = author;
+
+            if (bookService == null)
             {
-                authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, ThrowingProxy<IAuthorLibraryService>>();
-            }
-            else
-            {
-                authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, TerminalAuthorLibraryProxy>();
-                ((TerminalAuthorLibraryProxy)authorLibraryService).Terminal = terminal;
+                bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
             }
 
             return new ProcessPendingImportsCommandHandler(
                 pendingImportService,
                 authorLibraryService,
                 authorService,
-                DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                bookService,
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
@@ -229,7 +280,6 @@ namespace Chaptarr.Core.Test.Books
                 pendingImportService,
                 commandQueue,
                 eventAggregator,
-                existingAuthor: false,
                 terminal: terminal);
 
             handler.Execute(new ProcessPendingImportsCommand());
@@ -258,13 +308,275 @@ namespace Chaptarr.Core.Test.Books
                 pendingImportService,
                 commandQueue,
                 eventAggregator,
-                existingAuthor: false,
                 terminal: terminal);
 
             handler.Execute(new ProcessPendingImportsCommand());
 
             Assert.That(pending.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
             Assert.That(pending.LastError, Does.Contain("author_provider_record_missing"));
+            Assert.That(eventAggregator.Events.OfType<PendingAuthorImportFailedEvent>().Count(), Is.EqualTo(1));
+        }
+
+        [TestCase(true, false, new int[] { 101 })]
+        [TestCase(false, true, new int[] { 202 })]
+        [TestCase(true, true, new int[] { 101, 202 })]
+        public void should_search_requested_books_for_the_selected_media_types(
+            bool searchAudiobook,
+            bool searchEbook,
+            int[] expectedBookIds)
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(150);
+            pending.AudiobookStatus = searchAudiobook ? PendingImportStatus.Pending : PendingImportStatus.NotRequested;
+            pending.EbookStatus = searchEbook ? PendingImportStatus.Pending : PendingImportStatus.NotRequested;
+            pending.AudiobookBooksToSearch = searchAudiobook ? @"[""gr:1001""]" : null;
+            pending.EbookBooksToSearch = searchEbook ? @"[""gr:2002""]" : null;
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var author = new Author { Id = 42, Name = "Existing Author" };
+            var books = new List<Book>
+            {
+                new Book
+                {
+                    Id = 101,
+                    AuthorId = author.Id,
+                    MediaType = BookMediaType.Audiobook,
+                    GoodreadsWorkId = "gr:1001"
+                },
+                new Book
+                {
+                    Id = 202,
+                    AuthorId = author.Id,
+                    MediaType = BookMediaType.Ebook,
+                    GoodreadsWorkId = "gr:2002"
+                }
+            };
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).Books = books;
+            var commandQueue = new RecordingCommandQueue();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                new RecordingEventAggregator(),
+                author: author,
+                bookService: bookService);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            var search = commandQueue.Pushed.OfType<BookSearchCommand>().Single();
+            Assert.That(search.BookIds, Is.EquivalentTo(expectedBookIds));
+            Assert.That(books.Where(book => expectedBookIds.Contains(book.Id)).All(book => book.IsMonitoredWithAuthor()), Is.True);
+            Assert.That(author.AudiobookMonitorExisting, Is.EqualTo(searchAudiobook ? 2 : null));
+            Assert.That(author.EbookMonitorExisting, Is.EqualTo(searchEbook ? 2 : null));
+            Assert.That(commandQueue.Pushed.OfType<MissingBookSearchCommand>(), Is.Empty);
+            Assert.That(pendingImportService.DeletedIds, Does.Contain(pending.Id));
+        }
+
+        [Test]
+        public void should_retain_exact_searches_until_unavailable_author_is_imported()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(151);
+            pending.AudiobookStatus = PendingImportStatus.Pending;
+            pending.EbookStatus = PendingImportStatus.Pending;
+            pending.AudiobookBooksToSearch = "[\"gr:1001\"]";
+            pending.EbookBooksToSearch = "[\"gr:2002\"]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).Books = new List<Book>
+            {
+                new Book
+                {
+                    Id = 101,
+                    AuthorId = 42,
+                    MediaType = BookMediaType.Audiobook,
+                    GoodreadsWorkId = "gr:1001"
+                },
+                new Book
+                {
+                    Id = 202,
+                    AuthorId = 42,
+                    MediaType = BookMediaType.Ebook,
+                    GoodreadsWorkId = "gr:2002"
+                }
+            };
+            var commandQueue = new RecordingCommandQueue();
+            var eventAggregator = new RecordingEventAggregator();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                eventAggregator,
+                author: new Author { Id = 42, Name = "Now Available" },
+                bookService: bookService);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            var search = commandQueue.Pushed.OfType<BookSearchCommand>().Single();
+            Assert.That(search.BookIds, Is.EquivalentTo(new[] { 101, 202 }));
+            Assert.That(commandQueue.Pushed.OfType<MissingBookSearchCommand>(), Is.Empty);
+            Assert.That(pendingImportService.DeletedIds, Does.Contain(pending.Id));
+            Assert.That(eventAggregator.Events.OfType<PendingAuthorImportSucceededEvent>().Count(), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void should_repair_disabled_author_media_monitoring_before_exact_search()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(152);
+            pending.AudiobookStatus = PendingImportStatus.Pending;
+            pending.EbookStatus = PendingImportStatus.NotRequested;
+            pending.AudiobookMonitorExisting = 2;
+            pending.AudiobookBooksToSearch = @"[""gr:1001""]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var author = new Author
+            {
+                Id = 42,
+                Name = "Existing Author",
+                AudiobookMonitorExisting = 0,
+                AudiobookMonitorFuture = false
+            };
+            var book = new Book
+            {
+                Id = 101,
+                AuthorId = author.Id,
+                Author = author,
+                MediaType = BookMediaType.Audiobook,
+                GoodreadsWorkId = "gr:1001",
+                AudiobookMonitored = true
+            };
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).Books = new List<Book> { book };
+            var commandQueue = new RecordingCommandQueue();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                new RecordingEventAggregator(),
+                author: author,
+                bookService: bookService);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(author.AudiobookMonitorExisting, Is.EqualTo(2));
+            Assert.That(book.IsMonitoredWithAuthor(), Is.True);
+            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>().Single().BookIds, Is.EqualTo(new[] { book.Id }));
+            Assert.That(pendingImportService.DeletedIds, Does.Contain(pending.Id));
+        }
+
+        [Test]
+        public void should_repair_unmonitored_book_before_exact_search()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(153);
+            pending.AudiobookStatus = PendingImportStatus.Pending;
+            pending.EbookStatus = PendingImportStatus.NotRequested;
+            pending.AudiobookMonitorExisting = 2;
+            pending.AudiobookBooksToSearch = @"[""gr:1001""]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var author = new Author
+            {
+                Id = 42,
+                Name = "Existing Author",
+                AudiobookMonitorExisting = 2
+            };
+            var book = new Book
+            {
+                Id = 101,
+                AuthorId = author.Id,
+                Author = author,
+                MediaType = BookMediaType.Audiobook,
+                GoodreadsWorkId = "gr:1001",
+                AudiobookMonitored = false
+            };
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).Books = new List<Book> { book };
+            var commandQueue = new RecordingCommandQueue();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                new RecordingEventAggregator(),
+                author: author,
+                bookService: bookService);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(book.IsMonitoredWithAuthor(), Is.True);
+            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>().Single().BookIds, Is.EqualTo(new[] { book.Id }));
+            Assert.That(pendingImportService.DeletedIds, Does.Contain(pending.Id));
+        }
+
+        [Test]
+        public void should_fail_terminally_when_requested_book_is_absent_from_imported_catalog()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(155);
+            pending.AudiobookStatus = PendingImportStatus.Pending;
+            pending.EbookStatus = PendingImportStatus.NotRequested;
+            pending.AudiobookBooksToSearch = @"[""gr:missing""]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var commandQueue = new RecordingCommandQueue();
+            var eventAggregator = new RecordingEventAggregator();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                eventAggregator,
+                bookService: DispatchProxy.Create<IBookService, BookServiceProxy>());
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(pending.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
+            Assert.That(pending.LastError, Does.Contain("was not present in the imported author catalog"));
+            Assert.That(pendingImportService.DeletedIds, Does.Not.Contain(pending.Id));
+            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>(), Is.Empty);
+            Assert.That(eventAggregator.Events.OfType<PendingAuthorImportFailedEvent>().Count(), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void should_fail_terminally_when_requested_book_remains_unmonitored()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(156);
+            pending.AudiobookStatus = PendingImportStatus.Pending;
+            pending.EbookStatus = PendingImportStatus.NotRequested;
+            pending.AudiobookBooksToSearch = @"[""gr:1001""]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var author = new Author
+            {
+                Id = 42,
+                Name = "Existing Author",
+                AudiobookMonitorExisting = 2
+            };
+            var book = new Book
+            {
+                Id = 101,
+                AuthorId = author.Id,
+                Author = author,
+                MediaType = BookMediaType.Audiobook,
+                GoodreadsWorkId = "gr:1001"
+            };
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var bookServiceProxy = (BookServiceProxy)bookService;
+            bookServiceProxy.Books = new List<Book> { book };
+            bookServiceProxy.IgnoreMonitoringUpdates = true;
+            var commandQueue = new RecordingCommandQueue();
+            var eventAggregator = new RecordingEventAggregator();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                eventAggregator,
+                author: author,
+                bookService: bookService);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(pending.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
+            Assert.That(pending.LastError, Does.Contain("remained unmonitored"));
+            Assert.That(pendingImportService.DeletedIds, Does.Not.Contain(pending.Id));
+            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>(), Is.Empty);
             Assert.That(eventAggregator.Events.OfType<PendingAuthorImportFailedEvent>().Count(), Is.EqualTo(1));
         }
     }

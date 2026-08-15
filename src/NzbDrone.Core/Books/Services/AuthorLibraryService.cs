@@ -91,6 +91,8 @@ namespace NzbDrone.Core.Books.Services
         public bool CreateEbook { get; set; } = true;
         public List<string> AudiobookBooksToMonitor { get; set; }
         public List<string> EbookBooksToMonitor { get; set; }
+        public List<string> AudiobookBooksToSearch { get; set; }
+        public List<string> EbookBooksToSearch { get; set; }
         public HashSet<int> AudiobookTags { get; set; }
         public HashSet<int> EbookTags { get; set; }
         public HashSet<int> Tags { get; set; }

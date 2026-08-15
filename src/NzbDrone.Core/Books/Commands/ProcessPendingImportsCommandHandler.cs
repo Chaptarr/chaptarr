@@ -198,29 +198,6 @@ namespace NzbDrone.Core.Books.Commands
 
             try
             {
-                // Check if author was added manually while pending
-                var providerPrefix = ExtractPrefix(item.ProviderId);
-                var providerIdWithoutPrefix = ExtractIdWithoutPrefix(item.ProviderId);
-                var existingAuthor = _authorService.FindByProviderId(providerPrefix, providerIdWithoutPrefix);
-                if (existingAuthor != null)
-                {
-                    _logger.Info("Author {0} already exists in library, marking as succeeded", item.ProviderId);
-
-                    if (item.SearchForMissingBooks)
-                    {
-                        _commandQueueManager.Push(new MissingBookSearchCommand
-                        {
-                            AuthorId = existingAuthor.Id
-                        });
-                        _logger.Debug("Queued missing book search for existing author {0} (ID: {1})", item.ProviderId, existingAuthor.Id);
-                    }
-
-                    _pendingImportService.UpdateStatus(item, PendingImportStatus.Succeeded, null);
-                    // Delete row on success to prevent reprocessing loops
-                    _pendingImportService.Delete(item.Id);
-                    return item;
-                }
-
                 _logger.Info("Processing queued author import for provider {0}", item.ProviderId);
 
                 // Fire importing notification event. AddAuthorAsync performs the metadata fetch; avoid
@@ -245,18 +222,17 @@ namespace NzbDrone.Core.Books.Commands
 
                 var addedAuthor = await _authorLibraryService.AddAuthorAsync(item.ProviderId, config);
 
-                // Handle book-specific monitoring if needed
                 if (addedAuthor != null && addedAuthor.Id > 0)
                 {
-                    await HandleBookSpecificMonitoring(item, addedAuthor);
+                    addedAuthor = ApplyRequestedMonitoring(item, addedAuthor);
 
-                    if (item.SearchForMissingBooks)
+                    var terminalSearchError = QueueRequestedSearches(item, addedAuthor);
+                    if (!string.IsNullOrWhiteSpace(terminalSearchError))
                     {
-                        _commandQueueManager.Push(new MissingBookSearchCommand
-                        {
-                            AuthorId = addedAuthor.Id
-                        });
-                        _logger.Debug("Queued missing book search for newly imported author {0} (ID: {1})", item.ProviderId, addedAuthor.Id);
+                        _logger.Warn("Pending author import {0} completed, but its requested book search could not be fulfilled: {1}", item.ProviderId, terminalSearchError);
+                        _pendingImportService.UpdateStatus(item, PendingImportStatus.Failed, terminalSearchError);
+                        _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(item));
+                        return item;
                     }
 
                     _logger.Info("Successfully imported author {0} (ID: {1})", item.ProviderId, addedAuthor.Id);
@@ -334,54 +310,155 @@ namespace NzbDrone.Core.Books.Commands
             return config;
         }
 
-        private async Task HandleBookSpecificMonitoring(PendingAuthorImport item, Author addedAuthor)
+        private Author ApplyRequestedMonitoring(PendingAuthorImport item, Author author)
         {
-            var audiobookBooksToMonitor = DeserializeBooksToMonitor(item.AudiobookBooksToMonitor);
-            var ebookBooksToMonitor = DeserializeBooksToMonitor(item.EbookBooksToMonitor);
+            var audiobookTargets = MergeProviderIds(
+                DeserializeProviderIds(item.AudiobookBooksToMonitor, nameof(item.AudiobookBooksToMonitor)),
+                DeserializeProviderIds(item.AudiobookBooksToSearch, nameof(item.AudiobookBooksToSearch)));
+            var ebookTargets = MergeProviderIds(
+                DeserializeProviderIds(item.EbookBooksToMonitor, nameof(item.EbookBooksToMonitor)),
+                DeserializeProviderIds(item.EbookBooksToSearch, nameof(item.EbookBooksToSearch)));
 
-            if (audiobookBooksToMonitor?.Any() == true && item.HasAudiobook())
+            if (!audiobookTargets.Any() && !ebookTargets.Any())
             {
-                await UnmonitorAllExceptSpecified(addedAuthor, audiobookBooksToMonitor,
-                    processAudiobooks: true, processEbooks: false);
+                return author;
             }
 
-            if (ebookBooksToMonitor?.Any() == true && item.HasEbook())
+            if (item.HasAudiobook() && audiobookTargets.Any())
             {
-                await UnmonitorAllExceptSpecified(addedAuthor, ebookBooksToMonitor,
-                    processAudiobooks: false, processEbooks: true);
+                _authorService.PromoteMediaTypeMonitoringToSelected(author.Id, "audiobook");
+            }
+
+            if (item.HasEbook() && ebookTargets.Any())
+            {
+                _authorService.PromoteMediaTypeMonitoringToSelected(author.Id, "ebook");
+            }
+
+            author = _authorService.GetAuthor(author.Id) ?? author;
+            var allBooks = _bookService.GetBooksByAuthor(author.Id);
+
+            ApplyRequestedBookMonitoring(allBooks, BookMediaType.Audiobook, item.HasAudiobook(), audiobookTargets);
+            ApplyRequestedBookMonitoring(allBooks, BookMediaType.Ebook, item.HasEbook(), ebookTargets);
+
+            return _authorService.GetAuthor(author.Id) ?? author;
+        }
+
+        private static List<string> MergeProviderIds(params List<string>[] providerIdLists)
+        {
+            return providerIdLists
+                .Where(list => list != null)
+                .SelectMany(list => list)
+                .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void ApplyRequestedBookMonitoring(
+            List<Book> allBooks,
+            BookMediaType mediaType,
+            bool mediaTypeRequested,
+            List<string> requestedProviderIds)
+        {
+            if (!mediaTypeRequested || !requestedProviderIds.Any())
+            {
+                return;
+            }
+
+            var ids = allBooks
+                .Where(book => book.MediaType == mediaType)
+                .Where(book => requestedProviderIds.Any(providerId => BookMatchesProviderId(book, providerId)))
+                .Select(book => book.Id)
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            if (ids.Any())
+            {
+                _bookService.SetMonitoredForMediaType(
+                    ids,
+                    mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook",
+                    true);
             }
         }
 
-        private Task UnmonitorAllExceptSpecified(Author author, List<string> booksToMonitor,
-            bool processAudiobooks, bool processEbooks)
+        private string QueueRequestedSearches(PendingAuthorImport item, Author author)
         {
+            if (item.SearchForMissingBooks)
+            {
+                _commandQueueManager.Push(new MissingBookSearchCommand
+                {
+                    AuthorId = author.Id
+                });
+                _logger.Debug("Queued missing book search for imported author {0} (ID: {1})", item.ProviderId, author.Id);
+            }
+
+            var audiobookProviderIds = DeserializeProviderIds(item.AudiobookBooksToSearch, nameof(item.AudiobookBooksToSearch));
+            var ebookProviderIds = DeserializeProviderIds(item.EbookBooksToSearch, nameof(item.EbookBooksToSearch));
+            if (audiobookProviderIds?.Any() != true && ebookProviderIds?.Any() != true)
+            {
+                return null;
+            }
+
             var allBooks = _bookService.GetBooksByAuthor(author.Id);
-            var booksToUpdate = new List<Book>();
+            var bookIds = new HashSet<int>();
+            var failures = new List<string>();
 
-            foreach (var book in allBooks)
+            AddRequestedBookSearches(allBooks, author, BookMediaType.Audiobook, audiobookProviderIds, bookIds, failures);
+            AddRequestedBookSearches(allBooks, author, BookMediaType.Ebook, ebookProviderIds, bookIds, failures);
+
+            if (failures.Any())
             {
-                var shouldMonitor = booksToMonitor.Any(btm =>
-                    BookMatchesProviderId(book, btm));
-
-                if (book.MediaType == BookMediaType.Audiobook && processAudiobooks)
-                {
-                    book.AudiobookMonitored = shouldMonitor;
-                    booksToUpdate.Add(book);
-                }
-                else if (book.MediaType == BookMediaType.Ebook && processEbooks)
-                {
-                    book.EbookMonitored = shouldMonitor;
-                    booksToUpdate.Add(book);
-                }
+                return string.Join(" ", failures.Distinct());
             }
 
-            if (booksToUpdate.Any())
+            if (bookIds.Any())
             {
-                _bookService.UpdateMany(booksToUpdate);
-                _logger.Info("Updated monitoring for {0} books - monitoring only specified books", booksToUpdate.Count);
+                _commandQueueManager.Push(new BookSearchCommand(bookIds.ToList()));
+                _logger.Debug("Queued exact search for {0} requested books after importing author {1} (ID: {2})", bookIds.Count, item.ProviderId, author.Id);
             }
 
-            return Task.CompletedTask;
+            return null;
+        }
+
+        private void AddRequestedBookSearches(
+            List<Book> allBooks,
+            Author author,
+            BookMediaType mediaType,
+            List<string> providerIds,
+            HashSet<int> bookIds,
+            List<string> failures)
+        {
+            if (providerIds?.Any() != true)
+            {
+                return;
+            }
+
+            var mediaBooks = allBooks.Where(x => x.MediaType == mediaType).ToList();
+            foreach (var providerId in providerIds)
+            {
+                var matches = mediaBooks.Where(x => BookMatchesProviderId(x, providerId)).ToList();
+                if (!matches.Any())
+                {
+                    var failure = $"Requested {mediaType} book {providerId} was not present in the imported author catalog; no search was queued for it.";
+                    _logger.Warn(failure);
+                    failures.Add(failure);
+                    continue;
+                }
+
+                foreach (var match in matches)
+                {
+                    match.Author = author;
+                    if (!match.IsMonitoredWithAuthor())
+                    {
+                        var failure = $"Requested {mediaType} book {providerId} remained unmonitored after applying the saved add settings; no search was queued for it.";
+                        _logger.Error(failure);
+                        failures.Add(failure);
+                        continue;
+                    }
+
+                    bookIds.Add(match.Id);
+                }
+            }
         }
 
         private bool BookMatchesProviderId(Book book, string providerId)
@@ -416,7 +493,7 @@ namespace NzbDrone.Core.Books.Commands
             return false;
         }
 
-        private List<string> DeserializeBooksToMonitor(string json)
+        private List<string> DeserializeProviderIds(string json, string fieldName)
         {
             if (string.IsNullOrWhiteSpace(json))
                 return null;
@@ -427,7 +504,7 @@ namespace NzbDrone.Core.Books.Commands
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "Failed to deserialize BooksToMonitor: {0}", json);
+                _logger.Warn(ex, "Failed to deserialize {0}: {1}", fieldName, json);
                 return null;
             }
         }
@@ -438,18 +515,6 @@ namespace NzbDrone.Core.Books.Commands
                    ex.Message.Contains("Metadata profile", StringComparison.OrdinalIgnoreCase) ||
                    ex.Message.Contains("Root folder", StringComparison.OrdinalIgnoreCase) ||
                    ex.Message.Contains("Invalid", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private string ExtractPrefix(string providerId)
-        {
-            var colonIndex = providerId?.IndexOf(':') ?? -1;
-            return colonIndex > 0 ? providerId.Substring(0, colonIndex).ToLowerInvariant() : null;
-        }
-
-        private string ExtractIdWithoutPrefix(string providerId)
-        {
-            var colonIndex = providerId?.IndexOf(':') ?? -1;
-            return colonIndex > 0 ? providerId.Substring(colonIndex + 1) : providerId;
         }
 
         private string NormalizeProviderId(string providerId)

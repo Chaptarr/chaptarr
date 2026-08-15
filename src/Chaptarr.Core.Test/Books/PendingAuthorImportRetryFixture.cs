@@ -17,6 +17,7 @@ namespace Chaptarr.Core.Test.Books
     {
         private class RepositoryProxy : DispatchProxy
         {
+            public PendingAuthorImport Active { get; set; }
             public PendingAuthorImport Inserted { get; private set; }
             public PendingAuthorImport Updated { get; private set; }
 
@@ -25,7 +26,7 @@ namespace Chaptarr.Core.Test.Books
                 switch (targetMethod?.Name)
                 {
                     case nameof(IPendingAuthorImportRepository.GetActiveByProviderId):
-                        return null;
+                        return Active;
                     case nameof(IPendingAuthorImportRepository.Insert):
                         Inserted = (PendingAuthorImport)args[0];
                         Inserted.Id = 123;
@@ -114,6 +115,52 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(id, Is.EqualTo(123));
             Assert.That(repositoryProxy.Inserted.MaxAttempts, Is.Zero);
             Assert.That(repositoryProxy.Inserted.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
+        }
+
+        [Test]
+        public async Task pending_import_should_persist_and_merge_media_specific_book_searches()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var subject = new PendingAuthorImportService(
+                repository,
+                authorService,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var firstId = await subject.EnqueueAsync(
+                "gr:123",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    CreateEbook = false,
+                    AudiobookBooksToSearch = new List<string> { "gr:1001" },
+                    AudiobookBooksToMonitor = new List<string> { "gr:3001" }
+                },
+                "test");
+
+            repositoryProxy.Active = repositoryProxy.Inserted;
+            var secondId = await subject.EnqueueAsync(
+                "gr:123",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    CreateEbook = true,
+                    AudiobookBooksToSearch = new List<string> { "GR:1001", "gr:1002" },
+                    AudiobookBooksToMonitor = new List<string> { "GR:3001", "gr:3002" },
+                    EbookBooksToSearch = new List<string> { "gr:2001" },
+                    SearchForMissingBooks = true
+                },
+                "test");
+
+            Assert.That(firstId, Is.EqualTo(123));
+            Assert.That(secondId, Is.EqualTo(123));
+            Assert.That(repositoryProxy.Updated, Is.SameAs(repositoryProxy.Active));
+            Assert.That(repositoryProxy.Active.AudiobookBooksToSearch, Is.EqualTo("[\"gr:1001\",\"gr:1002\"]"));
+            Assert.That(repositoryProxy.Active.AudiobookBooksToMonitor, Is.EqualTo("[\"gr:3001\",\"gr:3002\"]"));
+            Assert.That(repositoryProxy.Active.EbookBooksToSearch, Is.EqualTo("[\"gr:2001\"]"));
+            Assert.That(repositoryProxy.Active.SearchForMissingBooks, Is.True);
         }
     }
 }

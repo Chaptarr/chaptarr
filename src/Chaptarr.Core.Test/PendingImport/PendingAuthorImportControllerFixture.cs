@@ -149,6 +149,25 @@ namespace Chaptarr.Core.Test.PendingImport
             Assert.That(resource.MaxAttempts, Is.Zero);
         }
 
+        [Test]
+        public void exact_book_search_targets_should_round_trip_through_the_api_resource()
+        {
+            var resource = new PendingAuthorImport
+            {
+                Id = 42,
+                AudiobookBooksToSearch = "[\"gr:audio\"]",
+                EbookBooksToSearch = "[\"gr:ebook\"]"
+            }.ToResource();
+
+            Assert.That(resource.AudiobookBooksToSearch, Is.EqualTo(new[] { "gr:audio" }));
+            Assert.That(resource.EbookBooksToSearch, Is.EqualTo(new[] { "gr:ebook" }));
+
+            var model = resource.ToModel();
+
+            Assert.That(model.AudiobookBooksToSearch, Is.EqualTo("[\"gr:audio\"]"));
+            Assert.That(model.EbookBooksToSearch, Is.EqualTo("[\"gr:ebook\"]"));
+        }
+
         private static QualityProfile CreateQualityProfile(int id, string name, ProfileType type)
         {
             return new QualityProfile

@@ -28,6 +28,7 @@ namespace NzbDrone.Core.Books
         private readonly IAuthorService _authorService;
         private readonly IAuthorLibraryService _authorLibraryService;
         private readonly IBookService _bookService;
+        private readonly IBookAddedService _bookAddedService;
         private readonly IProvideBookInfo _bookInfo;
         private readonly ISearchForNewBook _bookSearch;
         private readonly IImportListExclusionService _importListExclusionService;
@@ -45,6 +46,7 @@ namespace NzbDrone.Core.Books
         public AddBookService(IAuthorService authorService,
                                IAuthorLibraryService authorLibraryService,
                                IBookService bookService,
+                               IBookAddedService bookAddedService,
                                IProvideBookInfo bookInfo,
                                ISearchForNewBook bookSearch,
                                IImportListExclusionService importListExclusionService,
@@ -62,6 +64,7 @@ namespace NzbDrone.Core.Books
             _authorService = authorService;
             _authorLibraryService = authorLibraryService;
             _bookService = bookService;
+            _bookAddedService = bookAddedService;
             _bookInfo = bookInfo;
             _bookSearch = bookSearch;
             _importListExclusionService = importListExclusionService;
@@ -327,8 +330,9 @@ namespace NzbDrone.Core.Books
                                 isTriStateSelectedForMediaType;
 
                             // Create MonitoringConfig from the book's author settings
+                            var requestedBookProviderIds = GetAllBookProviderIds(book).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
                             var specificBookProviderIds = isSpecificBookIntent
-                                ? GetAllBookProviderIds(book).Where(x => !string.IsNullOrWhiteSpace(x)).ToList()
+                                ? requestedBookProviderIds
                                 : null;
 
                             var config = new MonitoringConfig
@@ -358,7 +362,9 @@ namespace NzbDrone.Core.Books
                                 SpecificBookMediaType = book.MediaType,
                                 // Pending import processing doesn't persist SpecificBookProviderIds; store an explicit list for later "monitor only these" behavior.
                                 AudiobookBooksToMonitor = isSpecificBookIntent && book.MediaType == BookMediaType.Audiobook ? specificBookProviderIds : null,
-                                EbookBooksToMonitor = isSpecificBookIntent && book.MediaType == BookMediaType.Ebook ? specificBookProviderIds : null
+                                EbookBooksToMonitor = isSpecificBookIntent && book.MediaType == BookMediaType.Ebook ? specificBookProviderIds : null,
+                                AudiobookBooksToSearch = book.AddOptions.SearchForNewBook && book.MediaType == BookMediaType.Audiobook ? requestedBookProviderIds : null,
+                                EbookBooksToSearch = book.AddOptions.SearchForNewBook && book.MediaType == BookMediaType.Ebook ? requestedBookProviderIds : null
                             };
 
                             // Handle "None, except this one book" monitoring option
@@ -439,16 +445,32 @@ namespace NzbDrone.Core.Books
                         var matchingBook = importedBooks.FirstOrDefault(b => b.MediaType == book.MediaType);
                         if (matchingBook != null)
                         {
+                            var searchForNewBook = book.AddOptions.SearchForNewBook;
+
                             // Book was imported with the author - use it
                             book = matchingBook;
                             book.Author = dbAuthor;
                             book.AuthorId = dbAuthor.Id;
-                            
+
                             // Monitoring has already been handled by AuthorLibraryService.ProcessBooksForAuthor
                             // using conditional monitoring at book creation time
                             _logger.Debug("[MONITOR-DEBUG] Book '{0}' (ID: {1}) monitoring already set by ProcessBooksForAuthor",
                                 book.Title, book.Id);
-                            
+
+                            if (searchForNewBook)
+                            {
+                                dbAuthor = EnsureMediaTypeMonitoringForRequestedSearch(dbAuthor, book.MediaType);
+                                book.Author = dbAuthor;
+                                book.SetMonitored(true);
+                                book.Monitored = true;
+                                _bookService.UpdateBook(book);
+
+                                book.AddOptions.AddType = BookAddType.Manual;
+                                book.AddOptions.SearchForNewBook = true;
+                                _bookService.SetAddOptions(new[] { book });
+                                _bookAddedService.SearchForRecentlyAdded(dbAuthor.Id);
+                            }
+
                             return book;
                         }
                         else
@@ -570,6 +592,15 @@ namespace NzbDrone.Core.Books
                     }
                 }
                 
+                if (book.AddOptions?.SearchForNewBook == true)
+                {
+                    dbAuthor = EnsureMediaTypeMonitoringForRequestedSearch(dbAuthor, bookMediaType);
+                    book.Author = dbAuthor;
+                    book.AuthorId = dbAuthor.Id;
+                    book.SetMonitored(true);
+                    book.Monitored = true;
+                }
+
                 // Handle "None, except this one book" when author already exists
                 // Using CAPTURED monitorMode instead of book.Author.AddOptions which is now NULL
                     if (isSpecificBookIntentForExistingAuthor)
@@ -695,6 +726,13 @@ namespace NzbDrone.Core.Books
             }
 
             return book;
+        }
+
+        private Author EnsureMediaTypeMonitoringForRequestedSearch(Author author, BookMediaType mediaType)
+        {
+            var mediaTypeName = mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
+            _authorService.PromoteMediaTypeMonitoringToSelected(author.Id, mediaTypeName);
+            return _authorService.GetAuthor(author.Id) ?? author;
         }
 
         private void EnsureAutoSelectedEdition(Book book)
