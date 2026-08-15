@@ -76,11 +76,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (comparison.Result <= 0)
             {
-                _logger.Debug("Existing item is equal or better by profile preference ({0}), skipping", comparison.Factor);
+                _logger.Trace("Existing item is equal or better by profile preference ({0}), skipping", comparison.Factor);
                 return false;
             }
 
-            _logger.Debug("New item improves profile preference by {0}", comparison.Factor);
+            _logger.Trace("New item improves profile preference by {0}", comparison.Factor);
             return true;
         }
 
@@ -129,7 +129,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return true;
             }
 
-            _logger.Debug("Existing item meets cut-off. skipping.");
+            _logger.Trace("Existing item meets cut-off. skipping.");
 
             return false;
         }
@@ -144,7 +144,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             // Comparing the quality directly because we don't want to upgrade to a proper for a webrip from a webdl or vice versa
             if (currentQuality.Quality == newQuality.Quality && compare > 0)
             {
-                _logger.Debug("New quality is a better revision for existing quality");
+                _logger.Trace("New quality is a better revision for existing quality");
                 return true;
             }
 
@@ -194,11 +194,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (!qualityProfile.UpgradeAllowed)
             {
-                _logger.Debug("Quality profile does not allow upgrades, skipping");
+                _logger.Trace("Quality profile does not allow upgrades, skipping");
                 return false;
             }
 
-            _logger.Debug("Quality profile allows upgrading by {0}", comparison.Factor);
+            _logger.Trace("Quality profile allows upgrading by {0}", comparison.Factor);
             return true;
         }
     }

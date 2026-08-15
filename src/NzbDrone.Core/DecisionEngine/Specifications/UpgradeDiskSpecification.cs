@@ -31,7 +31,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             if (InteractiveBookSearchSpecificationHelper.IsResolvedInteractiveBookSearch(subject, searchCriteria))
             {
-                _logger.Debug("Skipping on-disk upgrade rejection for resolved interactive book search");
+                _logger.Trace("Skipping on-disk upgrade rejection for resolved interactive book search");
                 return Decision.Accept();
             }
 

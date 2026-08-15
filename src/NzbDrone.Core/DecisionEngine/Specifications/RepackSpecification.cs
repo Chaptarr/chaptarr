@@ -38,7 +38,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (downloadPropersAndRepacks == ProperDownloadTypes.DoNotPrefer)
             {
-                _logger.Debug("Repacks are not preferred, skipping check");
+                _logger.Trace("Repacks are not preferred, skipping check");
                 return Decision.Accept();
             }
 
@@ -53,7 +53,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                     {
                         if (downloadPropersAndRepacks == ProperDownloadTypes.DoNotUpgrade)
                         {
-                            _logger.Debug("Auto downloading of repacks is disabled");
+                            _logger.Trace("Auto downloading of repacks is disabled");
                             return Decision.Reject("Repack downloading is disabled");
                         }
 
@@ -71,7 +71,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
                         if (!fileReleaseGroup.Equals(releaseGroup, StringComparison.InvariantCultureIgnoreCase))
                         {
-                            _logger.Debug("Release is a repack for a different release group. Release Group: {0}. File release group: {1}", releaseGroup, fileReleaseGroup);
+                            _logger.Trace("Release is a repack for a different release group. Release Group: {0}. File release group: {1}", releaseGroup, fileReleaseGroup);
                             return Decision.Reject("Release is a repack for a different release group. Release Group: {0}. File release group: {1}", releaseGroup, fileReleaseGroup);
                         }
                     }

@@ -23,11 +23,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.Search
                 return Decision.Accept();
             }
 
-            _logger.Debug("Checking if author matches searched author");
+            _logger.Trace("Checking if author matches searched author");
 
             if (remoteBook.Author.Id != searchCriteria.Author.Id)
             {
-                _logger.Debug("Author {0} does not match {1}", remoteBook.Author, searchCriteria.Author);
+                _logger.Trace("Author {0} does not match {1}", remoteBook.Author, searchCriteria.Author);
                 return Decision.Reject("Wrong author");
             }
 

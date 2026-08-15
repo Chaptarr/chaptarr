@@ -50,7 +50,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             var mediaType = ResolveMediaType(subject, searchCriteria);
             if (!mediaType.HasValue)
             {
-                _logger.Debug("[LANGUAGE_FILTER] Unable to determine media type for '{0}', skipping language filter", release.Title);
+                _logger.Trace("[LANGUAGE_FILTER] Unable to determine media type for '{0}', skipping language filter", release.Title);
                 return Decision.Accept();
             }
 
@@ -75,31 +75,36 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             var detectedLanguages = GetDetectedReleaseLanguages(subject);
             if (detectedLanguages.Count == 0)
             {
-                _logger.Debug("[LANGUAGE_FILTER] No explicit language detected for '{0}', allowing", release.Title);
+                _logger.Trace("[LANGUAGE_FILTER] No explicit language detected for '{0}', allowing", release.Title);
                 return Decision.Accept();
             }
 
             if (detectedLanguages.Any(allowedLanguages.Contains))
             {
-                _logger.Debug("[LANGUAGE_FILTER] Release '{0}' allowed by profile '{1}' with detected languages [{2}]",
-                    release.Title,
-                    profile.Name,
-                    string.Join(", ", detectedLanguages));
+                if (_logger.IsTraceEnabled)
+                {
+                    _logger.Trace("[LANGUAGE_FILTER] Release '{0}' allowed by profile '{1}' with detected languages [{2}]",
+                        release.Title,
+                        profile.Name,
+                        string.Join(", ", detectedLanguages));
+                }
+
                 return Decision.Accept();
             }
 
+            var detectedLanguageSummary = string.Join(", ", detectedLanguages);
             if (allowUnknownLanguage)
             {
-                _logger.Debug("[LANGUAGE_FILTER] Release '{0}' languages [{1}] are not allowed, but profile '{2}' permits unknowns only. Rejecting known foreign language.",
+                _logger.Trace("[LANGUAGE_FILTER] Release '{0}' languages [{1}] are not allowed, but profile '{2}' permits unknowns only. Rejecting known foreign language.",
                     release.Title,
-                    string.Join(", ", detectedLanguages),
+                    detectedLanguageSummary,
                     profile.Name);
             }
 
             return Decision.RejectSoftFilter(
                 "Release language [{0}] is not allowed by metadata profile '{1}'",
                 "Language",
-                string.Join(", ", detectedLanguages),
+                detectedLanguageSummary,
                 profile.Name);
         }
 

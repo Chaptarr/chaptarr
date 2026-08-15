@@ -28,14 +28,14 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             switch (detection.Verdict)
             {
                 case ReleasePackDetectionVerdict.MultipleBooks:
-                    _logger.Debug("Release {0} rejected as multi-book pack. Type={1}, Match={2}",
+                    _logger.Trace("Release {0} rejected as multi-book pack. Type={1}, Match={2}",
                         subject.Release?.Title,
                         detection.PackType,
                         detection.MatchedValue);
                     return Decision.RejectHardFilter("Release appears to contain multiple books", "Pack");
 
                 case ReleasePackDetectionVerdict.AudiobookFragment:
-                    _logger.Debug("Release {0} soft-rejected as audiobook fragment. Type={1}, Match={2}",
+                    _logger.Trace("Release {0} soft-rejected as audiobook fragment. Type={1}, Match={2}",
                         subject.Release?.Title,
                         detection.PackType,
                         detection.MatchedValue);

@@ -29,7 +29,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             if (InteractiveBookSearchSpecificationHelper.IsResolvedInteractiveBookSearch(subject, searchCriteria))
             {
-                _logger.Debug("Skipping upgrade-allowed rejection for resolved interactive book search");
+                _logger.Trace("Skipping upgrade-allowed rejection for resolved interactive book search");
                 return Decision.Accept();
             }
 
@@ -43,12 +43,12 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             {
                 if (file == null)
                 {
-                    _logger.Debug("File is no longer available, skipping this file.");
+                    _logger.Trace("File is no longer available, skipping this file.");
                     continue;
                 }
 
                 var fileCustomFormats = _formatService.ParseCustomFormat(file, subject.Author);
-                _logger.Debug("Comparing file quality with report. Existing files contain {0}", file.Quality);
+                _logger.Trace("Comparing file quality with report. Existing files contain {0}", file.Quality);
 
                 if (!_upgradableSpecification.IsUpgradeAllowed(qualityProfile,
                                                                file.Quality,
@@ -56,7 +56,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                                                                subject.ParsedBookInfo.Quality,
                                                                subject.CustomFormats))
                 {
-                    _logger.Debug("Upgrading is not allowed by the quality profile");
+                    _logger.Trace("Upgrading is not allowed by the quality profile");
 
                     return Decision.Reject("Existing files and the Quality profile does not allow upgrades");
                 }

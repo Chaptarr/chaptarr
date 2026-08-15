@@ -21,17 +21,17 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
-            _logger.Debug("size restriction not implemented");
+            _logger.Trace("size restriction not implemented");
             return Decision.Accept();
 
             /*
-            _logger.Debug("Beginning size check for: {0}", subject);
+            _logger.Trace("Beginning size check for: {0}", subject);
 
             var quality = subject.ParsedBookInfo.Quality.Quality;
 
             if (subject.Release.Size == 0)
             {
-                _logger.Debug("Release has unknown size, skipping size check");
+                _logger.Trace("Release has unknown size, skipping size check");
                 return Decision.Accept();
             }
 
@@ -44,14 +44,14 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 //If the parsed size is smaller than minSize we don't want it
                 if (subject.Release.Size < minSize)
                 {
-                    _logger.Debug("Item: {0}, Size: {1} is smaller than minimum allowed size ({2} bytes), rejecting.", subject, subject.Release.Size, minSize);
+                    _logger.Trace("Item: {0}, Size: {1} is smaller than minimum allowed size ({2} bytes), rejecting.", subject, subject.Release.Size, minSize);
                     return Decision.Reject("{0} is smaller than minimum allowed {1}", subject.Release.Size.SizeSuffix(), minSize.SizeSuffix());
                 }
             }
 
             if (!qualityDefinition.MaxSize.HasValue || qualityDefinition.MaxSize.Value == 0)
             {
-                _logger.Debug("Max size is unlimited, skipping size check");
+                _logger.Trace("Max size is unlimited, skipping size check");
             }
             else
             {
@@ -60,12 +60,12 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 //If the parsed size is greater than maxSize we don't want it
                 if (subject.Release.Size > maxSize)
                 {
-                    _logger.Debug("Item: {0}, Size: {1} is greater than maximum allowed size ({2} bytes), rejecting.", subject, subject.Release.Size, maxSize);
+                    _logger.Trace("Item: {0}, Size: {1} is greater than maximum allowed size ({2} bytes), rejecting.", subject, subject.Release.Size, maxSize);
                     return Decision.Reject("{0} is larger than maximum allowed {1}", subject.Release.Size.SizeSuffix(), maxSize.SizeSuffix());
                 }
             }
 
-            _logger.Debug("Item: {0}, meets size constraints", subject);
+            _logger.Trace("Item: {0}, meets size constraints", subject);
             return Decision.Accept();
             */
         }

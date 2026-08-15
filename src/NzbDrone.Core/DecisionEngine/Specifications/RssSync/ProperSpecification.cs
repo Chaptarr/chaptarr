@@ -37,7 +37,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             if (downloadPropersAndRepacks == ProperDownloadTypes.DoNotPrefer)
             {
-                _logger.Debug("Propers are not preferred, skipping check");
+                _logger.Trace("Propers are not preferred, skipping check");
                 return Decision.Accept();
             }
 
@@ -51,13 +51,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                     {
                         if (downloadPropersAndRepacks == ProperDownloadTypes.DoNotUpgrade)
                         {
-                            _logger.Debug("Auto downloading of propers is disabled");
+                            _logger.Trace("Auto downloading of propers is disabled");
                             return Decision.Reject("Proper downloading is disabled");
                         }
 
                         if (file.DateAdded < DateTime.Today.AddDays(-7))
                         {
-                            _logger.Debug("Proper for old file, rejecting: {0}", subject);
+                            _logger.Trace("Proper for old file, rejecting: {0}", subject);
                             return Decision.Reject("Proper for old file");
                         }
                     }

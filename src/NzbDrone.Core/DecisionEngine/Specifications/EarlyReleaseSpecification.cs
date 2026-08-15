@@ -37,7 +37,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             }
             catch (ModelNotFoundException)
             {
-                _logger.Debug("Indexer with id {0} does not exist, skipping early release check", subject.Release.IndexerId);
+                _logger.Trace("Indexer with id {0} does not exist, skipping early release check", subject.Release.IndexerId);
                 return Decision.Accept();
             }
 
@@ -61,7 +61,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             {
                 var message = $"Release published date, {subject.Release.PublishDate.ToShortDateString()}, is outside of {indexerSettings.EarlyReleaseLimit.Value} day early grab limit allowed by user";
 
-                _logger.Debug(message);
+                _logger.Trace(message);
                 return Decision.Reject(message);
             }
 

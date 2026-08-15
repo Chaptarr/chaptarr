@@ -27,7 +27,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Accept();
             }
 
-            _logger.Debug(availability.Reason);
+            _logger.Trace(availability.Reason);
             return Decision.Reject(availability.Reason);
         }
     }

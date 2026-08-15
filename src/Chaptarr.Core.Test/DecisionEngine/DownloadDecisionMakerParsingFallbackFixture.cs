@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Books;
@@ -22,6 +24,7 @@ using NzbDrone.Core.Qualities;
 namespace Chaptarr.Core.Test.DecisionEngine
 {
     [TestFixture]
+    [NonParallelizable]
     public class DownloadDecisionMakerParsingFallbackFixture
     {
         private sealed class TestParsingService : IParsingService
@@ -459,6 +462,170 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Assert.That(parsingService.MappedBookIds, Is.EqualTo(new[] { book.Id }));
                 Assert.That(decisions, Is.Empty);
             });
+        }
+
+        [Test]
+        public void rss_debug_logging_should_summarize_without_per_release_fts_noise()
+        {
+            NzbDrone.Core.Parser.Parser.ParseBookTitle("Logging Fixture - Warmup EPUB");
+            var previousConfiguration = LogManager.Configuration;
+            var previousGlobalThreshold = LogManager.GlobalThreshold;
+
+            try
+            {
+                var memory = ConfigureLogging(LogLevel.Debug);
+                var decisions = RunRssWithoutFtsRecall();
+                LogManager.Flush();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(decisions, Is.Empty);
+                    Assert.That(memory.Logs.Contains("Debug|RSS decision summary: reports=1, mapped=0, unmatched=1, accepted=0, permanentlyRejected=0, temporarilyRejected=0"), Is.True, string.Join(Environment.NewLine, memory.Logs));
+                    Assert.That(memory.Logs.Any(log => log.Contains("RSS FTS recall", StringComparison.Ordinal)), Is.False);
+                });
+            }
+            finally
+            {
+                LogManager.GlobalThreshold = previousGlobalThreshold;
+                LogManager.Configuration = previousConfiguration;
+                LogManager.ReconfigExistingLoggers();
+            }
+        }
+
+        [Test]
+        public void rss_trace_logging_should_retain_the_exact_unmatched_release_reason()
+        {
+            NzbDrone.Core.Parser.Parser.ParseBookTitle("Logging Fixture - Warmup EPUB");
+            var previousConfiguration = LogManager.Configuration;
+            var previousGlobalThreshold = LogManager.GlobalThreshold;
+
+            try
+            {
+                var memory = ConfigureLogging(LogLevel.Trace);
+                RunRssWithoutFtsRecall();
+                LogManager.Flush();
+
+                Assert.That(memory.Logs, Has.Some.Contains("Trace|RSS FTS recall found no monitored candidates for release 'Unrelated Release EPUB'"));
+            }
+            finally
+            {
+                LogManager.GlobalThreshold = previousGlobalThreshold;
+                LogManager.Configuration = previousConfiguration;
+                LogManager.ReconfigExistingLoggers();
+            }
+        }
+
+        [Test]
+        public void rss_summary_should_include_the_most_common_rejection_reasons()
+        {
+            var remoteBook = new RemoteBook();
+            var decisions = new List<DownloadDecision>
+            {
+                new DownloadDecision(remoteBook, new Rejection("Title/Author mismatch")),
+                new DownloadDecision(remoteBook, new Rejection("Title/Author mismatch")),
+                new DownloadDecision(remoteBook, new Rejection("Quality not wanted", RejectionType.Temporary))
+            };
+
+            var summary = DownloadDecisionMaker.BuildDecisionSummary("RSS", 4, decisions);
+
+            Assert.That(summary, Is.EqualTo("RSS decision summary: reports=4, mapped=3, unmatched=1, accepted=0, permanentlyRejected=2, temporarilyRejected=1; topRejections=[Title/Author mismatch (2), Quality not wanted (1)]"));
+        }
+
+        [Test]
+        public void search_debug_logging_should_name_the_target_and_summarize_rejections()
+        {
+            NzbDrone.Core.Parser.Parser.ParseBookTitle("Logging Fixture - Warmup EPUB");
+            var previousConfiguration = LogManager.Configuration;
+            var previousGlobalThreshold = LogManager.GlobalThreshold;
+
+            try
+            {
+                var memory = ConfigureLogging(LogLevel.Debug);
+                var author = new Author { Name = "Fiona Cole" };
+                var book = new Book
+                {
+                    Author = author,
+                    Title = "Voyeur",
+                    Editions = new List<Edition> { new Edition { Title = "Voyeur", Monitored = true } }
+                };
+
+                RunSingleSearchDecision(author, book, new ReleaseInfo
+                {
+                    Title = "Moongarden - Voyeur (2014) MP3",
+                    Author = "Fiona Cole",
+                    Indexer = "Generic",
+                    Categories = new List<int> { 3010 },
+                    PublishDate = DateTime.UtcNow
+                });
+                LogManager.Flush();
+
+                Assert.That(memory.Logs, Has.Some.Contains("Debug|Interactive search (author='Fiona Cole', book='Voyeur') decision summary: reports=1, mapped=1, unmatched=0, accepted=0, permanentlyRejected=1, temporarilyRejected=0; topRejections=[Title/Author mismatch (1)]"));
+            }
+            finally
+            {
+                LogManager.GlobalThreshold = previousGlobalThreshold;
+                LogManager.Configuration = previousConfiguration;
+                LogManager.ReconfigExistingLoggers();
+            }
+        }
+
+        [Test]
+        public void search_debug_logging_should_not_emit_per_release_specification_details()
+        {
+            NzbDrone.Core.Parser.Parser.ParseBookTitle("Logging Fixture - Warmup EPUB");
+            var previousConfiguration = LogManager.Configuration;
+            var previousGlobalThreshold = LogManager.GlobalThreshold;
+
+            try
+            {
+                var memory = ConfigureLogging(LogLevel.Debug);
+
+                GetMultiFormatDecision(CreateEbookProfile(Quality.EPUB), "Learn My Lesson", "epub");
+                LogManager.Flush();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(memory.Logs.Any(log => log.Contains("[QUALITY_PROFILE_CHECK]", StringComparison.Ordinal)), Is.False);
+                    Assert.That(memory.Logs.Any(log => log.Contains("[TITLE-MATCH]", StringComparison.Ordinal)), Is.False);
+                    Assert.That(memory.Logs.Any(log => log.Contains("Accepting ebook format", StringComparison.Ordinal)), Is.False);
+                    Assert.That(memory.Logs, Has.Some.Contains("Debug|Interactive search (author='Katee Robert', book='Learn My Lesson') decision summary"));
+                });
+            }
+            finally
+            {
+                LogManager.GlobalThreshold = previousGlobalThreshold;
+                LogManager.Configuration = previousConfiguration;
+                LogManager.ReconfigExistingLoggers();
+            }
+        }
+
+        [Test]
+        public void search_trace_logging_should_retain_per_release_specification_details()
+        {
+            NzbDrone.Core.Parser.Parser.ParseBookTitle("Logging Fixture - Warmup EPUB");
+            var previousConfiguration = LogManager.Configuration;
+            var previousGlobalThreshold = LogManager.GlobalThreshold;
+
+            try
+            {
+                var memory = ConfigureLogging(LogLevel.Trace);
+
+                GetMultiFormatDecision(CreateEbookProfile(Quality.EPUB), "Learn My Lesson", "epub");
+                LogManager.Flush();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(memory.Logs, Has.Some.Contains("Trace|[QUALITY_PROFILE_CHECK] ===== QUALITY PROFILE CHECK STARTED ====="));
+                    Assert.That(memory.Logs, Has.Some.Contains("Trace|[QUALITY_PROFILE_CHECK] Quality EPUB v1 ACCEPTED - allowed in profile"));
+                    Assert.That(memory.Logs, Has.Some.Contains("Trace|Accepting ebook format EPUB - author has ebook quality profile configured"));
+                });
+            }
+            finally
+            {
+                LogManager.GlobalThreshold = previousGlobalThreshold;
+                LogManager.Configuration = previousConfiguration;
+                LogManager.ReconfigExistingLoggers();
+            }
         }
 
         [TestCase(BookMatchingStrictness.Balanced, true)]
@@ -2079,6 +2246,45 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             Assert.That(decision.Rejected, Is.True);
             Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+        }
+
+        private static List<DownloadDecision> RunRssWithoutFtsRecall()
+        {
+            var logger = LogManager.GetLogger(nameof(DownloadDecisionMakerParsingFallbackFixture));
+            var decisionMaker = new DownloadDecisionMaker(
+                new List<IDecisionEngineSpecification>(),
+                new TestParsingService(),
+                new TestEditionFtsRepository(),
+                new NoOpCustomFormatCalculationService(),
+                new NoOpRemoteBookAggregationService(),
+                new NoOpReleaseNarratorMetadataEnricher(),
+                (IConfigService)null,
+                logger);
+
+            return decisionMaker.GetRssDecision(new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = "Unrelated Release EPUB",
+                    Indexer = "Generic",
+                    Categories = new List<int> { 3010 },
+                    PublishDate = DateTime.UtcNow
+                }
+            });
+        }
+
+        private static MemoryTarget ConfigureLogging(LogLevel minimumLevel)
+        {
+            var memory = new MemoryTarget("release-evaluation-memory")
+            {
+                Layout = "${level}|${message}"
+            };
+            var configuration = new LoggingConfiguration();
+            configuration.AddRule(minimumLevel, LogLevel.Fatal, memory);
+            LogManager.GlobalThreshold = minimumLevel;
+            LogManager.Configuration = configuration;
+            LogManager.ReconfigExistingLoggers();
+            return memory;
         }
     }
 }

@@ -24,7 +24,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             if (subject.Release.DownloadProtocol != Indexers.DownloadProtocol.Usenet)
             {
-                _logger.Debug("Not checking minimum age requirement for non-usenet report");
+                _logger.Trace("Not checking minimum age requirement for non-usenet report");
                 return Decision.Accept();
             }
 
@@ -34,19 +34,19 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (minimumAge == 0)
             {
-                _logger.Debug("Minimum age is not set.");
+                _logger.Trace("Minimum age is not set.");
                 return Decision.Accept();
             }
 
-            _logger.Debug("Checking if report meets minimum age requirements. {0}", ageRounded);
+            _logger.Trace("Checking if report meets minimum age requirements. {0}", ageRounded);
 
             if (age < minimumAge)
             {
-                _logger.Debug("Only {0} minutes old, minimum age is {1} minutes", ageRounded, minimumAge);
+                _logger.Trace("Only {0} minutes old, minimum age is {1} minutes", ageRounded, minimumAge);
                 return Decision.Reject("Only {0} minutes old, minimum age is {1} minutes", ageRounded, minimumAge);
             }
 
-            _logger.Debug("Release is {0} minutes old, greater than minimum age of {1} minutes", ageRounded, minimumAge);
+            _logger.Trace("Release is {0} minutes old, greater than minimum age of {1} minutes", ageRounded, minimumAge);
 
             return Decision.Accept();
         }

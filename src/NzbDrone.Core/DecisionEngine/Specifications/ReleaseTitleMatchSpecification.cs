@@ -56,7 +56,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (best == null)
             {
-                _logger.Debug("[TITLE-MATCH] Soft-filter mismatch (no match candidate). Release='{0}' ReleaseAuthor='{1}' SearchAuthor='{2}' Books={3}",
+                _logger.Trace("[TITLE-MATCH] Soft-filter mismatch (no match candidate). Release='{0}' ReleaseAuthor='{1}' SearchAuthor='{2}' Books={3}",
                     subject.Release.Title,
                     authorHint ?? "<null>",
                     context.AuthorName ?? "<null>",
@@ -77,13 +77,17 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (!best.IsMatch)
             {
-                _logger.Debug("[TITLE-MATCH] Mismatch. Release='{0}' ReleaseAuthor='{1}' BestBook='{2}' Variant='{3}' Problem={4} Leftovers=[{5}]",
-                    subject.Release.Title,
-                    authorHint ?? "<null>",
-                    best.Book?.Title ?? "<null>",
-                    best.MatchedVariant ?? "<none>",
-                    best.ProblemCode,
-                    string.Join(", ", best.MeaningfulLeftovers.Take(8)));
+                if (_logger.IsTraceEnabled)
+                {
+                    _logger.Trace("[TITLE-MATCH] Mismatch. Release='{0}' ReleaseAuthor='{1}' BestBook='{2}' Variant='{3}' Problem={4} Leftovers=[{5}]",
+                        subject.Release.Title,
+                        authorHint ?? "<null>",
+                        best.Book?.Title ?? "<null>",
+                        best.MatchedVariant ?? "<none>",
+                        best.ProblemCode,
+                        string.Join(", ", best.MeaningfulLeftovers.Take(8)));
+                }
+
                 return GetMismatchDecision(best);
             }
 

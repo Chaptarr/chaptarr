@@ -38,7 +38,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
         {
             if (searchCriteria != null && searchCriteria.UserInvokedSearch)
             {
-                _logger.Debug("Ignoring delay for user invoked search");
+                _logger.Trace("Ignoring delay for user invoked search");
                 return Decision.Accept();
             }
 
@@ -56,7 +56,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             if (delay == 0)
             {
-                _logger.Debug("Profile does not require a waiting period before download for {0}.", subject.Release.DownloadProtocol);
+                _logger.Trace("Profile does not require a waiting period before download for {0}.", subject.Release.DownloadProtocol);
                 return Decision.Accept();
             }
 
@@ -76,7 +76,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
                         if (qualityCompare == 0 && newQuality?.Revision.CompareTo(currentQuality.Revision) > 0)
                         {
-                            _logger.Debug("New quality is a better revision for existing quality, skipping delay");
+                            _logger.Trace("New quality is a better revision for existing quality, skipping delay");
                             return Decision.Accept();
                         }
                     }
@@ -91,7 +91,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
                 if (isBestInProfile && isPreferredProtocol)
                 {
-                    _logger.Debug("Quality is highest in profile for preferred protocol, will not delay");
+                    _logger.Trace("Quality is highest in profile for preferred protocol, will not delay");
                     return Decision.Accept();
                 }
             }
@@ -104,7 +104,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
                 if (score >= minimum && isPreferredProtocol)
                 {
-                    _logger.Debug("Custom format score ({0}) meets minimum ({1}) for preferred protocol, will not delay", score, minimum);
+                    _logger.Trace("Custom format score ({0}) meets minimum ({1}) for preferred protocol, will not delay", score, minimum);
                     return Decision.Accept();
                 }
             }
@@ -120,7 +120,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             if (subject.Release.AgeMinutes < delay)
             {
-                _logger.Debug("Waiting for better quality release, There is a {0} minute delay on {1}", delay, subject.Release.DownloadProtocol);
+                _logger.Trace("Waiting for better quality release, There is a {0} minute delay on {1}", delay, subject.Release.DownloadProtocol);
                 return Decision.Reject("Waiting for better quality release");
             }
 

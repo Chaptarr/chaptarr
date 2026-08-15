@@ -27,23 +27,26 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (maximumSize == 0)
             {
-                _logger.Debug("Maximum size is not set.");
+                _logger.Trace("Maximum size is not set.");
                 return Decision.Accept();
             }
 
             if (subject.Release.Size == 0)
             {
-                _logger.Debug("Release has unknown size, skipping size check.");
+                _logger.Trace("Release has unknown size, skipping size check.");
                 return Decision.Accept();
             }
 
-            _logger.Debug("Checking if release meets maximum size requirements. {0}", size.SizeSuffix());
+            if (_logger.IsTraceEnabled)
+            {
+                _logger.Trace("Checking if release meets maximum size requirements. {0}", size.SizeSuffix());
+            }
 
             if (size > maximumSize)
             {
                 var message = $"{size.SizeSuffix()} is too big, maximum size is {maximumSize.SizeSuffix()} (Settings->Indexers->Maximum Size)";
 
-                _logger.Debug(message);
+                _logger.Trace(message);
                 return Decision.Reject(message);
             }
 

@@ -57,12 +57,38 @@ namespace NzbDrone.Core.DecisionEngine
 
         public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease = false)
         {
-            return GetBookDecisions(reports).ToList();
+            var decisions = GetBookDecisions(reports).ToList();
+
+            if (_logger.IsDebugEnabled)
+            {
+                _logger.Debug(BuildDecisionSummary(pushedRelease ? "Release push" : "RSS", reports.Count, decisions));
+            }
+
+            return decisions;
         }
 
         public List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteriaBase)
         {
-            return GetBookDecisions(reports, false, searchCriteriaBase).ToList();
+            var decisions = GetBookDecisions(reports, false, searchCriteriaBase).ToList();
+
+            if (_logger.IsDebugEnabled)
+            {
+                var searchType = searchCriteriaBase.InteractiveSearch
+                    ? "Interactive"
+                    : searchCriteriaBase.UserInvokedSearch
+                        ? "Manual"
+                        : "Automatic";
+                var authorName = searchCriteriaBase.Author?.Name ?? "Unknown";
+                var searchedBooks = searchCriteriaBase.Books ?? new List<Book>();
+                var bookTarget = searchedBooks.Count == 1
+                    ? $"book='{searchedBooks[0]?.Title ?? "Unknown"}'"
+                    : $"books={searchedBooks.Count}";
+                var source = $"{searchType} search (author='{authorName}', {bookTarget})";
+
+                _logger.Debug(BuildDecisionSummary(source, reports.Count, decisions));
+            }
+
+            return decisions;
         }
 
         private IEnumerable<DownloadDecision> GetBookDecisions(List<ReleaseInfo> reports, bool pushedRelease = false, SearchCriteriaBase searchCriteria = null)
@@ -97,7 +123,7 @@ namespace NzbDrone.Core.DecisionEngine
                 }
 
                 _logger.ProgressTrace("Processing release {0}/{1}", reportNumber, reports.Count);
-                _logger.Debug("Processing release '{0}' from '{1}'", report.Title, report.Indexer);
+                _logger.Trace("Processing release '{0}' from '{1}'", report.Title, report.Indexer);
 
                 try
                 {
@@ -184,7 +210,7 @@ namespace NzbDrone.Core.DecisionEngine
                         // try parsing again using the search criteria, in case it parsed but parsed incorrectly
                         if ((remoteBook.Author == null || remoteBook.Books.Empty()) && searchCriteria != null)
                         {
-                            _logger.Debug("Author/Book null for {0}, reparsing with search criteria", report.Title);
+                            _logger.Trace("Author/Book null for {0}, reparsing with search criteria", report.Title);
                             var parsedBookInfoWithCriteria = Parser.Parser.ParseBookTitleWithSearchCriteria(report.Title,
                                                                                                             searchCriteria.Author,
                                                                                                             searchCriteria.Books);
@@ -248,11 +274,11 @@ namespace NzbDrone.Core.DecisionEngine
                         }
                         else
                         {
-                            _logger.Debug("[DECISION_MAKER] Processing valid remote book with author '{0}' and {1} books",
+                            _logger.Trace("[DECISION_MAKER] Processing valid remote book with author '{0}' and {1} books",
                                 remoteBook.Author?.Name ?? "NULL",
                                 remoteBook.Books?.Count ?? 0);
 
-                            _logger.Debug("[DECISION_MAKER] Author quality profile status - AudiobookProfile: {0}, EbookProfile: {1}",
+                            _logger.Trace("[DECISION_MAKER] Author quality profile status - AudiobookProfile: {0}, EbookProfile: {1}",
                                 remoteBook.Author?.AudiobookQualityProfileId.HasValue == true ? "LOADED" : "NULL",
                                 remoteBook.Author?.EbookQualityProfileId.HasValue == true ? "LOADED" : "NULL");
 
@@ -261,14 +287,17 @@ namespace NzbDrone.Core.DecisionEngine
 
                             remoteBook.CustomFormats = _formatCalculator.ParseCustomFormat(remoteBook, remoteBook.Release.Size);
 
-                            _logger.Debug("[DECISION_MAKER] Getting quality profile for author '{0}' and quality '{1}'",
+                            _logger.Trace("[DECISION_MAKER] Getting quality profile for author '{0}' and quality '{1}'",
                                 remoteBook?.Author?.Name ?? "NULL",
                                 remoteBook?.ParsedBookInfo?.Quality?.Quality?.Name ?? "NULL");
 
                             var qualityProfile = remoteBook?.Author?.GetQualityProfileForQuality(remoteBook.ParsedBookInfo.Quality.Quality);
 
-                            _logger.Debug("[DECISION_MAKER] Quality profile result: {0}",
-                                qualityProfile != null ? $"'{qualityProfile.Name}' (ID: {qualityProfile.Id})" : "NULL");
+                            if (_logger.IsTraceEnabled)
+                            {
+                                _logger.Trace("[DECISION_MAKER] Quality profile result: {0}",
+                                    qualityProfile != null ? $"'{qualityProfile.Name}' (ID: {qualityProfile.Id})" : "NULL");
+                            }
 
                             remoteBook.CustomFormatScore = qualityProfile?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
 
@@ -339,11 +368,14 @@ namespace NzbDrone.Core.DecisionEngine
 
                         if (decision.Rejections.Any())
                         {
-                            _logger.Debug("Release rejected for the following reasons: {0}", string.Join(", ", decision.Rejections));
+                            if (_logger.IsTraceEnabled)
+                            {
+                                _logger.Trace("Release rejected for the following reasons: {0}", string.Join(", ", decision.Rejections));
+                            }
                         }
                     else
                     {
-                        _logger.Debug("Release accepted");
+                        _logger.Trace("Release accepted");
                     }
 
                     yield return decision;
@@ -420,7 +452,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (tokens.Count == 0)
             {
-                _logger.Debug("RSS FTS recall skipped for release '{0}': no usable tokens in the release title or feed metadata", report.Title);
+                _logger.Trace("RSS FTS recall skipped for release '{0}': no usable tokens in the release title or feed metadata", report.Title);
                 return null;
             }
 
@@ -442,7 +474,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (recalls.Count == 0)
             {
-                _logger.Debug("RSS FTS recall found no monitored candidates for release '{0}' from {1} token(s)", report.Title, tokens.Count);
+                _logger.Trace("RSS FTS recall found no monitored candidates for release '{0}' from {1} token(s)", report.Title, tokens.Count);
                 return null;
             }
 
@@ -479,7 +511,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (matches.Count == 0)
             {
-                _logger.Debug("RSS FTS recall produced no title/author match for release '{0}' across {1} shortlisted monitored book(s)", report.Title, recalls.Count);
+                _logger.Trace("RSS FTS recall produced no title/author match for release '{0}' across {1} shortlisted monitored book(s)", report.Title, recalls.Count);
                 return null;
             }
 
@@ -494,7 +526,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (selected == null)
             {
-                _logger.Debug("RSS FTS recall found {0} proven matches for release '{1}' across {2} monitored author/media candidates", viableMatches.Count, report.Title, matches.Count);
+                _logger.Trace("RSS FTS recall found {0} proven matches for release '{1}' across {2} monitored author/media candidates", viableMatches.Count, report.Title, matches.Count);
                 return null;
             }
 
@@ -674,11 +706,14 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (qualityModel.Quality == null || selectedQuality.Id != qualityModel.Quality.Id)
             {
-                _logger.Debug("Using detected quality '{0}' for multi-format release '{1}' instead of primary '{2}'. All detected formats: [{3}]",
-                    selectedQuality.Name,
-                    remoteBook.Release?.Title ?? "Unknown",
-                    qualityModel.Quality?.Name ?? "Unknown",
-                    qualityModel.AllDetectedFormats);
+                if (_logger.IsTraceEnabled)
+                {
+                    _logger.Trace("Using detected quality '{0}' for multi-format release '{1}' instead of primary '{2}'. All detected formats: [{3}]",
+                        selectedQuality.Name,
+                        remoteBook.Release?.Title ?? "Unknown",
+                        qualityModel.Quality?.Name ?? "Unknown",
+                        qualityModel.AllDetectedFormats);
+                }
 
                 qualityModel.Quality = selectedQuality;
             }
@@ -693,6 +728,35 @@ namespace NzbDrone.Core.DecisionEngine
                 .ToList();
 
             return mediaTypes.Count == 1 ? mediaTypes[0] : null;
+        }
+
+        internal static string BuildDecisionSummary(string source, int reportCount, IReadOnlyCollection<DownloadDecision> decisions)
+        {
+            decisions ??= Array.Empty<DownloadDecision>();
+
+            var accepted = decisions.Count(decision => decision.Approved);
+            var permanentlyRejected = decisions.Count(decision => decision.Rejected);
+            var temporarilyRejected = decisions.Count(decision => decision.TemporarilyRejected);
+            var unmatched = Math.Max(0, reportCount - decisions.Count);
+            var summary = $"{source} decision summary: reports={reportCount}, mapped={decisions.Count}, unmatched={unmatched}, accepted={accepted}, permanentlyRejected={permanentlyRejected}, temporarilyRejected={temporarilyRejected}";
+
+            var topRejections = decisions
+                .SelectMany(decision => decision.Rejections ?? Enumerable.Empty<Rejection>())
+                .Select(rejection => rejection.Reason.IsNotNullOrWhiteSpace() ? rejection.Reason : "Unknown rejection")
+                .GroupBy(reason => reason, StringComparer.Ordinal)
+                .Select(group => new { Reason = group.Key, Count = group.Count() })
+                .OrderByDescending(group => group.Count)
+                .ThenBy(group => group.Reason, StringComparer.Ordinal)
+                .Take(5)
+                .Select(group => $"{group.Reason} ({group.Count})")
+                .ToList();
+
+            if (topRejections.Any())
+            {
+                summary += "; topRejections=[" + string.Join(", ", topRejections) + "]";
+            }
+
+            return summary;
         }
 
         private static bool IsAllowedByAuthorProfile(Author author, Quality quality)

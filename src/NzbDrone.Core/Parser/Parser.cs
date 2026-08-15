@@ -282,10 +282,13 @@ namespace NzbDrone.Core.Parser
 
                 var authorName = author.Name == "Various Authors" ? "VA" : author.Name.RemoveAccent();
 
-                Logger.Debug("Parsing string '{0}' using search criteria author: '{1}' books: '{2}'",
-                             title,
-                             authorName.RemoveAccent(),
-                             string.Join(", ", books.Select(a => a.Title.RemoveAccent())));
+                if (Logger.IsTraceEnabled)
+                {
+                    Logger.Trace("Parsing string '{0}' using search criteria author: '{1}' books: '{2}'",
+                                 title,
+                                 authorName.RemoveAccent(),
+                                 string.Join(", ", books.Select(a => a.Title.RemoveAccent())));
+                }
 
                 var releaseTitle = CleanReleaseTitleForParsing(title);
 
@@ -301,7 +304,7 @@ namespace NzbDrone.Core.Parser
 
                 if (bestMatch?.Book == null || !bestMatch.IsMatch)
                 {
-                    Logger.Debug("No acceptable title match found using search criteria for '{0}'", title);
+                    Logger.Trace("No acceptable title match found using search criteria for '{0}'", title);
                     return null;
                 }
 
@@ -318,11 +321,14 @@ namespace NzbDrone.Core.Parser
                     foundBook = bestMatch.Book.Title;
                 }
 
-                Logger.Trace("Search-criteria title match: Author='{0}', Book='{1}', Variant='{2}', Leftovers=[{3}]",
-                             foundAuthor,
-                             foundBook,
-                             bestMatch.MatchedVariant ?? "<none>",
-                             string.Join(", ", bestMatch.MeaningfulLeftovers.Take(8)));
+                if (Logger.IsTraceEnabled)
+                {
+                    Logger.Trace("Search-criteria title match: Author='{0}', Book='{1}', Variant='{2}', Leftovers=[{3}]",
+                                 foundAuthor,
+                                 foundBook,
+                                 bestMatch.MatchedVariant ?? "<none>",
+                                 string.Join(", ", bestMatch.MeaningfulLeftovers.Take(8)));
+                }
 
                 var result = new ParsedBookInfo
                 {
@@ -334,11 +340,11 @@ namespace NzbDrone.Core.Parser
                 try
                 {
                     result.Quality = QualityParser.ParseQuality(title);
-                    Logger.Debug("Quality parsed: {0}", result.Quality);
+                    Logger.Trace("Quality parsed: {0}", result.Quality);
 
                     result.ReleaseGroup = ParseReleaseGroup(releaseTitle);
 
-                    Logger.Debug("Release Group parsed: {0}", result.ReleaseGroup);
+                    Logger.Trace("Release Group parsed: {0}", result.ReleaseGroup);
 
                     return result;
                 }
@@ -355,7 +361,7 @@ namespace NzbDrone.Core.Parser
                 }
             }
 
-            Logger.Debug("Unable to parse {0}", title);
+            Logger.Trace("Unable to parse {0}", title);
             return null;
         }
 
@@ -363,7 +369,7 @@ namespace NzbDrone.Core.Parser
         {
             remainder = report;
 
-            Logger.Trace($"Finding '{name}' in '{report}'");
+            Logger.Trace("Finding '{0}' in '{1}'", name, report);
 
             var similarity = StringSimilarity(report, name);
             if (similarity < 0.6)
@@ -395,14 +401,14 @@ namespace NzbDrone.Core.Parser
         {
             try
             {
-                Logger.Debug("ParseBookTitle called with: '{0}'", title);
+                Logger.Trace("ParseBookTitle called with: '{0}'", title);
 
                 if (!ValidateBeforeParsing(title))
                 {
                     return null;
                 }
 
-                Logger.Debug("Parsing string '{0}'", title);
+                Logger.Trace("Parsing string '{0}'", title);
 
                 var releaseTitle = CleanReleaseTitleForParsing(title);
 
@@ -449,7 +455,7 @@ namespace NzbDrone.Core.Parser
                             if (result != null)
                             {
                                 result.Quality = QualityParser.ParseQuality(title);
-                                Logger.Debug("Quality parsed: {0}", result.Quality);
+                                Logger.Trace("Quality parsed: {0}", result.Quality);
 
                                 result.ReleaseGroup = ParseReleaseGroup(releaseTitle);
 
@@ -459,12 +465,12 @@ namespace NzbDrone.Core.Parser
                                     result.ReleaseGroup = subGroup;
                                 }
 
-                                Logger.Debug("Release Group parsed: {0}", result.ReleaseGroup);
+                                Logger.Trace("Release Group parsed: {0}", result.ReleaseGroup);
 
                                 result.ReleaseHash = GetReleaseHash(match);
                                 if (!result.ReleaseHash.IsNullOrWhiteSpace())
                                 {
-                                    Logger.Debug("Release Hash parsed: {0}", result.ReleaseHash);
+                                    Logger.Trace("Release Hash parsed: {0}", result.ReleaseHash);
                                 }
 
                                 return result;
@@ -486,7 +492,7 @@ namespace NzbDrone.Core.Parser
                 }
             }
 
-            Logger.Debug("Unable to parse {0}", title);
+            Logger.Trace("Unable to parse {0}", title);
             return null;
         }
 
@@ -711,7 +717,7 @@ namespace NzbDrone.Core.Parser
 
         public static string ParseAuthorName(string title)
         {
-            Logger.Debug("Parsing string '{0}'", title);
+            Logger.Trace("Parsing string '{0}'", title);
 
             var parseResult = ParseBookTitle(title);
 
@@ -766,7 +772,7 @@ namespace NzbDrone.Core.Parser
                 result.BookTitle = "Discography";
             }
 
-            Logger.Debug("Book Parsed. {0}", result);
+            Logger.Trace("Book Parsed. {0}", result);
 
             return result;
         }
@@ -799,7 +805,7 @@ namespace NzbDrone.Core.Parser
         {
             if (title.ToLower().Contains("password") && title.ToLower().Contains("yenc"))
             {
-                Logger.Debug("");
+                Logger.Trace("");
                 return false;
             }
 
@@ -812,7 +818,7 @@ namespace NzbDrone.Core.Parser
 
             if (RejectHashedReleasesRegex.Any(v => v.IsMatch(titleWithoutExtension)))
             {
-                Logger.Debug("Rejected Hashed Release Title: " + title);
+                Logger.Trace("Rejected Hashed Release Title: {0}", title);
                 return false;
             }
 

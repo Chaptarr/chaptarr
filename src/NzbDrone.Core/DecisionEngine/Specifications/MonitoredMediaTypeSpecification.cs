@@ -23,24 +23,24 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             if (InteractiveBookSearchSpecificationHelper.IsRequestedBookInteractiveSearch(subject, searchCriteria))
             {
-                _logger.Debug("Skipping media-type monitoring rejection for explicit interactive book search");
+                _logger.Trace("Skipping media-type monitoring rejection for explicit interactive book search");
                 return Decision.Accept();
             }
 
             if (subject?.Books == null || subject.Books.Count == 0)
             {
-                _logger.Debug("No books in release, skipping media type monitoring check");
+                _logger.Trace("No books in release, skipping media type monitoring check");
                 return Decision.Accept();
             }
 
             var quality = subject.ParsedBookInfo?.Quality?.Quality;
             if (quality == null)
             {
-                _logger.Debug("No quality information available, skipping media type monitoring check");
+                _logger.Trace("No quality information available, skipping media type monitoring check");
                 return Decision.Accept();
             }
 
-            _logger.Debug("Checking monitoring for quality: {0} (ID: {1})", quality.Name, quality.Id);
+            _logger.Trace("Checking monitoring for quality: {0} (ID: {1})", quality.Name, quality.Id);
 
             var mediaType = QualityMediaTypeHelper.DetectMediaType(quality, subject.Release);
             var isAudiobook = mediaType == BookMediaType.Audiobook;
@@ -48,7 +48,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (!isAudiobook && !isEbook)
             {
-                _logger.Debug("Quality {0} does not map to a known monitored media type, accepting", quality.Name);
+                _logger.Trace("Quality {0} does not map to a known monitored media type, accepting", quality.Name);
                 return Decision.Accept();
             }
 
@@ -58,7 +58,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (!authorSideMonitored)
             {
-                _logger.Debug("Rejecting {0} quality {1} - {0} monitoring is disabled for this author", mediaTypeName, quality.Name);
+                _logger.Trace("Rejecting {0} quality {1} - {0} monitoring is disabled for this author", mediaTypeName, quality.Name);
                 return Decision.Reject($"{mediaTypeDisplayName} monitoring is disabled for this author");
             }
 
@@ -68,11 +68,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (!bookSideMonitored)
             {
-                _logger.Debug("Rejecting {0} quality {1} - no books have {0} monitoring enabled", mediaTypeName, quality.Name);
+                _logger.Trace("Rejecting {0} quality {1} - no books have {0} monitoring enabled", mediaTypeName, quality.Name);
                 return Decision.Reject($"{mediaTypeDisplayName} format is not monitored for this book");
             }
 
-            _logger.Debug("{0} monitoring check passed for quality {1}", mediaTypeName, quality.Name);
+            _logger.Trace("{0} monitoring check passed for quality {1}", mediaTypeName, quality.Name);
             return Decision.Accept();
         }
     }

@@ -178,8 +178,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             
             // Parse author name into words
             var authorWords = ParseIntoWords(authorName);
-            _logger.Debug("[CONTAINMENT] Author parsed into words: [{0}]", 
-                string.Join(", ", authorWords.Select(w => $"'{w.Word}'({w.Type})")));
+            if (_logger.IsTraceEnabled)
+            {
+                _logger.Trace("[CONTAINMENT] Author parsed into words: [{0}]",
+                    string.Join(", ", authorWords.Select(w => $"'{w.Word}'({w.Type})")));
+            }
 
             // Check each match-eligible field individually. Callers do not all receive the
             // same pre-filtered dictionary, so the shared exclusion policy must be enforced
@@ -207,9 +210,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 }
             }
 
-            _logger.Debug("[CONTAINMENT] Author '{0}' NOT FOUND in any single field", authorName);
-            _logger.Debug("[CONTAINMENT] Searched {0} fields with {1} total values", 
-                allTags.Count, allTags.Sum(kv => kv.Value.Count));
+            _logger.Trace("[CONTAINMENT] Author '{0}' NOT FOUND in any single field", authorName);
+
+            if (_logger.IsTraceEnabled)
+            {
+                _logger.Trace("[CONTAINMENT] Searched {0} fields with {1} total values",
+                    allTags.Count, allTags.Sum(kv => kv.Value.Count));
+            }
             
             return false;
         }
@@ -236,9 +243,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             // A file with just "The Housemaid's Secret" cannot satisfy this demand.
             var editionTokens = GetEditionTokensForValidation(editionTitle);
 
-            _logger.Debug("[CONTAINMENT] Edition tokens ({0}): [{1}]",
-                editionTokens.Count,
-                string.Join(", ", editionTokens.Take(15)) + (editionTokens.Count > 15 ? "..." : ""));
+            if (_logger.IsTraceEnabled)
+            {
+                _logger.Trace("[CONTAINMENT] Edition tokens ({0}): [{1}]",
+                    editionTokens.Count,
+                    string.Join(", ", editionTokens.Take(15)) + (editionTokens.Count > 15 ? "..." : ""));
+            }
 
             // Check each tag field using CONSUMPTION-based matching:
             // Each edition token must find AND consume a matching field token.
@@ -315,8 +325,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return true;
             }
 
-            _logger.Debug("[CONTAINMENT] Edition '{0}' NOT FOUND in any single field",
-                TrimTitleForLog(editionTitle));
+            if (_logger.IsTraceEnabled)
+            {
+                _logger.Trace("[CONTAINMENT] Edition '{0}' NOT FOUND in any single field",
+                    TrimTitleForLog(editionTitle));
+            }
             return false;
         }
 

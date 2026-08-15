@@ -49,7 +49,7 @@ namespace NzbDrone.Core.Parser
 
         public static QualityModel ParseQuality(string name, string desc = null, List<int> categories = null, string indexerName = null, List<string> tags = null, int indexerFlags = 0)
         {
-            Logger.Debug("Trying to parse quality for '{0}'", name);
+            Logger.Trace("Trying to parse quality for '{0}'", name);
 
             if (name.IsNullOrWhiteSpace() && desc.IsNullOrWhiteSpace())
             {
@@ -62,7 +62,7 @@ namespace NzbDrone.Core.Parser
             if (desc.IsNotNullOrWhiteSpace())
             {
                 var descCodec = ParseCodec(desc, "");
-                Logger.Trace($"Got codec {descCodec}");
+                Logger.Trace("Got codec {0}", descCodec);
 
                 result.Quality = FindQuality(descCodec);
 
@@ -133,7 +133,7 @@ namespace NzbDrone.Core.Parser
 
         public static QualityModel ParseQualityFromFileType(string fileType, string title, int indexerFlags, string indexerName = null)
         {
-            Logger.Debug("Parsing quality from fileType '{0}' for title '{1}'", fileType, title);
+            Logger.Trace("Parsing quality from fileType '{0}' for title '{1}'", fileType, title);
 
             var result = ParseQualityModifiers(title, title.Replace('_', ' ').Trim().ToLower());
 
@@ -151,7 +151,10 @@ namespace NzbDrone.Core.Parser
                     result.DetectedQualities = detectedQualities;
                     result.QualityDetectionSource = QualityDetectionSource.TagLib;
 
-                    Logger.Debug("Multi-format detection: Primary='{0}', All detected=[{1}]", primaryQuality.Name, string.Join(", ", detectedQualities.Select(q => q.Name)));
+                    if (Logger.IsTraceEnabled)
+                    {
+                        Logger.Trace("Multi-format detection: Primary='{0}', All detected=[{1}]", primaryQuality.Name, string.Join(", ", detectedQualities.Select(q => q.Name)));
+                    }
 
                     return result;
                 }

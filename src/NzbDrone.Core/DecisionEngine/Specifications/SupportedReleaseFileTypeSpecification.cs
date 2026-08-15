@@ -27,7 +27,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 requestedMediaType.HasValue &&
                 ReleaseFileTypeCompatibility.TryGetMediaTypeMismatch(torrentInfo.FileType, requestedMediaType.Value, out var mismatchedFileType))
             {
-                _logger.Debug("Rejecting release '{0}' because indexer file type '{1}' is not compatible with requested media type {2}",
+                _logger.Trace("Rejecting release '{0}' because indexer file type '{1}' is not compatible with requested media type {2}",
                               subject.Release?.Title ?? "Unknown",
                               torrentInfo.FileType,
                               requestedMediaType.Value);
@@ -38,7 +38,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             if (torrentInfo?.FileType != null &&
                 ReleaseFileTypeCompatibility.TryGetKnownUnsupportedFileType(torrentInfo.FileType, out var unsupportedFileType))
             {
-                _logger.Debug("Rejecting release '{0}' because indexer file type '{1}' is not supported for import",
+                _logger.Trace("Rejecting release '{0}' because indexer file type '{1}' is not supported for import",
                               subject.Release?.Title ?? "Unknown",
                               torrentInfo.FileType);
 
@@ -50,7 +50,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             // an "unknown quality" case; Chaptarr cannot import that payload.
             if (ReleaseFileTypeCompatibility.TryGetKnownUnsupportedReleaseTitleFileType(subject?.Release?.Title, out unsupportedFileType))
             {
-                _logger.Debug("Rejecting release '{0}' because release title includes unsupported file type '{1}'",
+                _logger.Trace("Rejecting release '{0}' because release title includes unsupported file type '{1}'",
                               subject?.Release?.Title ?? "Unknown",
                               unsupportedFileType);
 

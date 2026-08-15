@@ -37,7 +37,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             }
             catch (ModelNotFoundException)
             {
-                _logger.Debug("Indexer with id {0} does not exist, skipping indexer tags check", subject.Release.IndexerId);
+                _logger.Trace("Indexer with id {0} does not exist, skipping indexer tags check", subject.Release.IndexerId);
                 return Decision.Accept();
             }
 
@@ -48,7 +48,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             if (indexerTags.Any() && indexerTags.Intersect(authorTags).Empty())
             {
-                _logger.Debug("Indexer {0} has tags. None of these are present on author {1}. Rejecting", subject.Release.Indexer, subject.Author);
+                _logger.Trace("Indexer {0} has tags. None of these are present on author {1}. Rejecting", subject.Release.Indexer, subject.Author);
 
                 return Decision.Reject("Author tags do not match any of the indexer tags");
             }

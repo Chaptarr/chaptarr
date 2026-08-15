@@ -39,16 +39,16 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
         {
             if (searchCriteria != null)
             {
-                _logger.Debug("Skipping history check during search");
+                _logger.Trace("Skipping history check during search");
                 return Decision.Accept();
             }
 
             var cdhEnabled = _configService.EnableCompletedDownloadHandling;
 
-            _logger.Debug("Performing history status check on report");
+            _logger.Trace("Performing history status check on report");
             foreach (var book in subject.Books)
             {
-                _logger.Debug("Checking current status of book [{0}] in history", book.Id);
+                _logger.Trace("Checking current status of book [{0}] in history", book.Id);
                 var mostRecent = _historyService.MostRecentForBook(book.Id);
 
                 if (mostRecent != null && mostRecent.EventType == EntityHistoryEventType.Grabbed)

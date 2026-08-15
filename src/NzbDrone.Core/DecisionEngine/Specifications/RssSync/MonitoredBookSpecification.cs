@@ -23,7 +23,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
         {
             if (InteractiveBookSearchSpecificationHelper.IsRequestedBookInteractiveSearch(subject, searchCriteria))
             {
-                _logger.Debug("Skipping monitored-book rejection for explicit interactive book search");
+                _logger.Trace("Skipping monitored-book rejection for explicit interactive book search");
                 return Decision.Accept();
             }
 
@@ -31,7 +31,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                 book != null && subject.Author.IsMonitoredForMediaType(book.MediaType == BookMediaType.Audiobook));
             if (subject.Books.Count > 0 && authorMonitoredCount == 0)
             {
-                _logger.Debug("Author is not monitored for the release's media type. Rejecting");
+                _logger.Trace("Author is not monitored for the release's media type. Rejecting");
                 return Decision.Reject("Author is not monitored");
             }
 
@@ -47,17 +47,17 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             if (subject.Books.Count == 1)
             {
-                _logger.Debug("Book is not monitored. Rejecting");
+                _logger.Trace("Book is not monitored. Rejecting");
                 return Decision.Reject("Book is not monitored");
             }
 
             if (monitoredCount == 0)
             {
-                _logger.Debug("No books in the release are monitored. Rejecting", monitoredCount, subject.Books.Count);
+                _logger.Trace("No books in the release are monitored. Rejecting", monitoredCount, subject.Books.Count);
             }
             else
             {
-                _logger.Debug("Only {0}/{1} books in the release are monitored. Rejecting", monitoredCount, subject.Books.Count);
+                _logger.Trace("Only {0}/{1} books in the release are monitored. Rejecting", monitoredCount, subject.Books.Count);
             }
 
             return Decision.Reject("Book is not monitored");

@@ -37,18 +37,18 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (!cdhEnabled)
             {
-                _logger.Debug("Skipping already imported check because CDH is disabled");
+                _logger.Trace("Skipping already imported check because CDH is disabled");
                 return Decision.Accept();
             }
 
-            _logger.Debug("Performing already imported check on report");
+            _logger.Trace("Performing already imported check on report");
             foreach (var book in subject.Books)
             {
                 var bookFiles = _mediaFileService.GetFilesByBook(book.Id);
 
                 if (bookFiles.Count() == 0)
                 {
-                    _logger.Debug("Skipping already imported check for book without files");
+                    _logger.Trace("Skipping already imported check for book without files");
                     continue;
                 }
 
@@ -85,7 +85,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
                     if (torrentInfo?.InfoHash != null && torrentInfo.InfoHash.ToUpper() == lastGrabbed.DownloadId)
                     {
-                        _logger.Debug("Has same torrent hash as a grabbed and imported release");
+                        _logger.Trace("Has same torrent hash as a grabbed and imported release");
                         return Decision.Reject("Has same torrent hash as a grabbed and imported release");
                     }
                 }
@@ -94,7 +94,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 // a different time very likely has the exact same content and we don't need to also try it.
                 if (release.Title.Equals(lastGrabbed.SourceTitle, StringComparison.InvariantCultureIgnoreCase))
                 {
-                    _logger.Debug("Has same release name as a grabbed and imported release");
+                    _logger.Trace("Has same release name as a grabbed and imported release");
                     return Decision.Reject("Has same release name as a grabbed and imported release");
                 }
             }

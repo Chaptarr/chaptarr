@@ -68,11 +68,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
                 if (qualityProfile == null || queuedSourceQuality?.Quality == null)
                 {
-                    _logger.Debug("Rejecting release because a matching download is already queued and Chaptarr cannot prove the new release is a profile-approved upgrade. Queue item: {0}", queueItem.Title);
+                    _logger.Trace("Rejecting release because a matching download is already queued and Chaptarr cannot prove the new release is a profile-approved upgrade. Queue item: {0}", queueItem.Title);
                     return Decision.Reject("A download is already queued for this book");
                 }
 
-                _logger.Debug("Checking if existing release in queue meets cutoff. Effective queued quality is: {0}", queuedEffectiveQuality);
+                _logger.Trace("Checking if existing release in queue meets cutoff. Effective queued quality is: {0}", queuedEffectiveQuality);
 
                 var queuedItemCustomFormats = remoteBook?.ParsedBookInfo != null
                     ? _formatService.ParseCustomFormat(remoteBook, (long)queueItem.Size)
@@ -86,7 +86,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                     return Decision.Reject("Release in queue already meets cutoff: {0}", queuedEffectiveQuality);
                 }
 
-                _logger.Debug("Checking if release has a higher profile preference than queued release. Queued source: {0}", queuedSourceQuality);
+                _logger.Trace("Checking if release has a higher profile preference than queued release. Queued source: {0}", queuedSourceQuality);
 
                 if (!_upgradableSpecification.IsReleaseUpgradable(qualityProfile,
                                                            queuedSourceQuality,
@@ -97,7 +97,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                     return Decision.Reject("Release in queue is of equal or higher preference: {0}", queuedSourceQuality);
                 }
 
-                _logger.Debug("Checking if profiles allow upgrading. Queued source: {0}", queuedSourceQuality);
+                _logger.Trace("Checking if profiles allow upgrading. Queued source: {0}", queuedSourceQuality);
 
                 if (!_upgradableSpecification.IsReleaseUpgradeAllowed(qualityProfile,
                                                                queuedSourceQuality,
@@ -112,7 +112,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 {
                     if (_configService.DownloadPropersAndRepacks == ProperDownloadTypes.DoNotUpgrade)
                     {
-                        _logger.Debug("Auto downloading of propers is disabled");
+                        _logger.Trace("Auto downloading of propers is disabled");
                         return Decision.Reject("Proper downloading is disabled");
                     }
                 }

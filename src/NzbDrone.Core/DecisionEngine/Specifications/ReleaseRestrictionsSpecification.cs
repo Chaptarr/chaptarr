@@ -31,7 +31,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public virtual Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
-            _logger.Debug("Checking if release meets restrictions: {0}", subject);
+            _logger.Trace("Checking if release meets restrictions: {0}", subject);
 
             var title = subject.Release.Title;
             var mediaType = subject.GetPreferredMediaType();
@@ -48,7 +48,10 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 .Distinct()
                 .ToList();
 
-            _logger.Debug("Term matching against title variants: {0}", string.Join(" | ", titleVariants));
+            if (_logger.IsTraceEnabled)
+            {
+                _logger.Trace("Term matching against title variants: {0}", string.Join(" | ", titleVariants));
+            }
 
             var required = releaseProfiles.Where(r => r.Required.Any());
             var ignored = releaseProfiles.Where(r => r.Ignored.Any());
@@ -61,13 +64,15 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 if (foundTerms.Empty())
                 {
                     var terms = string.Join(", ", requiredTerms);
-                    _logger.Debug("[{0}] does not contain one of the required terms: {1}", title, terms);
+                    _logger.Trace("[{0}] does not contain one of the required terms: {1}", title, terms);
                     return Decision.RejectSoftFilter("Does not contain one of the required terms: {0}", "Release Profile", terms);
                 }
                 else
                 {
-                    var matchedTerms = string.Join(", ", foundTerms);
-                    _logger.Debug("[{0}] matched required terms: {1}", title, matchedTerms);
+                    if (_logger.IsTraceEnabled)
+                    {
+                        _logger.Trace("[{0}] matched required terms: {1}", title, string.Join(", ", foundTerms));
+                    }
                 }
             }
 
@@ -79,12 +84,12 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 if (foundTerms.Any())
                 {
                     var terms = string.Join(", ", foundTerms);
-                    _logger.Debug("[{0}] contains these ignored terms: {1}", title, terms);
+                    _logger.Trace("[{0}] contains these ignored terms: {1}", title, terms);
                     return Decision.RejectSoftFilter("Contains these ignored terms: {0}", "Release Profile", terms);
                 }
             }
 
-            _logger.Debug("[{0}] No restrictions apply, allowing", subject);
+            _logger.Trace("[{0}] No restrictions apply, allowing", subject);
             return Decision.Accept();
         }
 

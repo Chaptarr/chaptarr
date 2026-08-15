@@ -31,7 +31,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             if (InteractiveBookSearchSpecificationHelper.IsResolvedInteractiveBookSearch(subject, searchCriteria))
             {
-                _logger.Debug("Skipping cutoff rejection for resolved interactive book search");
+                _logger.Trace("Skipping cutoff rejection for resolved interactive book search");
                 return Decision.Accept();
             }
 
@@ -46,7 +46,10 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             {
                 var currentQualities = new List<QualityModel> { file.Quality };
 
-                _logger.Debug("Comparing file quality with report. Existing files contain {0}", currentQualities.ConcatToString());
+                if (_logger.IsTraceEnabled)
+                {
+                    _logger.Trace("Comparing file quality with report. Existing files contain {0}", currentQualities.ConcatToString());
+                }
 
                 var customFormats = _formatService.ParseCustomFormat(file);
 
@@ -55,7 +58,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                                                            customFormats,
                                                            candidateQuality))
                 {
-                    _logger.Debug("Cutoff already met by existing files, rejecting.");
+                    _logger.Trace("Cutoff already met by existing files, rejecting.");
 
                     var qualityCutoffIndex = qualityProfile.GetIndex(qualityProfile.Cutoff);
                     var qualityCutoff = qualityProfile.Items[qualityCutoffIndex.Index];
