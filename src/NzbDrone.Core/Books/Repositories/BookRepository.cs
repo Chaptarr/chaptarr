@@ -1111,7 +1111,7 @@ namespace NzbDrone.Core.Books
                 ["releasedate"] = $"\"{tableName}\".\"ReleaseDate\"",
                 ["added"] = $"\"{tableName}\".\"Added\"",
                 ["id"] = $"\"{tableName}\".\"Id\"",
-                ["sizeondisk"] = $"COALESCE((SELECT SUM(bf.\"Size\") FROM \"Editions\" e INNER JOIN \"BookFiles\" bf ON bf.\"EditionId\" = e.\"Id\" WHERE e.\"BookId\" = \"{tableName}\".\"Id\"), 0)"
+                ["sizeondisk"] = "COALESCE(\"FileStatistics\".\"SizeOnDisk\", 0)"
             };
 
             var normalizedSortKey = sortKey.ToLowerInvariant();
@@ -1124,6 +1124,11 @@ namespace NzbDrone.Core.Books
                 var totalCount = conn.QuerySingle<int>(countTemplate.RawSql, countTemplate.Parameters);
                 var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
                 builder.Select(typeof(Book));
+
+                if (normalizedSortKey == "sizeondisk")
+                {
+                    builder.LeftJoin($@"({BookFileStatisticsSql.GroupedByBook}) AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""{tableName}"".""Id""");
+                }
 
                 if (normalizedSortKey == "authortitle")
                 {
