@@ -1094,7 +1094,7 @@ namespace NzbDrone.Core.Books
             offset = Math.Max(0, offset);
             pageSize = Math.Clamp(pageSize, 1, 500);
 
-            var allowedSortKeys = new HashSet<string> { "cleantitle", "title", "authortitle", "releasedate", "added", "id" };
+            var allowedSortKeys = new HashSet<string> { "cleantitle", "title", "authortitle", "releasedate", "added", "id", "sizeondisk" };
             if (string.IsNullOrWhiteSpace(sortKey) || !allowedSortKeys.Contains(sortKey.ToLowerInvariant()))
             {
                 sortKey = "title";
@@ -1110,7 +1110,8 @@ namespace NzbDrone.Core.Books
                 ["authortitle"] = "LOWER(\"Authors\".\"Name\")",
                 ["releasedate"] = $"\"{tableName}\".\"ReleaseDate\"",
                 ["added"] = $"\"{tableName}\".\"Added\"",
-                ["id"] = $"\"{tableName}\".\"Id\""
+                ["id"] = $"\"{tableName}\".\"Id\"",
+                ["sizeondisk"] = "COALESCE(\"FileStatistics\".\"SizeOnDisk\", 0)"
             };
 
             var normalizedSortKey = sortKey.ToLowerInvariant();
@@ -1123,6 +1124,11 @@ namespace NzbDrone.Core.Books
                 var totalCount = conn.QuerySingle<int>(countTemplate.RawSql, countTemplate.Parameters);
                 var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
                 builder.Select(typeof(Book));
+
+                if (normalizedSortKey == "sizeondisk")
+                {
+                    builder.LeftJoin($@"({BookFileStatisticsSql.GroupedByBook}) AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""{tableName}"".""Id""");
+                }
 
                 if (normalizedSortKey == "authortitle")
                 {

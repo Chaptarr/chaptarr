@@ -19,15 +19,8 @@ namespace NzbDrone.Core.AuthorStats
     {
         private const string _selectTemplate = "SELECT /**select**/ FROM \"Books\" /**join**/ /**innerjoin**/ /**leftjoin**/ /**where**/ /**groupby**/ /**having**/ /**orderby**/";
 
-        private const string _fileStatisticsJoin = @"(
-            SELECT ""Editions"".""BookId"" AS ""BookId"",
-                   SUM(""BookFiles"".""Size"") AS ""SizeOnDisk"",
-                   COUNT(""BookFiles"".""Id"") AS ""BookFileCount""
-            FROM ""BookFiles""
-            CROSS JOIN ""Editions""
-            WHERE ""Editions"".""Id"" = ""BookFiles"".""EditionId""
-            GROUP BY ""Editions"".""BookId""
-        ) AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""Books"".""Id""";
+        private const string _fileStatisticsJoin = "(" + BookFileStatisticsSql.GroupedByBook +
+                                                   @") AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""Books"".""Id""";
 
         private readonly IMainDatabase _database;
 
