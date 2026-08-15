@@ -12,6 +12,8 @@ import TableRow from 'Components/Table/TableRow';
 import { icons, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
+import selectAll from 'Utilities/Table/selectAll';
+import toggleSelected from 'Utilities/Table/toggleSelected';
 import EditImportListExclusionModalConnector from './EditImportListExclusionModalConnector';
 import ImportListExclusion from './ImportListExclusion';
 import styles from './ImportListExclusions.css';
@@ -51,6 +53,9 @@ class ImportListExclusions extends Component {
     this.state = {
       isAddImportListExclusionModalOpen: false,
       isDeleteSelectedImportListExclusionsModalOpen: false,
+      allSelected: false,
+      allUnselected: true,
+      lastToggled: null,
       selectedState: {}
     };
   }
@@ -61,9 +66,20 @@ class ImportListExclusions extends Component {
       !this.props.isDeleting &&
       !this.props.deleteError
     ) {
-      this.setState({ selectedState: {} });
+      this.setState(selectAll(this.getVisibleSelectedState(), false));
     }
   }
+
+  //
+  // Control
+
+  getVisibleSelectedState = () => {
+    return this.props.items.reduce((acc, item) => {
+      acc[item.id] = false;
+
+      return acc;
+    }, {});
+  };
 
   //
   // Listeners
@@ -92,28 +108,21 @@ class ImportListExclusions extends Component {
   };
 
   onSelectAllChange = ({ value }) => {
-    const selectedState = this.props.items.reduce((acc, item) => {
-      acc[item.id] = value;
-
-      return acc;
-    }, {});
-
-    this.setState({ selectedState });
+    this.setState(selectAll(this.getVisibleSelectedState(), value));
   };
 
-  onSelectedChange = ({ id, value }) => {
+  // TableSelectCell omits shiftKey when registering or unregistering rows.
+  // Real checkbox interactions always provide a boolean, so only they may
+  // establish a range-selection anchor.
+  onSelectedChange = ({ id, value, shiftKey }) => {
     this.setState((state) => {
-      const selectedState = {
-        ...state.selectedState
-      };
+      const nextState = toggleSelected(state, this.props.items, id, value, shiftKey);
 
-      if (value == null) {
-        delete selectedState[id];
-      } else {
-        selectedState[id] = value;
+      if (typeof shiftKey !== 'boolean') {
+        nextState.lastToggled = state.lastToggled;
       }
 
-      return { selectedState };
+      return nextState;
     });
   };
 
@@ -128,14 +137,13 @@ class ImportListExclusions extends Component {
       ...otherProps
     } = this.props;
 
-    const selectedIds = getSelectedIds(this.state.selectedState);
+    const {
+      allSelected,
+      allUnselected,
+      selectedState
+    } = this.state;
+    const selectedIds = getSelectedIds(selectedState);
     const selectedCount = selectedIds.length;
-    const allSelected = items.length > 0 && items.every((item) => {
-      return this.state.selectedState[item.id];
-    });
-    const allUnselected = items.every((item) => {
-      return !this.state.selectedState[item.id];
-    });
 
     return (
       <FieldSet legend={translate('ImportListExclusions')}>
@@ -145,7 +153,7 @@ class ImportListExclusions extends Component {
         >
           <Table
             selectAll={true}
-            allSelected={allSelected}
+            allSelected={items.length > 0 && allSelected}
             allUnselected={allUnselected}
             columns={columns}
             canModifyColumns={false}
@@ -159,7 +167,7 @@ class ImportListExclusions extends Component {
                       key={item.id}
                       {...item}
                       {...otherProps}
-                      isSelected={this.state.selectedState[item.id] || false}
+                      isSelected={selectedState[item.id] || false}
                       onSelectedChange={this.onSelectedChange}
                       onConfirmDeleteImportListExclusion={onConfirmDeleteImportListExclusion}
                     />
