@@ -46,6 +46,8 @@ namespace NzbDrone.Core.Messaging.Commands
     {
         private const string MaxManualQueueDepthEnvVar = "CHAPTARR_MAX_MANUAL_COMMAND_QUEUE";
         private const int DefaultMaxManualQueueDepth = 1000;
+        private const string DiskAccessLimitEnvVar = "CHAPTARR_DISK_ACCESS_LIMIT";
+        private const int DefaultDiskAccessLimit = 1;
         private static readonly int MaxManualQueueDepth = GetMaxManualQueueDepth();
 
         private readonly ICommandRepository _repo;
@@ -64,8 +66,31 @@ namespace NzbDrone.Core.Messaging.Commands
             _knownTypes = knownTypes;
             _logger = logger;
 
-            _commandQueue = new CommandQueue();
+            _commandQueue = new CommandQueue(GetDiskAccessGroupLimit);
             _cancellationTokenSources = new ConcurrentDictionary<int, CancellationTokenSource>();
+        }
+
+        /// <summary>
+        /// How many disk-access commands from the same group may run concurrently.
+        /// Defaults to 1, which preserves the previous strictly-serial behaviour.
+        ///
+        /// Raising this helps when the library sits on a high-latency filesystem
+        /// (e.g. FUSE/mergerfs or a network mount) where a single command spends most
+        /// of its time waiting on per-file I/O rather than saturating CPU or disk
+        /// bandwidth - work that parallelises well. It is opt-in because concurrent
+        /// commands share the database and can touch the same files, so the safe
+        /// default remains serial.
+        /// </summary>
+        private static int GetDiskAccessGroupLimit(string group)
+        {
+            var value = Environment.GetEnvironmentVariable(DiskAccessLimitEnvVar);
+
+            if (!string.IsNullOrWhiteSpace(value) && int.TryParse(value, out var parsed) && parsed > 0)
+            {
+                return parsed;
+            }
+
+            return DefaultDiskAccessLimit;
         }
 
         private static int GetMaxManualQueueDepth()
