@@ -44,6 +44,41 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private readonly IPendingAuthorImportService _pendingAuthorImportService;
         private readonly IManageCommandQueue _commandQueue;
         private readonly IAuthorFolderMatchingService _authorFolderMatchingService;
+        // Negative-result cache: folders whose files just exhausted the full
+        // matching pipeline with no result. Sibling fragment files share this
+        // verdict instead of re-running ~10s of staged FTS each. Entries are
+        // scope-keyed and expire quickly, so rescans after author adds and
+        // identifier-bearing files are unaffected.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _negativeUnitCache = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>();
+        private static readonly TimeSpan _negativeUnitCacheTtl = TimeSpan.FromMinutes(10);
+
+        private static string BuildNegativeUnitCacheKey(
+            DiscoveredFileWithMetadata file,
+            BookMediaType mediaType,
+            int? restrictToAuthorId,
+            bool unscoped,
+            bool disablePathFallback)
+        {
+            string Tag(string name)
+            {
+                if (file.AllTags != null && file.AllTags.TryGetValue(name, out var v) && v is { Count: > 0 })
+                {
+                    return v[0] ?? string.Empty;
+                }
+
+                return string.Empty;
+            }
+
+            var folder = Path.GetDirectoryName(file.Path) ?? string.Empty;
+            return string.Join("|",
+                folder.ToLowerInvariant(),
+                (int)mediaType,
+                restrictToAuthorId?.ToString() ?? "-",
+                unscoped,
+                disablePathFallback,
+                Tag("album").ToLowerInvariant(),
+                Tag("artist").ToLowerInvariant());
+        }
         private readonly IRootFolderService _rootFolderService;
         private readonly IConfigService _configService;
         private readonly IAuthorService _authorService;
@@ -4356,6 +4391,26 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 };
             }
 
+            var negativeUnitKey = BuildNegativeUnitCacheKey(file, mediaType, restrictToAuthorId, unscoped, disablePathFallback);
+            if (_negativeUnitCache.TryGetValue(negativeUnitKey, out var negativeSeenAt))
+            {
+                if (DateTime.UtcNow - negativeSeenAt < _negativeUnitCacheTtl)
+                {
+                    _logger.Debug("[HOLY-GRAIL] Sibling file in '{0}' already exhausted all fallbacks moments ago - skipping duplicate pipeline for '{1}'",
+                        Path.GetDirectoryName(file.Path),
+                        Path.GetFileName(file.Path));
+                    return new HolyGrailEvaluation
+                    {
+                        Match = null,
+                        WinningTags = embeddedTags,
+                        PathFallbackUsed = false,
+                        PathFallbackSuppressedReason = pathFallbackSuppressedReason
+                    };
+                }
+
+                _negativeUnitCache.TryRemove(negativeUnitKey, out _);
+            }
+
             _logger.Debug("[HOLY-GRAIL] === Starting match{0} for '{1}' ===",
                 unscoped ? " (unscoped)" : "",
                 Path.GetFileName(file.Path));
@@ -4523,6 +4578,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 Path.GetFileName(file.Path),
                 unscoped ? " (unscoped)" : "",
                 stopwatch.ElapsedMilliseconds);
+            _negativeUnitCache[negativeUnitKey] = DateTime.UtcNow;
                 return new HolyGrailEvaluation
                 {
                     Match = null,
