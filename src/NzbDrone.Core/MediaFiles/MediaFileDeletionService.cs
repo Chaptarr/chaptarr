@@ -65,40 +65,55 @@ namespace NzbDrone.Core.MediaFiles
         public void DeleteTrackFile(Author author, BookFile bookFile)
         {
             var fullPath = bookFile.Path;
-            var rootFolder = _diskProvider.GetParentFolder(author.Path);
 
-            if (!_diskProvider.FolderExists(rootFolder))
+            // The file's own path is the only reliable authority for which configured root holds it.
+            // Chaptarr has per-media-type roots, so the author's stored path is only ever one of them,
+            // and Organize rewrites a file's path after that author path was recorded. Media type does
+            // not prove containment either: a colocated ebook can live under the audiobook root.
+            var rootFolder = _rootFolderService.GetBestRootFolder(fullPath);
+
+            if (rootFolder == null)
             {
-                _logger.Warn("Author's root folder ({0}) doesn't exist.", rootFolder);
-                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Author's root folder ({0}) doesn't exist.", rootFolder);
+                _logger.Warn("Book file ({0}) is not inside any configured root folder.", fullPath);
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Book file ({0}) is not inside any configured root folder.", fullPath);
             }
 
-            if (_diskProvider.GetDirectories(rootFolder).Empty())
+            if (!_diskProvider.FolderExists(rootFolder.Path))
             {
-                _logger.Warn("Author's root folder ({0}) is empty.", rootFolder);
-                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Author's root folder ({0}) is empty.", rootFolder);
+                _logger.Warn("Root folder ({0}) doesn't exist.", rootFolder.Path);
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Root folder ({0}) doesn't exist.", rootFolder.Path);
             }
 
-            if (_diskProvider.FolderExists(author.Path))
+            if (_diskProvider.GetDirectories(rootFolder.Path).Empty())
             {
-                var subfolder = _diskProvider.GetParentFolder(author.Path).GetRelativePath(_diskProvider.GetParentFolder(fullPath));
-                DeleteTrackFile(bookFile, subfolder);
+                _logger.Warn("Root folder ({0}) is empty.", rootFolder.Path);
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Root folder ({0}) is empty.", rootFolder.Path);
             }
-            else
-            {
-                // delete from db even if the author folder is missing
-                _mediaFileService.Delete(bookFile, DeleteMediaFileReason.Manual);
-            }
+
+            var fileFolder = _diskProvider.GetParentFolder(fullPath);
+
+            // A file sitting directly in the root has no subfolder; GetRelativePath treats equal paths
+            // as unrelated and would throw.
+            var subfolder = rootFolder.Path.PathEquals(fileFolder)
+                ? string.Empty
+                : rootFolder.Path.GetRelativePath(fileFolder);
+
+            DeleteTrackFile(bookFile, subfolder, rootFolder);
         }
 
         public void DeleteTrackFile(BookFile bookFile, string subfolder = "")
+        {
+            DeleteTrackFile(bookFile, subfolder, null);
+        }
+
+        private void DeleteTrackFile(BookFile bookFile, string subfolder, RootFolder rootFolder)
         {
             var fullPath = bookFile.Path;
 
             if (_diskProvider.FileExistsCanonical(fullPath))
             {
                 _logger.Info("Deleting book file: {0}", fullPath);
-                DeleteFile(bookFile, subfolder);
+                DeleteFile(bookFile, subfolder, rootFolder);
             }
 
             // Delete the track file from the database to clean it up even if the file was already deleted
@@ -107,9 +122,19 @@ namespace NzbDrone.Core.MediaFiles
             _eventAggregator.PublishEvent(new DeleteCompletedEvent());
         }
 
-        private void DeleteFile(BookFile bookFile, string subfolder = "")
+        private void DeleteFile(BookFile bookFile, string subfolder = "", RootFolder rootFolder = null)
         {
-            var rootFolder = _rootFolderService.GetBestRootFolder(bookFile.Path);
+            rootFolder ??= _rootFolderService.GetBestRootFolder(bookFile.Path);
+
+            // Outside the try on purpose: the catch below turns everything into a 500, and this is a
+            // deliberate refusal. Without a containing root there is no Calibre setting to consult, so
+            // recycling the file would be guessing at the one decision we cannot make safely.
+            if (rootFolder == null)
+            {
+                _logger.Warn("Book file ({0}) is not inside any configured root folder.", bookFile.Path);
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Book file ({0}) is not inside any configured root folder.", bookFile.Path);
+            }
+
             var isCalibre = rootFolder.IsCalibreLibrary && rootFolder.CalibreSettings != null;
 
             try
