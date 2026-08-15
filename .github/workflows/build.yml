@@ -100,6 +100,15 @@ jobs:
       uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
       with:
         dotnet-version: 10.0.x
+
+    - name: Cache NuGet packages
+      if: runner.os == 'Windows'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-${{ runner.arch }}-nuget-${{ hashFiles('src/NuGet.config', 'src/Directory.Packages.props', 'src/Directory.Build.props', 'src/Directory.Build.targets', 'src/Targets/**/*.targets', 'src/Chaptarr.NoTests.sln', 'src/**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-nuget-
     
     # FFmpeg is intentionally not downloaded in this compile/test workflow.
     # Source builds resolve bundled tools first and then the system PATH; explicit
