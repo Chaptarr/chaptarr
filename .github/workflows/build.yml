@@ -243,16 +243,21 @@ jobs:
         TAG="v${VERSION}"
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-        BEFORE_SHA="${{ github.event.before }}"
-        if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
-          BEFORE_VERSION="$(git show "${BEFORE_SHA}:package.json" | python3 -c "import json, sys; print(json.load(sys.stdin)['version'])")"
-          if [[ "$BEFORE_VERSION" == "$VERSION" ]]; then
-            echo "Version unchanged ($VERSION); skipping auto-tag."
-            exit 0
-          fi
+        # Exact tag existence is authoritative. A failed version-bump build must
+        # remain recoverable by a later same-version fix.
+        HEAD_SHA="$(git rev-parse HEAD)"
+        BRANCH="${GITHUB_REF#refs/heads/}"
+        REMOTE_HEAD_SHA="$(git ls-remote origin "refs/heads/${BRANCH}" | awk '{print $1}')"
+
+        if [[ -z "$REMOTE_HEAD_SHA" ]]; then
+          echo "Unable to resolve the current remote head for ${BRANCH}."
+          exit 1
         fi
 
-        HEAD_SHA="$(git rev-parse HEAD)"
+        if [[ "$REMOTE_HEAD_SHA" != "$HEAD_SHA" ]]; then
+          echo "A newer push is now at ${BRANCH} (${REMOTE_HEAD_SHA}); this run is ${HEAD_SHA}. Skipping auto-tag."
+          exit 0
+        fi
 
         # Check for both annotated (^{}) and lightweight tags
         REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}' || true)"
