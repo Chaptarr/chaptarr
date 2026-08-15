@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using Dapper;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books.Commands;
@@ -18,6 +19,7 @@ using NzbDrone.Core.History;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
@@ -2098,7 +2100,7 @@ namespace NzbDrone.Core.Books
             _eventAggregator.PublishEvent(new BookInfoRefreshedEvent(entity, newChildren, updateChildren, deleteChildren));
         }
 
-        private void Rescan(List<int> authorIds, bool isNew, CommandTrigger trigger, bool infoUpdated, bool isFromImport = false, string mediaType = "all", bool rescanWhenMetadataUnchanged = false)
+        private void Rescan(List<int> authorIds, bool isNew, CommandTrigger trigger, bool infoUpdated, bool isFromImport = false, string mediaType = "all", bool rescanWhenMetadataUnchanged = false, bool scopeToSingleAuthor = false)
         {
 
             // The import process will handle a single comprehensive scan at the end
@@ -2156,16 +2158,110 @@ namespace NzbDrone.Core.Books
                     rootFolders = rootFolders.Where(r => r.FolderType == FolderType.Ebook || r.FolderType == FolderType.Mixed).ToList();
                 }
 
-                var folders = rootFolders.Select(x => x.Path).ToList();
+                List<string> folders;
+                var scopeLabel = "root";
+                if (scopeToSingleAuthor)
+                {
+                    if (authorIds.Count != 1)
+                    {
+                        throw new InvalidOperationException("A single-author rescan scope requires exactly one author id.");
+                    }
+
+                    var author = _authorService.GetAuthor(authorIds[0]);
+                    folders = GetAuthorScopedRescanFolders(author, requestedMediaType, rootFolders);
+                    scopeLabel = "author-evidenced";
+
+                    if (!folders.Any())
+                    {
+                        _logger.Debug("[FLOW-DEBUG] RESCAN-SKIP: No folder evidence is available for author '{0}' (ID: {1}), mediaType={2}. Unmapped-only folders remain covered by watcher or root scans.", author.Name, author.Id, requestedMediaType);
+                        _eventAggregator.PublishEvent(new AuthorScanSkippedEvent(author, AuthorScanSkippedReason.NoFolderEvidence));
+                        return;
+                    }
+                }
+                else
+                {
+                    folders = rootFolders.Select(x => x.Path).ToList();
+                }
 
                 var command = new RescanFoldersCommand(folders, FilterFilesType.Matched, authorIds)
                 {
                     MediaType = requestedMediaType
                 };
 
-                _logger.Debug("[FLOW-DEBUG] RESCAN-QUEUE: Queueing folder rescan for {0} root folder(s), {1} author(s), mediaType={2}.", folders.Count, authorIds.Count, requestedMediaType);
+                _logger.Debug("[FLOW-DEBUG] RESCAN-QUEUE: Queueing {0} rescan for {1} folder(s), {2} author(s), mediaType={3}.", scopeLabel, folders.Count, authorIds.Count, requestedMediaType);
                 _commandQueueManager.Push(command);
             }
+        }
+
+        private List<string> GetAuthorScopedRescanFolders(Author author, string requestedMediaType, List<RootFolder> rootFolders)
+        {
+            var candidates = new List<string>();
+            var includeAudiobooks = requestedMediaType != "ebook";
+            var includeEbooks = requestedMediaType != "audiobook";
+
+            if (includeAudiobooks && author.AudiobookPath.IsNotNullOrWhiteSpace())
+            {
+                candidates.Add(author.AudiobookPath);
+            }
+
+            if (includeEbooks && author.EbookPath.IsNotNullOrWhiteSpace())
+            {
+                candidates.Add(author.EbookPath);
+            }
+
+            if (author.AudiobookPath.IsNullOrWhiteSpace() &&
+                author.EbookPath.IsNullOrWhiteSpace() &&
+                author.Path.IsNotNullOrWhiteSpace())
+            {
+                candidates.Add(author.Path);
+            }
+
+            foreach (var file in _mediaFileService.GetMappedFilePathEvidenceByAuthor(author.Id, requestedMediaType))
+            {
+                var directory = file?.Path.IsNotNullOrWhiteSpace() == true
+                    ? Path.GetDirectoryName(file.Path)
+                    : null;
+
+                if (directory.IsNotNullOrWhiteSpace())
+                {
+                    candidates.Add(directory);
+                }
+            }
+
+            var boundedCandidates = new List<string>();
+            foreach (var candidate in candidates
+                         .Where(path => path.IsNotNullOrWhiteSpace())
+                         .Distinct(PathEqualityComparer.Instance)
+                         .OrderBy(path => path.Length))
+            {
+                var rootFolder = _rootFolderService.GetBestRootFolder(candidate, rootFolders);
+                if (rootFolder == null)
+                {
+                    _logger.Debug("[FLOW-DEBUG] RESCAN-EVIDENCE-SKIP: Ignoring '{0}' because it is outside every configured root folder.", candidate);
+                    continue;
+                }
+
+                if (rootFolder.Path.PathEquals(candidate))
+                {
+                    _logger.Debug("[FLOW-DEBUG] RESCAN-EVIDENCE-SKIP: Ignoring root-folder evidence '{0}' so a single-author refresh cannot widen to a root scan.", candidate);
+                    continue;
+                }
+
+                boundedCandidates.Add(candidate);
+            }
+
+            var collapsed = new List<string>();
+            foreach (var candidate in boundedCandidates)
+            {
+                if (collapsed.Any(parent => parent.IsParentPath(candidate)))
+                {
+                    continue;
+                }
+
+                collapsed.Add(candidate);
+            }
+
+            return collapsed;
         }
 
         private bool ProcessBulkSync(List<int> authorIds, bool forceRefresh, CancellationToken cancellationToken)
@@ -3227,7 +3323,7 @@ namespace NzbDrone.Core.Books
             return left.HasValue && right.HasValue && left.Value != right.Value;
         }
 
-        private void RefreshSelectedAuthors(List<int> authorIds, bool isNew, CommandTrigger trigger, bool isFromImport = false, bool refreshMetadata = true, bool rescanFolders = true, string mediaType = "all", CancellationToken cancellationToken = default, bool rescanWhenMetadataUnchanged = false, bool forceRefresh = false, bool useBulkSyncWhenNotForced = false)
+        private void RefreshSelectedAuthors(List<int> authorIds, bool isNew, CommandTrigger trigger, bool isFromImport = false, bool refreshMetadata = true, bool rescanFolders = true, string mediaType = "all", CancellationToken cancellationToken = default, bool rescanWhenMetadataUnchanged = false, bool forceRefresh = false, bool useBulkSyncWhenNotForced = false, bool scopeRescanToSingleAuthor = false)
         {
             _logger.Debug("[FLOW-DEBUG] ========== RefreshSelectedAuthors START ==========");
             _logger.Debug("[FLOW-DEBUG] AuthorIds: [{0}]", string.Join(", ", authorIds));
@@ -3376,7 +3472,7 @@ namespace NzbDrone.Core.Books
                 cancellationToken.ThrowIfCancellationRequested();
                 _logger.Debug("[FLOW-DEBUG] DECISION: Folder rescan requested; evaluating rescan rules.");
                 _logger.Debug("[FLOW-DEBUG] ACTION: Calling Rescan() with metadataUpdated={0}", updated);
-                Rescan(authorIds, isNew, trigger, updated, isFromImport, mediaType, rescanWhenMetadataUnchanged);
+                Rescan(authorIds, isNew, trigger, updated, isFromImport, mediaType, rescanWhenMetadataUnchanged, scopeRescanToSingleAuthor);
             }
             else
             {
@@ -3470,7 +3566,7 @@ namespace NzbDrone.Core.Books
                     message.RescanFolders &&
                     !message.IsFromImport;
 
-                RefreshSelectedAuthors(new List<int> { message.AuthorId.Value }, isNew, trigger, message.IsFromImport, message.RefreshMetadata, message.RescanFolders, "all", cancellationToken, rescanWhenMetadataUnchanged, forceRefresh: effectiveForceRefresh, useBulkSyncWhenNotForced: false);
+                RefreshSelectedAuthors(new List<int> { message.AuthorId.Value }, isNew, trigger, message.IsFromImport, message.RefreshMetadata, message.RescanFolders, "all", cancellationToken, rescanWhenMetadataUnchanged, forceRefresh: effectiveForceRefresh, useBulkSyncWhenNotForced: false, scopeRescanToSingleAuthor: true);
             }
             else
             {

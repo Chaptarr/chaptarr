@@ -137,7 +137,15 @@ namespace NzbDrone.Core.MediaFiles
 
                 if (!_diskProvider.FolderExists(folder))
                 {
-                    _logger.Warn("Skipping scan cleanup for {0} because the folder is not visible. This may be a missing mount or unavailable root folder.", folder);
+                    if (!_diskProvider.FolderExists(rootFolder.Path))
+                    {
+                        _logger.Warn("Skipping scan cleanup for {0} because its root folder {1} is not visible. This may be a missing mount or unavailable root folder.", folder, rootFolder.Path);
+                    }
+                    else
+                    {
+                        _logger.Debug("Skipping scan for absent folder {0}; root folder {1} is available.", folder, rootFolder.Path);
+                    }
+
                     continue;
                 }
 

@@ -35,6 +35,22 @@ namespace NzbDrone.Core.MediaFiles
         void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason);
         List<IFileInfo> FilterUnchangedFiles(List<IFileInfo> files, FilterFilesType filter);
         List<BookFile> GetFilesByAuthor(int authorId);
+        List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
+        {
+            var requestedMediaType = (mediaType ?? "all").Trim().ToLowerInvariant();
+            var files = requestedMediaType is "audiobook" or "ebook"
+                ? GetFilesByAuthorAndMediaType(authorId, requestedMediaType)
+                : GetFilesByAuthor(authorId);
+            return files
+                .Where(file => file != null && file.EditionId > 0)
+                .Select(file => new BookFile
+                {
+                    Path = file.Path,
+                    MediaType = file.MediaType,
+                    EditionId = file.EditionId
+                })
+                .ToList();
+        }
         List<BookFile> GetFilesByBook(int bookId);
         List<BookFile> GetFilesByBooks(List<int> bookIds);
         List<BookFile> GetFilesByEdition(int editionId);
@@ -409,6 +425,10 @@ namespace NzbDrone.Core.MediaFiles
             return _mediaFileRepository.GetFilesByAuthor(authorId);
         }
 
+        public List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
+        {
+            return _mediaFileRepository.GetMappedFilePathEvidenceByAuthor(authorId, mediaType);
+        }
 
         public List<BookFile> GetFilesByAuthorAndMediaType(int authorId, string mediaType)
         {

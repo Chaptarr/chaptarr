@@ -29,9 +29,9 @@ namespace NzbDrone.Core.Books
             {
                 _logger.Debug("[FLOW-DEBUG] DECISION: Will queue RefreshAuthorCommand");
                 _logger.Debug("[FLOW-DEBUG] FLAGS: refreshMetadata=true, rescanFolders=true, isNewAuthor=true, isFromImport=false");
-                _logger.Debug("[FLOW-DEBUG] REASON: New authors need both metadata refresh and folder scan to find their files");
+                _logger.Debug("[FLOW-DEBUG] REASON: New authors refresh metadata and scan only their known author folders");
 
-                // New authors need both metadata refresh and folder scan to find their files
+                // New authors refresh metadata and scan only their known author folders.
                 _commandQueueManager.Push(new RefreshAuthorCommand(message.Author.Id, refreshMetadata: true, rescanFolders: true, isNewAuthor: true, isFromImport: false, forceRefresh: true));
 
                 _logger.Debug("[FLOW-DEBUG] RefreshAuthorCommand pushed to queue");

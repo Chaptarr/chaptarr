@@ -13,6 +13,7 @@ namespace NzbDrone.Core.MediaFiles
     public interface IMediaFileRepository : IBasicRepository<BookFile>
     {
         List<BookFile> GetFilesByAuthor(int authorId);
+        List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType);
         List<BookFile> GetFilesByBook(int bookId);
         List<BookFile> GetFilesByBooks(List<int> bookIds);
         List<BookFile> GetFilesByEdition(int editionId);
@@ -74,6 +75,24 @@ namespace NzbDrone.Core.MediaFiles
         public List<BookFile> GetFilesByAuthor(int authorId)
         {
             return Query(Builder().Where<Book>(b => b.AuthorId == authorId));
+        }
+
+        public List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
+        {
+            var requestedMediaType = (mediaType ?? "all").Trim().ToLowerInvariant();
+            var mediaTypeClause = requestedMediaType is "audiobook" or "ebook"
+                ? @" AND bf.""MediaType"" = @mediaType"
+                : string.Empty;
+
+            using var conn = _database.OpenConnection();
+            return conn.Query<BookFile>(
+                @"SELECT bf.""Path"", bf.""MediaType"", bf.""EditionId""
+                  FROM ""BookFiles"" bf
+                  INNER JOIN ""Editions"" e ON e.""Id"" = bf.""EditionId""
+                  INNER JOIN ""Books"" b ON b.""Id"" = e.""BookId""
+                  WHERE b.""AuthorId"" = @authorId
+                    AND bf.""EditionId"" > 0" + mediaTypeClause + ";",
+                new { authorId, mediaType = requestedMediaType }).ToList();
         }
 
         public List<BookFile> GetFilesByBook(int bookId)

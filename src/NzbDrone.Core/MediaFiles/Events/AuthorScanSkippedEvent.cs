@@ -18,6 +18,7 @@ namespace NzbDrone.Core.MediaFiles.Events
     public enum AuthorScanSkippedReason
     {
         RootFolderDoesNotExist,
-        RootFolderIsEmpty
+        RootFolderIsEmpty,
+        NoFolderEvidence
     }
 }
