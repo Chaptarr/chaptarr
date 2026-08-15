@@ -23,6 +23,7 @@ import { align, icons, kinds, sizes, sortDirections } from 'Helpers/Props';
 import { getMediaTypeFromExtension } from 'Utilities/MediaFile/getMediaTypeFromExtension';
 import hasDifferentItemsOrOrder from 'Utilities/Object/hasDifferentItemsOrOrder';
 import translate from 'Utilities/String/translate';
+import getToggledRange from 'Utilities/Table/getToggledRange';
 import UnmappedFilesMediaTypeToggle from './UnmappedFilesMediaTypeToggle';
 import UnmappedFilesTableHeader from './UnmappedFilesTableHeader';
 import UnmappedFilesTableRow from './UnmappedFilesTableRow';
@@ -51,6 +52,7 @@ class UnmappedFilesTable extends Component {
       scroller: null,
       selectionMode: 'none',
       selectedIds: new Set(),
+      lastToggled: null,
       selectedMediaType: 'all',
       isConfirmDeleteModalOpen: false,
       isSendLogsPreviewModalOpen: false,
@@ -98,7 +100,8 @@ class UnmappedFilesTable extends Component {
     this.setState({
       selectedMediaType: mediaType,
       selectionMode: 'none',
-      selectedIds: new Set()
+      selectedIds: new Set(),
+      lastToggled: null
     });
   };
 
@@ -333,9 +336,13 @@ class UnmappedFilesTable extends Component {
   };
 
   reconcileSelectionState() {
-    const { selectionMode, selectedIds } = this.state;
+    const { selectionMode, selectedIds, lastToggled } = this.state;
 
     if (selectionMode === 'none' || selectedIds.size === 0) {
+      if (lastToggled !== null) {
+        this.setState({ lastToggled: null });
+      }
+
       return;
     }
 
@@ -348,18 +355,22 @@ class UnmappedFilesTable extends Component {
       }
     });
 
-    if (reconciledIds.size !== selectedIds.size) {
-      this.setState({
+    if (reconciledIds.size !== selectedIds.size || lastToggled !== null) {
+      const nextState = {
         selectedIds: reconciledIds,
-        selectionMode: selectionMode === 'subset' && reconciledIds.size === 0 ? 'none' : selectionMode
-      });
+        selectionMode: selectionMode === 'subset' && reconciledIds.size === 0 ? 'none' : selectionMode,
+        lastToggled: null
+      };
+
+      this.setState(nextState);
     }
   }
 
   onSelectAllChange = ({ value }) => {
     this.setState({
       selectionMode: value ? 'all' : 'none',
-      selectedIds: new Set()
+      selectedIds: new Set(),
+      lastToggled: null
     });
   };
 
@@ -370,46 +381,61 @@ class UnmappedFilesTable extends Component {
     this.onSelectAllChange({ value: !selectionSummary.allFilteredSelected });
   };
 
-  onSelectedChange = ({ id, value }) => {
-    const targetItem = this.getBookUnitIndex().byFileId.get(id);
+  onSelectedChange = ({ id, value, shiftKey = false }) => {
+    const bookUnitIndex = this.getBookUnitIndex();
+    const targetItem = bookUnitIndex.byFileId.get(id);
 
     if (!targetItem) {
       return;
     }
 
-    // Get all files in the same book unit
-    const filesInSameBookUnit = this.getFilesInBookUnit(targetItem);
+    const filteredItems = this.getFilteredItems();
 
     this.setState((state) => {
       const selectedIds = new Set(state.selectedIds);
+      const affectedBookUnits = new Set([
+        this.getBookUnitKey(targetItem)
+      ]);
 
-      if (state.selectionMode === 'all') {
-        filesInSameBookUnit.forEach((file) => {
-          if (value) {
-            selectedIds.delete(file.id);
-          } else {
-            selectedIds.add(file.id);
-          }
-        });
+      if (shiftKey && state.lastToggled !== null) {
+        const { lower, upper } = getToggledRange(filteredItems, id, state.lastToggled);
 
-        return {
-          ...state,
-          selectedIds
-        };
+        for (let i = lower; i < upper; i++) {
+          affectedBookUnits.add(this.getBookUnitKey(filteredItems[i]));
+        }
       }
 
-      filesInSameBookUnit.forEach((file) => {
-        if (value) {
-          selectedIds.add(file.id);
-        } else {
-          selectedIds.delete(file.id);
-        }
+      affectedBookUnits.forEach((bookUnit) => {
+        const filesInBookUnit = bookUnitIndex.byBookUnit.get(bookUnit) || [];
+
+        filesInBookUnit.forEach((file) => {
+          if (state.selectionMode === 'all') {
+            if (value) {
+              selectedIds.delete(file.id);
+            } else {
+              selectedIds.add(file.id);
+            }
+          } else if (value) {
+            selectedIds.add(file.id);
+          } else {
+            selectedIds.delete(file.id);
+          }
+        });
       });
+
+      if (state.selectionMode === 'all') {
+        return {
+          ...state,
+          selectedIds,
+          lastToggled: id
+        };
+      }
 
       return {
         ...state,
         selectedIds,
-        selectionMode: selectedIds.size > 0 ? 'subset' : 'none'
+        selectionMode: selectedIds.size > 0 ? 'subset' : 'none',
+        lastToggled: id
       };
     });
   };
@@ -785,6 +811,13 @@ class UnmappedFilesTable extends Component {
     const titleWithCount = unmappedCount > 0 ?
       `${translate('UnmappedFiles')} (${unmappedCount})` :
       translate('UnmappedFiles');
+    const selectedBookUnitsSuffix = selectedBookUnitsCount > 0 ?
+      ` (${this.formatBookUnitCount(selectedBookUnitsCount)})` :
+      '';
+    const refreshFilesLabel = translate('UnmappedFilesRefreshFiles');
+    const retryMatchLabel = translate('UnmappedFilesRetryMatch');
+    const refreshFilesTitle = `${refreshFilesLabel}${selectedBookUnitsSuffix}`;
+    const retryMatchTitle = `${retryMatchLabel}${selectedBookUnitsSuffix}`;
 
     return (
       <PageContent title={titleWithCount}>
@@ -795,8 +828,10 @@ class UnmappedFilesTable extends Component {
               onMediaTypeChange={this.onMediaTypeChange}
             />
             <PageToolbarButton
-              label={selectedBookUnitsCount > 0 ? `${translate('UnmappedFilesRefreshFiles')} (${this.formatBookUnitCount(selectedBookUnitsCount)})` : translate('UnmappedFilesRefreshFiles')}
+              label={refreshFilesLabel}
               iconName={icons.RESCAN}
+              title={refreshFilesTitle}
+              aria-label={refreshFilesTitle}
               isDisabled={isPopulated && !error && !filteredItems.length}
               isSpinning={isRefreshingFiles}
               onPress={() => {
@@ -804,8 +839,10 @@ class UnmappedFilesTable extends Component {
               }}
             />
             <PageToolbarButton
-              label={selectedBookUnitsCount > 0 ? `${translate('UnmappedFilesRetryMatch')} (${this.formatBookUnitCount(selectedBookUnitsCount)})` : translate('UnmappedFilesRetryMatch')}
+              label={retryMatchLabel}
               iconName={icons.SEARCH}
+              title={retryMatchTitle}
+              aria-label={retryMatchTitle}
               isDisabled={isPopulated && !error && !filteredItems.length}
               isSpinning={isRetryMatching}
               onPress={() => {
