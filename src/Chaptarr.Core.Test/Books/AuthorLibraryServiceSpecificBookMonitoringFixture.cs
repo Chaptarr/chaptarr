@@ -594,6 +594,150 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        // "Only This Book" limits MONITORING, not the catalog. Readarr paired it with the built-in
+        // "None" metadata profile so a specific-book add imported nothing else; Chaptarr keeps the
+        // configured profile on purpose, because unmonitored siblings are matcher evidence
+        // (TitleMatchProblemCode.SiblingTitleContradiction, ReleaseTitleMatchScorer.cs:22).
+        // Declined community PR #37 substituted the None profile here and the full suite stayed
+        // green — the sibling assertions above cannot see a profile swap, because the stub returns
+        // every book regardless of profile. These two pin the profile that actually filtered.
+        [Test]
+        public async Task add_author_with_only_this_book_should_keep_siblings_and_the_configured_audiobook_profile()
+        {
+            var remoteAuthor = new Author
+            {
+                Name = "Shelf Author",
+                Books = new List<Book>
+                {
+                    BuildAudiobook("Selected Book", "hc:1001"),
+                    BuildAudiobook("Other Book", "hc:1002")
+                },
+                Series = new List<Series>()
+            };
+
+            var bookService = new StubBookService();
+            var metadataProfileService = new StubMetadataProfileService();
+            var service = new AuthorLibraryService(
+                authorService: new StubAuthorService(),
+                authorInfo: new StubAuthorInfo(remoteAuthor),
+                bookService: bookService,
+                refreshSeriesService: null,
+                editionService: new StubEditionService(),
+                narratorLinkService: null,
+                metadataProfileService: metadataProfileService,
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: new StubAuthorPathBuilder(),
+                rootFolderService: new StubRootFolderService(BuildAudiobookRoot("/audiobooks")),
+                commandQueueManager: null,
+                eventAggregator: new StubEventAggregator(),
+                pendingImportService: null,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger(),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()));
+
+            var addedAuthor = await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
+            {
+                AuthorName = remoteAuthor.Name,
+                MonitorNewItems = true,
+                CreateAudiobook = true,
+                CreateEbook = false,
+                AudiobookQualityProfileId = 2,
+                AudiobookMetadataProfileId = 1,
+                AudiobookRootFolderPath = "/audiobooks",
+                AudiobookMonitorExisting = 2,
+                AudiobookMonitorFuture = false,
+                AudiobookBooksToMonitor = new List<string> { "hc:1001" }
+            });
+
+            Assert.That(addedAuthor, Is.Not.Null);
+
+            Assert.Multiple(() =>
+            {
+                // Catalog retained: the unselected sibling is still a row, just unmonitored.
+                Assert.That(bookService.InsertedBooks, Has.Count.EqualTo(2));
+                Assert.That(bookService.InsertedBooks.Single(b => b.HardcoverBookId == "hc:1001").AudiobookMonitored, Is.True);
+                Assert.That(bookService.InsertedBooks.Single(b => b.HardcoverBookId == "hc:1002").AudiobookMonitored, Is.False);
+
+                // The CONFIGURED profile is what filtered, never a substituted None profile.
+                Assert.That(metadataProfileService.FilterProfileIds, Is.Not.Empty);
+                Assert.That(metadataProfileService.FilterProfileIds, Has.All.EqualTo(1));
+                Assert.That(addedAuthor.AudiobookMetadataProfileId, Is.EqualTo(1));
+
+                // The media type that was not requested is left alone.
+                Assert.That(addedAuthor.EbookMetadataProfileId, Is.Null);
+            });
+        }
+
+        [Test]
+        public async Task add_author_with_only_this_book_should_keep_siblings_and_the_configured_ebook_profile()
+        {
+            var remoteAuthor = new Author
+            {
+                Name = "Shelf Author",
+                Books = new List<Book>
+                {
+                    BuildEbook("Selected Book", "hc:2001"),
+                    BuildEbook("Other Book", "hc:2002")
+                },
+                Series = new List<Series>()
+            };
+
+            var bookService = new StubBookService();
+            var metadataProfileService = new StubMetadataProfileService();
+            var service = new AuthorLibraryService(
+                authorService: new StubAuthorService(),
+                authorInfo: new StubAuthorInfo(remoteAuthor),
+                bookService: bookService,
+                refreshSeriesService: null,
+                editionService: new StubEditionService(),
+                narratorLinkService: null,
+                metadataProfileService: metadataProfileService,
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: new StubAuthorPathBuilder(),
+                rootFolderService: new StubRootFolderService(BuildEbookRoot("/ebooks")),
+                commandQueueManager: null,
+                eventAggregator: new StubEventAggregator(),
+                pendingImportService: null,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger(),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()));
+
+            var addedAuthor = await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
+            {
+                AuthorName = remoteAuthor.Name,
+                MonitorNewItems = true,
+                CreateAudiobook = false,
+                CreateEbook = true,
+                EbookQualityProfileId = 4,
+                EbookMetadataProfileId = 3,
+                EbookRootFolderPath = "/ebooks",
+                EbookMonitorExisting = 2,
+                EbookMonitorFuture = false,
+                EbookBooksToMonitor = new List<string> { "hc:2001" }
+            });
+
+            Assert.That(addedAuthor, Is.Not.Null);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(bookService.InsertedBooks, Has.Count.EqualTo(2));
+                Assert.That(bookService.InsertedBooks.Single(b => b.HardcoverBookId == "hc:2001").EbookMonitored, Is.True);
+                Assert.That(bookService.InsertedBooks.Single(b => b.HardcoverBookId == "hc:2002").EbookMonitored, Is.False);
+
+                Assert.That(metadataProfileService.FilterProfileIds, Is.Not.Empty);
+                Assert.That(metadataProfileService.FilterProfileIds, Has.All.EqualTo(3));
+                Assert.That(addedAuthor.EbookMetadataProfileId, Is.EqualTo(3));
+
+                Assert.That(addedAuthor.AudiobookMetadataProfileId, Is.Null);
+            });
+        }
+
         [Test]
         public async Task add_author_should_monitor_selected_book_by_remote_provider_alias()
         {
@@ -786,6 +930,25 @@ namespace Chaptarr.Core.Test.Books
             {
                 QualityProfileId = 2,
                 MetadataProfileId = 1,
+                MonitorExisting = 2,
+                MonitorFuture = false
+            });
+
+            return root;
+        }
+
+        private static RootFolder BuildEbookRoot(string path)
+        {
+            var root = new RootFolder
+            {
+                Path = path,
+                FolderType = FolderType.Ebook
+            };
+
+            root.SetEbookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 4,
+                MetadataProfileId = 3,
                 MonitorExisting = 2,
                 MonitorFuture = false
             });
