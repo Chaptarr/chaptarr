@@ -167,7 +167,10 @@ namespace NzbDrone.Core.MediaFiles
 
         private SqlBuilder BuildUnmappedFilesBuilder(string mediaType)
         {
-            var builder = new SqlBuilder(_database.DatabaseType).Select(typeof(BookFile))
+            // No explicit Select here: Query<T>/QueryDistinct<T> add the SELECT clause
+            // themselves, and a second Select(typeof(BookFile)) duplicates every column,
+            // which breaks Dapper's row deserialization for this query.
+            var builder = new SqlBuilder(_database.DatabaseType)
                 .Where<BookFile>(t => t.EditionId == 0);
 
             if (!string.IsNullOrWhiteSpace(mediaType))
