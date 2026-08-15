@@ -1,0 +1,162 @@
+name: Release
+
+# Manual only. Pick the branch in the Run workflow dropdown:
+# develop cuts a pre-release, main promotes to stable.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Require a releasable branch
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${GITHUB_REF}" != "refs/heads/develop" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+          echo "Releases must run from develop or main; selected ref is ${GITHUB_REF}."
+          exit 1
+        fi
+
+    - name: Require Docker credentials
+      shell: bash
+      env:
+        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$DOCKER_USERNAME" || -z "$DOCKER_PASSWORD" ]]; then
+          echo "Docker credentials are required before a release can start."
+          exit 1
+        fi
+
+  validate:
+    needs: preflight
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+
+  release:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        fetch-depth: 0
+
+    - name: Resolve head
+      id: head
+      run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    - name: Guard - versions in sync
+      run: python3 build-tools/version_guard.py sync
+
+    - name: Resolve tag
+      id: tag
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="$(python3 -c "import json; print(json.load(open('package.json', encoding='utf-8'))['version'])")"
+        echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+    - name: Guard - tag matches versions
+      run: python3 build-tools/version_guard.py release-tag --tag "${{ steps.tag.outputs.tag }}"
+
+    - name: Guard - selected branch has not advanced
+      shell: bash
+      run: |
+        set -euo pipefail
+        HEAD_SHA="$(git rev-parse HEAD)"
+        REMOTE_HEAD_SHA="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | awk '{print $1}')"
+
+        if [[ -z "$REMOTE_HEAD_SHA" ]]; then
+          echo "Unable to resolve the current remote head for ${GITHUB_REF_NAME}."
+          exit 1
+        fi
+
+        if [[ "$REMOTE_HEAD_SHA" != "$HEAD_SHA" ]]; then
+          echo "${GITHUB_REF_NAME} advanced to ${REMOTE_HEAD_SHA} while this run tested ${HEAD_SHA}."
+          echo "Run the release workflow again so the published image includes the current branch head."
+          exit 1
+        fi
+
+    - name: Create tag if absent
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        TAG="${{ steps.tag.outputs.tag }}"
+        HEAD_SHA="$(git rev-parse HEAD)"
+
+        REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}' || true)"
+        if [[ -z "$REMOTE_SHA" ]]; then
+          REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}' || true)"
+        fi
+
+        if [[ -n "$REMOTE_SHA" && "$REMOTE_SHA" != "$HEAD_SHA" ]]; then
+          echo "Tag $TAG already exists at $REMOTE_SHA but HEAD is $HEAD_SHA. Bump the version first."
+          exit 1
+        fi
+
+        if [[ -z "$REMOTE_SHA" ]]; then
+          echo "Creating tag $TAG"
+          git tag "$TAG"
+          git push origin "$TAG"
+        else
+          echo "Tag $TAG already on this commit."
+        fi
+
+    - name: Create or promote the release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        TAG="${{ steps.tag.outputs.tag }}"
+
+        # develop stays pre-release; main is the stable channel.
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          PRERELEASE_FLAG=""
+        else
+          PRERELEASE_FLAG="--prerelease"
+        fi
+
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          if [[ -z "$PRERELEASE_FLAG" ]]; then
+            echo "Promoting $TAG to stable."
+            gh release edit "$TAG" --prerelease=false --latest
+          else
+            echo "Release $TAG already exists."
+          fi
+          exit 0
+        fi
+
+        # Native zips stay suppressed until they pass the viability gates. Docker is
+        # the supported install.
+        gh release create "$TAG" \
+          --title "Chaptarr $TAG" \
+          --generate-notes \
+          --verify-tag \
+          ${PRERELEASE_FLAG}
+
+  # Images publish here and nowhere else, so merging PRs never ships an update.
+  docker:
+    needs: release
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      sha: ${{ needs.release.outputs.sha }}
+      branch: ${{ github.ref_name }}
+    secrets: inherit

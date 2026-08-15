@@ -1,9 +1,20 @@
 name: Docker Build and Publish
 
+# Never fires on its own. Only release.yml can call it after manual CI succeeds.
 on:
-  workflow_run:
-    workflows: ["Build Chaptarr"]
-    types: [completed]
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+      branch:
+        required: true
+        type: string
+    secrets:
+      DOCKER_USERNAME:
+        required: true
+      DOCKER_PASSWORD:
+        required: true
 
 env:
   REGISTRY: docker.io
@@ -11,7 +22,6 @@ env:
 
 jobs:
   build-and-push:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,29 +30,27 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       with:
-        ref: ${{ github.event.workflow_run.head_sha }}
+        ref: ${{ inputs.sha }}
         fetch-depth: 0
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-    - name: Check Docker credentials
-      id: check-docker
-      if: github.event.workflow_run.event == 'push'
-      env:
-        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+    - name: Validate release inputs
+      shell: bash
       run: |
-        if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
-          echo "credentials=true" >> "$GITHUB_OUTPUT"
-          echo "Docker credentials are available"
-        else
-          echo "credentials=false" >> "$GITHUB_OUTPUT"
-          echo "Docker credentials are not configured - skipping Docker publish"
+        set -euo pipefail
+        if [[ "${{ inputs.branch }}" != "develop" && "${{ inputs.branch }}" != "main" ]]; then
+          echo "Docker publication requires branch=develop or branch=main."
+          exit 1
         fi
-        
+
+        if [[ "$(git rev-parse HEAD)" != "${{ inputs.sha }}" ]]; then
+          echo "Checked-out commit does not match the release commit."
+          exit 1
+        fi
+
     - name: Log in to Docker Hub
-      if: github.event.workflow_run.event == 'push' && steps.check-docker.outputs.credentials == 'true'
       uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
       with:
         registry: ${{ env.REGISTRY }}
@@ -55,8 +63,16 @@ jobs:
       run: |
         set -euo pipefail
 
-        sha="${{ github.event.workflow_run.head_sha }}"
-        branch="${{ github.event.workflow_run.head_branch }}"
+        sha="$(git rev-parse HEAD)"
+        branch="${{ inputs.branch }}"
+        version="$(python3 -c "import json; print(json.load(open('package.json', encoding='utf-8'))['version'])")"
+        release_tag="v${version}"
+
+        if [[ "$(git tag --points-at "$sha" --list "$release_tag")" != "$release_tag" ]]; then
+          echo "Release tag $release_tag does not point to $sha; refusing to publish Docker images."
+          exit 1
+        fi
+
         tags=()
 
         for name in ${IMAGE_NAMES}; do
@@ -98,10 +114,10 @@ jobs:
         context: .
         file: ./Dockerfile.cross
         platforms: linux/amd64,linux/arm64,linux/arm/v7
-        push: ${{ steps.check-docker.outputs.credentials == 'true' && steps.docker-tags.outputs.has_tags == 'true' }}
+        push: true
         tags: ${{ steps.docker-tags.outputs.tags }}
         labels: |
           org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+          org.opencontainers.image.revision=${{ inputs.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max

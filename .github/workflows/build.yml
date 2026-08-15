@@ -3,9 +3,21 @@ name: Build Chaptarr
 on:
   push:
     branches: [ main, develop ]
-    tags: [ 'v*' ]
   pull_request:
     branches: [ main, develop ]
+  workflow_call:
+  workflow_dispatch:
+
+# Tests only, never publishes. PRs and merges are both validated automatically, but
+# nothing reaches users until release.yml is run by hand; docker-publish.yml is
+# workflow_call-only, so no run started here can push an image.
+
+# One live run per PR and per branch: a newer push supersedes the older run, so a
+# batch of merges costs one build of the combined result rather than one each.
+# Release-called runs are never cancelled - that would silently drop the gate.
+concurrency:
+  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 permissions:
   contents: read
@@ -53,11 +65,11 @@ jobs:
           git fetch --no-tags origin "refs/heads/develop:refs/remotes/origin/develop"
           COMPARE_REF="origin/develop"
         else
-          COMPARE_REF="${{ github.event.before }}"
+          COMPARE_REF="$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)"
 
-          if [[ -z "$COMPARE_REF" || "$COMPARE_REF" == "0000000000000000000000000000000000000000" ]]; then
-            echo "No previous commit available for monotonic version comparison; skipping."
-            exit 0
+          if [[ -z "$COMPARE_REF" ]]; then
+            echo "No reachable version tag is available for monotonic version comparison."
+            exit 1
           fi
         fi
 
@@ -74,11 +86,11 @@ jobs:
           git fetch --no-tags origin "refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
           COMPARE_REF="origin/${{ github.base_ref }}"
         else
-          COMPARE_REF="${{ github.event.before }}"
+          COMPARE_REF="$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)"
 
-          if [[ -z "$COMPARE_REF" || "$COMPARE_REF" == "0000000000000000000000000000000000000000" ]]; then
-            echo "No previous commit available for version-only commit hygiene; skipping."
-            exit 0
+          if [[ -z "$COMPARE_REF" ]]; then
+            echo "No reachable version tag is available for version-only commit hygiene."
+            exit 1
           fi
         fi
 
@@ -205,138 +217,3 @@ jobs:
         fi
 
         echo "PostgreSQL migrations smoke test passed."
-
-  auto_tag:
-    needs: [build, postgres-migrations]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      tag: ${{ steps.auto_tag.outputs.tag }}
-      created: ${{ steps.auto_tag.outputs.created }}
-      at_head: ${{ steps.auto_tag.outputs.at_head }}
-
-    steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      with:
-        fetch-depth: 0
-
-    - name: Create version tag on develop (if needed)
-      id: auto_tag
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        set -euo pipefail
-
-        # Defaults (used by release job conditions)
-        echo "tag=" >> "$GITHUB_OUTPUT"
-        echo "created=false" >> "$GITHUB_OUTPUT"
-        echo "at_head=false" >> "$GITHUB_OUTPUT"
-
-        if [[ "${{ github.event_name }}" != "push" ]] || [[ "${{ github.ref }}" != "refs/heads/develop" && "${{ github.ref }}" != "refs/heads/main" ]]; then
-          echo "Not a develop or main push; skipping auto-tag."
-          exit 0
-        fi
-
-        VERSION="$(python3 -c "import json; print(json.load(open('package.json', encoding='utf-8'))['version'])")"
-        TAG="v${VERSION}"
-        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-        # Exact tag existence is authoritative. A failed version-bump build must
-        # remain recoverable by a later same-version fix.
-        HEAD_SHA="$(git rev-parse HEAD)"
-        BRANCH="${GITHUB_REF#refs/heads/}"
-        REMOTE_HEAD_SHA="$(git ls-remote origin "refs/heads/${BRANCH}" | awk '{print $1}')"
-
-        if [[ -z "$REMOTE_HEAD_SHA" ]]; then
-          echo "Unable to resolve the current remote head for ${BRANCH}."
-          exit 1
-        fi
-
-        if [[ "$REMOTE_HEAD_SHA" != "$HEAD_SHA" ]]; then
-          echo "A newer push is now at ${BRANCH} (${REMOTE_HEAD_SHA}); this run is ${HEAD_SHA}. Skipping auto-tag."
-          exit 0
-        fi
-
-        # Check for both annotated (^{}) and lightweight tags
-        REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}' || true)"
-        if [[ -z "$REMOTE_SHA" ]]; then
-          REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}' || true)"
-        fi
-        if [[ -n "$REMOTE_SHA" ]]; then
-          if [[ "$REMOTE_SHA" == "$HEAD_SHA" ]]; then
-            echo "Tag $TAG already exists on this commit."
-            echo "at_head=true" >> "$GITHUB_OUTPUT"
-            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-              echo "Promotion to main: marking release $TAG as stable."
-              gh release edit "$TAG" --prerelease=false --latest
-            fi
-            exit 0
-          fi
-
-          echo "Tag $TAG already exists but points to $REMOTE_SHA (HEAD is $HEAD_SHA)."
-          echo "Bump the version before tagging a new release."
-          exit 1
-        fi
-
-        echo "Creating tag $TAG"
-        git tag "$TAG"
-        git push origin "$TAG"
-
-        echo "created=true" >> "$GITHUB_OUTPUT"
-        echo "at_head=true" >> "$GITHUB_OUTPUT"
-
-  release:
-    needs: [build, postgres-migrations, auto_tag]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || needs.auto_tag.outputs.at_head == 'true'
-    permissions:
-      contents: write
-    
-    steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-
-    - name: Guard (release) - tag matches versions
-      shell: bash
-      env:
-        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.auto_tag.outputs.tag }}
-      run: python3 build-tools/version_guard.py release-tag --tag "${RELEASE_TAG}"
-
-    - name: Check if release exists
-      id: release_check
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.auto_tag.outputs.tag }}
-      shell: bash
-      run: |
-        TAG="${RELEASE_TAG}"
-        if gh release view "$TAG" >/dev/null 2>&1; then
-          echo "exists=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "exists=false" >> "$GITHUB_OUTPUT"
-        fi
-
-    # Native zips are suppressed until they pass the viability gates (frontend included,
-    # platform assemblies present, per-RID naming). Docker is the supported install.
-    - name: Create GitHub Release
-      if: steps.release_check.outputs.exists != 'true'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.auto_tag.outputs.tag }}
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        TAG="${RELEASE_TAG}"
-        echo "Creating release $TAG"
-        PRERELEASE_FLAG=""
-        if [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-          PRERELEASE_FLAG="--prerelease"
-        fi
-
-        gh release create "$TAG" \
-          --title "Chaptarr $TAG" \
-          --generate-notes \
-          --verify-tag \
-          ${PRERELEASE_FLAG}
