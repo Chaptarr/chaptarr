@@ -53,6 +53,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         // that build their own service instances cannot see each other's entries.
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _negativeUnitCache = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>();
         private static readonly TimeSpan _negativeUnitCacheTtl = TimeSpan.FromMinutes(10);
+        private readonly System.Threading.AsyncLocal<bool> _negativeUnitCacheSuppressed = new System.Threading.AsyncLocal<bool>();
 
         private static string BuildNegativeUnitCacheKey(
             DiscoveredFileWithMetadata file,
@@ -630,6 +631,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var cancellationToken = context.CancellationToken;
             cancellationToken.ThrowIfCancellationRequested();
             _matchingTraceSink.Value = context.TraceSink;
+            _negativeUnitCacheSuppressed.Value = context.SuppressNegativeUnitCache;
 
             var allowV5Identification = context.AllowV5Identification;
             var allowAuthorImport = context.AllowAuthorImport;
@@ -4394,7 +4396,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var negativeUnitKey = BuildNegativeUnitCacheKey(file, mediaType, restrictToAuthorId, unscoped, disablePathFallback);
-            if (_negativeUnitCache.TryGetValue(negativeUnitKey, out var negativeSeenAt))
+            if (!_negativeUnitCacheSuppressed.Value && _negativeUnitCache.TryGetValue(negativeUnitKey, out var negativeSeenAt))
             {
                 if (DateTime.UtcNow - negativeSeenAt < _negativeUnitCacheTtl)
                 {
@@ -4580,7 +4582,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 Path.GetFileName(file.Path),
                 unscoped ? " (unscoped)" : "",
                 stopwatch.ElapsedMilliseconds);
-            _negativeUnitCache[negativeUnitKey] = DateTime.UtcNow;
+            if (!_negativeUnitCacheSuppressed.Value)
+            {
+                _negativeUnitCache[negativeUnitKey] = DateTime.UtcNow;
+            }
                 return new HolyGrailEvaluation
                 {
                     Match = null,

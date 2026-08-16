@@ -41,7 +41,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 AllowUnscopedFallback = false,
                 DisablePathFallback = !allowPathFallback,
                 PerFileMatching = true,
-                AllowGroupedV5Suggestions = true
+                AllowGroupedV5Suggestions = true,
+                SuppressNegativeUnitCache = true
             };
         }
 
