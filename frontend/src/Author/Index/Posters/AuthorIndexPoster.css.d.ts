@@ -8,10 +8,18 @@ interface CssExports {
   'editorSelect': string;
   'ended': string;
   'link': string;
+  'mediaProfile': string;
+  'mediaProfileIcon': string;
+  'mediaSummary': string;
+  'monitoringIconEnd': string;
+  'monitoringIconStart': string;
+  'monitoringLabel': string;
+  'monitoringSummary': string;
   'nextAiring': string;
   'overlayTitle': string;
   'poster': string;
   'posterContainer': string;
+  'profileName': string;
   'selectable': string;
   'selected': string;
   'title': string;

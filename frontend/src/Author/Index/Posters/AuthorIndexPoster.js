@@ -17,6 +17,26 @@ import shouldIgnoreCardSelectionEvent from 'Utilities/Table/shouldIgnoreCardSele
 import AuthorIndexPosterInfo from './AuthorIndexPosterInfo';
 import styles from './AuthorIndexPoster.css';
 
+function getMediaTypeLabel(mediaType) {
+  return translate(mediaType === 'ebook' ? 'Ebooks' : 'Audiobooks');
+}
+
+function getMonitorExistingLabel(value) {
+  if (value === 1) {
+    return translate('AllBooks');
+  }
+
+  if (value === 2) {
+    return translate('SelectBooks');
+  }
+
+  return translate('NoBooks');
+}
+
+function getMediaTypeIcon(mediaType) {
+  return mediaType === 'ebook' ? icons.BOOK : icons.HEADPHONES;
+}
+
 class AuthorIndexPoster extends Component {
 
   //
@@ -138,6 +158,8 @@ class AuthorIndexPoster extends Component {
       showMonitored,
       showQualityProfile,
       qualityProfile,
+      mediaTypeDetails = [],
+      selectedMediaType,
       metadataProfile,
       showSearchAction,
       showRelativeDates,
@@ -190,6 +212,28 @@ class AuthorIndexPoster extends Component {
       ...elementStyle,
       objectFit: 'cover'
     };
+    const visibleMediaTypeDetails = mediaTypeDetails.filter((details) => {
+      return details.isConfigured &&
+        (selectedMediaType === 'all' || details.mediaType === selectedMediaType);
+    });
+    const monitoringTitle = visibleMediaTypeDetails.map((details) => {
+      const monitoredLabel = translate(details.monitored ? 'Monitored' : 'Unmonitored');
+      const futureLabel = translate(details.monitorFuture ? 'Yes' : 'No');
+
+      return `${getMediaTypeLabel(details.mediaType)}: ${monitoredLabel}; ${translate('ExistingBooks')}: ${getMonitorExistingLabel(details.monitorExisting)}; ${translate('MonitorFutureReleases')}: ${futureLabel}`;
+    }).join('\n');
+    const profileTitle = visibleMediaTypeDetails.map((details) => {
+      return `${getMediaTypeLabel(details.mediaType)}: ${details.qualityProfile?.name ?? ''}`;
+    }).join('\n');
+    const isAudiobookMonitored = visibleMediaTypeDetails.some((details) => {
+      return details.mediaType === 'audiobook' && details.monitored;
+    });
+    const isEbookMonitored = visibleMediaTypeDetails.some((details) => {
+      return details.mediaType === 'ebook' && details.monitored;
+    });
+    const monitoredLabel = translate(monitored ? 'Monitored' : 'Unmonitored');
+    const visibleProfiles = visibleMediaTypeDetails.filter((details) => !!details.qualityProfile?.name);
+    const showProfileMediaType = selectedMediaType === 'all';
 
     return (
       <div className={styles.container}>
@@ -300,16 +344,63 @@ class AuthorIndexPoster extends Component {
 
           {
             showMonitored &&
-              <div className={styles.title}>
-                {monitored ? 'Monitored' : 'Unmonitored'}
+              <div
+                className={classNames(styles.mediaSummary, styles.monitoringSummary)}
+                title={monitoringTitle}
+                aria-label={monitoringTitle}
+              >
+                {
+                  isAudiobookMonitored &&
+                    <Icon
+                      className={styles.monitoringIconStart}
+                      name={getMediaTypeIcon('audiobook')}
+                    />
+                }
+
+                <span className={styles.monitoringLabel}>
+                  {monitoredLabel}
+                </span>
+
+                {
+                  isEbookMonitored &&
+                    <Icon
+                      className={styles.monitoringIconEnd}
+                      name={getMediaTypeIcon('ebook')}
+                    />
+                }
               </div>
           }
 
-          {showQualityProfile && !!qualityProfile?.name ? (
-            <div className={styles.title} title={translate('QualityProfile')}>
-              {qualityProfile.name}
-            </div>
-          ) : null}
+          {
+            showQualityProfile && visibleProfiles.length > 0 &&
+              <div
+                className={styles.mediaSummary}
+                title={profileTitle}
+                aria-label={profileTitle}
+              >
+                {
+                  visibleProfiles.map((details) => {
+                    return (
+                      <span
+                        key={details.mediaType}
+                        className={styles.mediaProfile}
+                      >
+                        {
+                          showProfileMediaType &&
+                            <Icon
+                              className={styles.mediaProfileIcon}
+                              name={getMediaTypeIcon(details.mediaType)}
+                            />
+                        }
+                        <span className={styles.profileName}>
+                          {details.qualityProfile.name}
+                        </span>
+                      </span>
+                    );
+                  })
+                }
+              </div>
+          }
 
           {
             nextAiring &&
@@ -375,6 +466,8 @@ AuthorIndexPoster.propTypes = {
   showMonitored: PropTypes.bool.isRequired,
   showQualityProfile: PropTypes.bool.isRequired,
   qualityProfile: PropTypes.object,
+  mediaTypeDetails: PropTypes.arrayOf(PropTypes.object).isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'all', 'ebook']).isRequired,
   metadataProfile: PropTypes.object,
   showSearchAction: PropTypes.bool.isRequired,
   showRelativeDates: PropTypes.bool.isRequired,

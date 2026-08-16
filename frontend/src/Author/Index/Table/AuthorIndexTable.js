@@ -70,8 +70,6 @@ class AuthorIndexTable extends Component {
           columns={columns}
           authorId={author.id}
           selectedMediaType={selectedMediaType}
-          qualityProfileId={author.lastSelectedMediaType === 'ebook' ? author.ebookQualityProfileId : author.audiobookQualityProfileId}
-          metadataProfileId={author.metadataProfileId}
           isSelected={selectedState[author.id]}
           onSelectedChange={onSelectedChange}
           isEditorActive={isEditorActive}
@@ -147,6 +145,7 @@ AuthorIndexTable.propTypes = {
   scrollTop: PropTypes.number,
   scroller: PropTypes.instanceOf(Element).isRequired,
   isSmallScreen: PropTypes.bool.isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'all', 'ebook']).isRequired,
   onSortPress: PropTypes.func.isRequired,
   allSelected: PropTypes.bool.isRequired,
   allUnselected: PropTypes.bool.isRequired,

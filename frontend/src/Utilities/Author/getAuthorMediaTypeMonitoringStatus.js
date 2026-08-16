@@ -1,40 +1,42 @@
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
 
-export function getAuthorMonitorExistingValue(author, mediaType) {
-  if (!author) {
-    return 0;
-  }
-
+export function getAuthorMediaTypeMonitoringStatus(author, mediaType) {
   const rootFolderStatus = getAuthorMediaTypeRootFolderStatus(author, mediaType);
-
-  if (!rootFolderStatus.hasRootFolder) {
-    return 0;
-  }
-
   const effectiveMediaType = rootFolderStatus.mediaType;
-  const monitorExistingValue = effectiveMediaType === 'ebook'
-    ? author.ebookMonitorExisting
-    : author.audiobookMonitorExisting;
+  const monitorExisting = effectiveMediaType === 'ebook' ?
+    author?.ebookMonitorExisting :
+    author?.audiobookMonitorExisting;
+  const monitorFuture = effectiveMediaType === 'ebook' ?
+    author?.ebookMonitorFuture :
+    author?.audiobookMonitorFuture;
+  const isConfigured = !!author && rootFolderStatus.hasRootFolder;
 
-  // NULL means "not configured for this media type yet" → treat as unmonitored.
-  return monitorExistingValue ?? 0;
+  return {
+    mediaType: effectiveMediaType,
+    isConfigured,
+    monitorExisting: monitorExisting ?? 0,
+    monitorFuture: monitorFuture === true,
+    monitored: isConfigured && ((monitorExisting ?? 0) > 0 || monitorFuture === true)
+  };
+}
+
+export function getAuthorMonitorExistingValue(author, mediaType) {
+  return getAuthorMediaTypeMonitoringStatus(author, mediaType).monitorExisting;
 }
 
 export function isAuthorMonitoredForMediaType(author, mediaType) {
-  return getAuthorMonitorExistingValue(author, mediaType) > 0;
+  return getAuthorMediaTypeMonitoringStatus(author, mediaType).monitored;
 }
 
 export function isAuthorMonitoredForAnyMediaType(author) {
-  if (!author) {
-    return false;
-  }
-
-  const audiobookStatus = getAuthorMediaTypeRootFolderStatus(author, 'audiobook');
-  const ebookStatus = getAuthorMediaTypeRootFolderStatus(author, 'ebook');
-
-  const audiobookMonitored = audiobookStatus.hasRootFolder && (author.audiobookMonitorExisting ?? 0) > 0;
-  const ebookMonitored = ebookStatus.hasRootFolder && (author.ebookMonitorExisting ?? 0) > 0;
-
-  return audiobookMonitored || ebookMonitored;
+  return isAuthorMonitoredForMediaType(author, 'audiobook') ||
+    isAuthorMonitoredForMediaType(author, 'ebook');
 }
 
+export function isAuthorMonitoredForSelection(author, selectedMediaType) {
+  if (selectedMediaType === 'audiobook' || selectedMediaType === 'ebook') {
+    return isAuthorMonitoredForMediaType(author, selectedMediaType);
+  }
+
+  return isAuthorMonitoredForAnyMediaType(author);
+}

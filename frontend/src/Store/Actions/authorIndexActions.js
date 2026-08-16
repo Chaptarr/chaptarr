@@ -3,6 +3,7 @@ import { batchActions } from 'redux-batched-actions';
 import { filterBuilderTypes, filterBuilderValueTypes, filterTypePredicates, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import sortByName from 'Utilities/Array/sortByName';
+import { isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import { filterPredicates, filters, sortPredicates } from './authorActions';
@@ -30,6 +31,7 @@ export const defaultState = {
   sortDirection: sortDirections.ASCENDING,
   secondarySortKey: 'sortNameLastFirst',
   secondarySortDirection: sortDirections.ASCENDING,
+  selectedMediaType: 'all',
   view: 'posters',
 
   posterOptions: {
@@ -208,6 +210,13 @@ export const defaultState = {
   filterPredicates: {
     ...filterPredicates,
 
+    monitored: function(item, filterValue, type, state) {
+      const predicate = filterTypePredicates[type];
+      const monitored = isAuthorMonitoredForSelection(item, state.selectedMediaType);
+
+      return predicate(monitored, filterValue);
+    },
+
     bookProgress: function(item, filterValue, type) {
       const { statistics = {} } = item;
 
@@ -341,6 +350,7 @@ export const persistState = [
 
 export const SET_AUTHOR_SORT = 'authorIndex/setAuthorSort';
 export const SET_AUTHOR_FILTER = 'authorIndex/setAuthorFilter';
+export const SET_AUTHOR_MEDIA_TYPE = 'authorIndex/setAuthorMediaType';
 export const SET_AUTHOR_VIEW = 'authorIndex/setAuthorView';
 export const SET_AUTHOR_TABLE_OPTION = 'authorIndex/setAuthorTableOption';
 export const SET_AUTHOR_POSTER_OPTION = 'authorIndex/setAuthorPosterOption';
@@ -354,6 +364,7 @@ export const BULK_DELETE_AUTHOR = 'authorIndex/bulkDeleteAuthor';
 
 export const setAuthorSort = createAction(SET_AUTHOR_SORT);
 export const setAuthorFilter = createAction(SET_AUTHOR_FILTER);
+export const setAuthorMediaType = createAction(SET_AUTHOR_MEDIA_TYPE);
 export const setAuthorView = createAction(SET_AUTHOR_VIEW);
 export const setAuthorTableOption = createAction(SET_AUTHOR_TABLE_OPTION);
 export const setAuthorPosterOption = createAction(SET_AUTHOR_POSTER_OPTION);
@@ -451,6 +462,10 @@ export const reducers = createHandleActions({
 
   [SET_AUTHOR_SORT]: createSetClientSideCollectionSortReducer(section),
   [SET_AUTHOR_FILTER]: createSetClientSideCollectionFilterReducer(section),
+
+  [SET_AUTHOR_MEDIA_TYPE]: function(state, { payload }) {
+    return Object.assign({}, state, { selectedMediaType: payload.mediaType });
+  },
 
   [SET_AUTHOR_VIEW]: function(state, { payload }) {
     return Object.assign({}, state, { view: payload.view });

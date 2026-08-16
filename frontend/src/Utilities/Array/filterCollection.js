@@ -35,12 +35,12 @@ function filterCollection(items, state) {
             type === filterTypes.NOT_CONTAINS ||
               type === filterTypes.NOT_EQUAL
           ) {
-            accepted = value.every((v) => predicate(item, v, type));
+            accepted = value.every((v) => predicate(item, v, type, state));
           } else {
-            accepted = value.some((v) => predicate(item, v, type));
+            accepted = value.some((v) => predicate(item, v, type, state));
           }
         } else {
-          accepted = predicate(item, value, type);
+          accepted = predicate(item, value, type, state);
         }
       } else if (item.hasOwnProperty(key)) {
         const predicate = filterTypePredicates[type];

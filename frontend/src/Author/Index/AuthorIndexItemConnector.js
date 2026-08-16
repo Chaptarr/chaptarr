@@ -7,10 +7,9 @@ import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import { executeCommand } from 'Store/Actions/commandActions';
 import createAuthorMetadataProfileSelector from 'Store/Selectors/createAuthorMetadataProfileSelector';
-import createAuthorQualityProfileSelector from 'Store/Selectors/createAuthorQualityProfileSelector';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createExecutingCommandsSelector from 'Store/Selectors/createExecutingCommandsSelector';
-import { isAuthorMonitoredForAnyMediaType, isAuthorMonitoredForMediaType } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
+import { getAuthorMediaTypeMonitoringStatus, isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 
 function selectShowSearchAction() {
   return createSelector(
@@ -35,7 +34,7 @@ function selectShowSearchAction() {
 function createMapStateToProps() {
   return createSelector(
     createAuthorSelector(),
-    createAuthorQualityProfileSelector(),
+    (state) => state.settings.qualityProfiles.items,
     createAuthorMetadataProfileSelector(),
     selectShowSearchAction(),
     createExecutingCommandsSelector(),
@@ -43,7 +42,7 @@ function createMapStateToProps() {
     (state, ownProps) => ownProps && ownProps.selectedMediaType,
     (
       author,
-      qualityProfile,
+      qualityProfiles,
       metadataProfile,
       showSearchAction,
       executingCommands,
@@ -77,7 +76,6 @@ function createMapStateToProps() {
         _.maxBy(author.books, (book) => book.releaseDate) :
         null;
 
-      // Choose statistics based on selected media type when provided
       let statistics = author.statistics;
       if (selectedMediaType === 'audiobook' && author.audiobookStatistics) {
         statistics = author.audiobookStatistics;
@@ -85,20 +83,28 @@ function createMapStateToProps() {
         statistics = author.ebookStatistics;
       }
 
-      // CONTEXT-AWARE MONITORING: show monitoring status for current media type.
-      // "Monitored" for Library purposes means "monitorExisting != None".
-      let monitored = author.monitored;
-      if (selectedMediaType === 'audiobook' || selectedMediaType === 'ebook') {
-        monitored = isAuthorMonitoredForMediaType(author, selectedMediaType);
-      } else if (selectedMediaType === 'all') {
-        monitored = isAuthorMonitoredForAnyMediaType(author);
-      }
+      const profileById = (id) => (qualityProfiles || []).find((profile) => profile.id === id);
+      const mediaTypeDetails = [
+        {
+          ...getAuthorMediaTypeMonitoringStatus(author, 'audiobook'),
+          qualityProfile: profileById(author.audiobookQualityProfileId)
+        },
+        {
+          ...getAuthorMediaTypeMonitoringStatus(author, 'ebook'),
+          qualityProfile: profileById(author.ebookQualityProfileId)
+        }
+      ];
+      const profileMediaType = selectedMediaType === 'audiobook' || selectedMediaType === 'ebook' ?
+        selectedMediaType :
+        author.lastSelectedMediaType;
+      const qualityProfile = mediaTypeDetails.find((details) => details.mediaType === profileMediaType)?.qualityProfile;
 
       return {
         ...author,
-        monitored,
+        monitored: isAuthorMonitoredForSelection(author, selectedMediaType),
         statistics,
         qualityProfile,
+        mediaTypeDetails,
         metadataProfile,
         latestBook,
         showSearchAction,

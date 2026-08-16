@@ -41,7 +41,7 @@ export const filters = [
   },
   {
     key: 'unmonitored',
-    label: 'All Only',
+    label: 'Unmonitored Only',
     filters: [
       {
         key: 'monitored',

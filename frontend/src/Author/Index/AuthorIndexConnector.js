@@ -5,7 +5,7 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import withScrollPosition from 'Components/withScrollPosition';
-import { saveAuthorEditor, setAuthorFilter, setAuthorSort, setAuthorTableOption, setAuthorView } from 'Store/Actions/authorIndexActions';
+import { saveAuthorEditor, setAuthorFilter, setAuthorMediaType, setAuthorSort, setAuthorTableOption, setAuthorView } from 'Store/Actions/authorIndexActions';
 import { executeCommand } from 'Store/Actions/commandActions';
 import scrollPositions from 'Store/scrollPositions';
 import createAuthorClientSideCollectionItemsSelector from 'Store/Selectors/createAuthorClientSideCollectionItemsSelector';
@@ -53,6 +53,10 @@ function createMapDispatchToProps(dispatch, props) {
 
     onFilterSelect(selectedFilterKey) {
       dispatch(setAuthorFilter({ selectedFilterKey }));
+    },
+
+    onMediaTypeChange(mediaType) {
+      dispatch(setAuthorMediaType({ mediaType }));
     },
 
     dispatchSetAuthorView(view) {
@@ -115,6 +119,7 @@ class AuthorIndexConnector extends Component {
 AuthorIndexConnector.propTypes = {
   isSmallScreen: PropTypes.bool.isRequired,
   view: PropTypes.string.isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'all', 'ebook']).isRequired,
   dispatchSetAuthorView: PropTypes.func.isRequired,
   dispatchSaveAuthorEditor: PropTypes.func.isRequired
 };

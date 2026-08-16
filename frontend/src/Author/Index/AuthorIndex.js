@@ -90,7 +90,6 @@ class AuthorIndex extends Component {
       allUnselected: false,
       lastToggled: null,
       selectedState: {},
-      selectedMediaType: 'all',
       isStartingRefresh: false
     };
   }
@@ -100,15 +99,16 @@ class AuthorIndex extends Component {
     this.setSelectedState();
   }
 
-  componentDidUpdate(prevProps, prevState) {
+  componentDidUpdate(prevProps) {
     const {
       items,
       isRefreshingAuthor,
+      selectedMediaType,
       sortKey,
       sortDirection
     } = this.props;
 
-    if (this.state.selectedMediaType !== prevState.selectedMediaType ||
+    if (selectedMediaType !== prevProps.selectedMediaType ||
         sortKey !== prevProps.sortKey ||
         sortDirection !== prevProps.sortDirection ||
         hasDifferentItemsOrOrder(prevProps.items, items)
@@ -141,10 +141,8 @@ class AuthorIndex extends Component {
   };
 
   setSelectedState() {
-    const {
-      selectedState,
-      selectedMediaType
-    } = this.state;
+    const { selectedState } = this.state;
+    const { selectedMediaType } = this.props;
     const items = filterAuthorsByMediaType(this.props.items, selectedMediaType);
 
     const newSelectedState = {};
@@ -179,8 +177,8 @@ class AuthorIndex extends Component {
   }
 
   setJumpBarItems() {
-    const { sortKey, sortDirection } = this.props;
-    const items = filterAuthorsByMediaType(this.props.items, this.state.selectedMediaType);
+    const { items: allItems, selectedMediaType, sortKey, sortDirection } = this.props;
+    const items = filterAuthorsByMediaType(allItems, selectedMediaType);
 
     // Reset if not sorting by sortName
     if (sortKey !== 'sortName' && sortKey !== 'sortNameLastFirst') {
@@ -267,7 +265,7 @@ class AuthorIndex extends Component {
 
   onSelectedChange = ({ id, value, shiftKey = false }) => {
     this.setState((state) => {
-      const items = filterAuthorsByMediaType(this.props.items, state.selectedMediaType);
+      const items = filterAuthorsByMediaType(this.props.items, this.props.selectedMediaType);
       return toggleSelected(state, items, id, value, shiftKey);
     });
   };
@@ -309,7 +307,7 @@ class AuthorIndex extends Component {
 
     this.setState({ isStartingRefresh: true });
 
-    Promise.resolve(this.props.onRefreshAuthorPress(refreshIds, this.state.selectedMediaType))
+    Promise.resolve(this.props.onRefreshAuthorPress(refreshIds, this.props.selectedMediaType))
       .catch(() => {
         this.setState({ isStartingRefresh: false });
       })
@@ -321,7 +319,7 @@ class AuthorIndex extends Component {
   };
 
   onMediaTypeChange = (mediaType) => {
-    this.setState({ selectedMediaType: mediaType });
+    this.props.onMediaTypeChange(mediaType);
   };
 
   //
@@ -338,6 +336,7 @@ class AuthorIndex extends Component {
       selectedFilterKey,
       filters,
       customFilters,
+      selectedMediaType,
       sortKey,
       sortDirection,
       view,
@@ -368,7 +367,6 @@ class AuthorIndex extends Component {
       selectedState,
       allSelected,
       allUnselected,
-      selectedMediaType,
       isStartingRefresh
     } = this.state;
 
@@ -636,6 +634,7 @@ AuthorIndex.propTypes = {
   selectedFilterKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
   filters: PropTypes.arrayOf(PropTypes.object).isRequired,
   customFilters: PropTypes.arrayOf(PropTypes.object).isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'all', 'ebook']).isRequired,
   sortKey: PropTypes.string,
   sortDirection: PropTypes.oneOf(sortDirections.all),
   view: PropTypes.string.isRequired,
@@ -651,6 +650,7 @@ AuthorIndex.propTypes = {
   deleteError: PropTypes.object,
   onSortSelect: PropTypes.func.isRequired,
   onFilterSelect: PropTypes.func.isRequired,
+  onMediaTypeChange: PropTypes.func.isRequired,
   onViewSelect: PropTypes.func.isRequired,
   onRefreshAuthorPress: PropTypes.func.isRequired,
   onRssSyncPress: PropTypes.func.isRequired,

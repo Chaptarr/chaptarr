@@ -99,6 +99,65 @@ $hoverScale: 1.05;
   line-height: 19px;
 }
 
+.mediaSummary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  height: 19px;
+  background-color: var(--seriesBackgroundColor);
+  white-space: nowrap;
+  font-size: $smallFontSize;
+  gap: 3px;
+}
+
+.monitoringSummary {
+  display: grid;
+  grid-template-columns: minmax(1em, 1fr) minmax(0, auto) minmax(1em, 1fr);
+  gap: 6px;
+}
+
+.monitoringIconStart {
+  grid-column: 1;
+  justify-self: end;
+}
+
+.monitoringLabel {
+  grid-column: 2;
+
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitoringIconEnd {
+  grid-column: 3;
+  justify-self: start;
+}
+
+.mediaProfile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  overflow: hidden;
+  padding: 0 4px;
+  min-width: 0;
+  gap: 3px;
+}
+
+.mediaProfileIcon {
+  flex-shrink: 0;
+}
+
+.profileName {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ended {
   position: absolute;
   top: 0;

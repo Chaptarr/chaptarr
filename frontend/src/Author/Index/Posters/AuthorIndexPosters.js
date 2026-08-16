@@ -250,8 +250,6 @@ class AuthorIndexPosters extends Component {
           timeFormat={timeFormat}
           style={style}
           authorId={author.id}
-          qualityProfileId={author.lastSelectedMediaType === 'ebook' ? author.ebookQualityProfileId : author.audiobookQualityProfileId}
-          metadataProfileId={author.metadataProfileId}
           isSelected={selectedState[author.id]}
           onSelectedChange={onSelectedChange}
           isEditorActive={isEditorActive}

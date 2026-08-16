@@ -191,8 +191,6 @@ class AuthorIndexOverviews extends Component {
           timeFormat={timeFormat}
           isSmallScreen={isSmallScreen}
           authorId={author.id}
-          qualityProfileId={author.lastSelectedMediaType === 'ebook' ? author.ebookQualityProfileId : author.audiobookQualityProfileId}
-          metadataProfileId={author.metadataProfileId}
           isSelected={selectedState[author.id]}
           onSelectedChange={onSelectedChange}
           isEditorActive={isEditorActive}
@@ -277,6 +275,7 @@ AuthorIndexOverviews.propTypes = {
   longDateFormat: PropTypes.string.isRequired,
   isSmallScreen: PropTypes.bool.isRequired,
   timeFormat: PropTypes.string.isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'all', 'ebook']).isRequired,
   selectedState: PropTypes.object.isRequired,
   onSelectedChange: PropTypes.func.isRequired,
   isEditorActive: PropTypes.bool.isRequired

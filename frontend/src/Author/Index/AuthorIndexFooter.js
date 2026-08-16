@@ -53,7 +53,7 @@ class AuthorIndexFooter extends PureComponent {
       return;
     }
 
-    const authorIds = author.map(a => a.id);
+    const authorIds = author.map((a) => a.id);
 
     const promise = createAjaxRequest({
       url: '/author/statistics/aggregate',
@@ -79,7 +79,7 @@ class AuthorIndexFooter extends PureComponent {
       // Fallback to client-side calculation on error
       this.calculateClientSideStats();
     });
-  }
+  };
 
   calculateClientSideStats = () => {
     const { author } = this.props;
@@ -106,18 +106,22 @@ class AuthorIndexFooter extends PureComponent {
       bookFiles,
       totalFileSize
     });
-  }
+  };
 
   //
   // Render
 
   render() {
-    const { author } = this.props;
+    const { author, mediaType } = this.props;
     const { books, bookFiles, totalFileSize } = this.state;
     const count = author.length;
     let ended = 0;
     let continuing = 0;
     let monitored = 0;
+    let audiobookConfigured = 0;
+    let audiobookMonitored = 0;
+    let ebookConfigured = 0;
+    let ebookMonitored = 0;
 
     author.forEach((s) => {
       if (s.status === 'ended') {
@@ -128,6 +132,22 @@ class AuthorIndexFooter extends PureComponent {
 
       if (s.monitored) {
         monitored++;
+      }
+
+      if (s.audiobookMonitoring?.isConfigured) {
+        audiobookConfigured++;
+
+        if (s.audiobookMonitoring.monitored) {
+          audiobookMonitored++;
+        }
+      }
+
+      if (s.ebookMonitoring?.isConfigured) {
+        ebookConfigured++;
+
+        if (s.ebookMonitoring.monitored) {
+          ebookMonitored++;
+        }
       }
     });
 
@@ -204,17 +224,31 @@ class AuthorIndexFooter extends PureComponent {
                   />
                 </DescriptionList>
 
-                <DescriptionList>
-                  <DescriptionListItem
-                    title={translate('Monitored')}
-                    data={monitored}
-                  />
+                {
+                  mediaType === 'all' ?
+                    <DescriptionList>
+                      <DescriptionListItem
+                        title={`${translate('Audiobooks')} ${translate('Monitored')}`}
+                        data={`${audiobookMonitored} / ${audiobookConfigured}`}
+                      />
 
-                  <DescriptionListItem
-                    title={translate('Unmonitored')}
-                    data={count - monitored}
-                  />
-                </DescriptionList>
+                      <DescriptionListItem
+                        title={`${translate('Ebooks')} ${translate('Monitored')}`}
+                        data={`${ebookMonitored} / ${ebookConfigured}`}
+                      />
+                    </DescriptionList> :
+                    <DescriptionList>
+                      <DescriptionListItem
+                        title={translate('Monitored')}
+                        data={monitored}
+                      />
+
+                      <DescriptionListItem
+                        title={translate('Unmonitored')}
+                        data={count - monitored}
+                      />
+                    </DescriptionList>
+                }
 
                 <DescriptionList>
                   <DescriptionListItem
