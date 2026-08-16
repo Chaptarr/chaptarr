@@ -95,7 +95,7 @@ class AuthorIndexOverviews extends Component {
             hasDifferentItemsOrOrder(prevProps.items, items) ||
             prevProps.isEditorActive !== isEditorActive ||
             prevProps.selectedState !== selectedState ||
-            prevProps.overviewOptions.showTitle !== overviewOptions.showTitle)) {
+            prevProps.overviewOptions !== overviewOptions)) {
       // recomputeGridSize also forces Grid to discard its cache of rendered cells
       this._grid.recomputeGridSize();
     }
