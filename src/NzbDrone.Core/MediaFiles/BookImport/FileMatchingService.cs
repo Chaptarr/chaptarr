@@ -49,7 +49,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         // verdict instead of re-running ~10s of staged FTS each. Entries are
         // scope-keyed and expire quickly, so rescans after author adds and
         // identifier-bearing files are unaffected.
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _negativeUnitCache = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>();
+        // Instance-scoped (the service is a singleton in production) so test fixtures
+        // that build their own service instances cannot see each other's entries.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _negativeUnitCache = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>();
         private static readonly TimeSpan _negativeUnitCacheTtl = TimeSpan.FromMinutes(10);
 
         private static string BuildNegativeUnitCacheKey(
