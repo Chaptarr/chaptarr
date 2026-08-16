@@ -18,8 +18,8 @@ function AuthorIndexProgressBar(props) {
     detailedProgressBar
   } = props;
 
-  // Calculate progress as: % of monitored books that have files
-  // bookCount = monitored books, availableBookCount = monitored books with files
+  // Future releases are excluded from both counts by the author statistics query.
+  // bookCount = released monitored books, availableBookCount = released monitored books with files.
   const progress = bookCount > 0 ? (availableBookCount / bookCount) * 100 : 100;
   const text = `${availableBookCount} / ${bookCount}`;
 

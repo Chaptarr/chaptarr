@@ -31,6 +31,8 @@ namespace Chaptarr.Core.Test.AuthorStats
                 StringAssert.Contains("CROSS JOIN \"Editions\"", authorSql);
                 StringAssert.Contains("GROUP BY \"Editions\".\"BookId\"", authorSql);
                 StringAssert.Contains(booleanComparison, authorSql);
+                StringAssert.Contains(@"""Books"".""ReleaseDate"" <= @currentDate", authorSql);
+                StringAssert.Contains(@"""Books"".""ReleaseDate"" IS NULL", authorSql);
                 StringAssert.DoesNotContain("MIN(\"BookFiles\"", authorSql);
 
                 StringAssert.Contains("FROM \"Books\"", aggregateSql);

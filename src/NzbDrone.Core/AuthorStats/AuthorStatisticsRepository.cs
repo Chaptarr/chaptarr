@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dapper;
@@ -133,6 +134,7 @@ namespace NzbDrone.Core.AuthorStats
         private static SqlBuilder Builder(DatabaseType databaseType)
         {
             var trueIndicator = databaseType == DatabaseType.PostgreSQL ? "true" : "1";
+            const string bookIsAvailable = @"(""Books"".""ReleaseDate"" <= @currentDate OR ""Books"".""ReleaseDate"" IS NULL)";
 
             return new SqlBuilder(databaseType)
                 .Select($@"""Authors"".""Id"" AS ""AuthorId"",
@@ -144,18 +146,19 @@ namespace NzbDrone.Core.AuthorStats
                              ELSE 0
                          END AS ""TotalBookCount"",
                          CASE
-                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
-                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
+                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} AND {bookIsAvailable} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
+                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} AND {bookIsAvailable} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
                              ELSE 0
                          END AS ""AvailableBookCount"",
                          CASE
-                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} THEN 1
-                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} THEN 1
+                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} AND {bookIsAvailable} THEN 1
+                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} AND {bookIsAvailable} THEN 1
                              ELSE 0
                          END AS ""BookCount"",
                          COALESCE(""FileStatistics"".""BookFileCount"", 0) AS ""BookFileCount""")
                 .Join<Book, Author>((book, author) => book.AuthorId == author.Id)
-                .LeftJoin(_fileStatisticsJoin);
+                .LeftJoin(_fileStatisticsJoin)
+                .AddParameters(new { currentDate = DateTime.UtcNow });
         }
 
         private static SqlBuilder AggregateBuilder(DatabaseType databaseType)

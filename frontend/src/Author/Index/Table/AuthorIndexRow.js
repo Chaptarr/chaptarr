@@ -289,7 +289,7 @@ class AuthorIndexRow extends Component {
             }
 
             if (name === 'bookProgress') {
-              const progress = totalBookCount ? (bookCount / totalBookCount) * 100 : 100;
+              const progress = bookCount ? (availableBookCount / bookCount) * 100 : 100;
 
               return (
                 <VirtualTableRowCell
@@ -300,7 +300,7 @@ class AuthorIndexRow extends Component {
                     progress={progress}
                     kind={getProgressBarKind(status, monitored, progress)}
                     showText={true}
-                    text={`${bookCount} / ${totalBookCount}`}
+                    text={`${availableBookCount} / ${bookCount}`}
                     title={translate('AuthorProgressBarText', { bookCount, availableBookCount, bookFileCount, totalBookCount })}
                     width={125}
                   />

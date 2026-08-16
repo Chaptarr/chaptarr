@@ -78,6 +78,54 @@ namespace Chaptarr.Core.Test.AuthorStats
         }
 
         [Test]
+        public void should_exclude_monitored_future_releases_from_progress_for_both_media_types()
+        {
+            WithRepository((repository, connectionString) =>
+            {
+                using (var connection = new SqliteConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"
+INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"", ""ReleaseDate"") VALUES
+    (30, 3, 1, 0, 1, @released),
+    (31, 3, 0, 1, 0, @released),
+    (32, 3, 1, 0, 1, @future),
+    (33, 3, 0, 1, 0, @future);
+INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"") VALUES
+    (300, 30, 1),
+    (310, 31, 1);
+INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
+    (3000, 300, 10),
+    (3100, 310, 20);",
+                        new
+                        {
+                            released = DateTime.UtcNow.AddDays(-1),
+                            future = DateTime.UtcNow.AddDays(1)
+                        });
+                }
+
+                var allStats = repository.AuthorStatistics(3);
+                var ebookStats = repository.AuthorStatistics(3, "ebook");
+                var audiobookStats = repository.AuthorStatistics(3, "audiobook");
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(allStats.Sum(stat => stat.BookCount), Is.EqualTo(2));
+                    Assert.That(allStats.Sum(stat => stat.AvailableBookCount), Is.EqualTo(2));
+                    Assert.That(allStats.Sum(stat => stat.TotalBookCount), Is.EqualTo(4));
+
+                    Assert.That(ebookStats.Sum(stat => stat.BookCount), Is.EqualTo(1));
+                    Assert.That(ebookStats.Sum(stat => stat.AvailableBookCount), Is.EqualTo(1));
+                    Assert.That(ebookStats.Sum(stat => stat.TotalBookCount), Is.EqualTo(2));
+
+                    Assert.That(audiobookStats.Sum(stat => stat.BookCount), Is.EqualTo(1));
+                    Assert.That(audiobookStats.Sum(stat => stat.AvailableBookCount), Is.EqualTo(1));
+                    Assert.That(audiobookStats.Sum(stat => stat.TotalBookCount), Is.EqualTo(2));
+                });
+            });
+        }
+
+        [Test]
         public void aggregate_should_count_file_bearing_books_once()
         {
             WithRepository((repository, _) =>
@@ -133,7 +181,8 @@ CREATE TABLE ""Books"" (
     ""AuthorId"" INTEGER NOT NULL,
     ""MediaType"" INTEGER NOT NULL,
     ""AudiobookMonitored"" INTEGER NOT NULL,
-    ""EbookMonitored"" INTEGER NOT NULL
+    ""EbookMonitored"" INTEGER NOT NULL,
+    ""ReleaseDate"" TEXT NULL
 );
 CREATE TABLE ""Editions"" (
     ""Id"" INTEGER PRIMARY KEY,
@@ -146,7 +195,7 @@ CREATE TABLE ""BookFiles"" (
     ""Size"" INTEGER NOT NULL
 );
 
-INSERT INTO ""Authors"" (""Id"") VALUES (1), (2);
+INSERT INTO ""Authors"" (""Id"") VALUES (1), (2), (3);
 INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"") VALUES
     (10, 1, 0, 1, 0),
     (11, 1, 1, 0, 1),
