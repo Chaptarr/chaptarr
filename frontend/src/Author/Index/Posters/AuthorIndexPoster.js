@@ -154,6 +154,7 @@ class AuthorIndexPoster extends Component {
       posterWidth,
       posterHeight,
       detailedProgressBar,
+      cropPosters,
       showTitle,
       showMonitored,
       showQualityProfile,
@@ -210,7 +211,8 @@ class AuthorIndexPoster extends Component {
 
     const posterStyle = {
       ...elementStyle,
-      objectFit: 'cover'
+      objectFit: cropPosters ? 'cover' : 'contain',
+      objectPosition: cropPosters ? 'top' : 'center'
     };
     const visibleMediaTypeDetails = mediaTypeDetails.filter((details) => {
       return details.isConfigured &&
@@ -462,6 +464,7 @@ AuthorIndexPoster.propTypes = {
   posterWidth: PropTypes.number.isRequired,
   posterHeight: PropTypes.number.isRequired,
   detailedProgressBar: PropTypes.bool.isRequired,
+  cropPosters: PropTypes.bool.isRequired,
   showTitle: PropTypes.string.isRequired,
   showMonitored: PropTypes.bool.isRequired,
   showQualityProfile: PropTypes.bool.isRequired,

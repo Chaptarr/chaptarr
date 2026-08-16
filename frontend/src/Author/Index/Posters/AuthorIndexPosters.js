@@ -214,6 +214,7 @@ class AuthorIndexPosters extends Component {
 
     const {
       detailedProgressBar,
+      cropPosters,
       showTitle,
       showMonitored,
       showQualityProfile
@@ -242,6 +243,7 @@ class AuthorIndexPosters extends Component {
           posterWidth={posterWidth}
           posterHeight={posterHeight}
           detailedProgressBar={detailedProgressBar}
+          cropPosters={cropPosters}
           showTitle={showTitle}
           showMonitored={showMonitored}
           showQualityProfile={showQualityProfile}

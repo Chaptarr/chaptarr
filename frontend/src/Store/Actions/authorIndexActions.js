@@ -37,6 +37,7 @@ export const defaultState = {
   posterOptions: {
     detailedProgressBar: false,
     size: 'large',
+    cropPosters: true,
     showTitle: 'lastFirst',
     showMonitored: true,
     showQualityProfile: true,

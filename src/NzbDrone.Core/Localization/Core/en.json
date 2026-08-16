@@ -431,6 +431,8 @@
   "CreateEmptyAuthorFolders": "Create empty author folders",
   "CreateEmptyAuthorFoldersHelpText": "Create missing author folders during disk scan",
   "CreateGroup": "Create group",
+  "CropPosters": "Crop Posters",
+  "CropPostersHelpText": "Zoom author photos to fill the card, keeping the top of the photo visible when cropping vertically",
   "CurrentlyInstalled": "Currently Installed",
   "Custom": "Custom",
   "CustomFilter": "Custom Filter",

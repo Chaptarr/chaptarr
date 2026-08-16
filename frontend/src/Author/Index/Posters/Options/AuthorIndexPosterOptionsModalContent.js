@@ -66,6 +66,7 @@ class AuthorIndexPosterOptionsModalContent extends Component {
     this.state = {
       detailedProgressBar: props.detailedProgressBar,
       size: props.size,
+      cropPosters: props.cropPosters,
       showTitle: props.showTitle,
       showMonitored: props.showMonitored,
       showQualityProfile: props.showQualityProfile,
@@ -77,6 +78,7 @@ class AuthorIndexPosterOptionsModalContent extends Component {
     const {
       detailedProgressBar,
       size,
+      cropPosters,
       showTitle,
       showMonitored,
       showQualityProfile,
@@ -91,6 +93,10 @@ class AuthorIndexPosterOptionsModalContent extends Component {
 
     if (size !== prevProps.size) {
       state.size = size;
+    }
+
+    if (cropPosters !== prevProps.cropPosters) {
+      state.cropPosters = cropPosters;
     }
 
     if (showTitle !== prevProps.showTitle) {
@@ -136,6 +142,7 @@ class AuthorIndexPosterOptionsModalContent extends Component {
     const {
       detailedProgressBar,
       size,
+      cropPosters,
       showTitle,
       showMonitored,
       showQualityProfile,
@@ -160,6 +167,20 @@ class AuthorIndexPosterOptionsModalContent extends Component {
                 name="size"
                 value={size}
                 values={posterSizeOptions}
+                onChange={this.onChangePosterOption}
+              />
+            </FormGroup>
+
+            <FormGroup>
+              <FormLabel>
+                {translate('CropPosters')}
+              </FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.CHECK}
+                name="cropPosters"
+                value={cropPosters}
+                helpText={translate('CropPostersHelpText')}
                 onChange={this.onChangePosterOption}
               />
             </FormGroup>
@@ -251,6 +272,7 @@ class AuthorIndexPosterOptionsModalContent extends Component {
 
 AuthorIndexPosterOptionsModalContent.propTypes = {
   size: PropTypes.string.isRequired,
+  cropPosters: PropTypes.bool.isRequired,
   showTitle: PropTypes.string.isRequired,
   showMonitored: PropTypes.bool.isRequired,
   showQualityProfile: PropTypes.bool.isRequired,
