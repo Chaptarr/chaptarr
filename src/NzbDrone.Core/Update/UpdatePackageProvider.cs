@@ -242,17 +242,21 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
-                            "Preview Rename (Organize & Rename) now has an option to move the files you select into the author folder that uses Chaptarr's canonical author spelling. It applies only to that run and is off by default. Without it, files are organized inside the discovered author folder they are already in, so the author folders other tools point at, such as Audiobookshelf or Storyteller, stay where they are."
+                            "When you add a book for an author that isn't in your library yet, your search choice is now remembered, so the book is searched once the author finishes importing.",
+                            "The author list now shows monitoring and quality profile per format, so you can tell at a glance whether an author is tracked for audiobooks, eBooks, or both.",
+                            "A new Crop Posters option under Poster Size lets you fill the card or show the whole author photo. Thanks @kiwi3007."
                         },
                         Fixed = new List<string>
                         {
-                            "Reduced RSS memory use for very large libraries and long Wanted lists.",
-                            "Release matching now only uses the edition title shown on the book, including for books set to Any Edition Ok. This is a trial change to reduce incorrect grabs. If a release you want is skipped, Interactive Search still shows it.",
-                            "Organize no longer renames files when Rename Books is turned off.",
-                            "Shift clicking now selects ranges correctly in Organize, Retag, and the author list.",
-                            "Purge & Re-add, the bottom option when deleting from an author's page, now re-matches that author's files from scratch using the latest metadata. Nothing on disk is moved.",
-                            "Dashboards and other tools running on a different address can reach the API again.",
-                            "API request logging works again behind reverse proxy subpaths, with secrets removed the same way Chaptarr does everywhere else."
+                            "Sorting the book list by Size on Disk works again. Thanks @tillkruss.",
+                            "Better handling of deleting files for authors with books that are tracked in different root folders and haven't been organized. Thanks @OldManBrodie.",
+                            "Rescanning a single author now only scans that author's own folders instead of your whole library. Thanks @sebclark.",
+                            "Monitored and Unmonitored filters on the author list now match the format you're viewing, the counts at the bottom agree with what's shown, and the author filter that read All Only now reads Unmonitored Only. Thanks @digitalgp and @sebclark.",
+                            "Author posters are a consistent size and no longer sit inside grey bars. Thanks @kiwi3007.",
+                            "Poster and overview display options now take effect immediately instead of after a refresh.",
+                            "Toolbar button labels no longer overlap their icons, and long labels show in full on hover. Thanks @sebclark.",
+                            "Shift clicking now selects ranges correctly on Unmapped Files and in Import List Exclusions.",
+                            "Moved even more search logging to trace, so debug logs stay readable during searches."
                         }
                     }
                 }
