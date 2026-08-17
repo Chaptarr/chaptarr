@@ -148,7 +148,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new System.NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new System.NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new System.NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new System.NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new System.NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new System.NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new System.NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new System.NotImplementedException();

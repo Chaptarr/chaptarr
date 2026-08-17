@@ -67,7 +67,7 @@ namespace NzbDrone.Core.Books
         List<Book> GetAuthorBooksWithFiles(Author author);
             List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null);
             List<Book> GetBooksByBaseId(string baseBookId);
-            Book AddWantedEdition(int bookId, int editionId);
+            Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false);
             bool ShouldSearchForMediaType(Book book, string mediaType);
             List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType);
             BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
@@ -2091,7 +2091,7 @@ namespace NzbDrone.Core.Books
                 .ToList();
         }
 
-        public Book AddWantedEdition(int bookId, int editionId)
+        public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false)
         {
             var baseBook = GetBook(bookId);
             if (baseBook == null)
@@ -2115,9 +2115,11 @@ namespace NzbDrone.Core.Books
                 throw new InvalidOperationException($"Edition {editionId} does not belong to book {bookId}");
             }
 
-            // If this book has no files, it is already a "missing" instance; just pin the selected edition here.
+            // If this book has no files, it is already a "missing" instance; just pin the selected
+            // edition here. When the caller explicitly asks for a variant, fall through instead so a
+            // second narration can be tracked alongside the first rather than replacing it.
             var existingFiles = _mediaFileService.GetFilesByBook(baseBook.Id);
-            if (!existingFiles.Any())
+            if (!existingFiles.Any() && !asNewVariant)
             {
                 var editions = _editionService.GetEditionsByBook(baseBook.Id);
 
@@ -2198,7 +2200,8 @@ namespace NzbDrone.Core.Books
 
             // If a matching wanted instance already exists, return it (don’t create duplicates).
             var selectedEditionKey = GetEditionKey(selectedEdition);
-            if (baseBook.AuthorId > 0 && !string.IsNullOrWhiteSpace(selectedEditionKey))
+            var selectedNarratorKeys = GetEditionNarratorKeys(selectedEdition);
+            if (baseBook.AuthorId > 0 && (!string.IsNullOrWhiteSpace(selectedEditionKey) || selectedNarratorKeys.Count > 0))
             {
                 var authorBooks = _bookRepository.GetBooksByAuthorId(baseBook.AuthorId);
                 var wantedCandidates = authorBooks
@@ -2223,12 +2226,19 @@ namespace NzbDrone.Core.Books
                         }
 
                         var candidateKey = GetEditionKey(candidateManual);
-                        if (candidateKey == null)
-                        {
-                            continue;
-                        }
 
-                        if (string.Equals(candidateKey, selectedEditionKey, StringComparison.OrdinalIgnoreCase))
+                        var sameEdition = candidateKey != null &&
+                                          !string.IsNullOrWhiteSpace(selectedEditionKey) &&
+                                          string.Equals(candidateKey, selectedEditionKey, StringComparison.OrdinalIgnoreCase);
+
+                        // Different printings of the same narration are distinct edition records but
+                        // the same request, so an existing variant for this narrator already covers it.
+                        var sameNarrator = selectedNarratorKeys.Count > 0 &&
+                                           GetEditionNarratorKeys(candidateManual)
+                                               .Intersect(selectedNarratorKeys, StringComparer.OrdinalIgnoreCase)
+                                               .Any();
+
+                        if (sameEdition || sameNarrator)
                         {
                             if (!candidate.AudiobookMonitored)
                             {
@@ -2244,6 +2254,28 @@ namespace NzbDrone.Core.Books
                             return GetBook(candidate.Id);
                         }
                     }
+                }
+            }
+
+            // The base book may already be pinned to this narration from an earlier in-place
+            // selection, in which case a variant would just duplicate what is already wanted.
+            if (asNewVariant && selectedNarratorKeys.Count > 0)
+            {
+                var baseEditions = _editionService.GetEditionsByBook(baseBook.Id);
+                if (baseEditions == null || baseEditions.Count == 0)
+                {
+                    baseEditions = baseBook.Editions?.ToList() ?? new List<Edition>();
+                }
+
+                var basePinned = baseEditions.FirstOrDefault(e => e.ManualAdd)
+                                 ?? baseEditions.FirstOrDefault(e => e.Monitored);
+
+                if (basePinned != null &&
+                    GetEditionNarratorKeys(basePinned)
+                        .Intersect(selectedNarratorKeys, StringComparer.OrdinalIgnoreCase)
+                        .Any())
+                {
+                    return GetBook(baseBook.Id);
                 }
             }
 
@@ -2389,6 +2421,30 @@ namespace NzbDrone.Core.Books
             }
 
             return GetBook(wantedBook.Id);
+        }
+
+        // Narrator names arrive from several providers with inconsistent spacing and casing
+        // ("Peter   Noble"), so compare on normalised tokens rather than the raw string.
+        private static List<string> GetEditionNarratorKeys(Edition edition)
+        {
+            var names = new List<string>();
+
+            if (edition?.NarratorNames != null)
+            {
+                names.AddRange(edition.NarratorNames);
+            }
+
+            if (!string.IsNullOrWhiteSpace(edition?.Narrator))
+            {
+                names.Add(edition.Narrator);
+            }
+
+            return names
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => string.Join(" ", Services.TextNormalizer.NormalizeAndTokenize(name)))
+                .Where(key => key.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private Edition SelectMonitoredEditionForInsert(IEnumerable<Edition> editions, BookMediaType mediaType)
