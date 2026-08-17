@@ -328,6 +328,11 @@ namespace NzbDrone.Core.Books
             AddOptions = other.AddOptions;
             AudiobookRootFolderPath = other.AudiobookRootFolderPath;
             EbookRootFolderPath = other.EbookRootFolderPath;
+
+            // Per-media author paths: null means the caller did not provide a value,
+            // so keep the stored one (an explicit clear arrives as an empty string).
+            AudiobookPath = other.AudiobookPath ?? AudiobookPath;
+            EbookPath = other.EbookPath ?? EbookPath;
             Monitored = other.Monitored;
             // TRI-STATE MONITORING SYSTEM - Copy only when explicitly provided (not null).
             // This prevents partial updates from wiping existing monitoring values.

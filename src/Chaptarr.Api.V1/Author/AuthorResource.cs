@@ -67,6 +67,10 @@ namespace Chaptarr.Api.V1.Author
         // Readarr/Seerr compatibility (monitor mode string, e.g. "none")
         public string MonitorNewItems { get; set; }
         public string Folder { get; set; }
+        // Writable per-media author paths. The edit UI submits these; AudiobookFolder/
+        // EbookFolder below remain the read-only display values set by the controller.
+        public string AudiobookPath { get; set; }
+        public string EbookPath { get; set; }
         public string AudiobookFolder { get; set; }
         public string EbookFolder { get; set; }
         public List<string> Genres { get; set; }
@@ -131,6 +135,8 @@ namespace Chaptarr.Api.V1.Author
                 Images = displayImages.JsonClone(),
 
                 Path = model.Path,
+                AudiobookPath = model.AudiobookPath,
+                EbookPath = model.EbookPath,
                 AudiobookQualityProfileId = model.AudiobookQualityProfileId,
                 EbookQualityProfileId = model.EbookQualityProfileId,
                 MetadataProfileId = model.MetadataProfileId,
@@ -463,6 +469,8 @@ namespace Chaptarr.Api.V1.Author
 
                 //AlternateTitles
                 Path = resource.Path,
+                AudiobookPath = resource.AudiobookPath,
+                EbookPath = resource.EbookPath,
                 AudiobookQualityProfileId = audiobookQualityProfileId,
                 EbookQualityProfileId = ebookQualityProfileId,
                 MetadataProfileId = resource.MetadataProfileId,
@@ -566,6 +574,16 @@ namespace Chaptarr.Api.V1.Author
             if (resource.Path == null)
             {
                 updatedAuthor.Path = storedAuthor.Path;
+            }
+
+            if (resource.AudiobookPath == null)
+            {
+                updatedAuthor.AudiobookPath = storedAuthor.AudiobookPath;
+            }
+
+            if (resource.EbookPath == null)
+            {
+                updatedAuthor.EbookPath = storedAuthor.EbookPath;
             }
 
             if (resource.AddOptions == null)
