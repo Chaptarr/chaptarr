@@ -782,7 +782,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return bookDecisions;
             }
 
-            var winner = ebookCandidates.Aggregate((best, candidate) =>
+            // The profile comparer ranks purely by Items position and never reads
+            // Allowed, so a disallowed format placed above the preferred one would
+            // win this pick. Prefer allowed formats; fall back to the ranked pick
+            // only when the download contains no allowed format at all.
+            var allowedCandidates = ebookCandidates
+                .Where(candidate => IsQualityAllowedInProfile(author, candidate.Item?.Quality?.Quality))
+                .ToList();
+            var selectionPool = allowedCandidates.Any() ? allowedCandidates : ebookCandidates;
+
+            var winner = selectionPool.Aggregate((best, candidate) =>
                 CompareEbookImportCandidate(candidate, best, author) > 0 ? candidate : best);
 
             var skipped = ebookCandidates.Where(d => !ReferenceEquals(d, winner)).ToList();
@@ -818,6 +827,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             return QualityMediaTypeHelper.IsEbookQuality(quality) ||
                    (quality == Qualities.Quality.Unknown && localBook.Book?.MediaType == BookMediaType.Ebook);
+        }
+
+        private static bool IsQualityAllowedInProfile(Author author, Qualities.Quality quality)
+        {
+            if (quality == null || quality == Qualities.Quality.Unknown)
+            {
+                return true;
+            }
+
+            var profile = author?.GetQualityProfileForQuality(quality);
+            return profile == null ||
+                   profile.Items.Any(item =>
+                       item.Allowed && item.GetQualities().Any(candidate => candidate.Id == quality.Id));
         }
 
         private static int CompareEbookImportCandidate(

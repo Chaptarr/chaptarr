@@ -390,6 +390,174 @@ namespace Chaptarr.Core.Test.MediaFiles
             return (results, editionServiceProxy);
         }
 
+        private static (
+            List<ImportResult> Results,
+            StubMediaFileService MediaFiles,
+            StubMoveBookFiles Mover)
+            ImportMixedEbookPayload(bool downloadForced)
+        {
+            var qualityProfile = new QualityProfile
+            {
+                Id = 1,
+                Name = "EPUB only",
+                ProfileType = ProfileType.Ebook,
+                UpgradeAllowed = true,
+                Items = new List<QualityProfileQualityItem>
+                {
+                    new() { Allowed = false, Quality = Quality.MOBI },
+                    new() { Allowed = true, Quality = Quality.EPUB },
+                    new() { Allowed = false, Quality = Quality.AZW3 }
+                }
+            };
+
+            var author = new Author
+            {
+                Id = 38,
+                Name = "Joe Abercrombie",
+                EbookRootFolderPath = "/ebooks",
+                EbookPath = "/ebooks/Joe Abercrombie",
+                EbookQualityProfileId = qualityProfile.Id,
+                EbookQualityProfile = qualityProfile
+            };
+
+            var book = new Book
+            {
+                Id = 5792,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Best Served Cold",
+                CleanTitle = "bestservedcold",
+                MediaType = BookMediaType.Ebook,
+                AnyEditionOk = true
+            };
+
+            var edition = new Edition
+            {
+                Id = 15629,
+                BookId = book.Id,
+                Book = book,
+                Title = book.Title,
+                Monitored = true,
+                IsEbook = true
+            };
+
+            var mediaFileService = new StubMediaFileService();
+            var eventAggregator = new CapturingEventAggregator();
+            var mover = new StubMoveBookFiles
+            {
+                DestinationPath = "/ebooks/Joe Abercrombie/Best Served Cold/Best Served Cold.epub"
+            };
+
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Book = book;
+
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)(object)authorService).Author = author;
+
+            var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+            ((EditionServiceProxy)(object)editionService).Edition = edition;
+            ((EditionServiceProxy)(object)editionService).EditionsByBook = new List<Edition> { edition };
+
+            var service = new ImportApprovedBooks(
+                mediaFileService,
+                new StubMetadataTagService(),
+                new StubMediaInfoExtractor(),
+                authorService,
+                bookService,
+                editionService,
+                Proxy<IRecycleBinProvider>(),
+                Proxy<IExtraService>(),
+                mover,
+                Proxy<IHistoryService>(),
+                Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                eventAggregator,
+                Proxy<IManageCommandQueue>(),
+                Proxy<ISeriesBookLinkService>(),
+                Proxy<ISeriesService>(),
+                Proxy<IQualityProfileService>(),
+                Proxy<IM4bConversionService>(),
+                LogManager.GetLogger("ImportApprovedBooksNotificationFixture"));
+
+            var decisions = new[]
+            {
+                (Quality: Quality.AZW3, Extension: "azw3"),
+                (Quality: Quality.EPUB, Extension: "epub"),
+                (Quality: Quality.MOBI, Extension: "mobi")
+            }
+            .Select(candidate => new ImportDecision<LocalBook>(new LocalBook
+            {
+                Path = $"/downloads/complete/Best Served Cold.{candidate.Extension}",
+                ExistingFile = false,
+                Book = book,
+                Author = author,
+                Edition = edition,
+                Quality = new QualityModel { Quality = candidate.Quality, Revision = new Revision() },
+                Part = 1,
+                PartCount = 1
+            }))
+            .ToList();
+
+            var results = service.Import(
+                decisions,
+                replaceExisting: true,
+                downloadClientItem: new DownloadClientItem
+                {
+                    DownloadId = "mixed-ebook-download",
+                    DownloadForced = downloadForced,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Name = "qBittorrent", Type = "qbittorrent" }
+                },
+                importMode: ImportMode.Move,
+                cancellationToken: CancellationToken.None);
+
+            return (results, mediaFileService, mover);
+        }
+
+        [Test]
+        public void interactive_grab_should_import_profile_allowed_ebook_from_multi_format_payload()
+        {
+            var import = ImportMixedEbookPayload(downloadForced: true);
+
+            Assert.That(import.Results, Has.Count.EqualTo(3));
+            Assert.That(import.Results.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(1));
+            Assert.That(import.Results.Count(result => result.Result == ImportResultType.Rejected), Is.EqualTo(2));
+
+            var imported = import.Results.Single(result => result.Result == ImportResultType.Imported);
+            Assert.That(imported.ImportDecision.Item.Quality.Quality, Is.EqualTo(Quality.EPUB));
+            Assert.That(import.MediaFiles.AddedFiles, Has.Count.EqualTo(1));
+            Assert.That(import.MediaFiles.AddedFiles.Single().Quality.Quality, Is.EqualTo(Quality.EPUB));
+            Assert.That(import.Mover.MoveCalls, Is.EqualTo(1));
+
+            var rejected = import.Results.Where(result => result.Result == ImportResultType.Rejected).ToList();
+            Assert.That(rejected.All(result =>
+                result.ImportDecision.Rejections.Single().Reason.Contains("Skipped duplicate ebook format")), Is.True);
+            Assert.That(rejected.All(result =>
+                !result.ImportDecision.Rejections.Single().IsQualityFilter), Is.True);
+        }
+
+        [Test]
+        public void automatic_grab_should_reject_disallowed_ebook_alternatives_before_selection()
+        {
+            var import = ImportMixedEbookPayload(downloadForced: false);
+
+            Assert.That(import.Results, Has.Count.EqualTo(3));
+            Assert.That(import.Results.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(1));
+            Assert.That(import.Results.Count(result => result.Result == ImportResultType.Rejected), Is.EqualTo(2));
+
+            var imported = import.Results.Single(result => result.Result == ImportResultType.Imported);
+            Assert.That(imported.ImportDecision.Item.Quality.Quality, Is.EqualTo(Quality.EPUB));
+            Assert.That(import.MediaFiles.AddedFiles, Has.Count.EqualTo(1));
+            Assert.That(import.MediaFiles.AddedFiles.Single().Quality.Quality, Is.EqualTo(Quality.EPUB));
+            Assert.That(import.Mover.MoveCalls, Is.EqualTo(1));
+
+            var rejected = import.Results.Where(result => result.Result == ImportResultType.Rejected).ToList();
+            Assert.That(rejected.All(result =>
+                result.ImportDecision.Rejections.Single().Type == RejectionType.Permanent), Is.True);
+            Assert.That(rejected.All(result =>
+                result.ImportDecision.Rejections.Single().IsQualityFilter), Is.True);
+            Assert.That(rejected.All(result =>
+                !result.ImportDecision.Rejections.Single().CanBypass), Is.True);
+        }
+
         [TestCase(false, true, ImportResultType.Skipped)]
         [TestCase(true, true, ImportResultType.Imported)]
         [TestCase(true, false, ImportResultType.Imported)]
