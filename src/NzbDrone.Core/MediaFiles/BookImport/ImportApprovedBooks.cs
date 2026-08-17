@@ -837,11 +837,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var profile = author?.GetQualityProfileForQuality(quality);
-            var item = profile?.Items?.FirstOrDefault(i =>
-                (i.Quality != null && i.Quality.Id == quality.Id) ||
-                (i.Items?.Any(nested => nested.Quality != null && nested.Quality.Id == quality.Id) ?? false));
-
-            return item?.Allowed ?? true;
+            return profile == null ||
+                   profile.Items.Any(item =>
+                       item.Allowed && item.GetQualities().Any(candidate => candidate.Id == quality.Id));
         }
 
         private static int CompareEbookImportCandidate(
