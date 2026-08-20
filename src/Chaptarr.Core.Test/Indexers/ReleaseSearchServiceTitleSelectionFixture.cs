@@ -57,6 +57,125 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
+        public void should_use_book_title_when_selected_edition_is_an_omnibus_containing_it()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones / A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Clash of Kings"));
+        }
+
+        [Test]
+        public void should_use_book_title_when_omnibus_separator_has_no_surrounding_spaces()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones/A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Clash of Kings"));
+        }
+
+        [Test]
+        public void should_match_omnibus_segment_ignoring_case_and_padding()
+        {
+            var omnibus = new Edition { Title = "A GAME OF THRONES  /   a clash of kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Clash of Kings"));
+        }
+
+        [Test]
+        public void should_keep_edition_title_when_slash_is_part_of_a_phrase()
+        {
+            // "Horror/Sci-Fi" is one phrase, not two works. Splitting here would search for nonsense.
+            var edition = new Edition { Title = "Stories of Fantasy, Horror/Sci-Fi, and a Man Called Tuf" };
+
+            var book = new Book
+            {
+                Title = "Dreamsongs",
+                Editions = new List<Edition> { edition }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, edition);
+
+            Assert.That(title, Is.EqualTo("Stories of Fantasy, Horror/Sci-Fi, and a Man Called Tuf"));
+        }
+
+        [Test]
+        public void should_keep_edition_title_when_no_segment_matches_the_book()
+        {
+            // A marketplace-style listing that happens to contain a slash. The book title is not a
+            // clean segment, so there is nothing safe to fall back to.
+            var edition = new Edition { Title = "Rare George R R Martin / A KNIGHT OF THE SEVEN KINGDOMS Signed 1st Edition 2015" };
+
+            var book = new Book
+            {
+                Title = "A Knight of the Seven Kingdoms",
+                Editions = new List<Edition> { edition }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, edition);
+
+            Assert.That(title, Is.EqualTo("Rare George R R Martin / A KNIGHT OF THE SEVEN KINGDOMS Signed 1st Edition 2015"));
+        }
+
+        [Test]
+        public void should_keep_edition_title_when_book_title_is_blank()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones / A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "   ",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Game of Thrones / A Clash of Kings"));
+        }
+
+        [Test]
+        public void omnibus_edition_should_produce_a_single_work_book_query()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones / A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "George R.R. Martin" },
+                BookTitle = ReleaseSearchService.GetSearchBookTitle(book, omnibus)
+            };
+
+            Assert.That(criteria.BookQuery, Is.EqualTo("A+Clash+of+Kings"));
+        }
+
+        [Test]
         public void book_query_should_use_main_title_section()
         {
             var criteria = new BookSearchCriteria

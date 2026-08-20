@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -25,6 +26,8 @@ namespace NzbDrone.Core.IndexerSearch
 
     public class ReleaseSearchService : ISearchForReleases
     {
+        private static readonly Regex CollapsedWhitespace = new Regex(@"\s+", RegexOptions.Compiled);
+
         private readonly IIndexerFactory _indexerFactory;
         private readonly IBookService _bookService;
         private readonly IAuthorService _authorService;
@@ -145,10 +148,56 @@ namespace NzbDrone.Core.IndexerSearch
             var selectedTitle = selectedEdition?.Title;
             if (!string.IsNullOrWhiteSpace(selectedTitle))
             {
-                return selectedTitle;
+                // An omnibus edition is named after every work it collects ("A Game of Thrones / A
+                // Clash of Kings"). Searching for that whole string finds nothing, because releases
+                // are named after a book, not after the compilation that happens to contain it. When
+                // the book being searched for is itself one of the collected works, search for it by
+                // name instead of for the compilation.
+                return GetCollectedWorkTitle(selectedTitle, book.Title) ?? selectedTitle;
             }
 
             return book.Title ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Returns the book's own title when <paramref name="editionTitle"/> is a slash-separated
+        /// compilation that lists it as one of its works; otherwise null, leaving the caller's title
+        /// untouched. Deliberately conservative: a slash inside a phrase ("Horror/Sci-Fi") only ever
+        /// yields segments that fail the equality check, so such titles are left alone.
+        /// </summary>
+        internal static string GetCollectedWorkTitle(string editionTitle, string bookTitle)
+        {
+            if (string.IsNullOrWhiteSpace(editionTitle) || string.IsNullOrWhiteSpace(bookTitle))
+            {
+                return null;
+            }
+
+            var segments = editionTitle.Split('/');
+            if (segments.Length < 2)
+            {
+                return null;
+            }
+
+            var normalisedBookTitle = NormaliseTitleSegment(bookTitle);
+            if (normalisedBookTitle.Length == 0)
+            {
+                return null;
+            }
+
+            foreach (var segment in segments)
+            {
+                if (string.Equals(NormaliseTitleSegment(segment), normalisedBookTitle, StringComparison.OrdinalIgnoreCase))
+                {
+                    return bookTitle.Trim();
+                }
+            }
+
+            return null;
+        }
+
+        private static string NormaliseTitleSegment(string value)
+        {
+            return CollapsedWhitespace.Replace(value ?? string.Empty, " ").Trim();
         }
 
         internal static bool HasConfiguredQualityProfileForMediaType(Author author, BookMediaType mediaType)
