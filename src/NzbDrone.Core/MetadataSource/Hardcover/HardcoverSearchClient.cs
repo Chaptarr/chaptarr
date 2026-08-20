@@ -134,20 +134,42 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
 
-            var graphqlRequests = SearchTargets.Select(target => new
+            var searchPayloads = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+
+            // Hardcover answers a JSON array body with 400 invalid_query ("Unexpected end of document"),
+            // so each search type is sent as its own request rather than as one batched operation list.
+            foreach (var target in SearchTargets)
             {
-                query = SEARCH_QUERY,
-                variables = new
+                var jsonContent = JsonSerializer.Serialize(
+                    new
+                    {
+                        query = SEARCH_QUERY,
+                        variables = new
+                        {
+                            q = query,
+                            query_type = target.QueryType,
+                            limit = MAX_RESULTS_PER_TYPE,
+                            page = 1
+                        }
+                    },
+                    jsonOptions);
+
+                var response = ExecuteWithRetry(BuildGraphQlRequest(jsonContent));
+                if (response == null ||
+                    !TryExtractSearchPayload(target.QueryType, response.Content, out var searchPayload))
                 {
-                    q = query,
-                    query_type = target.QueryType,
-                    limit = MAX_RESULTS_PER_TYPE,
-                    page = 1
+                    return null;
                 }
-            }).ToList();
 
-            var jsonContent = JsonSerializer.Serialize(graphqlRequests, jsonOptions);
+                searchPayloads[target.ResponseProperty] = searchPayload;
+            }
 
+            var combinedContent = JsonSerializer.Serialize(new { data = searchPayloads }, jsonOptions);
+            return ParseSearchResponse(query, combinedContent, jsonOptions);
+        }
+
+        private HttpRequest BuildGraphQlRequest(string jsonContent)
+        {
             var request = new HttpRequestBuilder(HARDCOVER_ENDPOINT)
                 .SetHeader("Content-Type", "application/json")
                 .SetHeader("Accept", "application/json")
@@ -156,57 +178,25 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
 
             request.Method = HttpMethod.Post;
             request.SetContent(jsonContent);
-            
+
             // Add Authorization AFTER building to avoid duplication
             request.Headers.Add("Authorization", $"Bearer {_configService.HardcoverApiToken}");
 
-            var response = ExecuteWithRetry(request);
-            if (response == null || !TryExtractSearchPayloads(response.Content, out var searchPayloads))
-            {
-                return null;
-            }
-
-            var combinedContent = JsonSerializer.Serialize(new { data = searchPayloads }, jsonOptions);
-            return ParseSearchResponse(query, combinedContent, jsonOptions);
+            return request;
         }
 
-        private bool TryExtractSearchPayloads(string responseContent, out Dictionary<string, JsonElement> searchPayloads)
+        private bool TryExtractSearchPayload(string queryType, string responseContent, out JsonElement searchPayload)
         {
-            searchPayloads = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            searchPayload = default;
 
             try
             {
                 using var document = JsonDocument.Parse(responseContent);
-                var root = document.RootElement;
-
-                if (root.ValueKind != JsonValueKind.Array)
-                {
-                    _logger.Error("Hardcover search batch response was not an array");
-                    return false;
-                }
-
-                if (root.GetArrayLength() != SearchTargets.Length)
-                {
-                    _logger.Error($"Hardcover search batch returned {root.GetArrayLength()} operations; expected {SearchTargets.Length}");
-                    return false;
-                }
-
-                for (var index = 0; index < SearchTargets.Length; index++)
-                {
-                    var target = SearchTargets[index];
-                    if (!TryExtractSearchPayload(target.QueryType, root[index], out var searchPayload))
-                    {
-                        return false;
-                    }
-
-                    searchPayloads[target.ResponseProperty] = searchPayload;
-                }
-
-                return true;
+                return TryExtractSearchPayload(queryType, document.RootElement, out searchPayload);
             }
             catch (JsonException ex)
             {
-                _logger.Error(ex, $"Failed to parse Hardcover search batch response: {ex.Message}");
+                _logger.Error(ex, $"Failed to parse Hardcover {queryType} search response: {ex.Message}");
                 return false;
             }
         }
@@ -842,44 +832,37 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                     .Chunk(MAX_AUTHOR_BOOK_FIELDS_PER_OPERATION)
                     .Select(chunk => chunk.ToList())
                     .ToList();
-                var graphqlRequests = authorIdChunks.Select(chunk => new
-                {
-                    query = BuildAuthorBooksBatchQuery(chunk),
-                    variables = new
-                    {
-                        limit = MAX_RESULTS_PER_TYPE
-                    }
-                }).ToList();
-
-                var jsonContent = JsonSerializer.Serialize(graphqlRequests, jsonOptions);
-
-	                var request = new HttpRequestBuilder(HARDCOVER_ENDPOINT)
-	                    .SetHeader("Content-Type", "application/json")
-	                    .SetHeader("Accept", "application/json")
-	                    .SetHeader("User-Agent", ExternalImageRequestHeaders.GetRandomUserAgent())
-	                    .Build();
-
-                request.Method = HttpMethod.Post;
-                request.SetContent(jsonContent);
-                request.Headers.Add("Authorization", $"Bearer {_configService.HardcoverApiToken}");
-
-                var response = ExecuteWithRetry(request);
-                if (response == null || response.HasHttpError || string.IsNullOrWhiteSpace(response.Content))
-                {
-                    return null;
-                }
-
-                using var document = JsonDocument.Parse(response.Content);
-                var root = document.RootElement;
-                if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() != authorIdChunks.Count)
-                {
-                    return null;
-                }
-
                 var results = ids.ToDictionary(id => id, _ => new List<HardcoverBookResult>());
+
+                // As with search, Hardcover rejects a batched array body, so each chunk is its own request.
                 for (var chunkIndex = 0; chunkIndex < authorIdChunks.Count; chunkIndex++)
                 {
-                    var operation = root[chunkIndex];
+                    var chunk = authorIdChunks[chunkIndex];
+
+                    var jsonContent = JsonSerializer.Serialize(
+                        new
+                        {
+                            query = BuildAuthorBooksBatchQuery(chunk),
+                            variables = new
+                            {
+                                limit = MAX_RESULTS_PER_TYPE
+                            }
+                        },
+                        jsonOptions);
+
+                    var response = ExecuteWithRetry(BuildGraphQlRequest(jsonContent));
+                    if (response == null || response.HasHttpError || string.IsNullOrWhiteSpace(response.Content))
+                    {
+                        return null;
+                    }
+
+                    using var document = JsonDocument.Parse(response.Content);
+                    var operation = document.RootElement;
+                    if (operation.ValueKind != JsonValueKind.Object)
+                    {
+                        return null;
+                    }
+
                     if (operation.TryGetProperty("errors", out var errors))
                     {
                         _logger.Debug("Hardcover author-books operation failed: {0}", errors.GetRawText());
@@ -891,7 +874,6 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                         return null;
                     }
 
-                    var chunk = authorIdChunks[chunkIndex];
                     for (var authorIndex = 0; authorIndex < chunk.Count; authorIndex++)
                     {
                         var authorId = chunk[authorIndex];
