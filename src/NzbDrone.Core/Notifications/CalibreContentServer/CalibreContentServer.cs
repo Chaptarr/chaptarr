@@ -134,10 +134,10 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
                 return;
             }
 
-            var titles = new[] { Normalize(book.Title), Normalize(Regex.Replace(book.Title, @"\s*\([^)]*\)\s*$", "")) };
+            var titles = TitleForms(book.Title);
             var booksRequest = BuildRequest($"ajax/books?ids={string.Join(",", ids)}").Build();
             var calibreBooks = _httpClient.Get<Dictionary<string, CalibreBookData>>(booksRequest).Resource;
-            var matches = calibreBooks.Where(x => x.Value != null && titles.Contains(Normalize(x.Value.Title))).Select(x => x.Key).ToList();
+            var matches = calibreBooks.Where(x => x.Value != null && TitleForms(x.Value.Title).Intersect(titles).Any()).Select(x => x.Key).ToList();
 
             if (matches.Any())
             {
@@ -146,8 +146,13 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
             }
             else
             {
-                _logger.Debug("No matching book found on Calibre content server for {0}", book.Title);
+                _logger.Info("No matching book found on Calibre content server for {0}", book.Title);
             }
+        }
+
+        private static string[] TitleForms(string title)
+        {
+            return new[] { Normalize(title), Normalize(Regex.Replace(title ?? string.Empty, @"\s*\([^)]*\)\s*$", "")) };
         }
 
         private static string Normalize(string title)
