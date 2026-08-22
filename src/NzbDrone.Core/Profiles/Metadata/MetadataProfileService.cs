@@ -591,13 +591,26 @@ namespace NzbDrone.Core.Profiles.Metadata
                     (e.Asins != null && e.Asins.Any(a => a.IsNotNullOrWhiteSpace())));
         }
 
+        private static bool IsNumericSeriesPosition(string position)
+        {
+            return double.TryParse(position, out _);
+        }
+
         private bool IsPartOrSet(Book book, List<SeriesBookLink> seriesLinks, HashSet<string> titles)
         {
             if (seriesLinks != null &&
                 seriesLinks.Any(x => x.Position.IsNotNullOrWhiteSpace()) &&
-                !seriesLinks.Any(s => double.TryParse(s.Position, out _)))
+                !seriesLinks.Any(s => IsNumericSeriesPosition(s.Position)))
             {
                 // No non-empty series entries parse to a number, so all like 1-3 etc.
+                return true;
+            }
+
+            // SeriesBookLink rows are often sparse, or hold a tidied-up position, while the book itself
+            // still carries what the metadata provider returned - "3, Part 1 of 2", "2A", "2 Part B".
+            // A position that is not a number means this record is one slice of a work, not the work.
+            if (book.SeriesPosition.IsNotNullOrWhiteSpace() && !IsNumericSeriesPosition(book.SeriesPosition))
+            {
                 return true;
             }
 
