@@ -3,7 +3,6 @@ import React, { Component } from 'react';
 import AuthorNameLink from 'Author/AuthorNameLink';
 import { getAuthorStatusDetails } from 'Author/AuthorStatus';
 import Icon from 'Components/Icon';
-import MonitorToggleButton from 'Components/MonitorToggleButton';
 import VirtualTableRowCell from 'Components/Table/Cells/VirtualTableRowCell';
 import VirtualTableSelectCell from 'Components/Table/Cells/VirtualTableSelectCell';
 import BookshelfBook from './BookshelfBook';
@@ -20,12 +19,9 @@ class BookshelfRow extends Component {
       status,
       titleSlug,
       authorName,
-      monitored,
       books,
-      isSaving,
       isSelected,
       onSelectedChange,
-      onAuthorMonitoredPress,
       onBookMonitoredPress
     } = this.props;
 
@@ -40,16 +36,6 @@ class BookshelfRow extends Component {
           onSelectedChange={onSelectedChange}
           isDisabled={false}
         />
-
-        <VirtualTableRowCell className={styles.monitored}>
-          <MonitorToggleButton
-            monitored={monitored}
-            size={14}
-            isSaving={isSaving}
-            isBinary={true}
-            onPress={onAuthorMonitoredPress}
-          />
-        </VirtualTableRowCell>
 
         <VirtualTableRowCell className={styles.status}>
           <Icon
@@ -90,17 +76,10 @@ BookshelfRow.propTypes = {
   status: PropTypes.string.isRequired,
   titleSlug: PropTypes.string.isRequired,
   authorName: PropTypes.string.isRequired,
-  monitored: PropTypes.bool.isRequired,
   books: PropTypes.arrayOf(PropTypes.object).isRequired,
-  isSaving: PropTypes.bool.isRequired,
   isSelected: PropTypes.bool,
   onSelectedChange: PropTypes.func.isRequired,
-  onAuthorMonitoredPress: PropTypes.func.isRequired,
   onBookMonitoredPress: PropTypes.func.isRequired
-};
-
-BookshelfRow.defaultProps = {
-  isSaving: false
 };
 
 export default BookshelfRow;

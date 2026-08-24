@@ -12,8 +12,7 @@
   align-items: center;
 }
 
-.status,
-.monitored {
+.status {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
 
   display: flex;

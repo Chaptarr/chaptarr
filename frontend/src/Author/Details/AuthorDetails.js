@@ -749,7 +749,6 @@ AuthorDetails.propTypes = {
   hasEbookRootFolder: PropTypes.bool,
   syncMonitoredAcrossFormats: PropTypes.bool,
   filterValue: PropTypes.string,
-  onMonitorTogglePress: PropTypes.func.isRequired,
   onRefreshPress: PropTypes.func.isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
   onSearchPress: PropTypes.func.isRequired,

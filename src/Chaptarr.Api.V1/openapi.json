@@ -13975,6 +13975,25 @@
         },
         "additionalProperties": false
       },
+      "BookshelfMonitoringOptionsResource": {
+        "type": "object",
+        "properties": {
+          "monitor": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "mediaType": {
+            "$ref": "#/components/schemas/BookMediaType"
+          },
+          "booksToMonitor": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "BookshelfResource": {
         "type": "object",
         "properties": {
@@ -13986,7 +14005,7 @@
             "nullable": true
           },
           "monitoringOptions": {
-            "$ref": "#/components/schemas/MonitoringOptions"
+            "$ref": "#/components/schemas/BookshelfMonitoringOptionsResource"
           },
           "monitorNewItems": {
             "$ref": "#/components/schemas/NewItemMonitorTypes"
@@ -17049,28 +17068,6 @@
           "unknown"
         ],
         "type": "string"
-      },
-      "MonitoringOptions": {
-        "type": "object",
-        "properties": {
-          "monitor": {
-            "$ref": "#/components/schemas/MonitorTypes"
-          },
-          "mediaType": {
-            "$ref": "#/components/schemas/BookMediaType"
-          },
-          "booksToMonitor": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "nullable": true
-          },
-          "monitored": {
-            "type": "boolean"
-          }
-        },
-        "additionalProperties": false
       },
       "MonitoringResource": {
         "type": "object",

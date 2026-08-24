@@ -286,7 +286,7 @@ export const actionHandlers = handleThunks({
     const {
       authorId: id,
       monitored,
-      mediaType = 'audiobook'  // Default to audiobook for backward compatibility
+      mediaType
     } = payload;
 
     const author = _.find(getState().authors.items, { id });
@@ -295,12 +295,10 @@ export const actionHandlers = handleThunks({
       return;
     }
 
-    const hasExplicitMediaType = Object.prototype.hasOwnProperty.call(payload, 'mediaType');
-    const isLegacyMonitoredToggle = (typeof monitored === 'boolean') && !hasExplicitMediaType;
-    const rootFolderStatus = !isLegacyMonitoredToggle ? getAuthorMediaTypeRootFolderStatus(author, mediaType) : null;
-    const effectiveMediaType = rootFolderStatus ? rootFolderStatus.mediaType : mediaType;
+    const rootFolderStatus = getAuthorMediaTypeRootFolderStatus(author, mediaType);
+    const effectiveMediaType = rootFolderStatus.mediaType;
 
-    if (rootFolderStatus && !rootFolderStatus.hasRootFolder) {
+    if (!rootFolderStatus.hasRootFolder) {
       dispatch(showMessage({
         id: `author-monitor-toggle-no-root-folder-${id}-${effectiveMediaType}`,
         name: 'AuthorMonitorToggleNoRootFolder',
@@ -328,10 +326,7 @@ export const actionHandlers = handleThunks({
     delete updateData.nextBook;
     delete updateData.lastBook;
     
-    if (isLegacyMonitoredToggle) {
-      // Legacy toggle (e.g. Bookshelf list): flip the boolean monitored flag
-      updateData.monitored = monitored;
-    } else if (effectiveMediaType === 'audiobook') {
+    if (effectiveMediaType === 'audiobook') {
       updateData.audiobookMonitorExisting = monitorExistingValue;
       updateData.audiobookSettingsManuallyOverridden = true; // Mark as manually set
     } else if (effectiveMediaType === 'ebook') {
@@ -372,9 +367,7 @@ export const actionHandlers = handleThunks({
       }
       
       // Ensure the specific media type monitoring field is updated in Redux state
-      if (isLegacyMonitoredToggle) {
-        stateUpdate.monitored = monitored;
-      } else if (effectiveMediaType === 'audiobook') {
+      if (effectiveMediaType === 'audiobook') {
         stateUpdate.audiobookMonitorExisting = monitorExistingValue;
         stateUpdate.audiobookSettingsManuallyOverridden = true;
       } else if (effectiveMediaType === 'ebook') {
