@@ -6,10 +6,12 @@ using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Messaging;
 using NzbDrone.Common.TPL;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
 using NzbDrone.Core.Messaging.Events;
@@ -79,6 +81,7 @@ namespace Chaptarr.Core.Test.Download
             }
 
             public int DownloadCount { get; private set; }
+            public Exception DownloadException { get; set; }
             public string Name => "Client";
             public Type ConfigContract => typeof(object);
             public ProviderMessage Message => null;
@@ -90,6 +93,12 @@ namespace Chaptarr.Core.Test.Download
             {
                 _calls.Add("download");
                 DownloadCount++;
+
+                if (DownloadException != null)
+                {
+                    throw DownloadException;
+                }
+
                 return Task.FromResult("download-id");
             }
 
@@ -114,6 +123,43 @@ namespace Chaptarr.Core.Test.Download
             public IDownloadClient GetDownloadClient(DownloadProtocol downloadProtocol, BookMediaType mediaType, int indexerId = 0, bool filterBlockedClients = false, HashSet<int> tags = null) => _client;
             public IEnumerable<IDownloadClient> GetDownloadClients(bool filterBlockedClients = false) => new[] { _client };
             public IDownloadClient Get(int id) => _client;
+        }
+
+        private sealed class RecordingEventAggregator : IEventAggregator
+        {
+            public List<IEvent> PublishedEvents { get; } = new();
+
+            public void PublishEvent<TEvent>(TEvent @event)
+                where TEvent : class, IEvent
+            {
+                PublishedEvents.Add(@event);
+            }
+        }
+
+        private sealed class RecordingIndexerStatusService : IIndexerStatusService
+        {
+            public int FailureCount { get; private set; }
+
+            public List<IndexerStatus> GetBlockedProviders() => new();
+
+            public void RecordSuccess(int providerId)
+            {
+            }
+
+            public void RecordFailure(int providerId, TimeSpan minimumBackOff = default)
+            {
+                FailureCount++;
+            }
+
+            public void RecordConnectionFailure(int providerId)
+            {
+            }
+
+            public ReleaseInfo GetLastRssSyncReleaseInfo(int indexerId) => null;
+
+            public void UpdateRssSyncStatus(int indexerId, ReleaseInfo releaseInfo)
+            {
+            }
         }
 
         [Test]
@@ -151,15 +197,42 @@ namespace Chaptarr.Core.Test.Download
             });
         }
 
-        private static DownloadService CreateService(IDownloadClient client, IMamUnsatisfiedSlotGuard guard)
+        [Test]
+        public void should_not_publish_a_grab_or_fail_the_indexer_when_the_download_client_rejects_the_release()
+        {
+            var calls = new List<string>();
+            var remoteBook = RemoteBook();
+            var client = new RecordingDownloadClient(calls)
+            {
+                DownloadException = new DownloadClientRejectedReleaseException(remoteBook.Release, "Torrent already exists")
+            };
+            var guard = new RecordingSlotGuard(calls, MamUnsatisfiedSlotAvailability.Accept());
+            var events = new RecordingEventAggregator();
+            var indexerStatus = new RecordingIndexerStatusService();
+            var service = CreateService(client, guard, events, indexerStatus);
+
+            Assert.ThrowsAsync<DownloadClientRejectedReleaseException>(async () => await service.DownloadReport(remoteBook, null));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(calls, Is.EqualTo(new[] { "reserve", "download" }));
+                Assert.That(events.PublishedEvents.OfType<BookGrabbedEvent>(), Is.Empty);
+                Assert.That(indexerStatus.FailureCount, Is.Zero);
+            });
+        }
+
+        private static DownloadService CreateService(IDownloadClient client,
+                                                      IMamUnsatisfiedSlotGuard guard,
+                                                      IEventAggregator eventAggregator = null,
+                                                      IIndexerStatusService indexerStatusService = null)
         {
             return new DownloadService(
                 new SingleDownloadClientProvider(client),
                 Noop<IDownloadClientStatusService>(),
                 Noop<IIndexerFactory>(),
-                Noop<IIndexerStatusService>(),
+                indexerStatusService ?? Noop<IIndexerStatusService>(),
                 Noop<IRateLimitService>(),
-                Noop<IEventAggregator>(),
+                eventAggregator ?? Noop<IEventAggregator>(),
                 Noop<ISeedConfigProvider>(),
                 guard,
                 LogManager.GetCurrentClassLogger());

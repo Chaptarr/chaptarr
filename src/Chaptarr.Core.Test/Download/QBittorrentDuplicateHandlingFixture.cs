@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
+using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Clients.QBittorrent;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 
@@ -25,7 +28,7 @@ namespace Chaptarr.Core.Test.Download
 
         private class TestProxy : IQBittorrentProxy
         {
-            public bool TorrentLoaded { get; set; }
+            public Exception AddException { get; set; }
 
             public List<string> LoadedHashes { get; } = new();
             public List<(string Hash, string Label)> Labels { get; } = new();
@@ -45,7 +48,7 @@ namespace Chaptarr.Core.Test.Download
             public bool IsTorrentLoaded(string hash, QBittorrentSettings settings)
             {
                 LoadedHashes.Add(hash);
-                return TorrentLoaded;
+                return false;
             }
 
             public QBittorrentTorrentProperties GetTorrentProperties(string hash, QBittorrentSettings settings) => throw new NotImplementedException();
@@ -55,13 +58,21 @@ namespace Chaptarr.Core.Test.Download
             public void AddTorrentFromUrl(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, string category = null)
             {
                 AddedMagnetLinks.Add(torrentUrl);
-                throw new DownloadClientException("qBittorrent rejected request");
+
+                if (AddException != null)
+                {
+                    throw AddException;
+                }
             }
 
             public void AddTorrentFromFile(string fileName, byte[] fileContent, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, string category = null)
             {
                 AddedTorrentFiles.Add(fileName);
-                throw new DownloadClientException("qBittorrent rejected request");
+
+                if (AddException != null)
+                {
+                    throw AddException;
+                }
             }
 
             public void RemoveTorrent(string hash, bool removeData, QBittorrentSettings settings) => throw new NotImplementedException();
@@ -125,9 +136,9 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
-        public void should_treat_existing_torrent_as_added_when_torrent_file_add_fails()
+        public void should_reject_torrent_file_conflicts_without_adopting_the_existing_torrent()
         {
-            var proxy = new TestProxy { TorrentLoaded = true };
+            var proxy = new TestProxy { AddException = ConflictException() };
             var proxySelector = new TestProxySelector(proxy, new Version(2, 11, 0));
             var cacheManager = new CacheManager();
 
@@ -146,22 +157,26 @@ namespace Chaptarr.Core.Test.Download
 
             var remoteBook = new RemoteBook
             {
-                Books = new List<Book> { new Book { MediaType = BookMediaType.Ebook } }
+                Books = new List<Book> { new Book { MediaType = BookMediaType.Ebook } },
+                Release = new TorrentInfo()
             };
 
             var hash = "ABCDEF1234";
-            var result = client.AddTorrentFile(remoteBook, hash);
+            var exception = Assert.Throws<DownloadClientRejectedReleaseException>(() => client.AddTorrentFile(remoteBook, hash));
 
-            Assert.That(result, Is.EqualTo(hash));
-            Assert.That(proxy.AddedTorrentFiles, Has.Count.EqualTo(1));
-            Assert.That(proxy.LoadedHashes, Is.EquivalentTo(new[] { hash.ToLower() }));
-            Assert.That(proxy.Labels, Is.EquivalentTo(new[] { (hash.ToLower(), "ebooks") }));
+            Assert.Multiple(() =>
+            {
+                Assert.That(exception.Message, Is.EqualTo("qBittorrent rejected the torrent file due to a conflict"));
+                Assert.That(proxy.AddedTorrentFiles, Has.Count.EqualTo(1));
+                Assert.That(proxy.LoadedHashes, Is.Empty);
+                Assert.That(proxy.Labels, Is.Empty);
+            });
         }
 
         [Test]
-        public void should_treat_existing_torrent_as_added_when_magnet_add_fails()
+        public void should_reject_magnet_conflicts_without_adopting_the_existing_torrent()
         {
-            var proxy = new TestProxy { TorrentLoaded = true };
+            var proxy = new TestProxy { AddException = ConflictException() };
             var proxySelector = new TestProxySelector(proxy, new Version(2, 11, 0));
             var cacheManager = new CacheManager();
 
@@ -180,22 +195,27 @@ namespace Chaptarr.Core.Test.Download
 
             var remoteBook = new RemoteBook
             {
-                Books = new List<Book> { new Book { MediaType = BookMediaType.Ebook } }
+                Books = new List<Book> { new Book { MediaType = BookMediaType.Ebook } },
+                Release = new TorrentInfo()
             };
 
             var hash = "ABCDEF1234";
-            var result = client.AddMagnet(remoteBook, hash);
+            var exception = Assert.Throws<DownloadClientRejectedReleaseException>(() => client.AddMagnet(remoteBook, hash));
 
-            Assert.That(result, Is.EqualTo(hash));
-            Assert.That(proxy.AddedMagnetLinks, Has.Count.EqualTo(1));
-            Assert.That(proxy.LoadedHashes, Is.EquivalentTo(new[] { hash.ToLower() }));
-            Assert.That(proxy.Labels, Is.EquivalentTo(new[] { (hash.ToLower(), "ebooks") }));
+            Assert.Multiple(() =>
+            {
+                Assert.That(exception.Message, Is.EqualTo("qBittorrent rejected the magnet link due to a conflict"));
+                Assert.That(proxy.AddedMagnetLinks, Has.Count.EqualTo(1));
+                Assert.That(proxy.LoadedHashes, Is.Empty);
+                Assert.That(proxy.Labels, Is.Empty);
+            });
         }
 
         [Test]
-        public void should_surface_original_error_when_torrent_is_not_loaded()
+        public void should_surface_non_conflict_errors_unchanged()
         {
-            var proxy = new TestProxy { TorrentLoaded = false };
+            var original = new DownloadClientException("qBittorrent rejected request");
+            var proxy = new TestProxy { AddException = original };
             var proxySelector = new TestProxySelector(proxy, new Version(2, 11, 0));
             var cacheManager = new CacheManager();
 
@@ -217,8 +237,22 @@ namespace Chaptarr.Core.Test.Download
                 Books = new List<Book> { new Book { MediaType = BookMediaType.Ebook } }
             };
 
-            Assert.Throws<DownloadClientException>(() => client.AddTorrentFile(remoteBook, "ABCDEF1234"));
+            var exception = Assert.Throws<DownloadClientException>(() => client.AddTorrentFile(remoteBook, "ABCDEF1234"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(exception, Is.SameAs(original));
+                Assert.That(proxy.LoadedHashes, Is.Empty);
+                Assert.That(proxy.Labels, Is.Empty);
+            });
+        }
+
+        private static DownloadClientException ConflictException()
+        {
+            var request = new HttpRequest("http://localhost/api/v2/torrents/add");
+            var response = new HttpResponse(request, new HttpHeader(), Array.Empty<byte>(), HttpStatusCode.Conflict);
+
+            return new DownloadClientException("qBittorrent rejected request", new HttpException(request, response));
         }
     }
 }
-

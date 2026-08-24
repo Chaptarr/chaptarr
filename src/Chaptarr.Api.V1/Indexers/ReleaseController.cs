@@ -139,10 +139,21 @@ namespace Chaptarr.Api.V1.Indexers
 
                 await _downloadService.DownloadReport(remoteBook, release.DownloadClientId);
             }
+            catch (DownloadClientRejectedReleaseException ex)
+            {
+                _logger.Warn(ex, "Download client rejected release");
+
+                var detail = ex.InnerException?.Message;
+                var message = string.IsNullOrWhiteSpace(detail)
+                    ? ex.Message
+                    : $"{ex.Message}: {detail}";
+
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, $"Download client rejected release: {message}");
+            }
             catch (ReleaseDownloadException ex)
             {
                 _logger.Error(ex, "Getting release from indexer failed");
-                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Getting release from indexer failed");
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, $"Getting release from indexer failed: {ex.Message}");
             }
             catch (DownloadClientAuthenticationException ex)
             {

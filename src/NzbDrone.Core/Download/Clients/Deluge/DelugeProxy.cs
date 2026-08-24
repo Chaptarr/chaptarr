@@ -30,7 +30,6 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         void AddLabel(string label, DelugeSettings settings);
         string AddTorrentFromMagnet(string magnetLink, DelugeSettings settings);
         string AddTorrentFromFile(string filename, byte[] fileContent, DelugeSettings settings);
-        bool IsTorrentLoaded(string hash, DelugeSettings settings);
         bool RemoveTorrent(string hash, bool removeData, DelugeSettings settings);
         void MoveTorrentToTopInQueue(string hash, DelugeSettings settings);
     }
@@ -155,16 +154,6 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
             var response = ProcessRequest<string>(settings, "core.add_torrent_file", filename, fileContent, options);
             return response;
-        }
-
-        public bool IsTorrentLoaded(string hash, DelugeSettings settings)
-        {
-            if (hash.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            return GetTorrents(settings).Any(t => hash.Equals(t.Hash, StringComparison.InvariantCultureIgnoreCase));
         }
 
         public bool RemoveTorrent(string hash, bool removeData, DelugeSettings settings)
