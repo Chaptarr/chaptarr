@@ -8,6 +8,7 @@ using System.Text.Json;
 using NUnit.Framework;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MetadataSource.Hardcover;
 
 namespace Chaptarr.Core.Test.MetadataSource
@@ -163,32 +164,25 @@ namespace Chaptarr.Core.Test.MetadataSource
             return new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, content, statusCode);
         }
 
-        private static string BuildHttpBatch(params string[] operationResponses)
-        {
-            return $"[{string.Join(",", operationResponses)}]";
-        }
-
         [Test]
-        public void should_send_one_search_root_per_http_batched_operation()
+        public void should_send_one_search_root_per_http_request()
         {
-            var httpClient = new RecordingHttpClient(request => JsonResponse(request,
-                BuildHttpBatch(EmptySearchPayload, EmptySearchPayload, EmptySearchPayload)));
+            var httpClient = new RecordingHttpClient(request => JsonResponse(request, EmptySearchPayload));
             var client = CreateClient(httpClient);
 
             var results = client.Search("matt dinniman");
 
             Assert.That(results, Is.Not.Null.And.Empty);
-            Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(3));
 
             var queryTypes = new List<string>();
-            using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(httpClient.Requests.Single().ContentData));
-            Assert.That(payload.RootElement.ValueKind, Is.EqualTo(JsonValueKind.Array));
-            Assert.That(payload.RootElement.GetArrayLength(), Is.EqualTo(3));
-
-            foreach (var operation in payload.RootElement.EnumerateArray())
+            foreach (var sent in httpClient.Requests)
             {
-                var query = operation.GetProperty("query").GetString();
-                var variables = operation.GetProperty("variables");
+                using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(sent.ContentData));
+                Assert.That(payload.RootElement.ValueKind, Is.EqualTo(JsonValueKind.Object));
+
+                var query = payload.RootElement.GetProperty("query").GetString();
+                var variables = payload.RootElement.GetProperty("variables");
 
                 Assert.That(query.Split("search(", StringSplitOptions.None), Has.Length.EqualTo(2));
                 Assert.That(variables.GetProperty("q").GetString(), Is.EqualTo("matt dinniman"));
@@ -197,11 +191,11 @@ namespace Chaptarr.Core.Test.MetadataSource
                 queryTypes.Add(variables.GetProperty("query_type").GetString());
             }
 
-            Assert.That(queryTypes, Is.EquivalentTo(new[] { "Author", "Book", "Series" }));
+            Assert.That(queryTypes, Is.EqualTo(new[] { "Author", "Book", "Series" }));
         }
 
         [Test]
-        public void should_not_retry_or_disguise_a_forbidden_search_contract()
+        public void should_surface_a_forbidden_search_contract_verbatim_without_retrying()
         {
             var httpClient = new RecordingHttpClient(request =>
             {
@@ -212,26 +206,26 @@ namespace Chaptarr.Core.Test.MetadataSource
             });
             var client = CreateClient(httpClient);
 
-            var results = client.Search("matt dinniman");
+            var ex = Assert.Throws<NzbDroneClientException>(() => client.Search("matt dinniman"));
 
-            Assert.That(results, Is.Null);
+            Assert.That(ex.Message, Does.Contain("403"));
+            Assert.That(ex.Message, Does.Contain("top_level_search_limit_exceeded"));
             Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
         }
 
         [Test]
-        public void should_fail_the_combined_search_on_a_bare_string_graphql_error()
+        public void should_surface_a_bare_string_graphql_error_verbatim()
         {
             const string PartialErrorPayload = @"{
                 ""errors"": [""top_level_search_limit_exceeded""],
                 ""data"": { ""search"": { ""results"": { ""hits"": [] } } }
             }";
-            var httpClient = new RecordingHttpClient(request => JsonResponse(request,
-                BuildHttpBatch(PartialErrorPayload, EmptySearchPayload, EmptySearchPayload)));
+            var httpClient = new RecordingHttpClient(request => JsonResponse(request, PartialErrorPayload));
             var client = CreateClient(httpClient);
 
-            var results = client.Search("matt dinniman");
+            var ex = Assert.Throws<NzbDroneClientException>(() => client.Search("matt dinniman"));
 
-            Assert.That(results, Is.Null);
+            Assert.That(ex.Message, Does.Contain("top_level_search_limit_exceeded"));
             Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
         }
 
@@ -242,37 +236,24 @@ namespace Chaptarr.Core.Test.MetadataSource
             {
                 using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(request.ContentData));
                 var root = payload.RootElement;
+                var query = root.GetProperty("query").GetString();
 
-                if (root.ValueKind == JsonValueKind.Array)
+                if (root.GetProperty("variables").TryGetProperty("query_type", out var queryTypeElement))
                 {
-                    var operations = root.EnumerateArray().ToList();
-                    var firstQuery = operations[0].GetProperty("query").GetString();
-                    var firstVariables = operations[0].GetProperty("variables");
-
-                    if (firstVariables.TryGetProperty("query_type", out _))
+                    return queryTypeElement.GetString() switch
                     {
-                        var responses = operations.Select(operation =>
-                        {
-                            var queryType = operation.GetProperty("variables").GetProperty("query_type").GetString();
-                            return queryType switch
-                            {
-                                "Author" => AuthorSearchPayload,
-                                "Book" => BookSearchPayload,
-                                "Series" => SeriesSearchPayload,
-                                _ => throw new AssertionException($"Unexpected Hardcover query type {queryType}")
-                            };
-                        }).ToArray();
-
-                        return JsonResponse(request, BuildHttpBatch(responses));
-                    }
-
-                    if (firstQuery.Contains("BooksByAuthors", StringComparison.Ordinal))
-                    {
-                        return JsonResponse(request, BuildHttpBatch(AuthorBooksPayload));
-                    }
+                        "Author" => JsonResponse(request, AuthorSearchPayload),
+                        "Book" => JsonResponse(request, BookSearchPayload),
+                        "Series" => JsonResponse(request, SeriesSearchPayload),
+                        var queryType => throw new AssertionException($"Unexpected Hardcover query type {queryType}")
+                    };
                 }
 
-                var query = root.GetProperty("query").GetString();
+                if (query.Contains("BooksByAuthors", StringComparison.Ordinal))
+                {
+                    return JsonResponse(request, AuthorBooksPayload);
+                }
+
                 if (query.Contains("SearchEnrichment", StringComparison.Ordinal))
                 {
                     return JsonResponse(request, EnrichmentPayload);
@@ -293,7 +274,7 @@ namespace Chaptarr.Core.Test.MetadataSource
             Assert.That(((HardcoverBookResult)results[1]).Title, Is.EqualTo("Dungeon Crawler Carl"));
             Assert.That(results[2], Is.TypeOf<HardcoverSeriesResult>());
             Assert.That(((HardcoverSeriesResult)results[2]).Id, Is.EqualTo("12717"));
-            Assert.That(httpClient.Requests, Has.Count.EqualTo(3));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(5));
         }
 
         [Test]
@@ -363,16 +344,19 @@ namespace Chaptarr.Core.Test.MetadataSource
                 using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(request.ContentData));
                 var root = payload.RootElement;
 
-                if (root.ValueKind == JsonValueKind.Array)
+                if (root.GetProperty("variables").TryGetProperty("query_type", out var queryTypeElement))
                 {
-                    var operations = root.EnumerateArray().ToList();
-                    var variables = operations[0].GetProperty("variables");
-                    if (variables.TryGetProperty("query_type", out _))
+                    return queryTypeElement.GetString() switch
                     {
-                        return JsonResponse(request, BuildHttpBatch(authorSearch, bookSearch, seriesSearch));
-                    }
+                        "Author" => JsonResponse(request, authorSearch),
+                        "Book" => JsonResponse(request, bookSearch),
+                        _ => JsonResponse(request, seriesSearch)
+                    };
+                }
 
-                    return JsonResponse(request, BuildHttpBatch(authorBooks));
+                if (root.GetProperty("query").GetString().Contains("BooksByAuthors", StringComparison.Ordinal))
+                {
+                    return JsonResponse(request, authorBooks);
                 }
 
                 return JsonResponse(request, EmptyEnrichmentPayload);
@@ -391,7 +375,7 @@ namespace Chaptarr.Core.Test.MetadataSource
             Assert.That(((HardcoverSeriesResult)results[2]).AuthorId, Is.EqualTo("80626"));
             Assert.That(results[3], Is.TypeOf<HardcoverAuthorResult>());
             Assert.That(((HardcoverAuthorResult)results[3]).Id, Is.EqualTo("92162"));
-            Assert.That(httpClient.Requests, Has.Count.EqualTo(3));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(5));
         }
 
         [Test]
@@ -469,16 +453,19 @@ namespace Chaptarr.Core.Test.MetadataSource
                 using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(request.ContentData));
                 var root = payload.RootElement;
 
-                if (root.ValueKind == JsonValueKind.Array)
+                if (root.GetProperty("variables").TryGetProperty("query_type", out var queryTypeElement))
                 {
-                    var operations = root.EnumerateArray().ToList();
-                    var variables = operations[0].GetProperty("variables");
-                    if (variables.TryGetProperty("query_type", out _))
+                    return queryTypeElement.GetString() switch
                     {
-                        return JsonResponse(request, BuildHttpBatch(authorSearch, bookSearch, seriesSearch));
-                    }
+                        "Author" => JsonResponse(request, authorSearch),
+                        "Book" => JsonResponse(request, bookSearch),
+                        _ => JsonResponse(request, seriesSearch)
+                    };
+                }
 
-                    return JsonResponse(request, BuildHttpBatch(authorBooks));
+                if (root.GetProperty("query").GetString().Contains("BooksByAuthors", StringComparison.Ordinal))
+                {
+                    return JsonResponse(request, authorBooks);
                 }
 
                 return JsonResponse(request, EmptyEnrichmentPayload);
@@ -498,7 +485,7 @@ namespace Chaptarr.Core.Test.MetadataSource
             Assert.That(results[2], Is.TypeOf<HardcoverSeriesResult>());
             Assert.That(((HardcoverSeriesResult)results[2]).Id, Is.EqualTo("1185"));
             Assert.That(((HardcoverSeriesResult)results[2]).AuthorId, Is.EqualTo("80626"));
-            Assert.That(httpClient.Requests, Has.Count.EqualTo(3));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(5));
         }
 
         [Test]
@@ -526,9 +513,14 @@ namespace Chaptarr.Core.Test.MetadataSource
             var httpClient = new RecordingHttpClient(request =>
             {
                 using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(request.ContentData));
-                if (payload.RootElement.ValueKind == JsonValueKind.Array)
+                if (payload.RootElement.GetProperty("variables").TryGetProperty("query_type", out var queryTypeElement))
                 {
-                    return JsonResponse(request, BuildHttpBatch(EmptySearchPayload, bookSearch, seriesSearch));
+                    return queryTypeElement.GetString() switch
+                    {
+                        "Book" => JsonResponse(request, bookSearch),
+                        "Series" => JsonResponse(request, seriesSearch),
+                        _ => JsonResponse(request, EmptySearchPayload)
+                    };
                 }
 
                 return JsonResponse(request, EmptyEnrichmentPayload);
@@ -542,7 +534,7 @@ namespace Chaptarr.Core.Test.MetadataSource
             Assert.That(((HardcoverSeriesResult)results[0]).Id, Is.EqualTo("3022"));
             Assert.That(((HardcoverSeriesResult)results[0]).SearchScore, Is.EqualTo(3000));
             Assert.That(results[1], Is.TypeOf<HardcoverBookResult>());
-            Assert.That(httpClient.Requests, Has.Count.EqualTo(2));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(4));
         }
 
         [Test]
@@ -558,18 +550,18 @@ namespace Chaptarr.Core.Test.MetadataSource
                     throw new HttpException(request, response);
                 }
 
-                return JsonResponse(request, BuildHttpBatch(EmptySearchPayload, EmptySearchPayload, EmptySearchPayload));
+                return JsonResponse(request, EmptySearchPayload);
             });
             var client = CreateClient(httpClient);
 
             var results = client.Search("matt dinniman");
 
             Assert.That(results, Is.Not.Null.And.Empty);
-            Assert.That(httpClient.Requests, Has.Count.EqualTo(2));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(4));
         }
 
         [Test]
-        public void should_chunk_ten_author_book_roots_into_two_http_batched_operations()
+        public void should_send_each_author_book_chunk_as_its_own_http_request()
         {
             var authorHits = Enumerable.Range(1, 10)
                 .Select(id => new
@@ -598,42 +590,36 @@ namespace Chaptarr.Core.Test.MetadataSource
             var httpClient = new RecordingHttpClient(request =>
             {
                 using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(request.ContentData));
-                var operations = payload.RootElement.EnumerateArray().ToList();
-                var variables = operations[0].GetProperty("variables");
+                var root = payload.RootElement;
 
-                if (variables.TryGetProperty("query_type", out _))
+                if (root.GetProperty("variables").TryGetProperty("query_type", out var queryTypeElement))
                 {
                     return JsonResponse(request,
-                        BuildHttpBatch(authorSearchPayload, EmptySearchPayload, EmptySearchPayload));
+                        queryTypeElement.GetString() == "Author" ? authorSearchPayload : EmptySearchPayload);
                 }
 
-                var responses = operations.Select(operation =>
+                var query = root.GetProperty("query").GetString();
+                var data = new Dictionary<string, object>();
+                var aliasCount = query.Split(": books(", StringSplitOptions.None).Length - 1;
+                for (var index = 0; index < aliasCount; index++)
                 {
-                    var query = operation.GetProperty("query").GetString();
-                    var data = new Dictionary<string, object>();
-                    var aliasCount = query.Split(": books(", StringSplitOptions.None).Length - 1;
-                    for (var index = 0; index < aliasCount; index++)
-                    {
-                        data[$"author{index}"] = Array.Empty<object>();
-                    }
+                    data[$"author{index}"] = Array.Empty<object>();
+                }
 
-                    return JsonSerializer.Serialize(new { data });
-                }).ToArray();
-
-                return JsonResponse(request, BuildHttpBatch(responses));
+                return JsonResponse(request, JsonSerializer.Serialize(new { data }));
             });
             var client = CreateClient(httpClient);
 
             var results = client.Search("smith");
 
             Assert.That(results, Is.Not.Null.And.Empty);
-            Assert.That(httpClient.Requests, Has.Count.EqualTo(2));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(5));
 
-            using var authorBooksPayload = JsonDocument.Parse(Encoding.UTF8.GetString(httpClient.Requests[1].ContentData));
-            Assert.That(authorBooksPayload.RootElement.GetArrayLength(), Is.EqualTo(2));
-            foreach (var operation in authorBooksPayload.RootElement.EnumerateArray())
+            foreach (var sent in httpClient.Requests.Skip(3))
             {
-                var query = operation.GetProperty("query").GetString();
+                using var authorBooksPayload = JsonDocument.Parse(Encoding.UTF8.GetString(sent.ContentData));
+                Assert.That(authorBooksPayload.RootElement.ValueKind, Is.EqualTo(JsonValueKind.Object));
+                var query = authorBooksPayload.RootElement.GetProperty("query").GetString();
                 Assert.That(query.Split(": books(", StringSplitOptions.None), Has.Length.EqualTo(6));
             }
         }
