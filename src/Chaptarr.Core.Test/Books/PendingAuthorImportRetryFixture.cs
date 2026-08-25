@@ -20,6 +20,7 @@ namespace Chaptarr.Core.Test.Books
             public PendingAuthorImport Active { get; set; }
             public PendingAuthorImport Inserted { get; private set; }
             public PendingAuthorImport Updated { get; private set; }
+            public Func<PendingAuthorImport, long, bool> TryUpdate { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -34,6 +35,18 @@ namespace Chaptarr.Core.Test.Books
                     case nameof(IPendingAuthorImportRepository.Update):
                         Updated = (PendingAuthorImport)args[0];
                         return Updated;
+                    case nameof(IPendingAuthorImportRepository.TryUpdateRequest):
+                        var candidate = (PendingAuthorImport)args[0];
+                        var expectedVersion = (long)args[1];
+                        if (TryUpdate != null && !TryUpdate(candidate, expectedVersion))
+                        {
+                            return false;
+                        }
+
+                        candidate.Version = expectedVersion + 1;
+                        Updated = candidate;
+                        Active = candidate;
+                        return true;
                     default:
                         throw new NotImplementedException($"Repository method {targetMethod?.Name} is not implemented by this test proxy");
                 }
@@ -161,6 +174,89 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repositoryProxy.Active.AudiobookBooksToMonitor, Is.EqualTo("[\"gr:3001\",\"gr:3002\"]"));
             Assert.That(repositoryProxy.Active.EbookBooksToSearch, Is.EqualTo("[\"gr:2001\"]"));
             Assert.That(repositoryProxy.Active.SearchForMissingBooks, Is.True);
+        }
+
+        [Test]
+        public async Task concurrent_requests_should_retry_the_merge_without_losing_either_book_target()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var subject = new PendingAuthorImportService(
+                repository,
+                authorService,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 123,
+                ProviderId = "gr:123",
+                Version = 4,
+                AudiobookStatus = PendingImportStatus.Pending,
+                OverallStatus = PendingImportStatus.Pending,
+                AudiobookBooksToMonitor = "[\"gr:first\"]"
+            };
+
+            var firstAttempt = true;
+            repositoryProxy.TryUpdate = (_, _) =>
+            {
+                if (!firstAttempt)
+                {
+                    return true;
+                }
+
+                firstAttempt = false;
+                repositoryProxy.Active = new PendingAuthorImport
+                {
+                    Id = 123,
+                    ProviderId = "gr:123",
+                    Version = 5,
+                    AudiobookStatus = PendingImportStatus.Pending,
+                    OverallStatus = PendingImportStatus.Pending,
+                    AudiobookBooksToMonitor = "[\"gr:first\",\"gr:concurrent\"]"
+                };
+                return false;
+            };
+
+            var id = await subject.EnqueueAsync(
+                "gr:123",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    AudiobookBooksToMonitor = new List<string> { "gr:incoming" }
+                },
+                "test");
+
+            Assert.That(id, Is.EqualTo(123));
+            Assert.That(repositoryProxy.Active.AudiobookBooksToMonitor,
+                Is.EqualTo("[\"gr:first\",\"gr:concurrent\",\"gr:incoming\"]"));
+            Assert.That(repositoryProxy.Active.Version, Is.EqualTo(6));
+        }
+
+        [Test]
+        [Timeout(1000)]
+        public void retry_should_stop_if_the_pending_row_became_inactive_during_the_update()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            repositoryProxy.TryUpdate = (_, _) => false;
+            var subject = new PendingAuthorImportService(
+                repository,
+                null,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+            var item = new PendingAuthorImport
+            {
+                Id = 42,
+                ProviderId = "gr:42",
+                AudiobookStatus = PendingImportStatus.Pending,
+                OverallStatus = PendingImportStatus.Pending
+            };
+
+            subject.ScheduleRetry(item, "not ready");
+
+            Assert.That(repositoryProxy.Updated, Is.Null);
         }
     }
 }

@@ -2386,6 +2386,12 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     _logger.Debug($"[BookInfoProxy] Hardcover filtered results: {filtered.Count}");
                     return filtered;
                 }
+                catch (NzbDroneClientException ex)
+                {
+                    // Preserve the provider's own error verbatim for the UI.
+                    _logger.Warn("[BookInfoProxy] Hardcover search failed: {0}", ex.Message);
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.Warn(ex, "[BookInfoProxy] Hardcover search threw exception");
@@ -3153,6 +3159,18 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     // Work not ready (typically because the upstream metadata server queued the author/work for import).
                     // Treat as "not found" so callers can retry later without surfacing an exception.
                     throw new BookNotFoundException(foreignBookId);
+                }
+
+                if (httpResponse.StatusCode == HttpStatusCode.Conflict &&
+                    string.Equals(route, "work", StringComparison.OrdinalIgnoreCase))
+                {
+                    var declaredReason = httpResponse.Content?.Trim();
+                    if (string.IsNullOrWhiteSpace(declaredReason))
+                    {
+                        declaredReason = $"Work rescue for {foreignBookId} reached a terminal state.";
+                    }
+
+                    throw new WorkRescueTerminalException(foreignBookId, declaredReason);
                 }
 
                 if (httpResponse.HasHttpRedirect)

@@ -24,6 +24,7 @@ namespace NzbDrone.Core.Books.Commands
         private readonly IAuthorLibraryService _authorLibraryService;
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
+        private readonly IProvideBookInfo _bookInfo;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
@@ -33,6 +34,7 @@ namespace NzbDrone.Core.Books.Commands
             IAuthorLibraryService authorLibraryService,
             IAuthorService authorService,
             IBookService bookService,
+            IProvideBookInfo bookInfo,
             IManageCommandQueue commandQueueManager,
             IEventAggregator eventAggregator,
             Logger logger)
@@ -41,6 +43,7 @@ namespace NzbDrone.Core.Books.Commands
             _authorLibraryService = authorLibraryService;
             _authorService = authorService;
             _bookService = bookService;
+            _bookInfo = bookInfo;
             _commandQueueManager = commandQueueManager;
             _eventAggregator = eventAggregator;
             _logger = logger;
@@ -224,21 +227,64 @@ namespace NzbDrone.Core.Books.Commands
 
                 if (addedAuthor != null && addedAuthor.Id > 0)
                 {
-                    addedAuthor = ApplyRequestedMonitoring(item, addedAuthor);
+                    var requestedWorks = GetRequestedWorks(item);
+                    ResolveLocalBooks(requestedWorks, addedAuthor);
 
-                    var terminalSearchError = QueueRequestedSearches(item, addedAuthor);
-                    if (!string.IsNullOrWhiteSpace(terminalSearchError))
+                    if (requestedWorks.Any(target => target.Book == null))
                     {
-                        _logger.Warn("Pending author import {0} completed, but its requested book search could not be fulfilled: {1}", item.ProviderId, terminalSearchError);
-                        _pendingImportService.UpdateStatus(item, PendingImportStatus.Failed, terminalSearchError);
-                        _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(item));
+                        var notReady = new List<string>();
+                        foreach (var target in requestedWorks.Where(target => target.Book == null))
+                        {
+                            // This lookup is only a rescue signal. The returned work is never inserted;
+                            // the refreshed author catalog remains the sole source of local Book rows.
+                            try
+                            {
+                                _bookInfo.GetWorkInfo(target.ProviderId, target.MediaType, item.ProviderId);
+                            }
+                            catch (BookNotFoundException)
+                            {
+                                notReady.Add(target.ProviderId);
+                            }
+                        }
+
+                        if (notReady.Any())
+                        {
+                            var reason = $"Requested work(s) {string.Join(", ", notReady)} are still being prepared by the metadata server.";
+                            _logger.Debug("Pending book request for author {0} is not ready; scheduling retry", item.ProviderId);
+                            _pendingImportService.ScheduleRetry(item, reason);
+                            return item;
+                        }
+
+                        addedAuthor = await _authorLibraryService.AddAuthorAsync(item.ProviderId, config);
+                        ResolveLocalBooks(requestedWorks, addedAuthor);
+                    }
+
+                    var missingTargets = requestedWorks
+                        .Where(target => target.Book == null)
+                        .Select(target => $"{target.MediaType} work {target.ProviderId}")
+                        .ToList();
+                    if (missingTargets.Any())
+                    {
+                        var reason = $"Requested {string.Join(", ", missingTargets)} is not yet present in the authoritative author catalog.";
+                        _logger.Debug("Pending author import {0} retained: {1}", item.ProviderId, reason);
+                        _pendingImportService.ScheduleRetry(item, reason);
                         return item;
                     }
 
+                    addedAuthor = ApplyRequestedMonitoring(item, addedAuthor, requestedWorks);
+                    var requestedSearchBookIds = GetRequestedSearchBookIds(addedAuthor, requestedWorks);
+                    QueueRequestedSearches(item, addedAuthor, requestedSearchBookIds);
+
                     _logger.Info("Successfully imported author {0} (ID: {1})", item.ProviderId, addedAuthor.Id);
-                    _pendingImportService.UpdateStatus(item, PendingImportStatus.Succeeded, null);
-                    // Delete row on success to prevent reprocessing loops
-                    _pendingImportService.Delete(item.Id);
+                    MarkSucceeded(item);
+                    if (!_pendingImportService.TryDeleteIfUnchanged(item))
+                    {
+                        // Another request was merged while this worker was running. Leave the row
+                        // active so the newly added target is processed rather than deleted as stale.
+                        _logger.Debug("Pending import {0} changed while it was processing; retaining the merged request", item.Id);
+                        return _pendingImportService.GetByProviderId(item.ProviderId) ?? item;
+                    }
+
                     _eventAggregator.PublishEvent(new PendingAuthorImportSucceededEvent(item, addedAuthor));
                 }
                 else
@@ -254,12 +300,24 @@ namespace NzbDrone.Core.Books.Commands
                 _pendingImportService.UpdateStatus(item, PendingImportStatus.Failed, declaredReason);
                 _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(item));
             }
+            catch (WorkRescueTerminalException ex)
+            {
+                _logger.Warn("Pending book request {0} reached a declared terminal rescue state: {1}", ex.ProviderId, ex.Message);
+                _pendingImportService.UpdateStatus(item, PendingImportStatus.Failed, ex.Message);
+                _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(item));
+            }
 
             catch (AuthorNotFoundException)
             {
                 // Author still not available, schedule retry
                 _logger.Debug("Author {0} not yet available on metadata server, scheduling retry", item.ProviderId);
                 _pendingImportService.ScheduleRetry(item, PendingAuthorImportRetryReason.AuthorNotYetAvailable);
+            }
+            catch (BookNotFoundException ex)
+            {
+                var reason = $"Requested book {ex.Message} is still being prepared by the metadata server.";
+                _logger.Debug("Pending book request for author {0} is not ready; scheduling retry", item.ProviderId);
+                _pendingImportService.ScheduleRetry(item, reason);
             }
             catch (Exception ex)
             {
@@ -281,6 +339,15 @@ namespace NzbDrone.Core.Books.Commands
 
         private MonitoringConfig BuildMonitoringConfig(PendingAuthorImport item)
         {
+            var audiobookMonitorTargets = DeserializeProviderIds(item.AudiobookBooksToMonitor, nameof(item.AudiobookBooksToMonitor));
+            var audiobookSearchTargets = DeserializeProviderIds(item.AudiobookBooksToSearch, nameof(item.AudiobookBooksToSearch));
+            var ebookMonitorTargets = DeserializeProviderIds(item.EbookBooksToMonitor, nameof(item.EbookBooksToMonitor));
+            var ebookSearchTargets = DeserializeProviderIds(item.EbookBooksToSearch, nameof(item.EbookBooksToSearch));
+            var requestedTargets = MergeProviderIds(
+                audiobookMonitorTargets,
+                audiobookSearchTargets,
+                ebookMonitorTargets,
+                ebookSearchTargets);
             var config = new MonitoringConfig
             {
                 AudiobookMonitorExisting = item.AudiobookMonitorExisting,
@@ -298,7 +365,17 @@ namespace NzbDrone.Core.Books.Commands
                 DiscoveredAuthorFolderPath = item.DiscoveredAuthorFolderPath,
                 SearchForMissingBooks = item.SearchForMissingBooks,
                 CreateAudiobook = item.HasAudiobook(),
-                CreateEbook = item.HasEbook()
+                CreateEbook = item.HasEbook(),
+                AudiobookBooksToMonitor = audiobookMonitorTargets,
+                AudiobookBooksToSearch = audiobookSearchTargets,
+                EbookBooksToMonitor = ebookMonitorTargets,
+                EbookBooksToSearch = ebookSearchTargets,
+                SpecificBookProviderIds = requestedTargets.Any()
+                    ? new HashSet<string>(requestedTargets, StringComparer.OrdinalIgnoreCase)
+                    : null,
+                SpecificBookMediaType = item.HasAudiobook() == item.HasEbook()
+                    ? null
+                    : item.HasAudiobook() ? BookMediaType.Audiobook : BookMediaType.Ebook
             };
 
             // Deserialize tags if present
@@ -310,14 +387,10 @@ namespace NzbDrone.Core.Books.Commands
             return config;
         }
 
-        private Author ApplyRequestedMonitoring(PendingAuthorImport item, Author author)
+        private Author ApplyRequestedMonitoring(PendingAuthorImport item, Author author, List<RequestedWork> requestedWorks)
         {
-            var audiobookTargets = MergeProviderIds(
-                DeserializeProviderIds(item.AudiobookBooksToMonitor, nameof(item.AudiobookBooksToMonitor)),
-                DeserializeProviderIds(item.AudiobookBooksToSearch, nameof(item.AudiobookBooksToSearch)));
-            var ebookTargets = MergeProviderIds(
-                DeserializeProviderIds(item.EbookBooksToMonitor, nameof(item.EbookBooksToMonitor)),
-                DeserializeProviderIds(item.EbookBooksToSearch, nameof(item.EbookBooksToSearch)));
+            var audiobookTargets = requestedWorks.Where(target => target.MediaType == BookMediaType.Audiobook).ToList();
+            var ebookTargets = requestedWorks.Where(target => target.MediaType == BookMediaType.Ebook).ToList();
 
             if (!audiobookTargets.Any() && !ebookTargets.Any())
             {
@@ -335,10 +408,8 @@ namespace NzbDrone.Core.Books.Commands
             }
 
             author = _authorService.GetAuthor(author.Id) ?? author;
-            var allBooks = _bookService.GetBooksByAuthor(author.Id);
-
-            ApplyRequestedBookMonitoring(allBooks, BookMediaType.Audiobook, item.HasAudiobook(), audiobookTargets);
-            ApplyRequestedBookMonitoring(allBooks, BookMediaType.Ebook, item.HasEbook(), ebookTargets);
+            ApplyRequestedBookMonitoring(BookMediaType.Audiobook, item.HasAudiobook(), audiobookTargets);
+            ApplyRequestedBookMonitoring(BookMediaType.Ebook, item.HasEbook(), ebookTargets);
 
             return _authorService.GetAuthor(author.Id) ?? author;
         }
@@ -354,20 +425,17 @@ namespace NzbDrone.Core.Books.Commands
         }
 
         private void ApplyRequestedBookMonitoring(
-            List<Book> allBooks,
             BookMediaType mediaType,
             bool mediaTypeRequested,
-            List<string> requestedProviderIds)
+            List<RequestedWork> requestedWorks)
         {
-            if (!mediaTypeRequested || !requestedProviderIds.Any())
+            if (!mediaTypeRequested || !requestedWorks.Any())
             {
                 return;
             }
 
-            var ids = allBooks
-                .Where(book => book.MediaType == mediaType)
-                .Where(book => requestedProviderIds.Any(providerId => BookMatchesProviderId(book, providerId)))
-                .Select(book => book.Id)
+            var ids = requestedWorks
+                .Select(target => target.Book?.Id ?? 0)
                 .Where(id => id > 0)
                 .Distinct()
                 .ToList();
@@ -381,7 +449,26 @@ namespace NzbDrone.Core.Books.Commands
             }
         }
 
-        private string QueueRequestedSearches(PendingAuthorImport item, Author author)
+        private static HashSet<int> GetRequestedSearchBookIds(Author author, List<RequestedWork> requestedWorks)
+        {
+            return requestedWorks
+                .Where(target => target.Search)
+                .Select(target => target.Book)
+                .Where(book => book != null)
+                .Select(book =>
+                {
+                    book.Author = author;
+                    if (!book.IsMonitoredWithAuthor())
+                    {
+                        throw new InvalidOperationException($"Requested {book.MediaType} book {book.Id} remained unmonitored after applying the saved add settings.");
+                    }
+
+                    return book.Id;
+                })
+                .ToHashSet();
+        }
+
+        private void QueueRequestedSearches(PendingAuthorImport item, Author author, HashSet<int> bookIds)
         {
             if (item.SearchForMissingBooks)
             {
@@ -392,105 +479,87 @@ namespace NzbDrone.Core.Books.Commands
                 _logger.Debug("Queued missing book search for imported author {0} (ID: {1})", item.ProviderId, author.Id);
             }
 
-            var audiobookProviderIds = DeserializeProviderIds(item.AudiobookBooksToSearch, nameof(item.AudiobookBooksToSearch));
-            var ebookProviderIds = DeserializeProviderIds(item.EbookBooksToSearch, nameof(item.EbookBooksToSearch));
-            if (audiobookProviderIds?.Any() != true && ebookProviderIds?.Any() != true)
-            {
-                return null;
-            }
-
-            var allBooks = _bookService.GetBooksByAuthor(author.Id);
-            var bookIds = new HashSet<int>();
-            var failures = new List<string>();
-
-            AddRequestedBookSearches(allBooks, author, BookMediaType.Audiobook, audiobookProviderIds, bookIds, failures);
-            AddRequestedBookSearches(allBooks, author, BookMediaType.Ebook, ebookProviderIds, bookIds, failures);
-
-            if (failures.Any())
-            {
-                return string.Join(" ", failures.Distinct());
-            }
-
             if (bookIds.Any())
             {
                 _commandQueueManager.Push(new BookSearchCommand(bookIds.ToList()));
                 _logger.Debug("Queued exact search for {0} requested books after importing author {1} (ID: {2})", bookIds.Count, item.ProviderId, author.Id);
             }
-
-            return null;
         }
 
-        private void AddRequestedBookSearches(
-            List<Book> allBooks,
-            Author author,
-            BookMediaType mediaType,
-            List<string> providerIds,
-            HashSet<int> bookIds,
-            List<string> failures)
+        private List<RequestedWork> GetRequestedWorks(PendingAuthorImport item)
         {
-            if (providerIds?.Any() != true)
+            var audiobookSearch = DeserializeProviderIds(item.AudiobookBooksToSearch, nameof(item.AudiobookBooksToSearch)) ?? new List<string>();
+            var ebookSearch = DeserializeProviderIds(item.EbookBooksToSearch, nameof(item.EbookBooksToSearch)) ?? new List<string>();
+            var requested = new List<RequestedWork>();
+
+            AddRequestedWorks(requested, BookMediaType.Audiobook,
+                MergeProviderIds(DeserializeProviderIds(item.AudiobookBooksToMonitor, nameof(item.AudiobookBooksToMonitor)), audiobookSearch),
+                audiobookSearch);
+            AddRequestedWorks(requested, BookMediaType.Ebook,
+                MergeProviderIds(DeserializeProviderIds(item.EbookBooksToMonitor, nameof(item.EbookBooksToMonitor)), ebookSearch),
+                ebookSearch);
+
+            return requested;
+        }
+
+        private static void AddRequestedWorks(List<RequestedWork> requested, BookMediaType mediaType, List<string> providerIds, List<string> searchIds)
+        {
+            foreach (var providerId in providerIds ?? new List<string>())
             {
-                return;
-            }
-
-            var mediaBooks = allBooks.Where(x => x.MediaType == mediaType).ToList();
-            foreach (var providerId in providerIds)
-            {
-                var matches = mediaBooks.Where(x => BookMatchesProviderId(x, providerId)).ToList();
-                if (!matches.Any())
+                requested.Add(new RequestedWork
                 {
-                    var failure = $"Requested {mediaType} book {providerId} was not present in the imported author catalog; no search was queued for it.";
-                    _logger.Warn(failure);
-                    failures.Add(failure);
-                    continue;
-                }
-
-                foreach (var match in matches)
-                {
-                    match.Author = author;
-                    if (!match.IsMonitoredWithAuthor())
-                    {
-                        var failure = $"Requested {mediaType} book {providerId} remained unmonitored after applying the saved add settings; no search was queued for it.";
-                        _logger.Error(failure);
-                        failures.Add(failure);
-                        continue;
-                    }
-
-                    bookIds.Add(match.Id);
-                }
+                    ProviderId = providerId,
+                    MediaType = mediaType,
+                    Search = searchIds.Contains(providerId, StringComparer.OrdinalIgnoreCase)
+                });
             }
         }
 
-        private bool BookMatchesProviderId(Book book, string providerId)
+        private void ResolveLocalBooks(List<RequestedWork> requestedWorks, Author author)
         {
-            providerId = NormalizeProviderId(providerId);
+            foreach (var target in requestedWorks)
+            {
+                var normalized = NormalizeProviderId(target.ProviderId);
+                var separator = normalized?.IndexOf(':') ?? -1;
+                if (separator <= 0)
+                {
+                    throw new InvalidOperationException($"Invalid requested work provider ID '{target.ProviderId}'.");
+                }
 
-            if (BookIdentity.GetProviderIdentityTokens(book).Contains(providerId))
-                return true;
+                var matches = _bookService.FindAllByWorkProviderId(
+                        normalized.Substring(0, separator),
+                        ProviderIdHelper.StripPrefix(normalized),
+                        target.MediaType)
+                    .Where(book => book.AuthorId == author.Id)
+                    .GroupBy(book => book.Id)
+                    .Select(group => group.First())
+                    .ToList();
 
-            if (!string.IsNullOrEmpty(book.HardcoverBookId) &&
-                NormalizeProviderId(ProviderIdHelper.Canonicalize(book.HardcoverBookId, "hc")) == providerId)
-                return true;
+                if (matches.Count > 1)
+                {
+                    throw new InvalidOperationException($"Requested work '{target.ProviderId}' resolves to multiple local {target.MediaType} books.");
+                }
 
-            if (!string.IsNullOrEmpty(book.GoodreadsWorkId) &&
-                NormalizeProviderId(ProviderIdHelper.Canonicalize(book.GoodreadsWorkId, "gr")) == providerId)
-                return true;
+                target.Book = matches.SingleOrDefault();
+            }
+        }
 
-            if (!string.IsNullOrEmpty(book.OpenLibraryWorkId) &&
-                NormalizeProviderId(ProviderIdHelper.Canonicalize(book.OpenLibraryWorkId, "ol")) == providerId)
-                return true;
+        private static void MarkSucceeded(PendingAuthorImport item)
+        {
+            item.AudiobookStatus = item.HasAudiobook() ? PendingImportStatus.Succeeded : PendingImportStatus.NotRequested;
+            item.EbookStatus = item.HasEbook() ? PendingImportStatus.Succeeded : PendingImportStatus.NotRequested;
+            item.OverallStatus = PendingImportStatus.Succeeded;
+            item.LastError = null;
+            item.LastAttemptAt = DateTime.UtcNow;
+            item.UpdatedAt = DateTime.UtcNow;
+        }
 
-            if (BookEditionIdentity.GetGoogleBooksEditionId(book) is string googleBooksEditionId &&
-                NormalizeProviderId(ProviderIdHelper.Canonicalize(googleBooksEditionId, "gb")) == providerId)
-                return true;
-
-            if (BookEditionIdentity.GetAsin(book) is string asin &&
-                NormalizeProviderId(asin.Contains(":")
-                    ? ProviderIdHelper.Normalize(asin, "az")
-                    : ProviderIdHelper.WithPrefix("az", asin)) == providerId)
-                return true;
-
-            return false;
+        private sealed class RequestedWork
+        {
+            public string ProviderId { get; init; }
+            public BookMediaType MediaType { get; init; }
+            public bool Search { get; init; }
+            public Book Book { get; set; }
         }
 
         private List<string> DeserializeProviderIds(string json, string fieldName)
@@ -514,6 +583,7 @@ namespace NzbDrone.Core.Books.Commands
             return ex.Message.Contains("Quality profile", StringComparison.OrdinalIgnoreCase) ||
                    ex.Message.Contains("Metadata profile", StringComparison.OrdinalIgnoreCase) ||
                    ex.Message.Contains("Root folder", StringComparison.OrdinalIgnoreCase) ||
+                   ex.Message.Contains("remained unmonitored", StringComparison.OrdinalIgnoreCase) ||
                    ex.Message.Contains("Invalid", StringComparison.OrdinalIgnoreCase);
         }
 

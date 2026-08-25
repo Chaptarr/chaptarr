@@ -87,6 +87,10 @@ function canAddSelectedMediaType(props, mediaType) {
 }
 
 function getAddButtonLabel(props, mediaType) {
+  if (props.isQueued) {
+    return translate('Queued');
+  }
+
   const missingMediaTypes = getMissingMediaTypes(props);
 
   if (!missingMediaTypes.length) {
@@ -189,6 +193,8 @@ class AddNewBookModalContent extends Component {
       overview,
       images,
       isAdding,
+      isQueued,
+      addNotice,
       isExistingAuthor,
       isSmallScreen,
       initialMediaType,
@@ -283,6 +289,17 @@ class AddNewBookModalContent extends Component {
               />
 
               {
+                isQueued && addNotice ?
+                  <Alert
+                    className={styles.addError}
+                    kind={kinds.SUCCESS}
+                  >
+                    {addNotice}
+                  </Alert> :
+                  null
+              }
+
+              {
                 addErrorMessage ?
                   <Alert
                     className={styles.addError}
@@ -315,7 +332,7 @@ class AddNewBookModalContent extends Component {
             <SpinnerButton
               className={styles.addButton}
               kind={kinds.PRIMARY}
-              isDisabled={!canAddSelectedMediaType(this.props, this.state.selectedMediaType)}
+              isDisabled={isQueued || !canAddSelectedMediaType(this.props, this.state.selectedMediaType)}
               isSpinning={isAdding}
               onPress={this.onAddBookPress}
             >
@@ -344,6 +361,8 @@ AddNewBookModalContent.propTypes = {
   overview: PropTypes.string,
   images: PropTypes.arrayOf(PropTypes.object).isRequired,
   isAdding: PropTypes.bool.isRequired,
+  isQueued: PropTypes.bool.isRequired,
+  addNotice: PropTypes.string,
   addError: PropTypes.object,
   addedMediaTypes: PropTypes.arrayOf(PropTypes.oneOf(['audiobook', 'ebook'])),
   addFailedMediaType: PropTypes.oneOf(['audiobook', 'ebook']),

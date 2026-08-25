@@ -21,6 +21,8 @@ function createMapStateToProps() {
     (isExistingAuthor, searchState, metadataProfiles, uiState, dimensions, systemStatus) => {
       const {
         isAdding,
+        isQueued,
+        addNotice,
         addError,
         addedMediaTypes,
         addFailedMediaType,
@@ -35,6 +37,8 @@ function createMapStateToProps() {
 
       return {
         isAdding,
+        isQueued,
+        addNotice,
         addError,
         addedMediaTypes,
         addFailedMediaType,
@@ -224,6 +228,8 @@ class AddNewBookModalContentConnector extends Component {
 
 AddNewBookModalContentConnector.propTypes = {
   isExistingAuthor: PropTypes.bool.isRequired,
+  isQueued: PropTypes.bool.isRequired,
+  addNotice: PropTypes.string,
   addedMediaTypes: PropTypes.arrayOf(PropTypes.oneOf(['audiobook', 'ebook'])),
   addFailedMediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   defaultMediaType: PropTypes.string,

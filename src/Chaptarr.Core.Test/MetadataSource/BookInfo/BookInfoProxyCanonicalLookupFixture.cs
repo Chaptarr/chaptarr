@@ -754,6 +754,20 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         }
 
         [Test]
+        public void should_preserve_declared_work_rescue_conflict_for_the_pending_request_handler()
+        {
+            const string reason = "Work rescue is blocked_safety_gate";
+            var proxy = CreateProxy(new RecordingHttpClient(request =>
+                new HttpResponse(request, new HttpHeader { ContentType = "text/plain" }, reason, HttpStatusCode.Conflict)));
+
+            var exception = Assert.Throws<WorkRescueTerminalException>(() =>
+                proxy.GetWorkInfo("gr:12345", BookMediaType.Ebook, "gr:author"));
+
+            Assert.That(exception.ProviderId, Is.EqualTo("gr:12345"));
+            Assert.That(exception.Message, Is.EqualTo(reason));
+        }
+
+        [Test]
         public void should_canonicalize_hardcover_work_id_when_v5_work_response_omits_prefix()
         {
             const string payload = @"{

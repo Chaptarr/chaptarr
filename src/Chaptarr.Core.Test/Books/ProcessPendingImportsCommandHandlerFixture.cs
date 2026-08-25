@@ -16,6 +16,7 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MetadataSource;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -27,11 +28,14 @@ namespace Chaptarr.Core.Test.Books
             public Queue<List<PendingAuthorImport>> DueResponses { get; } = new();
             public int CleanupCount { get; private set; }
             public List<int> DeletedIds { get; } = new();
+            public List<string> RetryReasons { get; } = new();
+            public bool DeleteIfUnchangedResult { get; set; } = true;
+            public PendingAuthorImport CurrentByProviderId { get; set; }
 
             public Task<int> EnqueueAsync(string providerId, MonitoringConfig config, string sourceApplication) => throw new NotImplementedException();
             public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => DueResponses.Count > 0 ? DueResponses.Dequeue() : new List<PendingAuthorImport>();
-            public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
+            public PendingAuthorImport GetByProviderId(string providerId) => CurrentByProviderId;
 
             public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error)
             {
@@ -39,10 +43,24 @@ namespace Chaptarr.Core.Test.Books
                 item.LastError = error;
             }
 
-            public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
+            public void ScheduleRetry(PendingAuthorImport item, string error)
+            {
+                item.OverallStatus = PendingImportStatus.Retrying;
+                item.LastError = error;
+                RetryReasons.Add(error);
+            }
             public void Cancel(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void Delete(int id) => DeletedIds.Add(id);
+            public bool TryDeleteIfUnchanged(PendingAuthorImport item)
+            {
+                if (DeleteIfUnchangedResult)
+                {
+                    DeletedIds.Add(item.Id);
+                }
+
+                return DeleteIfUnchangedResult;
+            }
             public void CleanupOldCompleted() => CleanupCount++;
         }
 
@@ -96,6 +114,15 @@ namespace Chaptarr.Core.Test.Books
                     case nameof(IBookService.GetBooks):
                         var ids = ((IEnumerable<int>)args[0]).ToHashSet();
                         return Books.Where(book => ids.Contains(book.Id)).ToList();
+                    case nameof(IBookService.FindAllByWorkProviderId):
+                        var provider = (string)args[0];
+                        var providerId = ProviderIdHelper.Canonicalize((string)args[1], provider);
+                        var requestedMediaType = (BookMediaType)args[2];
+                        return Books.Where(book => book.MediaType == requestedMediaType &&
+                                                   BookEditionIdentity.GetCanonicalWorkProviderIds(book)
+                                                       .Concat(book.RemoteProviderIds ?? Enumerable.Empty<string>())
+                                                       .Any(id => string.Equals(id, providerId, StringComparison.OrdinalIgnoreCase)))
+                            .ToList();
                     case nameof(IBookService.SetMonitoredForMediaType):
                         if (!IgnoreMonitoringUpdates)
                         {
@@ -133,6 +160,28 @@ namespace Chaptarr.Core.Test.Books
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IAuthorLibraryService.{targetMethod?.Name}");
+            }
+        }
+
+        private class BookInfoProxy : DispatchProxy
+        {
+            public Exception WorkException { get; set; }
+            public List<string> RequestedWorkIds { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IProvideBookInfo.GetWorkInfo))
+                {
+                    RequestedWorkIds.Add((string)args[0]);
+                    if (WorkException != null)
+                    {
+                        throw WorkException;
+                    }
+
+                    return null;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IProvideBookInfo.{targetMethod?.Name}");
             }
         }
         private sealed class RecordingCommandQueue : IManageCommandQueue
@@ -198,7 +247,8 @@ namespace Chaptarr.Core.Test.Books
             RecordingEventAggregator eventAggregator,
             AuthorTerminalException terminal = null,
             Author author = null,
-            IBookService bookService = null)
+            IBookService bookService = null,
+            IProvideBookInfo bookInfo = null)
         {
             author ??= new Author { Id = 42, Name = "Existing Author" };
 
@@ -214,11 +264,14 @@ namespace Chaptarr.Core.Test.Books
                 bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
             }
 
+            bookInfo ??= DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>();
+
             return new ProcessPendingImportsCommandHandler(
                 pendingImportService,
                 authorLibraryService,
                 authorService,
                 bookService,
+                bookInfo,
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
@@ -420,6 +473,47 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void should_not_delete_a_second_book_request_merged_while_the_first_was_processing()
+        {
+            var pendingImportService = new StubPendingAuthorImportService { DeleteIfUnchangedResult = false };
+            var pending = Pending(158);
+            pending.Version = 4;
+            pending.EbookBooksToSearch = "[\"gr:2002\"]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+            pendingImportService.CurrentByProviderId = new PendingAuthorImport
+            {
+                Id = pending.Id,
+                ProviderId = pending.ProviderId,
+                Version = 5,
+                OverallStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.Pending,
+                EbookBooksToSearch = "[\"gr:2002\",\"gr:second\"]"
+            };
+            var author = new Author { Id = 42, Name = "Existing Author" };
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).Books = new List<Book>
+            {
+                new Book { Id = 202, AuthorId = author.Id, MediaType = BookMediaType.Ebook, GoodreadsWorkId = "gr:2002" }
+            };
+            var events = new RecordingEventAggregator();
+            var commandQueue = new RecordingCommandQueue();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                events,
+                author: author,
+                bookService: bookService);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(pendingImportService.DeletedIds, Is.Empty);
+            Assert.That(pendingImportService.CurrentByProviderId.EbookBooksToSearch, Does.Contain("gr:second"));
+            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>().Single().BookIds, Is.EqualTo(new[] { 202 }));
+            Assert.That(commandQueue.Pushed.OfType<MissingBookSearchCommand>(), Is.Empty);
+            Assert.That(events.Events.OfType<PendingAuthorImportSucceededEvent>(), Is.Empty);
+        }
+
+        [Test]
         public void should_repair_disabled_author_media_monitoring_before_exact_search()
         {
             var pendingImportService = new StubPendingAuthorImportService();
@@ -508,7 +602,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_fail_terminally_when_requested_book_is_absent_from_imported_catalog()
+        public void should_retain_request_when_requested_book_is_not_yet_in_the_author_catalog()
         {
             var pendingImportService = new StubPendingAuthorImportService();
             var pending = Pending(155);
@@ -519,19 +613,81 @@ namespace Chaptarr.Core.Test.Books
 
             var commandQueue = new RecordingCommandQueue();
             var eventAggregator = new RecordingEventAggregator();
+            var bookInfo = DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>();
+            ((BookInfoProxy)bookInfo).WorkException = new BookNotFoundException("gr:missing");
             var handler = BuildHandler(
                 pendingImportService,
                 commandQueue,
                 eventAggregator,
-                bookService: DispatchProxy.Create<IBookService, BookServiceProxy>());
+                bookService: DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                bookInfo: bookInfo);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(pending.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
+            Assert.That(pending.LastError, Does.Contain("still being prepared"));
+            Assert.That(pendingImportService.DeletedIds, Does.Not.Contain(pending.Id));
+            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>(), Is.Empty);
+            Assert.That(eventAggregator.Events.OfType<PendingAuthorImportFailedEvent>(), Is.Empty);
+            Assert.That(((BookInfoProxy)bookInfo).RequestedWorkIds, Is.EqualTo(new[] { "gr:missing" }));
+        }
+
+        [Test]
+        public void should_signal_every_missing_work_merged_for_the_same_author()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(159);
+            pending.AudiobookStatus = PendingImportStatus.Pending;
+            pending.EbookStatus = PendingImportStatus.NotRequested;
+            pending.AudiobookBooksToSearch = @"[""gr:first"",""gr:second""]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var bookInfo = DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>();
+            ((BookInfoProxy)bookInfo).WorkException = new BookNotFoundException("not ready");
+            var commandQueue = new RecordingCommandQueue();
+            var handler = BuildHandler(
+                pendingImportService,
+                commandQueue,
+                new RecordingEventAggregator(),
+                bookService: DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                bookInfo: bookInfo);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(((BookInfoProxy)bookInfo).RequestedWorkIds, Is.EqualTo(new[] { "gr:first", "gr:second" }));
+            Assert.That(pending.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
+            Assert.That(pendingImportService.DeletedIds, Is.Empty);
+            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>(), Is.Empty);
+        }
+
+        [Test]
+        public void should_stop_retrying_and_preserve_the_declared_work_rescue_terminal_reason()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(157);
+            pending.AudiobookStatus = PendingImportStatus.NotRequested;
+            pending.EbookStatus = PendingImportStatus.Pending;
+            pending.EbookBooksToMonitor = "[\"hc:blocked\"]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+            var bookInfo = DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>();
+            ((BookInfoProxy)bookInfo).WorkException = new WorkRescueTerminalException(
+                "hc:blocked",
+                "Work rescue is blocked_safety_gate");
+            var events = new RecordingEventAggregator();
+            var handler = BuildHandler(
+                pendingImportService,
+                new RecordingCommandQueue(),
+                events,
+                bookService: DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                bookInfo: bookInfo);
 
             handler.Execute(new ProcessPendingImportsCommand());
 
             Assert.That(pending.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
-            Assert.That(pending.LastError, Does.Contain("was not present in the imported author catalog"));
-            Assert.That(pendingImportService.DeletedIds, Does.Not.Contain(pending.Id));
-            Assert.That(commandQueue.Pushed.OfType<BookSearchCommand>(), Is.Empty);
-            Assert.That(eventAggregator.Events.OfType<PendingAuthorImportFailedEvent>().Count(), Is.EqualTo(1));
+            Assert.That(pending.LastError, Is.EqualTo("Work rescue is blocked_safety_gate"));
+            Assert.That(pendingImportService.RetryReasons, Is.Empty);
+            Assert.That(pendingImportService.DeletedIds, Is.Empty);
+            Assert.That(events.Events.OfType<PendingAuthorImportFailedEvent>().Count(), Is.EqualTo(1));
         }
 
         [Test]

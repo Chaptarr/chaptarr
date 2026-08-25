@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Newtonsoft.Json;
 using NLog;
+using Npgsql;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
@@ -27,6 +29,11 @@ namespace NzbDrone.Core.Books.Services
         void RetryNow(int id);
         void CleanupOldCompleted();
         void Delete(int id);
+        bool TryDeleteIfUnchanged(PendingAuthorImport item)
+        {
+            Delete(item.Id);
+            return true;
+        }
     }
 
     public class PendingAuthorImportService : IPendingAuthorImportService
@@ -57,214 +64,262 @@ namespace NzbDrone.Core.Books.Services
                 throw new ArgumentException($"Invalid provider ID format: {providerId}");
             }
 
-            // Guard: if the author already exists in the library, do not queue again
-            try
+            // A book request may need the metadata-server rescue lifecycle even when its author
+            // already exists locally. Author-only requests can still stop here.
+            if (!HasRequestedBooks(config))
             {
-                var prefix = ExtractPrefix(providerId);
-                var rawId = ExtractIdWithoutPrefix(providerId);
-                var existingAuthor = _authorService.FindByProviderId(prefix, rawId);
-                if (existingAuthor != null)
+                try
                 {
-                    _logger.Debug("[PENDING-IMPORT] Author already exists in database, skipping queue: {0} (ID: {1})", providerId, existingAuthor.Id);
-                    return Task.FromResult(0);
+                    var prefix = ExtractPrefix(providerId);
+                    var rawId = ExtractIdWithoutPrefix(providerId);
+                    var existingAuthor = _authorService.FindByProviderId(prefix, rawId);
+                    if (existingAuthor != null)
+                    {
+                        _logger.Debug("[PENDING-IMPORT] Author already exists in database, skipping author-only queue: {0} (ID: {1})", providerId, existingAuthor.Id);
+                        return Task.FromResult(0);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "[PENDING-IMPORT] Failed to check existing author for {0}; proceeding cautiously", providerId);
                 }
             }
-            catch (Exception ex)
+
+            while (true)
             {
-                _logger.Warn(ex, "[PENDING-IMPORT] Failed to check existing author for {0}; proceeding cautiously", providerId);
-            }
-
-            // Check for existing active pending
-            var existing = _repository.GetActiveByProviderId(providerId);
-            if (existing != null)
-            {
-                _logger.Debug("Found existing pending import for {0}, merging configuration", providerId);
-
-                // Merge compatible settings (widen scope if needed)
-                bool updated = false;
-
-                // Enable audiobook if requested and not already
-                if (config.CreateAudiobook && !existing.HasAudiobook())
+                // Check for existing active pending
+                var existing = _repository.GetActiveByProviderId(providerId);
+                if (existing != null)
                 {
-                    existing.AudiobookStatus = PendingImportStatus.Pending;
-                    // Convert bool to int?: true=1 (All), false=0 (None)
-                    existing.AudiobookMonitorExisting = config.AudiobookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                    existing.AudiobookMonitorFuture = config.AudiobookMonitorFuture ?? config.MonitorFuture;
-                    existing.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
-                    existing.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
-                    existing.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
+                    _logger.Debug("Found existing pending import for {0}, merging configuration", providerId);
 
-                    if (config.AudiobookBooksToMonitor?.Any() == true)
+                    // Merge compatible settings (widen scope if needed)
+                    bool updated = false;
+
+                    // Enable audiobook if requested and not already
+                    if (config.CreateAudiobook && !existing.HasAudiobook())
                     {
-                        existing.AudiobookBooksToMonitor = JsonConvert.SerializeObject(config.AudiobookBooksToMonitor);
+                        existing.AudiobookStatus = PendingImportStatus.Pending;
+                        // Convert bool to int?: true=1 (All), false=0 (None)
+                        existing.AudiobookMonitorExisting = config.AudiobookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
+                        existing.AudiobookMonitorFuture = config.AudiobookMonitorFuture ?? config.MonitorFuture;
+                        existing.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
+                        existing.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
+                        existing.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
+
+                        if (config.AudiobookBooksToMonitor?.Any() == true)
+                        {
+                            existing.AudiobookBooksToMonitor = JsonConvert.SerializeObject(config.AudiobookBooksToMonitor);
+                        }
+                        updated = true;
                     }
-                    updated = true;
-                }
-                else if (config.CreateAudiobook && existing.HasAudiobook() && TryMergeProviderIds(
-                        existing.AudiobookBooksToMonitor,
-                        config.AudiobookBooksToMonitor,
-                        nameof(existing.AudiobookBooksToMonitor),
-                        providerId,
-                        out var audiobookBooksToMonitor))
-                {
-                    existing.AudiobookBooksToMonitor = audiobookBooksToMonitor;
-                    updated = true;
-                }
-
-                // Enable ebook if requested and not already
-                if (config.CreateEbook && !existing.HasEbook())
-                {
-                    existing.EbookStatus = PendingImportStatus.Pending;
-                    // Convert bool to int?: true=1 (All), false=0 (None)
-                    existing.EbookMonitorExisting = config.EbookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                    existing.EbookMonitorFuture = config.EbookMonitorFuture ?? config.MonitorFuture;
-                    existing.EbookQualityProfileId = config.EbookQualityProfileId;
-                    existing.EbookMetadataProfileId = config.EbookMetadataProfileId;
-                    existing.EbookRootFolderPath = config.EbookRootFolderPath;
-
-                    if (config.EbookBooksToMonitor?.Any() == true)
+                    else if (config.CreateAudiobook && existing.HasAudiobook() && TryMergeProviderIds(
+                            existing.AudiobookBooksToMonitor,
+                            config.AudiobookBooksToMonitor,
+                            nameof(existing.AudiobookBooksToMonitor),
+                            providerId,
+                            out var audiobookBooksToMonitor))
                     {
-                        existing.EbookBooksToMonitor = JsonConvert.SerializeObject(config.EbookBooksToMonitor);
+                        existing.AudiobookBooksToMonitor = audiobookBooksToMonitor;
+                        updated = true;
                     }
-                    updated = true;
-                }
-                else if (config.CreateEbook && existing.HasEbook() && TryMergeProviderIds(
-                        existing.EbookBooksToMonitor,
-                        config.EbookBooksToMonitor,
-                        nameof(existing.EbookBooksToMonitor),
-                        providerId,
-                        out var ebookBooksToMonitor))
-                {
-                    existing.EbookBooksToMonitor = ebookBooksToMonitor;
-                    updated = true;
-                }
 
-                if (config.CreateAudiobook && TryMergeProviderIds(
-                        existing.AudiobookBooksToSearch,
-                        config.AudiobookBooksToSearch,
-                        nameof(existing.AudiobookBooksToSearch),
-                        providerId,
-                        out var audiobookBooksToSearch))
-                {
-                    existing.AudiobookBooksToSearch = audiobookBooksToSearch;
-                    updated = true;
-                }
+                    // Enable ebook if requested and not already
+                    if (config.CreateEbook && !existing.HasEbook())
+                    {
+                        existing.EbookStatus = PendingImportStatus.Pending;
+                        // Convert bool to int?: true=1 (All), false=0 (None)
+                        existing.EbookMonitorExisting = config.EbookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
+                        existing.EbookMonitorFuture = config.EbookMonitorFuture ?? config.MonitorFuture;
+                        existing.EbookQualityProfileId = config.EbookQualityProfileId;
+                        existing.EbookMetadataProfileId = config.EbookMetadataProfileId;
+                        existing.EbookRootFolderPath = config.EbookRootFolderPath;
 
-                if (config.CreateEbook && TryMergeProviderIds(
-                        existing.EbookBooksToSearch,
-                        config.EbookBooksToSearch,
-                        nameof(existing.EbookBooksToSearch),
-                        providerId,
-                        out var ebookBooksToSearch))
-                {
-                    existing.EbookBooksToSearch = ebookBooksToSearch;
-                    updated = true;
-                }
+                        if (config.EbookBooksToMonitor?.Any() == true)
+                        {
+                            existing.EbookBooksToMonitor = JsonConvert.SerializeObject(config.EbookBooksToMonitor);
+                        }
+                        updated = true;
+                    }
+                    else if (config.CreateEbook && existing.HasEbook() && TryMergeProviderIds(
+                            existing.EbookBooksToMonitor,
+                            config.EbookBooksToMonitor,
+                            nameof(existing.EbookBooksToMonitor),
+                            providerId,
+                            out var ebookBooksToMonitor))
+                    {
+                        existing.EbookBooksToMonitor = ebookBooksToMonitor;
+                        updated = true;
+                    }
 
-                if (config.SearchForMissingBooks == true && !existing.SearchForMissingBooks)
-                {
-                    existing.SearchForMissingBooks = true;
-                    updated = true;
-                }
+                    if (config.CreateAudiobook && TryMergeProviderIds(
+                            existing.AudiobookBooksToSearch,
+                            config.AudiobookBooksToSearch,
+                            nameof(existing.AudiobookBooksToSearch),
+                            providerId,
+                            out var audiobookBooksToSearch))
+                    {
+                        existing.AudiobookBooksToSearch = audiobookBooksToSearch;
+                        updated = true;
+                    }
 
-                // Preserve discovered author folder path if provided and not already set
-                if (string.IsNullOrWhiteSpace(existing.DiscoveredAuthorFolderPath) && !string.IsNullOrWhiteSpace(config.DiscoveredAuthorFolderPath))
-                {
-                    existing.DiscoveredAuthorFolderPath = config.DiscoveredAuthorFolderPath;
-                    updated = true;
-                }
+                    if (config.CreateEbook && TryMergeProviderIds(
+                            existing.EbookBooksToSearch,
+                            config.EbookBooksToSearch,
+                            nameof(existing.EbookBooksToSearch),
+                            providerId,
+                            out var ebookBooksToSearch))
+                    {
+                        existing.EbookBooksToSearch = ebookBooksToSearch;
+                        updated = true;
+                    }
 
-                if (updated)
-                {
-                    existing.UpdatedAt = DateTime.UtcNow;
-                    // Trigger immediate processing rather than waiting for scheduled delay
-                    existing.NextAttemptAt = DateTime.UtcNow;
-                    existing.UpdateOverallStatus();
-                    _repository.Update(existing);
+                    if (config.SearchForMissingBooks == true && !existing.SearchForMissingBooks)
+                    {
+                        existing.SearchForMissingBooks = true;
+                        updated = true;
+                    }
+
+                    // Preserve discovered author folder path if provided and not already set
+                    if (string.IsNullOrWhiteSpace(existing.DiscoveredAuthorFolderPath) && !string.IsNullOrWhiteSpace(config.DiscoveredAuthorFolderPath))
+                    {
+                        existing.DiscoveredAuthorFolderPath = config.DiscoveredAuthorFolderPath;
+                        updated = true;
+                    }
+
+                    if (updated)
+                    {
+                        existing.UpdatedAt = DateTime.UtcNow;
+                        // Trigger immediate processing rather than waiting for scheduled delay
+                        existing.NextAttemptAt = DateTime.UtcNow;
+                        existing.UpdateOverallStatus();
+                        var expectedVersion = existing.Version;
+                        if (_repository.TryUpdateRequest(existing, expectedVersion))
+                        {
+                            return Task.FromResult(existing.Id);
+                        }
+
+                        // Another request changed this row after it was read. Reload and merge the
+                        // incoming targets into the newer value instead of overwriting them.
+                        continue;
+                    }
+
+                    // Nothing changed; return existing pending ID so caller can inform user.
+                    // Every incoming target was already present in this snapshot.
                     return Task.FromResult(existing.Id);
                 }
 
-                // Nothing changed; return existing pending ID so caller can inform user
-                return Task.FromResult(existing.Id);
-            }
-
-            // Create new pending record
-            var pending = new PendingAuthorImport
-            {
-                ProviderId = providerId,
-                ProviderPrefix = ExtractPrefix(providerId),
-                AuthorName = config.AuthorName,
-                DiscoveredAuthorFolderPath = config.DiscoveredAuthorFolderPath,
-                CreatedAt = DateTime.UtcNow,
-                NextAttemptAt = DateTime.UtcNow, // Process immediately
-                // Zero is the persisted/API representation for an unbounded retry lifecycle.
-                // Declared terminal outcomes are stopped by ProcessPendingImportsCommandHandler;
-                // transient "not ready" states must not age into a synthetic terminal.
-                MaxAttempts = 0,
-                SourceApplication = sourceApplication,
-                RequestedBy = config.RequestedBy,
-                SearchForMissingBooks = config.SearchForMissingBooks ?? false
-            };
-
-            // Set audiobook configuration if requested
-            if (config.CreateAudiobook)
-            {
-                pending.AudiobookStatus = PendingImportStatus.Pending;
-                // Convert bool to int?: true=1 (All), false=0 (None)
-                pending.AudiobookMonitorExisting = config.AudiobookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                pending.AudiobookMonitorFuture = config.AudiobookMonitorFuture ?? config.MonitorFuture;
-                pending.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
-                pending.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
-                pending.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
-
-                if (config.AudiobookBooksToMonitor?.Any() == true)
+                // Create new pending record
+                var pending = new PendingAuthorImport
                 {
-                    pending.AudiobookBooksToMonitor = JsonConvert.SerializeObject(config.AudiobookBooksToMonitor);
+                    ProviderId = providerId,
+                    ProviderPrefix = ExtractPrefix(providerId),
+                    AuthorName = config.AuthorName,
+                    DiscoveredAuthorFolderPath = config.DiscoveredAuthorFolderPath,
+                    CreatedAt = DateTime.UtcNow,
+                    NextAttemptAt = DateTime.UtcNow,
+                    // Zero is the persisted/API representation for an unbounded retry lifecycle.
+                    // Declared terminal outcomes are stopped by ProcessPendingImportsCommandHandler;
+                    // transient "not ready" states must not age into a synthetic terminal.
+                    MaxAttempts = 0,
+                    SourceApplication = sourceApplication,
+                    RequestedBy = config.RequestedBy,
+                    SearchForMissingBooks = config.SearchForMissingBooks ?? false,
+                    Version = 1
+                };
+
+                // Set audiobook configuration if requested
+                if (config.CreateAudiobook)
+                {
+                    pending.AudiobookStatus = PendingImportStatus.Pending;
+                    // Convert bool to int?: true=1 (All), false=0 (None)
+                    pending.AudiobookMonitorExisting = config.AudiobookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
+                    pending.AudiobookMonitorFuture = config.AudiobookMonitorFuture ?? config.MonitorFuture;
+                    pending.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
+                    pending.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
+                    pending.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
+
+                    if (config.AudiobookBooksToMonitor?.Any() == true)
+                    {
+                        pending.AudiobookBooksToMonitor = JsonConvert.SerializeObject(config.AudiobookBooksToMonitor);
+                    }
+
+                    if (config.AudiobookBooksToSearch?.Any() == true)
+                    {
+                        pending.AudiobookBooksToSearch = JsonConvert.SerializeObject(config.AudiobookBooksToSearch);
+                    }
                 }
 
-                if (config.AudiobookBooksToSearch?.Any() == true)
+                // Set ebook configuration if requested
+                if (config.CreateEbook)
                 {
-                    pending.AudiobookBooksToSearch = JsonConvert.SerializeObject(config.AudiobookBooksToSearch);
+                    pending.EbookStatus = PendingImportStatus.Pending;
+                    // Convert bool to int?: true=1 (All), false=0 (None)
+                    pending.EbookMonitorExisting = config.EbookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
+                    pending.EbookMonitorFuture = config.EbookMonitorFuture ?? config.MonitorFuture;
+                    pending.EbookQualityProfileId = config.EbookQualityProfileId;
+                    pending.EbookMetadataProfileId = config.EbookMetadataProfileId;
+                    pending.EbookRootFolderPath = config.EbookRootFolderPath;
+
+                    if (config.EbookBooksToMonitor?.Any() == true)
+                    {
+                        pending.EbookBooksToMonitor = JsonConvert.SerializeObject(config.EbookBooksToMonitor);
+                    }
+
+                    if (config.EbookBooksToSearch?.Any() == true)
+                    {
+                        pending.EbookBooksToSearch = JsonConvert.SerializeObject(config.EbookBooksToSearch);
+                    }
+                }
+
+                // Set common fields
+                if (config.Tags?.Any() == true)
+                {
+                    pending.Tags = JsonConvert.SerializeObject(config.Tags);
+                }
+
+                pending.UpdateOverallStatus();
+
+                try
+                {
+                    _repository.Insert(pending);
+                    _logger.Info("Queued author {0} for pending import (ID: {1}), NextAttemptAt={2:o}", providerId, pending.Id, pending.NextAttemptAt);
+
+                    // Fire event for UI updates
+                    _eventAggregator.PublishEvent(new PendingAuthorImportQueuedEvent(pending));
+
+                    return Task.FromResult(pending.Id);
+                }
+                catch (SqliteException ex) when (IsActiveProviderUniqueViolation(ex))
+                {
+                    // A concurrent request inserted the active row. Reload it and merge.
+                }
+                catch (PostgresException ex) when (IsActiveProviderUniqueViolation(ex))
+                {
+                    // A concurrent request inserted the active row. Reload it and merge.
                 }
             }
+        }
 
-            // Set ebook configuration if requested
-            if (config.CreateEbook)
-            {
-                pending.EbookStatus = PendingImportStatus.Pending;
-                // Convert bool to int?: true=1 (All), false=0 (None)
-                pending.EbookMonitorExisting = config.EbookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                pending.EbookMonitorFuture = config.EbookMonitorFuture ?? config.MonitorFuture;
-                pending.EbookQualityProfileId = config.EbookQualityProfileId;
-                pending.EbookMetadataProfileId = config.EbookMetadataProfileId;
-                pending.EbookRootFolderPath = config.EbookRootFolderPath;
+        private static bool HasRequestedBooks(MonitoringConfig config)
+        {
+            return config?.AudiobookBooksToMonitor?.Any() == true ||
+                   config?.AudiobookBooksToSearch?.Any() == true ||
+                   config?.EbookBooksToMonitor?.Any() == true ||
+                   config?.EbookBooksToSearch?.Any() == true;
+        }
 
-                if (config.EbookBooksToMonitor?.Any() == true)
-                {
-                    pending.EbookBooksToMonitor = JsonConvert.SerializeObject(config.EbookBooksToMonitor);
-                }
+        private static bool IsActiveProviderUniqueViolation(SqliteException ex)
+        {
+            return ex?.SqliteErrorCode == 19 &&
+                   ex.Message?.Contains("PendingAuthorImport.ProviderId", StringComparison.OrdinalIgnoreCase) == true;
+        }
 
-                if (config.EbookBooksToSearch?.Any() == true)
-                {
-                    pending.EbookBooksToSearch = JsonConvert.SerializeObject(config.EbookBooksToSearch);
-                }
-            }
-
-            // Set common fields
-            if (config.Tags?.Any() == true)
-            {
-                pending.Tags = JsonConvert.SerializeObject(config.Tags);
-            }
-
-            pending.UpdateOverallStatus();
-
-            _repository.Insert(pending);
-            _logger.Info("Queued author {0} for pending import (ID: {1}), NextAttemptAt={2:o}", providerId, pending.Id, pending.NextAttemptAt);
-
-            // Fire event for UI updates
-            _eventAggregator.PublishEvent(new PendingAuthorImportQueuedEvent(pending));
-
-            return Task.FromResult(pending.Id);
+        private static bool IsActiveProviderUniqueViolation(PostgresException ex)
+        {
+            return string.Equals(ex?.SqlState, "23505", StringComparison.Ordinal) &&
+                   (string.Equals(ex.ConstraintName, "UX_PendingAuthorImport_Active", StringComparison.OrdinalIgnoreCase) ||
+                    ex.MessageText?.Contains("PendingAuthorImport", StringComparison.OrdinalIgnoreCase) == true);
         }
 
         private bool TryMergeProviderIds(
@@ -312,41 +367,91 @@ namespace NzbDrone.Core.Books.Services
 
         public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error)
         {
-            item.LastError = error;
-            item.LastAttemptAt = DateTime.UtcNow;
-
-            if (status == PendingImportStatus.Succeeded)
+            while (true)
             {
-                item.AudiobookStatus = item.HasAudiobook() ? PendingImportStatus.Succeeded : PendingImportStatus.NotRequested;
-                item.EbookStatus = item.HasEbook() ? PendingImportStatus.Succeeded : PendingImportStatus.NotRequested;
-            }
-            else if (status == PendingImportStatus.Failed)
-            {
-                item.AudiobookStatus = item.HasAudiobook() ? PendingImportStatus.Failed : PendingImportStatus.NotRequested;
-                item.EbookStatus = item.HasEbook() ? PendingImportStatus.Failed : PendingImportStatus.NotRequested;
-            }
+                var current = _repository.GetActiveByProviderId(item.ProviderId) ?? item;
+                current.LastError = error;
+                current.LastAttemptAt = DateTime.UtcNow;
 
-            item.UpdateOverallStatus();
-            item.UpdatedAt = DateTime.UtcNow;
-            _repository.Update(item);
+                if (status == PendingImportStatus.Succeeded)
+                {
+                    current.AudiobookStatus = current.HasAudiobook() ? PendingImportStatus.Succeeded : PendingImportStatus.NotRequested;
+                    current.EbookStatus = current.HasEbook() ? PendingImportStatus.Succeeded : PendingImportStatus.NotRequested;
+                }
+                else if (status == PendingImportStatus.Failed)
+                {
+                    current.AudiobookStatus = current.HasAudiobook() ? PendingImportStatus.Failed : PendingImportStatus.NotRequested;
+                    current.EbookStatus = current.HasEbook() ? PendingImportStatus.Failed : PendingImportStatus.NotRequested;
+                }
 
-            _logger.Info("Updated pending import {0} status to {1}", item.Id, status);
+                current.UpdateOverallStatus();
+                current.UpdatedAt = DateTime.UtcNow;
+                var expectedVersion = current.Version;
+                if (!_repository.TryUpdateRequest(current, expectedVersion))
+                {
+                    if (_repository.GetActiveByProviderId(item.ProviderId) == null)
+                    {
+                        _logger.Debug("Pending import {0} became inactive while its status was being updated", item.Id);
+                        return;
+                    }
+
+                    continue;
+                }
+
+                CopyMutableState(current, item);
+                _logger.Info("Updated pending import {0} status to {1}", current.Id, status);
+                return;
+            }
         }
 
         public void ScheduleRetry(PendingAuthorImport item, string error)
         {
-            item.AttemptCount++;
-            item.MaxAttempts = 0;
-            item.LastAttemptAt = DateTime.UtcNow;
-            item.LastError = error;
-            item.NextAttemptAt = CalculateNextAttempt(item.AttemptCount);
+            while (true)
+            {
+                var current = _repository.GetActiveByProviderId(item.ProviderId) ?? item;
+                current.AttemptCount++;
+                current.MaxAttempts = 0;
+                current.LastAttemptAt = DateTime.UtcNow;
+                current.LastError = error;
+                current.NextAttemptAt = CalculateNextAttempt(current.AttemptCount);
+                current.OverallStatus = PendingImportStatus.Retrying;
+                current.UpdatedAt = DateTime.UtcNow;
 
-            item.OverallStatus = PendingImportStatus.Retrying;
+                var expectedVersion = current.Version;
+                if (!_repository.TryUpdateRequest(current, expectedVersion))
+                {
+                    if (_repository.GetActiveByProviderId(item.ProviderId) == null)
+                    {
+                        _logger.Debug("Pending import {0} became inactive while a retry was being scheduled", item.Id);
+                        return;
+                    }
 
-            item.UpdatedAt = DateTime.UtcNow;
-            _repository.Update(item);
+                    continue;
+                }
 
-            _logger.Debug("Scheduled retry for pending import {0} at {1}", item.Id, item.NextAttemptAt);
+                CopyMutableState(current, item);
+                _logger.Debug("Scheduled retry for pending import {0} at {1}", current.Id, current.NextAttemptAt);
+                return;
+            }
+        }
+
+        private static void CopyMutableState(PendingAuthorImport source, PendingAuthorImport target)
+        {
+            if (ReferenceEquals(source, target))
+            {
+                return;
+            }
+
+            target.AudiobookStatus = source.AudiobookStatus;
+            target.EbookStatus = source.EbookStatus;
+            target.OverallStatus = source.OverallStatus;
+            target.AttemptCount = source.AttemptCount;
+            target.MaxAttempts = source.MaxAttempts;
+            target.LastAttemptAt = source.LastAttemptAt;
+            target.LastError = source.LastError;
+            target.NextAttemptAt = source.NextAttemptAt;
+            target.UpdatedAt = source.UpdatedAt;
+            target.Version = source.Version;
         }
 
         public List<PendingAuthorImport> GetAll()
@@ -409,6 +514,17 @@ namespace NzbDrone.Core.Books.Services
         {
             _repository.Delete(id);
             _logger.Info("Deleted pending author import {0}", id);
+        }
+
+        public bool TryDeleteIfUnchanged(PendingAuthorImport item)
+        {
+            if (!_repository.TryDelete(item.Id, item.Version))
+            {
+                return false;
+            }
+
+            _logger.Info("Deleted completed pending author import {0}", item.Id);
+            return true;
         }
 
         private string NormalizeProviderId(string providerId)
