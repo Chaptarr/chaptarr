@@ -916,34 +916,69 @@ namespace Chaptarr.Api.V1.Author
         // it one, at which point an explicit "monitored" on the same request needs to apply there too,
         // whether or not the top-level flag also happened to change.
         //
-        // Per media type, independently: a media type whose own tri-state fields the client's request
-        // genuinely changes is left alone entirely (that explicit edit wins, same as it always has),
-        // and a media type with no root folder - on the author as it's stored OR as this same request
-        // is assigning one - is skipped since there's nothing to monitor there. This mirrors, and runs
-        // alongside, the equivalent single-media-type cascade ToModel already does for a Readarr-facade
-        // request - kept as a separate pass here (rather than folded into ToModel) because it needs the
-        // author's stored state, not just what's on the incoming resource.
+        // Per FIELD (not per media type - see the comment further down for why that distinction
+        // matters), a field the client's request genuinely changes is left alone entirely (that
+        // explicit edit wins, same as it always has), and a media type with no root folder - on the
+        // author as it's stored OR as this same request is assigning one - is skipped entirely since
+        // there's nothing to monitor there. This mirrors, and runs alongside, the equivalent single-
+        // media-type cascade ToModel already does for a Readarr-facade request - kept as a separate
+        // pass here (rather than folded into ToModel) because it needs the author's stored state, not
+        // just what's on the incoming resource.
         // Internal (rather than private) so the test fixture can call it directly instead of via
         // reflection - a reflection-based call would only fail at test runtime, not compile time, if
-        // this signature's parameter order or count ever changed.
+        // this signature's parameter order or count ever changed. Thin AuthorResource-shaped wrapper
+        // around the primitive-parameter overload below, which AuthorEditorController's bulk PUT also
+        // calls directly (AuthorEditorResource has the same four tri-state fields plus Monitored, but
+        // isn't an AuthorResource) - the underlying "is this a genuine change, per media type" logic is
+        // identical for both endpoints, only the source of the requested values differs.
         internal static void CascadeExplicitMonitoredIntoMediaTypeSettings(
             AuthorResource authorResource,
             NzbDrone.Core.Books.Author model,
             ReadarrFacadeContext facadeContext,
             StoredAuthorMonitoringState stored)
         {
-            if (facadeContext != null || !authorResource.Monitored.HasValue)
+            if (facadeContext != null)
             {
                 return;
             }
 
-            var monitored = authorResource.Monitored.Value;
+            CascadeExplicitMonitoredIntoMediaTypeSettings(
+                authorResource.Monitored,
+                authorResource.AudiobookMonitorExisting,
+                authorResource.AudiobookMonitorFuture,
+                authorResource.EbookMonitorExisting,
+                authorResource.EbookMonitorFuture,
+                model,
+                stored);
+        }
+
+        internal static void CascadeExplicitMonitoredIntoMediaTypeSettings(
+            bool? requestedMonitored,
+            int? requestedAudiobookMonitorExisting,
+            bool? requestedAudiobookMonitorFuture,
+            int? requestedEbookMonitorExisting,
+            bool? requestedEbookMonitorFuture,
+            NzbDrone.Core.Books.Author model,
+            StoredAuthorMonitoringState stored)
+        {
+            if (!requestedMonitored.HasValue)
+            {
+                return;
+            }
+
+            var monitored = requestedMonitored.Value;
             var isGenuineChange = monitored != stored.WasMonitoredFromMediaSettings;
 
+            // Per FIELD, not per media type: a client that explicitly sends one of a media type's two
+            // tri-state fields but not the other (e.g. Chaptarr's own bulk author editor, which always
+            // sends MonitorExisting when changing monitoring but never sends MonitorFuture) still needs
+            // the untouched field to pick up the top-level flag - otherwise that field is left wherever
+            // it was, `IsMonitoredFromMediaSettings()` still reads it, and the requested change can
+            // silently fail to take effect even though the field the client DID send applied correctly.
+            // An earlier version of this gated on either field being present, which protected the whole
+            // media type from any cascading the moment ONE field was touched - safe for the single-
+            // author PUT's echo scenarios, but a no-op for exactly the real bulk-editor payload shape.
             var audiobookHasNewRootFolder = stored.AudiobookRootFolderPath.IsNullOrWhiteSpace() && !model.AudiobookRootFolderPath.IsNullOrWhiteSpace();
-            var audiobookTouched =
-                (authorResource.AudiobookMonitorExisting.HasValue && authorResource.AudiobookMonitorExisting != stored.AudiobookMonitorExisting) ||
-                (authorResource.AudiobookMonitorFuture.HasValue && authorResource.AudiobookMonitorFuture != stored.AudiobookMonitorFuture);
             var audiobookConfigured = !stored.AudiobookRootFolderPath.IsNullOrWhiteSpace() || audiobookHasNewRootFolder;
 
             // isGenuineChange alone would miss a media type gaining a root folder in THIS same
@@ -955,32 +990,63 @@ namespace Chaptarr.Api.V1.Author
             // gives it a root folder, it's a real candidate, and the explicit "monitored" on this same
             // request should apply there too - whether or not the top-level flag also happened to
             // change relative to the author's overall prior state.
-            if (!audiobookTouched && audiobookConfigured && (isGenuineChange || audiobookHasNewRootFolder))
+            if (audiobookConfigured && (isGenuineChange || audiobookHasNewRootFolder))
             {
-                model.AudiobookMonitorFuture = monitored;
-                if (!monitored)
+                var audiobookFutureChanged = requestedAudiobookMonitorFuture.HasValue && requestedAudiobookMonitorFuture != stored.AudiobookMonitorFuture;
+                var audiobookExistingChanged = requestedAudiobookMonitorExisting.HasValue && requestedAudiobookMonitorExisting != stored.AudiobookMonitorExisting;
+                var overrodeSomething = false;
+
+                // Turning off needs both fields cleared - MonitorExisting > 0 alone would still keep
+                // the author monitored, so if the client isn't already clearing Future itself, this has
+                // to. Turning on doesn't have that asymmetry: MonitorExisting > 0 alone already
+                // satisfies "monitored", so only force Future when Existing (as this request leaves it)
+                // won't - otherwise this would silently flip on "monitor new releases" for a media type
+                // whose future-monitoring preference nobody asked to change.
+                var audiobookNeedsFuture = !monitored || (model.AudiobookMonitorExisting ?? 0) <= 0;
+                if (!audiobookFutureChanged && audiobookNeedsFuture)
                 {
-                    model.AudiobookMonitorExisting = 0;
+                    model.AudiobookMonitorFuture = monitored;
+                    overrodeSomething = true;
                 }
 
-                model.AudiobookSettingsManuallyOverridden = true;
+                if (!monitored && !audiobookExistingChanged)
+                {
+                    model.AudiobookMonitorExisting = 0;
+                    overrodeSomething = true;
+                }
+
+                if (overrodeSomething)
+                {
+                    model.AudiobookSettingsManuallyOverridden = true;
+                }
             }
 
             var ebookHasNewRootFolder = stored.EbookRootFolderPath.IsNullOrWhiteSpace() && !model.EbookRootFolderPath.IsNullOrWhiteSpace();
-            var ebookTouched =
-                (authorResource.EbookMonitorExisting.HasValue && authorResource.EbookMonitorExisting != stored.EbookMonitorExisting) ||
-                (authorResource.EbookMonitorFuture.HasValue && authorResource.EbookMonitorFuture != stored.EbookMonitorFuture);
             var ebookConfigured = !stored.EbookRootFolderPath.IsNullOrWhiteSpace() || ebookHasNewRootFolder;
 
-            if (!ebookTouched && ebookConfigured && (isGenuineChange || ebookHasNewRootFolder))
+            if (ebookConfigured && (isGenuineChange || ebookHasNewRootFolder))
             {
-                model.EbookMonitorFuture = monitored;
-                if (!monitored)
+                var ebookFutureChanged = requestedEbookMonitorFuture.HasValue && requestedEbookMonitorFuture != stored.EbookMonitorFuture;
+                var ebookExistingChanged = requestedEbookMonitorExisting.HasValue && requestedEbookMonitorExisting != stored.EbookMonitorExisting;
+                var overrodeSomething = false;
+
+                var ebookNeedsFuture = !monitored || (model.EbookMonitorExisting ?? 0) <= 0;
+                if (!ebookFutureChanged && ebookNeedsFuture)
                 {
-                    model.EbookMonitorExisting = 0;
+                    model.EbookMonitorFuture = monitored;
+                    overrodeSomething = true;
                 }
 
-                model.EbookSettingsManuallyOverridden = true;
+                if (!monitored && !ebookExistingChanged)
+                {
+                    model.EbookMonitorExisting = 0;
+                    overrodeSomething = true;
+                }
+
+                if (overrodeSomething)
+                {
+                    model.EbookSettingsManuallyOverridden = true;
+                }
             }
         }
 

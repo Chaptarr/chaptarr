@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -42,6 +43,7 @@ namespace Chaptarr.Api.V1.Author
             var authorsToUpdate = _authorService.GetAuthors(resource.AuthorIds);
             var previousSyncByAuthorId = authorsToUpdate.ToDictionary(author => author.Id, author => author.SyncMonitoredAcrossFormats == true);
             var previousRootFoldersByAuthorId = authorsToUpdate.ToDictionary(author => author.Id, author => (author.AudiobookRootFolderPath, author.EbookRootFolderPath));
+            var previousMonitoringByAuthorId = authorsToUpdate.ToDictionary(author => author.Id, AuthorController.StoredAuthorMonitoringState.Capture);
             var audiobookMoves = new List<BulkMoveAuthor>();
             var ebookMoves = new List<BulkMoveAuthor>();
             var rootFolders = _rootFolderService.All();
@@ -154,6 +156,29 @@ namespace Chaptarr.Api.V1.Author
                             MediaType = "ebook"
                         });
                     }
+                }
+
+                // AuthorService.UpdateAuthors recomputes the legacy Monitored flag from the tri-state
+                // fields on every save, so setting it via the "resource.Monitored.HasValue" write near
+                // the top of this loop doesn't stick on its own unless the tri-state fields end up
+                // agreeing with it - the same underlying problem the single-author PUT path has (see
+                // AuthorController.UpdateAuthor). This bulk endpoint already gates every field write on
+                // the resource actually providing it, so - unlike the single-author PUT path - there's
+                // no risk of a root folder being silently cleared by omission here; the per-author
+                // "before this request" snapshot captured above is all this needs. Skipped under a
+                // Readarr-facade request for the same reason AuthorController.UpdateAuthor skips it:
+                // this endpoint isn't facade-media-type-scoped the way that PUT is, so nothing here
+                // guarantees the request is only about one media type.
+                if (HttpContext.GetReadarrFacadeContext() == null)
+                {
+                    AuthorController.CascadeExplicitMonitoredIntoMediaTypeSettings(
+                        resource.Monitored,
+                        resource.AudiobookMonitorExisting,
+                        resource.AudiobookMonitorFuture,
+                        resource.EbookMonitorExisting,
+                        resource.EbookMonitorFuture,
+                        author,
+                        previousMonitoringByAuthorId[author.Id]);
                 }
 
                 if (resource.SyncMonitoredAcrossFormats.HasValue)

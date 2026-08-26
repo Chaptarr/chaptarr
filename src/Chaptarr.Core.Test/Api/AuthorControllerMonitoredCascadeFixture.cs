@@ -70,6 +70,27 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
+        public void should_not_force_future_monitoring_on_when_existing_alone_already_satisfies_monitored_true()
+        {
+            // MonitorExisting > 0 alone already makes IsMonitoredForMediaType true, so forcing
+            // MonitorFuture too on a monitored:true request isn't needed to satisfy it - and doing so
+            // anyway would silently flip on "monitor new releases" for a field the client never
+            // mentioned. Turning OFF genuinely needs both fields cleared (Existing > 0 alone would keep
+            // the author monitored even with Future false); turning ON does not have that asymmetry.
+            var model = new Author { AudiobookMonitorExisting = 1, AudiobookMonitorFuture = false }; // Existing just set by the client's genuine edit
+            var resource = new AuthorResource { Monitored = true, AudiobookMonitorExisting = 1 };
+
+            Cascade(resource, model, @"C:\audiobooks", null, wasMonitoredFromMediaSettings: false,
+                storedAudiobookMonitorExisting: 0, storedAudiobookMonitorFuture: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(model.AudiobookMonitorExisting, Is.EqualTo(1), "client's genuine edit");
+                Assert.That(model.AudiobookMonitorFuture, Is.False, "not forced on - Existing alone already satisfies monitored:true");
+            });
+        }
+
+        [Test]
         public void should_unmonitor_when_client_echoes_unchanged_tri_state_fields_from_a_prior_get()
         {
             // The gap an earlier version of this fix had: a client that does GET -> flip `monitored`
@@ -178,11 +199,15 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public void should_not_cascade_a_media_type_the_client_genuinely_changed()
+        public void should_not_override_a_tri_state_field_the_client_genuinely_changed()
         {
-            // model reflects the state AFTER ApplyChanges has already applied the client's edit
-            // (AudiobookMonitorFuture: false -> true); `stored` reflects what was there BEFORE this
-            // request. The two differing is what makes this a genuine edit, not an echo.
+            // The protection is per FIELD, not per media type: the client explicitly changed
+            // AudiobookMonitorFuture (false -> true, a genuine edit) but said nothing about
+            // AudiobookMonitorExisting, so Future must be left as the client set it while Existing -
+            // untouched by the request - still picks up the top-level monitored:false. This is exactly
+            // the shape Chaptarr's own bulk author editor sends (MonitorExisting alone, never
+            // MonitorFuture) - protecting the whole media type the moment either field is present, as
+            // an earlier version of this did, made the cascade a no-op for that payload.
             var model = new Author
             {
                 AudiobookMonitorExisting = 1,
@@ -198,9 +223,9 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.Multiple(() =>
             {
-                Assert.That(model.AudiobookMonitorFuture, Is.True, "client's genuine edit should win, not be overridden by the legacy flag");
-                Assert.That(model.AudiobookMonitorExisting, Is.EqualTo(1));
-                Assert.That(model.EbookMonitorFuture, Is.False, "ebook wasn't touched by the client, so the legacy flag should still cascade into it");
+                Assert.That(model.AudiobookMonitorFuture, Is.True, "client's genuine edit to this field should win, not be overridden by the legacy flag");
+                Assert.That(model.AudiobookMonitorExisting, Is.EqualTo(0), "untouched by the request, so the legacy flag cascades into it despite Future being protected");
+                Assert.That(model.EbookMonitorFuture, Is.False, "ebook wasn't touched at all by the client, so the legacy flag should still cascade into it");
                 Assert.That(model.EbookMonitorExisting, Is.EqualTo(0));
             });
         }
