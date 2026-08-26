@@ -473,33 +473,55 @@ namespace NzbDrone.Core.Books.Services
 
         public void Cancel(int id)
         {
-            var item = _repository.Get(id);
-            if (item != null && item.IsActive())
+            while (true)
             {
+                var item = _repository.Find(id);
+                if (item == null || !item.IsActive())
+                {
+                    return;
+                }
+
                 item.AudiobookStatus = item.HasAudiobook() ? PendingImportStatus.Failed : PendingImportStatus.NotRequested;
                 item.EbookStatus = item.HasEbook() ? PendingImportStatus.Failed : PendingImportStatus.NotRequested;
                 item.OverallStatus = PendingImportStatus.Failed;
                 item.LastError = "Cancelled by user";
                 item.UpdatedAt = DateTime.UtcNow;
-                _repository.Update(item);
+
+                var expectedVersion = item.Version;
+                if (!_repository.TryUpdateRequest(item, expectedVersion))
+                {
+                    continue;
+                }
 
                 _logger.Info("Cancelled pending import {0}", id);
                 _eventAggregator.PublishEvent(new PendingAuthorImportCancelledEvent(item));
+                return;
             }
         }
 
         public void RetryNow(int id)
         {
-            var item = _repository.Get(id);
-            if (item != null)
+            while (true)
             {
+                var item = _repository.Find(id);
+                if (item == null)
+                {
+                    return;
+                }
+
                 item.NextAttemptAt = DateTime.UtcNow;
                 item.OverallStatus = PendingImportStatus.Retrying;
                 item.MaxAttempts = 0;
                 item.UpdatedAt = DateTime.UtcNow;
-                _repository.Update(item);
+
+                var expectedVersion = item.Version;
+                if (!_repository.TryUpdateRequest(item, expectedVersion))
+                {
+                    continue;
+                }
 
                 _logger.Info("Scheduled immediate retry for pending import {0}", id);
+                return;
             }
         }
 
