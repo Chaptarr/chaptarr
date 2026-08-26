@@ -77,9 +77,9 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         public List<V5MatchedAuthor> SearchV5Matching(string query, IDictionary<string, List<string>> tags, string mediaType, string filePath)
         {
             _logger.Debug("[V5-MATCHING] ENTER query='{0}', tags={1}, media={2}, file={3}",
-                query, tags?.Count ?? 0, mediaType, Path.GetFileName(filePath ?? "unknown"));
+                SanitizeV5Text(query), tags?.Count ?? 0, mediaType, SanitizeV5Text(Path.GetFileName(filePath ?? "unknown")));
 
-            var effectiveQuery = BuildEffectiveQuery(query, tags);
+            var effectiveQuery = SanitizeV5Text(BuildEffectiveQuery(query, tags));
             if (string.IsNullOrWhiteSpace(effectiveQuery))
             {
                 _logger.Debug("[V5-MATCHING] Skipping call: empty query for file '{0}'", Path.GetFileName(filePath ?? "unknown"));
@@ -209,7 +209,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     _logger.Error("[V5-MATCHING] Request failed with status {0} from {1}", (int)httpResponse.StatusCode, safeMetadataServerAuthority ?? "UNCONFIGURED");
                     if (_logger.IsTraceEnabled)
                     {
-                        _logger.Trace("[V5-MATCHING] Error body (truncated): {0}", SanitizeV5TagValue(httpResponse.Content, 512) ?? "<empty>");
+                        _logger.Trace("[V5-MATCHING] Error body (truncated): {0}", SanitizeV5Text(httpResponse.Content, 512) ?? "<empty>");
                     }
                     // Log V5 request failure
                     _matchingLogger.LogV5Request(effectiveQuery, logTags, mediaType, $"HTTP_STATUS_{(int)httpResponse.StatusCode}", filePath: filePath);
@@ -228,7 +228,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     _logger.Error(parseEx, "[V5-MATCHING] Failed to parse response JSON from {0} (bytes={1}, first={2})",
                         safeMetadataServerAuthority ?? "UNCONFIGURED",
                         httpResponse.ResponseData?.Length ?? 0,
-                        SanitizeV5TagValue(httpResponse.Content, 256) ?? "<empty>");
+                        SanitizeV5Text(httpResponse.Content, 256) ?? "<empty>");
                     return new List<V5MatchedAuthor>();
                 }
 
@@ -310,15 +310,16 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                          .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                          .ThenBy(pair => pair.Key, StringComparer.Ordinal))
             {
-                if (string.IsNullOrWhiteSpace(kv.Key) ||
-                    TagExclusionPolicy.IsExcludedFromMatching(kv.Key))
+                var key = SanitizeV5TagKey(kv.Key);
+                if (string.IsNullOrWhiteSpace(key) ||
+                    TagExclusionPolicy.IsExcludedFromMatching(key))
                 {
                     continue;
                 }
 
                 foreach (var rawValue in kv.Value ?? new List<string>())
                 {
-                    var value = SanitizeV5TagValue(rawValue, V5MaxTagValueChars);
+                    var value = SanitizeV5Text(rawValue, V5MaxTagValueChars);
                     if (string.IsNullOrWhiteSpace(value) ||
                         string.Equals(value, "[Binary Data]", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(value, "[Unknown Frame]", StringComparison.OrdinalIgnoreCase))
@@ -334,10 +335,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                         continue;
                     }
 
-                    if (!result.TryGetValue(kv.Key, out var outputValues))
+                    if (!result.TryGetValue(key, out var outputValues))
                     {
                         outputValues = new List<string>();
-                        result[kv.Key] = outputValues;
+                        result[key] = outputValues;
                     }
 
                     outputValues.Add(value);
@@ -349,7 +350,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             if (!string.IsNullOrWhiteSpace(filePath))
             {
                 var fileName = Path.GetFileName(filePath);
-                var value = SanitizeV5TagValue(fileName, 200);
+                var value = SanitizeV5Text(fileName, 200);
                 if (!string.IsNullOrWhiteSpace(value))
                 {
                     var bytes = Encoding.UTF8.GetByteCount(value);
@@ -373,17 +374,18 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             return CanonicalMatchInputBuilder.BuildEmbeddedQuery(tags);
         }
 
-        private static string SanitizeV5TagValue(string value, int maxChars)
+        private static string SanitizeV5Text(string value, int? maxChars = null)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
                 return null;
             }
 
-            maxChars = Math.Max(1, maxChars);
+            var outputLimit = Math.Max(1, maxChars ?? value.Length);
 
-            // Collapse all whitespace/control characters into spaces to avoid control chars in logs/JSON.
-            var sb = new StringBuilder(Math.Min(value.Length, maxChars));
+            // PostgreSQL text cannot store U+0000 after JSON decoding. Preserve word boundaries
+            // by retaining the existing whitespace/control normalization for request and log text.
+            var sb = new StringBuilder(Math.Min(value.Length, outputLimit));
             var lastWasSpace = false;
             foreach (var ch in value)
             {
@@ -401,13 +403,24 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     lastWasSpace = false;
                 }
 
-                if (sb.Length >= maxChars)
+                if (sb.Length >= outputLimit)
                 {
                     break;
                 }
             }
 
             var sanitized = sb.ToString().Trim();
+            return sanitized.Length == 0 ? null : sanitized;
+        }
+
+        private static string SanitizeV5TagKey(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var sanitized = new string(value.Where(ch => !char.IsControl(ch)).ToArray()).Trim();
             return sanitized.Length == 0 ? null : sanitized;
         }
 
