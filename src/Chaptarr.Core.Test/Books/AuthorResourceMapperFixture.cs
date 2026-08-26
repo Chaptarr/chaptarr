@@ -284,6 +284,49 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void should_default_facade_media_side_tri_state_to_false_when_monitored_is_omitted()
+        {
+            // AuthorResource.Monitored is bool? (changed from a non-nullable bool so a native PUT can
+            // tell "omitted" from "explicitly false" - see AuthorController.UpdateAuthor). This facade
+            // write path predates that distinction and never needs it - Monitored being unset here
+            // should still backfill the media-side tri-state fields to false, exactly as it did back
+            // when the field's own default (rather than an explicit null) meant "not sent".
+            var resource = new AuthorResource
+            {
+                ForeignAuthorId = "173491",
+                RootFolderPath = "/ebooks",
+                Monitored = null
+            };
+
+            var model = resource.ToModel(new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(model.EbookMonitorExisting, Is.EqualTo(0));
+                Assert.That(model.EbookMonitorFuture, Is.False);
+            });
+        }
+
+        [Test]
+        public void should_default_facade_media_side_tri_state_to_false_when_monitored_is_explicitly_false()
+        {
+            var resource = new AuthorResource
+            {
+                ForeignAuthorId = "173491",
+                RootFolderPath = "/audiobooks",
+                Monitored = false
+            };
+
+            var model = resource.ToModel(new ReadarrFacadeContext("hc", "audiobook", "/readarr/hc/audiobook"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(model.AudiobookMonitorExisting, Is.EqualTo(0));
+                Assert.That(model.AudiobookMonitorFuture, Is.False);
+            });
+        }
+
+        [Test]
         public void should_preserve_sibling_and_omitted_fields_on_facade_author_update()
         {
             var existing = new NzbDrone.Core.Books.Author

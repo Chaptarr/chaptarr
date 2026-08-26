@@ -50,7 +50,9 @@ namespace Chaptarr.Api.V1.Author
         public int? EbookMetadataProfileId { get; set; }
 
         //Editing Only
-        public bool Monitored { get; set; }
+        // NULL = client didn't send this field (leave the effective monitored status as whatever the
+        // tri-state fields below already say); non-null = client explicitly wants this legacy flag set.
+        public bool? Monitored { get; set; }
         // TRI-STATE MONITORING SYSTEM - Integer per media type
         // Values: 0 = None (monitor nothing), 1 = All (monitor everything), 2 = Selected (monitor specific books only)
         // NULL = not configured for this media type yet (treated as unmonitored until root-folder discovery or user config)
@@ -425,15 +427,18 @@ namespace Chaptarr.Api.V1.Author
             var ebookMonitorExisting = resource.EbookMonitorExisting;
             var ebookMonitorFuture = resource.EbookMonitorFuture;
 
+            // Preserves this block's pre-existing (resource.Monitored used to be a non-nullable bool,
+            // defaulting to false when omitted) behavior for the facade write path unchanged - an
+            // omitted Monitored still backfills as false here, exactly as it always did.
             if (facadeContext?.MediaType == "audiobook")
             {
-                audiobookMonitorExisting ??= resource.Monitored ? 1 : 0;
-                audiobookMonitorFuture ??= resource.Monitored;
+                audiobookMonitorExisting ??= resource.Monitored == true ? 1 : 0;
+                audiobookMonitorFuture ??= resource.Monitored ?? false;
             }
             else if (facadeContext?.MediaType == "ebook")
             {
-                ebookMonitorExisting ??= resource.Monitored ? 1 : 0;
-                ebookMonitorFuture ??= resource.Monitored;
+                ebookMonitorExisting ??= resource.Monitored == true ? 1 : 0;
+                ebookMonitorFuture ??= resource.Monitored ?? false;
             }
 
             var hasTagInput = resource.Tags != null || resource.AudiobookTags != null || resource.EbookTags != null;
@@ -469,7 +474,11 @@ namespace Chaptarr.Api.V1.Author
                 AudiobookMetadataProfileId = resource.AudiobookMetadataProfileId,
                 EbookMetadataProfileId = resource.EbookMetadataProfileId,
 
-                Monitored = resource.Monitored,
+                // Author.Monitored is non-nullable; an omitted resource.Monitored maps to false here,
+                // matching this field's pre-existing (bool, not bool?) deserialization default. Callers
+                // that need to distinguish "omitted" from "explicitly false" (see AuthorController.
+                // UpdateAuthor's cascade) read resource.Monitored directly before calling ToModel.
+                Monitored = resource.Monitored ?? false,
                 // TRI-STATE MONITORING SYSTEM
                 AudiobookMonitorExisting = audiobookMonitorExisting,
                 AudiobookMonitorFuture = audiobookMonitorFuture,

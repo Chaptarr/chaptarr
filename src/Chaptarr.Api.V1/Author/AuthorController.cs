@@ -358,16 +358,16 @@ namespace Chaptarr.Api.V1.Author
                 authorResource.AudiobookQualityProfileId ??= authorResource.QualityProfileId;
                 authorResource.AudiobookRootFolderPath ??= authorResource.RootFolderPath;
                 authorResource.AudiobookTags ??= authorResource.Tags;
-                authorResource.AudiobookMonitorExisting ??= authorResource.Monitored ? 1 : 0;
-                authorResource.AudiobookMonitorFuture ??= authorResource.Monitored;
+                authorResource.AudiobookMonitorExisting ??= authorResource.Monitored == true ? 1 : 0;
+                authorResource.AudiobookMonitorFuture ??= authorResource.Monitored ?? false;
             }
             else if (facadeContext.MediaType == "ebook")
             {
                 authorResource.EbookQualityProfileId ??= authorResource.QualityProfileId;
                 authorResource.EbookRootFolderPath ??= authorResource.RootFolderPath;
                 authorResource.EbookTags ??= authorResource.Tags;
-                authorResource.EbookMonitorExisting ??= authorResource.Monitored ? 1 : 0;
-                authorResource.EbookMonitorFuture ??= authorResource.Monitored;
+                authorResource.EbookMonitorExisting ??= authorResource.Monitored == true ? 1 : 0;
+                authorResource.EbookMonitorFuture ??= authorResource.Monitored ?? false;
             }
         }
 
@@ -414,7 +414,7 @@ namespace Chaptarr.Api.V1.Author
 
             var config = new MonitoringConfig
             {
-                MonitorNewItems = authorResource.Monitored,
+                MonitorNewItems = authorResource.Monitored ?? false,
                 IsManualAddition = true,
                 CreateAudiobook = !string.IsNullOrWhiteSpace(authorResource.AudiobookRootFolderPath),
                 CreateEbook = !string.IsNullOrWhiteSpace(authorResource.EbookRootFolderPath),
@@ -822,6 +822,14 @@ namespace Chaptarr.Api.V1.Author
 	            var author = _authorService.GetAuthor(authorResource.Id);
                 var wasSyncEnabled = author.SyncMonitoredAcrossFormats == true;
 
+                // ToModel/ApplyChanges mutate `author` in place (the returned `model` below is the same
+                // object), so everything the cascade below needs to know about the author's state
+                // BEFORE this request - root folders, tri-state fields, derived monitored status - has
+                // to be captured before that call, not read off `model` afterwards. Bundled into one
+                // struct, captured in one line, specifically so there's nothing here for a later edit
+                // to accidentally reorder relative to the ToModel call below.
+                var storedMonitoringState = StoredAuthorMonitoringState.Capture(author);
+
 	            if (moveFiles)
 	            {
 	                var sourcePath = author.Path;
@@ -837,6 +845,7 @@ namespace Chaptarr.Api.V1.Author
 	            }
 
 	            var model = authorResource.ToModel(author, facadeContext);
+	            CascadeExplicitMonitoredIntoMediaTypeSettings(authorResource, model, facadeContext, storedMonitoringState);
 	            var updatedAuthor = _authorService.UpdateAuthor(model);
 
                 var shouldReconcile = updatedAuthor.SyncMonitoredAcrossFormats == true &&
@@ -853,6 +862,127 @@ namespace Chaptarr.Api.V1.Author
 
 	            return Accepted(updatedAuthor.Id);
 	        }
+
+        // Everything about the author's state BEFORE this request that the cascade below needs to
+        // reason about - captured before ToModel/ApplyChanges mutate the author in place. Bundled into
+        // one type, captured in one line at the top of UpdateAuthor, so there's no set of loose local
+        // variables for a later edit to accidentally reorder relative to the ToModel call.
+        internal readonly record struct StoredAuthorMonitoringState(
+            string AudiobookRootFolderPath,
+            string EbookRootFolderPath,
+            int? AudiobookMonitorExisting,
+            bool? AudiobookMonitorFuture,
+            int? EbookMonitorExisting,
+            bool? EbookMonitorFuture,
+            bool WasMonitoredFromMediaSettings)
+        {
+            public static StoredAuthorMonitoringState Capture(NzbDrone.Core.Books.Author author)
+            {
+                return new StoredAuthorMonitoringState(
+                    author.AudiobookRootFolderPath,
+                    author.EbookRootFolderPath,
+                    author.AudiobookMonitorExisting,
+                    author.AudiobookMonitorFuture,
+                    author.EbookMonitorExisting,
+                    author.EbookMonitorFuture,
+                    author.IsMonitoredFromMediaSettings());
+            }
+        }
+
+        // AuthorService.UpdateAuthor recomputes the legacy Monitored flag from the per-media-type
+        // tri-state settings on every save (author.Monitored = author.IsMonitoredFromMediaSettings()),
+        // and separately fills any still-null tri-state field from the root folder's defaults before
+        // that recompute runs. So a request that only sets the top-level "monitored" field - without
+        // touching any of the four tri-state fields for a media type - has it silently discarded:
+        // whatever those fields already were (or get defaulted to) wins, and the recompute overwrites
+        // the requested value right back.
+        //
+        // The tricky part: almost every real client, including Chaptarr's own UI toggle and any script
+        // that does GET -> flip one field -> PUT the whole object back, sends a full object on every
+        // PUT - so both `monitored` AND the four tri-state fields ride along unchanged from the last
+        // GET on saves that have nothing to do with monitoring. A client that only means to flip
+        // `monitored` is indistinguishable, at the JSON level, from one that's echoing it - and the
+        // same is true of each tri-state field individually. Treating a tri-state field's mere presence
+        // in the request as "the client edited this" (an earlier version of this fix did exactly that)
+        // breaks the GET-modify-PUT case specifically: the four tri-state fields ride along unchanged,
+        // read as "touched", and the cascade skips every media type - the original bug, undisturbed.
+        // The only reliable signal, for `monitored` and for each tri-state field alike, is whether the
+        // request's value actually differs from what was already stored - a same-value echo is then
+        // always a no-op, by construction, whichever fields happen to be present.
+        //
+        // The one case that signal alone would miss: a media type gaining a root folder in this exact
+        // request. AuthorService's root-folder-defaults fill only resolves a media type that has a
+        // root folder, so a media type with none yet isn't at risk from it - until this request gives
+        // it one, at which point an explicit "monitored" on the same request needs to apply there too,
+        // whether or not the top-level flag also happened to change.
+        //
+        // Per media type, independently: a media type whose own tri-state fields the client's request
+        // genuinely changes is left alone entirely (that explicit edit wins, same as it always has),
+        // and a media type with no root folder - on the author as it's stored OR as this same request
+        // is assigning one - is skipped since there's nothing to monitor there. This mirrors, and runs
+        // alongside, the equivalent single-media-type cascade ToModel already does for a Readarr-facade
+        // request - kept as a separate pass here (rather than folded into ToModel) because it needs the
+        // author's stored state, not just what's on the incoming resource.
+        // Internal (rather than private) so the test fixture can call it directly instead of via
+        // reflection - a reflection-based call would only fail at test runtime, not compile time, if
+        // this signature's parameter order or count ever changed.
+        internal static void CascadeExplicitMonitoredIntoMediaTypeSettings(
+            AuthorResource authorResource,
+            NzbDrone.Core.Books.Author model,
+            ReadarrFacadeContext facadeContext,
+            StoredAuthorMonitoringState stored)
+        {
+            if (facadeContext != null || !authorResource.Monitored.HasValue)
+            {
+                return;
+            }
+
+            var monitored = authorResource.Monitored.Value;
+            var isGenuineChange = monitored != stored.WasMonitoredFromMediaSettings;
+
+            var audiobookHasNewRootFolder = stored.AudiobookRootFolderPath.IsNullOrWhiteSpace() && !model.AudiobookRootFolderPath.IsNullOrWhiteSpace();
+            var audiobookTouched =
+                (authorResource.AudiobookMonitorExisting.HasValue && authorResource.AudiobookMonitorExisting != stored.AudiobookMonitorExisting) ||
+                (authorResource.AudiobookMonitorFuture.HasValue && authorResource.AudiobookMonitorFuture != stored.AudiobookMonitorFuture);
+            var audiobookConfigured = !stored.AudiobookRootFolderPath.IsNullOrWhiteSpace() || audiobookHasNewRootFolder;
+
+            // isGenuineChange alone would miss a media type gaining a root folder in THIS same
+            // request. A media type with no root folder before this PUT isn't a candidate for
+            // monitoring at all yet, whatever its tri-state fields happen to hold - AuthorService's
+            // root-folder-defaults fill (which resolves any still-null field once a media type has a
+            // root folder) is the common way that becomes reachable, but stale non-null values from a
+            // previous, since-removed root folder are also possible. Either way, once this request
+            // gives it a root folder, it's a real candidate, and the explicit "monitored" on this same
+            // request should apply there too - whether or not the top-level flag also happened to
+            // change relative to the author's overall prior state.
+            if (!audiobookTouched && audiobookConfigured && (isGenuineChange || audiobookHasNewRootFolder))
+            {
+                model.AudiobookMonitorFuture = monitored;
+                if (!monitored)
+                {
+                    model.AudiobookMonitorExisting = 0;
+                }
+
+                model.AudiobookSettingsManuallyOverridden = true;
+            }
+
+            var ebookHasNewRootFolder = stored.EbookRootFolderPath.IsNullOrWhiteSpace() && !model.EbookRootFolderPath.IsNullOrWhiteSpace();
+            var ebookTouched =
+                (authorResource.EbookMonitorExisting.HasValue && authorResource.EbookMonitorExisting != stored.EbookMonitorExisting) ||
+                (authorResource.EbookMonitorFuture.HasValue && authorResource.EbookMonitorFuture != stored.EbookMonitorFuture);
+            var ebookConfigured = !stored.EbookRootFolderPath.IsNullOrWhiteSpace() || ebookHasNewRootFolder;
+
+            if (!ebookTouched && ebookConfigured && (isGenuineChange || ebookHasNewRootFolder))
+            {
+                model.EbookMonitorFuture = monitored;
+                if (!monitored)
+                {
+                    model.EbookMonitorExisting = 0;
+                }
+
+                model.EbookSettingsManuallyOverridden = true;
+            }
+        }
 
         private bool HasSyncMonitoredAcrossFormatsEligibility(NzbDrone.Core.Books.Author author)
         {

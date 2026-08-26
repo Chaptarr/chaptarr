@@ -12900,7 +12900,8 @@
             "nullable": true
           },
           "monitored": {
-            "type": "boolean"
+            "type": "boolean",
+            "nullable": true
           },
           "audiobookMonitorExisting": {
             "type": "integer",
