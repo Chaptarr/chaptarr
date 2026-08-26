@@ -1700,6 +1700,8 @@
   "RootFolderEbookMonitorFutureHelpText": "Monitor future ebook releases from this author",
   "RootFolderErrorInDeleteModal": "Error in delete modal",
   "RootFolderFreeSpace": "{space} Free",
+  "RootFolderMissingMediaTypeDefaultsMultipleMessage": "Root folders are missing media type defaults and will silently fail to add new authors/books: {0}",
+  "RootFolderMissingMediaTypeDefaultsSingleMessage": "Root folder is missing media type defaults and will silently fail to add new authors/books: {0}",
   "RootFolderPathHelpText": "Root Folder list items will be added to",
   "RootFolderTypeChangeAssignedMessage": "You can't split a mixed-content root folder or switch an assigned single-type root folder. Remove it and re-add it as audiobook-only or eBook-only.",
   "RootFolders": "Root Folders",
