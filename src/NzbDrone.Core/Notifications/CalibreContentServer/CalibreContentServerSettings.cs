@@ -10,7 +10,8 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
     {
         public CalibreContentServerSettingsValidator()
         {
-            RuleFor(c => c.Url).IsValidUrl();
+            RuleFor(c => c.Url).NotEmpty().WithMessage("URL cannot be empty");
+            RuleFor(c => c.Url).IsValidUrl().When(c => c.Url.IsNotNullOrWhiteSpace());
             RuleFor(c => c.Username).NotEmpty().When(c => c.Password.IsNotNullOrWhiteSpace());
         }
     }

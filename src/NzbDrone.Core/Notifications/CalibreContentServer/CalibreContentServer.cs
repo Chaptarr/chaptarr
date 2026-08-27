@@ -80,12 +80,29 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
 
             try
             {
-                var request = BuildRequest("ajax/library-info").Build();
-                _httpClient.Get(request);
-            }
-            catch (HttpException ex) when (ex.Response?.StatusCode == HttpStatusCode.Unauthorized)
-            {
-                failures.Add(new ValidationFailure("Username", "Authentication failed"));
+                var request = BuildRequest("cdb/add-book/0/0/chaptarr-connection-test.epub").Build();
+
+                if (Settings.Username.IsNullOrWhiteSpace())
+                {
+                    request.Credentials = new NetworkCredential("chaptarr-connection-test", Guid.NewGuid().ToString("N"));
+                }
+
+                request.SuppressHttpError = true;
+                request.SetContent(Array.Empty<byte>());
+                var response = _httpClient.Post(request);
+
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    failures.Add(new ValidationFailure("Username", "Authentication failed"));
+                }
+                else if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    failures.Add(new ValidationFailure("Username", "The content server does not accept anonymous changes, a username and password are required to push books"));
+                }
+                else if (response.StatusCode == HttpStatusCode.NotFound || ((int)response.StatusCode >= 300 && (int)response.StatusCode < 400))
+                {
+                    failures.Add(new ValidationFailure("Url", "Not a Calibre content server, check the URL"));
+                }
             }
             catch (Exception ex)
             {
