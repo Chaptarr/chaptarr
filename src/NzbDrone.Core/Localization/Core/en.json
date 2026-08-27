@@ -1115,7 +1115,7 @@
   "Medium": "Medium",
   "Member": "Member",
   "MergeMultiPartFiles": "Create Single File",
-  "MergeMultiPartFilesHelpText": "Also merge multi-part downloads that are already M4B into a single M4B file. Multi-part MP3 and other formats are always merged when converting.",
+  "MergeMultiPartFilesHelpText": "All multi-part downloads will be merged into a single M4B file",
   "Message": "Message",
   "Metadata": "Metadata",
   "MetadataConsumers": "Metadata Consumers",
