@@ -816,7 +816,8 @@ namespace NzbDrone.Core.Datastore.Migration
                 .WithColumn("FormatItems").AsString().NotNullable()
                 .WithColumn("SearchCriteriaProfileId").AsInt32().Nullable()
                 .WithColumn("ConvertMp3ToM4b").AsBoolean().NotNullable().WithDefaultValue(false)
-                .WithColumn("ConvertToQualityId").AsInt32().Nullable();
+                .WithColumn("ConvertToQualityId").AsInt32().Nullable()
+                .WithColumn("MergeMultiPartFiles").AsBoolean().NotNullable().WithDefaultValue(false);
 
             // Metadata profiles
             Create.TableForModel("MetadataProfiles")
