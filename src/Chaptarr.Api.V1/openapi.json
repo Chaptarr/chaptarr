@@ -18272,6 +18272,9 @@
             "format": "int32",
             "nullable": true
           },
+          "mergeMultiPartFiles": {
+            "type": "boolean"
+          },
           "cutoff": {
             "type": "integer",
             "format": "int32"

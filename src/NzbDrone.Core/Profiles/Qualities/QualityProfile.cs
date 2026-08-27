@@ -27,6 +27,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         public bool PreferCustomFormatsOverQuality { get; set; }
         public bool ConvertMp3ToM4b { get; set; } // Only applies to audiobook profiles
         public int? ConvertToQualityId { get; set; }
+        public bool MergeMultiPartFiles { get; set; } // Only applies when converting to M4B
         public int Cutoff { get; set; }
         public int MinFormatScore { get; set; }
         public int CutoffFormatScore { get; set; }

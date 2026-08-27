@@ -68,6 +68,21 @@ namespace NzbDrone.Core.Qualities
             return null;
         }
 
+        public static bool ShouldMergeMultiPartM4b(QualityProfile profile, QualityModel sourceQuality)
+        {
+            if (profile == null || !profile.MergeMultiPartFiles || profile.ProfileType != ProfileType.Audiobook)
+            {
+                return false;
+            }
+
+            if (GetConversionTargetQualityId(profile) != Quality.M4B.Id)
+            {
+                return false;
+            }
+
+            return (sourceQuality?.Quality ?? Quality.Unknown) == Quality.M4B;
+        }
+
         private static int? GetConversionTargetQualityId(QualityProfile profile)
         {
             if (profile.ConvertToQualityId.HasValue && profile.ConvertToQualityId.Value > 0)
