@@ -2454,6 +2454,35 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         public List<Author> SearchForNewAuthor(string title)
         {
+            // A canonical provider-prefixed term (hc:/gr:/ol:/gb:/az:) is an identity, not a text
+            // query. Delegating it to SearchForNewBook would route it to the V5 *work* endpoint
+            // and confidently search the wrong entity type; the direct author fetch already
+            // handles these IDs.
+            var trimmed = title?.Trim();
+            if (!trimmed.IsNullOrWhiteSpace())
+            {
+                var firstColon = trimmed.IndexOf(':');
+                if (firstColon > 0 &&
+                    firstColon < trimmed.Length - 1 &&
+                    trimmed.IndexOf(':', firstColon + 1) == -1 &&
+                    ProviderIdHelper.IsCanonicalPrefix(trimmed.Substring(0, firstColon).Trim().ToLowerInvariant()))
+                {
+                    try
+                    {
+                        var author = GetAuthorInfo(ProviderIdHelper.Normalize(trimmed, defaultPrefix: null));
+                        return author != null ? new List<Author> { author } : new List<Author>();
+                    }
+                    catch (AuthorNotFoundException)
+                    {
+                        return new List<Author>();
+                    }
+                    catch (InvalidProviderIdException)
+                    {
+                        return new List<Author>();
+                    }
+                }
+            }
+
             var books = SearchForNewBook(title, null);
 
             return books

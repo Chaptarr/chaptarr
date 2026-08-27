@@ -152,6 +152,48 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         }
 
         [Test]
+        public void should_route_provider_prefixed_author_search_to_the_author_endpoint()
+        {
+            // SearchForNewAuthor("hc:...") used to delegate to SearchForNewBook, which routes
+            // canonical provider ids to the V5 *work* endpoint - an author id searched as the
+            // wrong entity type. It must hit the author endpoint instead.
+            var httpClient = new RecordingHttpClient(req =>
+                new HttpResponse(req, new HttpHeader { ContentType = "application/json" }, "{}", HttpStatusCode.NotFound));
+
+            var proxy = CreateProxy(httpClient);
+
+            var results = proxy.SearchForNewAuthor("hc:252214");
+
+            var urls = httpClient.Requests.Select(r => Uri.UnescapeDataString(r.Url.ToString())).ToList();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(urls, Is.Not.Empty);
+                Assert.That(urls, Has.All.Contains("/api/v5/author"));
+                Assert.That(urls, Has.None.Contains("/api/v5/work"));
+                Assert.That(urls[0], Does.Contain("id=hc:252214"));
+                Assert.That(results, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_still_text_search_authors_for_unprefixed_terms()
+        {
+            // Plain text terms keep the existing book-search-derived author flow: no direct
+            // author-endpoint call. With no search providers wired in this fixture the flow
+            // degrades to an empty result rather than touching the metadata server.
+            var httpClient = new RecordingHttpClient(_ =>
+                throw new AssertionException("Metadata server should not be called for a text term"));
+
+            var proxy = CreateProxy(httpClient);
+
+            var results = proxy.SearchForNewAuthor("Kentaro Miura");
+
+            Assert.That(results, Is.Empty);
+            Assert.That(httpClient.Requests, Is.Empty);
+        }
+
+        [Test]
         public void should_reject_a_bare_numeric_author_id_without_calling_the_metadata_server()
         {
             var httpClient = new RecordingHttpClient(_ =>
