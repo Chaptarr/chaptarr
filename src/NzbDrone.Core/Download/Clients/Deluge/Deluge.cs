@@ -13,6 +13,7 @@ using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
@@ -79,7 +80,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
         protected override string AddFromMagnetLink(RemoteBook remoteBook, string hash, string magnetLink)
         {
-            var actualHash = AddTorrentWithDuplicateHandling(hash, () => _proxy.AddTorrentFromMagnet(magnetLink, Settings));
+            var actualHash = AddTorrent(remoteBook, () => _proxy.AddTorrentFromMagnet(magnetLink, Settings));
 
             if (actualHash.IsNullOrWhiteSpace())
             {
@@ -108,7 +109,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
         protected override string AddFromTorrentFile(RemoteBook remoteBook, string hash, string filename, byte[] fileContent)
         {
-            var actualHash = AddTorrentWithDuplicateHandling(hash, () => _proxy.AddTorrentFromFile(filename, fileContent, Settings));
+            var actualHash = AddTorrent(remoteBook, () => _proxy.AddTorrentFromFile(filename, fileContent, Settings));
 
             if (actualHash.IsNullOrWhiteSpace())
             {
@@ -135,30 +136,21 @@ namespace NzbDrone.Core.Download.Clients.Deluge
             return actualHash.ToUpper();
         }
 
-        private string AddTorrentWithDuplicateHandling(string hash, Func<string> addAction)
+        private static string AddTorrent(RemoteBook remoteBook, Func<string> addAction)
         {
             try
             {
                 return addAction();
             }
-            catch (DelugeException ex) when (IsExistingTorrentDuplicate(ex, hash))
+            catch (DelugeException ex) when (IsExistingTorrentDuplicate(ex))
             {
-                var normalizedHash = hash.ToLowerInvariant();
-
-                if (!_proxy.IsTorrentLoaded(normalizedHash, Settings))
-                {
-                    throw;
-                }
-
-                _logger.Info("Torrent '{0}' already exists in Deluge, treating as added.", hash);
-                return normalizedHash;
+                throw new DownloadClientRejectedReleaseException(remoteBook.Release, "Deluge rejected the torrent because it is already in the session", ex);
             }
         }
 
-        private static bool IsExistingTorrentDuplicate(DelugeException ex, string hash)
+        private static bool IsExistingTorrentDuplicate(DelugeException ex)
         {
-            return !hash.IsNullOrWhiteSpace() &&
-                   ex != null &&
+            return ex != null &&
                    ex.Code == 4 &&
                    ex.Message.Contains("already in session", StringComparison.InvariantCultureIgnoreCase);
         }

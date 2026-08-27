@@ -3,7 +3,6 @@
 interface CssExports {
   'books': string;
   'cell': string;
-  'monitored': string;
   'selectCell': string;
   'status': string;
   'statusIcon': string;

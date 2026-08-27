@@ -294,6 +294,8 @@
   "BookshelfInputFetchError": "Could not retrieve bookshelves from Goodreads. Check the User ID and that shelves are public, or add shelves manually below.",
   "BookshelfInputManualAddPlaceholder": "Manual: add shelf (e.g. read, currently-reading)",
   "BookshelfInputNoShelvesForUser": "No bookshelves returned for Goodreads user {user}. You can still add shelves manually below.",
+  "BookshelfNoAudiobooks": "No audiobooks found in your library.",
+  "BookshelfNoEbooks": "No eBooks found in your library.",
   "Born": "Born",
   "Both": "Both",
   "Branch": "Branch",

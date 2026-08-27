@@ -13,6 +13,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
@@ -104,10 +105,14 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             var forceStart = (QBittorrentState)Settings.InitialState == QBittorrentState.ForceStart;
             var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
 
-            AddTorrentWithDuplicateHandling(hash, category, () =>
+            try
             {
                 Proxy.AddTorrentFromUrl(magnetLink, addHasSetShareLimits && setShareLimits ? remoteBook.SeedConfiguration : null, Settings, category);
-            });
+            }
+            catch (DownloadClientException ex) when (ex.InnerException is HttpException httpException && httpException.Response.StatusCode is HttpStatusCode.Conflict)
+            {
+                throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the magnet link due to a conflict", ex);
+            }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
             {
@@ -118,8 +123,6 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
                 if (!addHasSetShareLimits && setShareLimits)
                 {
-                    Proxy.SetTorrentSeedingConfiguration(hash.ToLower(), remoteBook.SeedConfiguration, Settings);
-
                     try
                     {
                         Proxy.SetTorrentSeedingConfiguration(hash.ToLower(), remoteBook.SeedConfiguration, Settings);
@@ -167,10 +170,14 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             var forceStart = (QBittorrentState)Settings.InitialState == QBittorrentState.ForceStart;
             var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
 
-            AddTorrentWithDuplicateHandling(hash, category, () =>
+            try
             {
                 Proxy.AddTorrentFromFile(filename, fileContent, addHasSetShareLimits ? remoteBook.SeedConfiguration : null, Settings, category);
-            });
+            }
+            catch (DownloadClientException ex) when (ex.InnerException is HttpException httpException && httpException.Response.StatusCode is HttpStatusCode.Conflict)
+            {
+                throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the torrent file due to a conflict", ex);
+            }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
             {
@@ -217,42 +224,6 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             }
 
             return hash;
-        }
-
-        private void AddTorrentWithDuplicateHandling(string hash, string category, Action addAction)
-        {
-            try
-            {
-                addAction();
-            }
-            catch (DownloadClientException)
-            {
-                if (hash.IsNullOrWhiteSpace())
-                {
-                    throw;
-                }
-
-                var normalizedHash = hash.ToLower();
-
-                if (!Proxy.IsTorrentLoaded(normalizedHash, Settings))
-                {
-                    throw;
-                }
-
-                _logger.Info("Torrent '{0}' already exists in qBittorrent, treating as added.", hash);
-
-                if (category.IsNotNullOrWhiteSpace())
-                {
-                    try
-                    {
-                        Proxy.SetTorrentLabel(normalizedHash, category, Settings);
-                    }
-                    catch (DownloadClientException ex)
-                    {
-                        _logger.Warn(ex, "Failed to set torrent label \"{0}\" for existing torrent {1} in qBittorrent.", category, hash);
-                    }
-                }
-            }
         }
 
         protected bool WaitForTorrent(string hash)

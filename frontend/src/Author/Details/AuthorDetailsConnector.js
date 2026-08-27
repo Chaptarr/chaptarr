@@ -6,7 +6,7 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import { setSelectedMediaType } from 'Store/Actions/appActions';
-import { toggleAuthorMonitored, updateAuthorMediaType, fetchAuthorMediaTypeSize } from 'Store/Actions/authorActions';
+import { updateAuthorMediaType, fetchAuthorMediaTypeSize } from 'Store/Actions/authorActions';
 import { clearBooks, fetchBooks } from 'Store/Actions/bookActions';
 import { clearBookFiles, fetchBookFiles } from 'Store/Actions/bookFileActions';
 import { saveBookEditor } from 'Store/Actions/bookIndexActions';
@@ -455,7 +455,6 @@ const mapDispatchToProps = {
   saveBookEditor,
   fetchBookFiles,
   clearBookFiles,
-  toggleAuthorMonitored,
   updateAuthorMediaType,
   fetchAuthorMediaTypeSize,
   fetchQueueDetails,
@@ -653,13 +652,6 @@ class AuthorDetailsConnector extends Component {
   //
   // Listeners
 
-  onMonitorTogglePress = (monitored) => {
-    this.props.toggleAuthorMonitored({
-      authorId: this.props.id,
-      monitored
-    });
-  };
-
   onRefreshPress = () => {
     this.props.executeCommand({
       name: commandNames.REFRESH_AUTHOR,
@@ -700,7 +692,6 @@ class AuthorDetailsConnector extends Component {
     return (
       <AuthorDetails
         {...this.props}
-        onMonitorTogglePress={this.onMonitorTogglePress}
         onRefreshPress={this.onRefreshPress}
         onSearchPress={this.onSearchPress}
         onSaveSelected={this.onSaveSelected}
@@ -730,7 +721,6 @@ AuthorDetailsConnector.propTypes = {
   saveBookEditor: PropTypes.func.isRequired,
   fetchBookFiles: PropTypes.func.isRequired,
   clearBookFiles: PropTypes.func.isRequired,
-  toggleAuthorMonitored: PropTypes.func.isRequired,
   updateAuthorMediaType: PropTypes.func.isRequired,
   fetchAuthorMediaTypeSize: PropTypes.func.isRequired,
   fetchQueueDetails: PropTypes.func.isRequired,

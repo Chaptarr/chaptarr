@@ -242,21 +242,16 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
-                            "When you add a book for an author that isn't in your library yet, your search choice is now remembered, so the book is searched once the author finishes importing.",
-                            "The author list now shows monitoring and quality profile per format, so you can tell at a glance whether an author is tracked for audiobooks, eBooks, or both.",
-                            "A new Crop Posters option under Poster Size lets you fill the card or show the whole author photo. Thanks @kiwi3007."
+                            "The Shelf page now has an audiobook/eBook toggle and changes book monitoring separately for each format."
                         },
                         Fixed = new List<string>
                         {
-                            "Sorting the book list by Size on Disk works again. Thanks @tillkruss.",
-                            "Better handling of deleting files for authors with books that are tracked in different root folders and haven't been organized. Thanks @OldManBrodie.",
-                            "Rescanning a single author now only scans that author's own folders instead of your whole library. Thanks @sebclark.",
-                            "Monitored and Unmonitored filters on the author list now match the format you're viewing, the counts at the bottom agree with what's shown, and the author filter that read All Only now reads Unmonitored Only. Thanks @digitalgp and @sebclark.",
-                            "Author posters are a consistent size and no longer sit inside grey bars. Thanks @kiwi3007.",
-                            "Poster and overview display options now take effect immediately instead of after a refresh.",
-                            "Toolbar button labels no longer overlap their icons, and long labels show in full on hover. Thanks @sebclark.",
-                            "Shift clicking now selects ranges correctly on Unmapped Files and in Import List Exclusions.",
-                            "Moved even more search logging to trace, so debug logs stay readable during searches."
+                            "Adding a book whose author isn't ready on the metadata server no longer fails with a confusing error like \"no edition survived pruning\". The request is saved (like with adding an author) and will remember if you wanted to search it or not when it arrives.",
+                            "Saving the Shelf with no monitoring change selected no longer monitors all existing books for the selected authors.",
+                            "Hardcover search works again after a Hardcover API change, and failures now show the actual reason.",
+                            "Grabbing a release that already exists in qBittorrent or Deluge is now clearly rejected instead of silently taking over the existing torrent.",
+                            "Removed the Shelf's non-working Monitor Author and Monitor New Books controls. Those settings remain in the Author Editor.",
+                            "Matching no longer breaks when file tags contain unusual embedded characters."
                         }
                     }
                 }

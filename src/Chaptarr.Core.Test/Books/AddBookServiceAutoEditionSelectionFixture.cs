@@ -9,6 +9,7 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.ImportLists.Exclusions;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Profiles.Metadata;
@@ -29,12 +30,14 @@ namespace Chaptarr.Core.Test.Books
         private class AuthorLibraryProxy : DispatchProxy
         {
             public Author AddedAuthor { get; set; }
+            public string ProviderId { get; private set; }
             public MonitoringConfig Config { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IAuthorLibraryService.AddAuthorAsync))
                 {
+                    ProviderId = (string)args[0];
                     Config = (MonitoringConfig)args[1];
                     return Task.FromResult(AddedAuthor);
                 }
@@ -176,6 +179,15 @@ namespace Chaptarr.Core.Test.Books
             public Book FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => null;
             public List<Book> FindAllByProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
+            public List<Book> FindAllByWorkProviderId(string provider, string providerId, BookMediaType mediaType)
+            {
+                var normalized = ProviderIdHelper.Canonicalize(providerId, provider);
+                return AuthorBooks.Where(book => book.MediaType == mediaType &&
+                                                  BookEditionIdentity.GetCanonicalWorkProviderIds(book)
+                                                      .Concat(book.RemoteProviderIds ?? Enumerable.Empty<string>())
+                                                      .Any(id => string.Equals(id, normalized, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+            }
             public Book FindByISBN(string isbn) => throw new NotImplementedException();
             public Book FindByASIN(string asin) => throw new NotImplementedException();
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
@@ -274,15 +286,15 @@ namespace Chaptarr.Core.Test.Books
             IMetadataProfileService metadataProfileService,
             IAuthorLibraryService authorLibraryService = null,
             IBookAddedService bookAddedService = null,
-            IImportListExclusionService importListExclusionService = null)
+            IImportListExclusionService importListExclusionService = null,
+            IProvideBookInfo bookInfo = null)
         {
             return new AddBookService(
                 authorService,
                 authorLibraryService ?? DispatchProxy.Create<IAuthorLibraryService, ThrowingProxy<IAuthorLibraryService>>(),
                 bookService,
                 bookAddedService ?? DispatchProxy.Create<IBookAddedService, ThrowingProxy<IBookAddedService>>(),
-                DispatchProxy.Create<IProvideBookInfo, ThrowingProxy<IProvideBookInfo>>(),
-                DispatchProxy.Create<ISearchForNewBook, ThrowingProxy<ISearchForNewBook>>(),
+                bookInfo ?? DispatchProxy.Create<IProvideBookInfo, ThrowingProxy<IProvideBookInfo>>(),
                 importListExclusionService ?? DispatchProxy.Create<IImportListExclusionService, ThrowingProxy<IImportListExclusionService>>(),
                 DispatchProxy.Create<ISeriesBookLinkService, ThrowingProxy<ISeriesBookLinkService>>(),
                 DispatchProxy.Create<ISeriesService, ThrowingProxy<ISeriesService>>(),
@@ -351,39 +363,6 @@ namespace Chaptarr.Core.Test.Books
             }
 
             return (IReadOnlyCollection<string>)method.Invoke(service, new object[] { editions });
-        }
-
-        private static bool InvokeResolveAnyEditionOkForAddPayload(Book book)
-        {
-            var method = typeof(AddBookService).GetMethod("ResolveAnyEditionOkForAddPayload", BindingFlags.NonPublic | BindingFlags.Static);
-            if (method == null)
-            {
-                throw new InvalidOperationException("Could not find AddBookService.ResolveAnyEditionOkForAddPayload via reflection");
-            }
-
-            return (bool)method.Invoke(null, new object[] { book });
-        }
-
-        private static bool InvokeShouldHydrateAddPayload(AddBookService service, Book book)
-        {
-            var method = typeof(AddBookService).GetMethod("ShouldHydrateAddPayload", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (method == null)
-            {
-                throw new InvalidOperationException("Could not find AddBookService.ShouldHydrateAddPayload via reflection");
-            }
-
-            return (bool)method.Invoke(service, new object[] { book });
-        }
-
-        private static string InvokeResolveAddHydrationLookupId(AddBookService service, Book book)
-        {
-            var method = typeof(AddBookService).GetMethod("ResolveAddHydrationLookupId", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (method == null)
-            {
-                throw new InvalidOperationException("Could not find AddBookService.ResolveAddHydrationLookupId via reflection");
-            }
-
-            return (string)method.Invoke(service, new object[] { book });
         }
 
         private static void AssertSingleMonitoredEdition(IEnumerable<Edition> editions, string expectedForeignEditionId)
@@ -1159,309 +1138,6 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(requestedEditionIds, Does.Contain("first"));
         }
 
-        [Test]
-        public void should_treat_ids_only_strict_add_payload_as_any_edition_ok()
-        {
-            var book = new Book
-            {
-                AnyEditionOk = false,
-                Editions = new List<Edition>
-                {
-                    new Edition { ForeignEditionId = "hc-edition-1", Monitored = true }
-                }
-            };
-
-            var anyEditionOk = InvokeResolveAnyEditionOkForAddPayload(book);
-
-            Assert.That(anyEditionOk, Is.True);
-        }
-
-        [Test]
-        public void should_treat_seerr_ids_only_add_payload_with_no_editions_as_any_edition_ok()
-        {
-            var book = new Book
-            {
-                AnyEditionOk = false,
-                HardcoverBookId = "hc:12345",
-                Editions = new List<Edition>()
-            };
-
-            var anyEditionOk = InvokeResolveAnyEditionOkForAddPayload(book);
-
-            Assert.That(anyEditionOk, Is.True);
-        }
-
-        [Test]
-        public void should_preserve_strict_add_payload_when_edition_metadata_is_present()
-        {
-            var book = new Book
-            {
-                AnyEditionOk = false,
-                Editions = new List<Edition>
-                {
-                    new Edition { ForeignEditionId = "hc-edition-1", Title = "A Court of Thorns and Roses", ReadingFormatId = 2, Monitored = true }
-                }
-            };
-
-            var anyEditionOk = InvokeResolveAnyEditionOkForAddPayload(book);
-
-            Assert.That(anyEditionOk, Is.False);
-        }
-
-        [Test]
-        public void should_treat_title_only_strict_add_payload_as_any_edition_ok()
-        {
-            var book = new Book
-            {
-                AnyEditionOk = false,
-                Editions = new List<Edition>
-                {
-                    new Edition { ForeignEditionId = "hc-edition-1", Title = "A Court of Thorns and Roses", Monitored = true }
-                }
-            };
-
-            var anyEditionOk = InvokeResolveAnyEditionOkForAddPayload(book);
-
-            Assert.That(anyEditionOk, Is.True);
-        }
-
-        [Test]
-        public void should_preserve_any_edition_ok_add_payloads()
-        {
-            var book = new Book
-            {
-                AnyEditionOk = true,
-                Editions = new List<Edition>
-                {
-                    new Edition { ForeignEditionId = "hc-edition-1", Monitored = true }
-                }
-            };
-
-            var anyEditionOk = InvokeResolveAnyEditionOkForAddPayload(book);
-
-            Assert.That(anyEditionOk, Is.True);
-        }
-
-        [Test]
-        public void should_hydrate_text_search_payload_before_add_filtering_when_format_identity_is_missing()
-        {
-            var profile = new MetadataProfile { Id = 21, AllowedLanguages = "eng" };
-            var author = new Author { Id = 21, AudiobookMetadataProfileId = profile.Id };
-            var book = new Book
-            {
-                AuthorId = author.Id,
-                Author = author,
-                Title = "Tailored Realities",
-                GoodreadsWorkId = "gr:87596585",
-                MediaType = BookMediaType.Audiobook,
-                Editions = new List<Edition>
-                {
-                    new Edition
-                    {
-                        ForeignEditionId = "gr:222034397",
-                        GoodreadsEditionId = 222034397,
-                        Title = "Tailored Realities",
-                        Monitored = true
-                    }
-                }
-            };
-
-            var service = BuildService(
-                new StubAuthorService(author),
-                new StubBookService(),
-                new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService(profile));
-
-            Assert.That(InvokeShouldHydrateAddPayload(service, book), Is.True);
-            Assert.That(InvokeResolveAddHydrationLookupId(service, book), Is.EqualTo("gr:87596585"));
-        }
-
-        [Test]
-        public void should_hydrate_when_posted_editions_do_not_survive_metadata_profile_filtering()
-        {
-            var profile = new MetadataProfile { Id = 22, AllowedLanguages = "eng" };
-            var author = new Author { Id = 22, AudiobookMetadataProfileId = profile.Id };
-            var book = new Book
-            {
-                AuthorId = author.Id,
-                Author = author,
-                Title = "Tailored Realities",
-                HardcoverBookId = "hc:1644075",
-                MediaType = BookMediaType.Audiobook,
-                Editions = new List<Edition>
-                {
-                    new Edition
-                    {
-                        ForeignEditionId = "thin-audio",
-                        Title = "Tailored Realities",
-                        Language = null,
-                        ReadingFormatId = 2,
-                        Monitored = true
-                    }
-                }
-            };
-
-            var service = BuildService(
-                new StubAuthorService(author),
-                new StubBookService(),
-                new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService(profile));
-
-            Assert.That(InvokeShouldHydrateAddPayload(service, book), Is.True);
-        }
-
-        [Test]
-        public void should_use_persisted_author_profile_for_hydration_backstop_when_posted_author_is_provider_skeleton()
-        {
-            var profile = new MetadataProfile { Id = 24, AllowedLanguages = "eng" };
-            var persistedAuthor = new Author { Id = 24, HardcoverAuthorId = "hc:204214", AudiobookMetadataProfileId = profile.Id };
-            var book = new Book
-            {
-                Author = new Author { HardcoverAuthorId = "hc:204214" },
-                Title = "Tailored Realities",
-                HardcoverBookId = "hc:1644075",
-                MediaType = BookMediaType.Audiobook,
-                Editions = new List<Edition>
-                {
-                    new Edition
-                    {
-                        ForeignEditionId = "thin-audio",
-                        Title = "Tailored Realities",
-                        Language = null,
-                        ReadingFormatId = 2,
-                        Monitored = true
-                    }
-                }
-            };
-
-            var service = BuildService(
-                new StubAuthorService(null, (provider, providerId) =>
-                    provider == "hc" && providerId == "hc:204214" ? persistedAuthor : null),
-                new StubBookService(),
-                new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService(profile));
-
-            Assert.That(InvokeShouldHydrateAddPayload(service, book), Is.True);
-        }
-
-        [Test]
-        public void should_use_persisted_author_profile_for_hydration_backstop_when_posted_author_has_only_id()
-        {
-            var profile = new MetadataProfile { Id = 25, AllowedLanguages = "eng" };
-            var persistedAuthor = new Author { Id = 25, AudiobookMetadataProfileId = profile.Id };
-            var book = new Book
-            {
-                Author = new Author { Id = persistedAuthor.Id },
-                AuthorId = persistedAuthor.Id,
-                Title = "Tailored Realities",
-                HardcoverBookId = "hc:1644075",
-                MediaType = BookMediaType.Audiobook,
-                Editions = new List<Edition>
-                {
-                    new Edition
-                    {
-                        ForeignEditionId = "thin-audio",
-                        Title = "Tailored Realities",
-                        Language = null,
-                        ReadingFormatId = 2,
-                        Monitored = true
-                    }
-                }
-            };
-
-            var service = BuildService(
-                new StubAuthorService(persistedAuthor),
-                new StubBookService(),
-                new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService(profile));
-
-            Assert.That(InvokeShouldHydrateAddPayload(service, book), Is.True);
-        }
-
-        [Test]
-        public void should_not_hydrate_when_posted_editions_are_filterable_and_retained()
-        {
-            var profile = new MetadataProfile { Id = 23, AllowedLanguages = "eng" };
-            var author = new Author { Id = 23, AudiobookMetadataProfileId = profile.Id };
-            var book = new Book
-            {
-                AuthorId = author.Id,
-                Author = author,
-                Title = "Tailored Realities",
-                HardcoverBookId = "hc:1644075",
-                MediaType = BookMediaType.Audiobook,
-                Editions = new List<Edition>
-                {
-                    new Edition
-                    {
-                        ForeignEditionId = "eng-audio",
-                        Title = "Tailored Realities",
-                        Language = "eng",
-                        ReadingFormatId = 2,
-                        Monitored = true
-                    }
-                }
-            };
-
-            var service = BuildService(
-                new StubAuthorService(author),
-                new StubBookService(),
-                new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService(profile));
-
-            Assert.That(InvokeShouldHydrateAddPayload(service, book), Is.False);
-        }
-
-        [Test]
-        public void should_prefer_work_ids_over_edition_ids_for_add_hydration()
-        {
-            var service = BuildService(
-                new StubAuthorService(null),
-                new StubBookService(),
-                new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService());
-
-            var book = new Book
-            {
-                HardcoverBookId = "hc:1644075",
-                GoodreadsWorkId = "gr:87596585",
-                MediaType = BookMediaType.Audiobook,
-                Editions = new List<Edition>
-                {
-                    new Edition
-                    {
-                        GoodreadsEditionId = 222034397,
-                        GoogleBooksEditionId = "gb:edition-1",
-                        Asin = "B0DPGKGG9R",
-                        Monitored = true
-                    }
-                }
-            };
-
-            Assert.That(InvokeResolveAddHydrationLookupId(service, book), Is.EqualTo("hc:1644075"));
-        }
-
-        [Test]
-        public void should_fall_back_to_audible_asin_for_add_hydration_when_no_work_id_exists()
-        {
-            var service = BuildService(
-                new StubAuthorService(null),
-                new StubBookService(),
-                new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService());
-
-            var book = new Book
-            {
-                MediaType = BookMediaType.Audiobook,
-                Editions = new List<Edition>
-                {
-                    new Edition { AudibleASIN = "B0DPGKGG9R", Monitored = true }
-                }
-            };
-
-            Assert.That(InvokeResolveAddHydrationLookupId(service, book), Is.EqualTo("az:B0DPGKGG9R"));
-        }
-
         [TestCase(BookMediaType.Audiobook, 2)]
         [TestCase(BookMediaType.Ebook, 3)]
         public async Task existing_author_search_request_should_enable_the_book_and_its_media_side(
@@ -1514,8 +1190,20 @@ namespace Chaptarr.Core.Test.Books
                 Editions = new List<Edition> { requestedEdition }
             };
 
-            var bookService = new StubBookService();
+            var authoritativeBook = new Book
+            {
+                Id = 101,
+                AuthorId = existingAuthor.Id,
+                Author = existingAuthor,
+                Title = requestedBook.Title,
+                HardcoverBookId = requestedBook.HardcoverBookId,
+                MediaType = mediaType
+            };
+            var bookService = new StubBookService { AuthorBooks = new List<Book> { authoritativeBook } };
             var authorService = new StubAuthorService(existingAuthor, (_, _) => existingAuthor);
+            var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = existingAuthor;
+            var bookAddedService = new RecordingBookAddedService();
             var storedEdition = new Edition
             {
                 Id = requestedEdition.Id,
@@ -1532,11 +1220,14 @@ namespace Chaptarr.Core.Test.Books
                 new StubMetadataProfileService(
                     new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
                     new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
+                authorLibraryService,
+                bookAddedService,
                 importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
 
             var result = await service.AddBook(requestedBook);
 
-            Assert.That(result, Is.SameAs(bookService.AddedBook));
+            Assert.That(result, Is.SameAs(authoritativeBook));
+            Assert.That(bookService.AddedBook, Is.Null, "A direct book add must never create a row outside the authoritative author catalog.");
             Assert.That(result.AddOptions.SearchForNewBook, Is.True);
             Assert.That(result.IsMonitoredWithAuthor(), Is.True);
             Assert.That(
@@ -1549,6 +1240,12 @@ namespace Chaptarr.Core.Test.Books
                     ? existingAuthor.EbookMonitorExisting
                     : existingAuthor.AudiobookMonitorExisting,
                 Is.EqualTo(0));
+            var config = ((AuthorLibraryProxy)authorLibraryService).Config;
+            Assert.That(mediaType == BookMediaType.Audiobook ? config.AudiobookBooksToMonitor : config.EbookBooksToMonitor,
+                Is.EqualTo(new[] { "hc:1001" }));
+            Assert.That(mediaType == BookMediaType.Audiobook ? config.AudiobookBooksToSearch : config.EbookBooksToSearch,
+                Is.EqualTo(new[] { "hc:1001" }));
+            Assert.That(bookAddedService.AuthorIds, Is.EqualTo(new[] { existingAuthor.Id }));
         }
 
         [Test]
@@ -1623,6 +1320,54 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(importedBook.AddOptions.SearchForNewBook, Is.True);
             Assert.That(importedBook.IsMonitoredWithAuthor(), Is.True);
             Assert.That(bookAddedService.AuthorIds, Is.EqualTo(new[] { importedAuthor.Id }));
+        }
+
+        [Test]
+        public void unavailable_requested_book_should_queue_exact_work_monitoring_and_search_without_direct_insert()
+        {
+            var pendingAuthor = new Author { Id = -77, Name = "Pending Import" };
+            var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = pendingAuthor;
+            var bookService = new StubBookService();
+            var service = BuildService(
+                new StubAuthorService(null, (_, _) => null),
+                bookService,
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(),
+                authorLibraryService,
+                new RecordingBookAddedService(),
+                DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+            var request = new Book
+            {
+                Title = "Requested Book",
+                HardcoverBookId = "hc:1001",
+                MediaType = BookMediaType.Ebook,
+                Author = new Author
+                {
+                    Name = "Pending Author",
+                    HardcoverAuthorId = " ",
+                    GoodreadsAuthorId = "777",
+                    EbookMonitorExisting = 2,
+                    EbookQualityProfileId = 1,
+                    EbookMetadataProfileId = 2,
+                    EbookRootFolderPath = "/ebooks",
+                    AddOptions = new AddAuthorOptions { Monitor = MonitorTypes.SpecificBook }
+                },
+                AddOptions = new AddBookOptions { SearchForNewBook = true }
+            };
+
+            var exception = Assert.ThrowsAsync<PendingBookRequestException>(() => service.AddBook(request));
+
+            Assert.That(exception.PendingId, Is.EqualTo(77));
+            Assert.That(exception.Message, Is.EqualTo(PendingBookRequestException.UserMessage));
+            Assert.That(bookService.AddedBook, Is.Null);
+            var authorLibraryProxy = (AuthorLibraryProxy)authorLibraryService;
+            Assert.That(authorLibraryProxy.ProviderId, Is.EqualTo("gr:777"));
+            var config = authorLibraryProxy.Config;
+            Assert.That(config.EbookBooksToMonitor, Is.EqualTo(new[] { "hc:1001" }));
+            Assert.That(config.EbookBooksToSearch, Is.EqualTo(new[] { "hc:1001" }));
+            Assert.That(config.AudiobookBooksToMonitor, Is.Null);
+            Assert.That(config.QueueIfUnavailable, Is.True);
         }
     }
 }

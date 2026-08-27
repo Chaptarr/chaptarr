@@ -30,7 +30,6 @@ namespace NzbDrone.Core.Books
         private readonly IBookService _bookService;
         private readonly IBookAddedService _bookAddedService;
         private readonly IProvideBookInfo _bookInfo;
-        private readonly ISearchForNewBook _bookSearch;
         private readonly IImportListExclusionService _importListExclusionService;
         private readonly ISeriesBookLinkService _seriesBookLinkService;
         private readonly ISeriesService _seriesService;
@@ -48,7 +47,6 @@ namespace NzbDrone.Core.Books
                                IBookService bookService,
                                IBookAddedService bookAddedService,
                                IProvideBookInfo bookInfo,
-                               ISearchForNewBook bookSearch,
                                IImportListExclusionService importListExclusionService,
                                ISeriesBookLinkService seriesBookLinkService,
                                ISeriesService seriesService,
@@ -66,7 +64,6 @@ namespace NzbDrone.Core.Books
             _bookService = bookService;
             _bookAddedService = bookAddedService;
             _bookInfo = bookInfo;
-            _bookSearch = bookSearch;
             _importListExclusionService = importListExclusionService;
             _seriesBookLinkService = seriesBookLinkService;
             _seriesService = seriesService;
@@ -126,149 +123,33 @@ namespace NzbDrone.Core.Books
                 dbBook = _bookService.FindByProviderId("gb", googleBooksEditionId, book.MediaType);
             }
 
-            // Seerr/Readarr compatibility: clients may POST lookup payloads that identify the work
-            // but do not carry enough edition metadata to survive Chaptarr's media-type/profile filters.
-            // Hydrate from the metadata server before pruning so add-time filtering runs on real data.
-            if (dbBook == null && ShouldHydrateAddPayload(book))
+            if (dbBook == null)
             {
-                try
-                {
-                    var lookupId = ResolveAddHydrationLookupId(book);
-
-                    if (!string.IsNullOrWhiteSpace(lookupId))
-                    {
-                        var requestedMediaType = book.MediaType;
-                        var requestedAuthor = book.Author;
-                        var requestedAddOptions = book.AddOptions;
-                        var requestedAnyEditionOk = ResolveAnyEditionOkForAddPayload(book);
-                        var requestedAudiobookMonitored = book.AudiobookMonitored;
-                        var requestedEbookMonitored = book.EbookMonitored;
-                        var requestedAdded = book.Added;
-
-                        var candidates = _bookSearch.SearchForNewBook(lookupId, author: null) ?? new List<Book>();
-
-                        var hydrated = candidates.FirstOrDefault(b => b != null && b.MediaType == requestedMediaType)
-                                      ?? candidates.FirstOrDefault(b =>
-                                          requestedEditionProviderIdsForAdd.Any() &&
-                                          b?.Editions?.Any(e => requestedEditionProviderIdsForAdd.Any(id => BookEditionIdentity.EditionMatchesProviderId(e, id))) == true);
-
-                        if (hydrated != null)
-                        {
-                            // Keep caller-supplied settings/intent, but take metadata fields from V5.
-                            // Clients like Seerr may POST an IDs-only payload with author settings but no author metadata.
-                            // Merge metadata from the hydrated author into the caller-supplied author object so we keep
-                            // caller settings while taking provider IDs/names from the metadata server.
-                            var hydratedAuthorMetadata = hydrated.Author;
-                            if (requestedAuthor != null && hydratedAuthorMetadata != null)
-                            {
-                                requestedAuthor.UseMetadataFrom(hydratedAuthorMetadata);
-                            }
-
-                            hydrated.Author = requestedAuthor ?? hydratedAuthorMetadata;
-                            hydrated.AuthorId = requestedAuthor?.Id ?? 0;
-                            hydrated.AddOptions = requestedAddOptions;
-                            hydrated.AnyEditionOk = requestedAnyEditionOk;
-                            hydrated.AudiobookMonitored = requestedAudiobookMonitored;
-                            hydrated.EbookMonitored = requestedEbookMonitored;
-                            hydrated.MediaType = requestedMediaType;
-                            hydrated.Added = requestedAdded;
-
-                            ApplyEditionRetentionForAdd(hydrated, requestedEditionProviderIdsForAdd);
-
-                            book = hydrated;
-                            _logger.Debug("[ADD-HYDRATE] Hydrated book from metadata server for add: ProviderId={0}, MediaType={1}, Title='{2}'",
-                                lookupId, requestedMediaType, hydrated.Title);
-                        }
-                        else
-                        {
-                            _logger.Warn("[ADD-HYDRATE] Unable to hydrate book from metadata server for add: ProviderId={0}, MediaType={1}", lookupId, requestedMediaType);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "[ADD-HYDRATE] Failed to hydrate AddBook payload; continuing with posted payload");
-                }
+                return await RequestBookThroughAuthorCatalog(book);
             }
 
-            if (dbBook != null)
+            book.UseDbFieldsFrom(dbBook);
+
+            // Some clients post IDs-only payloads even when the book already exists locally.
+            // Ensure we never Upsert NULL Title/Edition titles.
+            book.Title ??= dbBook.Title;
+
+            if (HasMissingOrEmptyEditionMetadata(book.Editions))
             {
-                book.UseDbFieldsFrom(dbBook);
+                book.Editions = _editionService.GetEditionsByBook(dbBook.Id) ?? new List<Edition>();
 
-                // Some clients post IDs-only payloads even when the book already exists locally.
-                // Ensure we never Upsert NULL Title/Edition titles.
-                book.Title ??= dbBook.Title;
-
-                if (HasMissingOrEmptyEditionMetadata(book.Editions))
+                if (book.Editions.Any())
                 {
-                    book.Editions = _editionService.GetEditionsByBook(dbBook.Id) ?? new List<Edition>();
-
-                    if (book.Editions.Any())
+                    var selected = SelectPreferredEditionForAdd(book, book.Editions, requestedEditionProviderIdsForAdd);
+                    var selectedIndex = GetSelectedRetainedEditionIndex(book.Editions, selected);
+                    for (var i = 0; i < book.Editions.Count; i++)
                     {
-                        var selected = SelectPreferredEditionForAdd(book, book.Editions, requestedEditionProviderIdsForAdd);
-                        var selectedIndex = GetSelectedRetainedEditionIndex(book.Editions, selected);
-                        for (var i = 0; i < book.Editions.Count; i++)
-                        {
-                            book.Editions[i].Monitored = i == selectedIndex;
-                        }
+                        book.Editions[i].Monitored = i == selectedIndex;
                     }
                 }
             }
-            else
-            {
-                // Fail fast before hitting DB constraints. If a client posts an IDs-only payload and we can't hydrate,
-                // the insert would violate NOT NULL constraints (Books.Title/Editions.Title).
-                if (string.IsNullOrWhiteSpace(book.Title))
-                {
-                    throw new ValidationException(new[]
-                    {
-                        new ValidationFailure("Title",
-                            "Cannot add book: missing Title. If you are using a third-party client that posts IDs-only payloads (e.g. Seerr), ensure the metadata server can resolve the provider ID and retry.")
-                    });
-                }
 
-                if (book.Editions == null || !book.Editions.Any())
-                {
-                    throw new ValidationException(new[]
-                    {
-                        new ValidationFailure("Editions",
-                            "Cannot add book: no editions were supplied. Retry the add so Chaptarr can hydrate edition metadata from the metadata server.")
-                    });
-                }
-
-                if (book.Editions.Any(e => e != null && string.IsNullOrWhiteSpace(e.Title)))
-                {
-                    throw new ValidationException(new[]
-                    {
-                        new ValidationFailure("Editions",
-                            "Cannot add book: one or more editions are missing Title. Retry the add so Chaptarr can hydrate edition metadata from the metadata server.")
-                    });
-                }
-            }
-
-            // Remove any import list exclusions preventing addition
-            var matchingExclusions = _importListExclusionService.FindByForeignId(ImportListExclusionBookMatcher.GetLookupIds(book));
-            var oppositeMediaType = ImportListExclusionBookMatcher.GetOppositeMediaType(book.MediaType);
-
-            foreach (var exclusion in matchingExclusions)
-            {
-                if (exclusion.MediaType == book.MediaType)
-                {
-                    _importListExclusionService.Delete(exclusion.Id);
-                    continue;
-                }
-
-                if (!exclusion.MediaType.HasValue)
-                {
-                    exclusion.MediaType = oppositeMediaType;
-                    _importListExclusionService.Update(exclusion);
-                }
-            }
-
-            if (book.Author != null && !string.IsNullOrEmpty(book.Author.HardcoverAuthorId))
-            {
-                _importListExclusionService.Delete(book.Author.HardcoverAuthorId);
-            }
+            RemoveMatchingImportListExclusions(book);
 
             // Note it's a manual addition so it's not deleted on next refresh
             book.AddOptions.AddType = BookAddType.Manual;
@@ -286,227 +167,7 @@ namespace NzbDrone.Core.Books
 
             if (dbAuthor == null)
             {
-                // Author doesn't exist locally - try to import from the configured metadata server
-                _logger.Info("Author not found locally for book '{0}'. Attempting import from metadata server", book.Title);
-
-                // Log the author provider IDs we received
-                _logger.Debug("Author provider IDs - HardcoverAuthorId: '{0}', GoodreadsAuthorId: '{1}'",
-                    book.Author?.HardcoverAuthorId ?? "NULL",
-                    book.Author?.GoodreadsAuthorId ?? "NULL");
-
-                // Determine which provider ID to use for import
-                string foreignAuthorId = null;
-
-                if (!string.IsNullOrEmpty(book.Author.HardcoverAuthorId))
-                {
-                    // HardcoverAuthorId already contains the prefix (e.g., "hc:191785")
-                    foreignAuthorId = book.Author.HardcoverAuthorId;
-                }
-                else if (!string.IsNullOrEmpty(book.Author.GoodreadsAuthorId))
-                {
-                    // GoodreadsAuthorId already contains the prefix (e.g., "gr:12345")
-                    foreignAuthorId = book.Author.GoodreadsAuthorId;
-                }
-                else if (!string.IsNullOrEmpty(book.Author.AudnexusAuthorId))
-                {
-                    // AudnexusAuthorId already contains the prefix (e.g., "az:B000AP9A6K")
-                    foreignAuthorId = book.Author.AudnexusAuthorId;
-                }
-
-                    if (!string.IsNullOrEmpty(foreignAuthorId))
-                    {
-                        _logger.Info("[AddBookService] Attempting author import with foreignAuthorId: '{0}'", foreignAuthorId);
-
-                        {
-                            // "None (Well, obviously just this one)" is represented in the UI as tri-state Selected (2)
-                            // on the relevant media type, but the AddOptions.Monitor enum is often left as None.
-                            // Treat tri-state Selected as a SpecificBook intent when adding a single book.
-                            var isTriStateSelectedForMediaType =
-                                (book.MediaType == BookMediaType.Audiobook && (book.Author?.AudiobookMonitorExisting ?? 0) == 2) ||
-                                (book.MediaType == BookMediaType.Ebook && (book.Author?.EbookMonitorExisting ?? 0) == 2);
-
-                            var isSpecificBookIntent =
-                                book.Author?.AddOptions?.Monitor == MonitorTypes.SpecificBook ||
-                                isTriStateSelectedForMediaType;
-
-                            // Create MonitoringConfig from the book's author settings
-                            var requestedBookProviderIds = GetAllBookProviderIds(book).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
-                            var specificBookProviderIds = isSpecificBookIntent
-                                ? requestedBookProviderIds
-                                : null;
-
-                            var config = new MonitoringConfig
-                            {
-                                IsManualAddition = true,
-                                AuthorName = book.Author?.Name,
-                                // Only create the media type being added; avoid failing the entire add/queue due to missing config on the other type.
-                                CreateAudiobook = book.MediaType == BookMediaType.Audiobook,
-                                CreateEbook = book.MediaType == BookMediaType.Ebook,
-                                MonitorNewItems = book.Author.Monitored,
-                                AudiobookQualityProfileId = book.Author.AudiobookQualityProfileId,
-                            EbookQualityProfileId = book.Author.EbookQualityProfileId,
-                                AudiobookMetadataProfileId = book.Author.AudiobookMetadataProfileId,
-                            EbookMetadataProfileId = book.Author.EbookMetadataProfileId,
-                            AudiobookRootFolderPath = book.Author.AudiobookRootFolderPath,
-                            EbookRootFolderPath = book.Author.EbookRootFolderPath,
-                                AudiobookTags = book.Author.AudiobookTags,
-                                EbookTags = book.Author.EbookTags,
-                                Tags = book.Author.Tags,
-                                QueueIfUnavailable = true,
-                                
-                                // Pass specific book context for conditional monitoring
-                                MonitorMode = isSpecificBookIntent ? MonitorTypes.SpecificBook : book.Author?.AddOptions?.Monitor,
-                                SpecificBookProviderIds = isSpecificBookIntent
-                                    ? new HashSet<string>(specificBookProviderIds, StringComparer.OrdinalIgnoreCase)
-                                    : null,
-                                SpecificBookMediaType = book.MediaType,
-                                // Pending import processing doesn't persist SpecificBookProviderIds; store an explicit list for later "monitor only these" behavior.
-                                AudiobookBooksToMonitor = isSpecificBookIntent && book.MediaType == BookMediaType.Audiobook ? specificBookProviderIds : null,
-                                EbookBooksToMonitor = isSpecificBookIntent && book.MediaType == BookMediaType.Ebook ? specificBookProviderIds : null,
-                                AudiobookBooksToSearch = book.AddOptions.SearchForNewBook && book.MediaType == BookMediaType.Audiobook ? requestedBookProviderIds : null,
-                                EbookBooksToSearch = book.AddOptions.SearchForNewBook && book.MediaType == BookMediaType.Ebook ? requestedBookProviderIds : null
-                            };
-
-                            // Handle "None, except this one book" monitoring option
-                            if (isSpecificBookIntent)
-                            {
-                                // "None, except this one book" - use Selected mode (2) for tri-state monitoring
-                                config.MonitorNewItems = true;
-                                if (book.MediaType == BookMediaType.Audiobook)
-                                {
-                                    config.AudiobookMonitorExisting = 2; // Selected mode - only specific books
-                                    // Respect the user's "Monitor New Books" preference for audiobooks (if provided)
-                                    config.AudiobookMonitorFuture = book.Author?.AudiobookMonitorFuture;
-                                    // Don't monitor ebooks
-                                    config.EbookMonitorExisting = 0; // None mode
-                                    config.EbookMonitorFuture = false; // Don't monitor
-                                }
-                                else if (book.MediaType == BookMediaType.Ebook)
-                                {
-                                    config.EbookMonitorExisting = 2; // Selected mode - only specific books
-                                    // Respect the user's "Monitor New Books" preference for ebooks (if provided)
-                                    config.EbookMonitorFuture = book.Author?.EbookMonitorFuture;
-                                    // Don't monitor audiobooks
-                                    config.AudiobookMonitorExisting = 0; // None mode
-                                    config.AudiobookMonitorFuture = false; // Don't monitor
-                                }
-                            }
-                        else
-                        {
-                            // Apply regular monitoring settings from the book's author
-                            config.AudiobookMonitorExisting = book.Author.AudiobookMonitorExisting;
-                            config.AudiobookMonitorFuture = book.Author.AudiobookMonitorFuture;
-                            config.EbookMonitorExisting = book.Author.EbookMonitorExisting;
-                            config.EbookMonitorFuture = book.Author.EbookMonitorFuture;
-                        }
-
-                            // Use AuthorLibraryService which handles dual-instance creation correctly
-                            dbAuthor = await _authorLibraryService.AddAuthorAsync(foreignAuthorId, config);
-                            
-                            // When the metadata server doesn't have the author yet, AddAuthorAsync queues a pending import and returns a marker with a negative Id.
-                            if (dbAuthor != null && dbAuthor.Id < 0)
-                            {
-                                var pendingId = -dbAuthor.Id;
-                                throw new ValidationException(new List<ValidationFailure>
-                                {
-                                    new ValidationFailure("Author",
-                                        $"Author '{book.Author.Name}' isn't available yet on our metadata server. It has been queued for import (pending ID: {pendingId}) and will be imported automatically when it becomes available.")
-                                });
-                            }
-                            
-                            // After the author is added, find the specific book instance we're adding
-                            var targetProviderIds = new HashSet<string>(GetAllBookProviderIds(book), StringComparer.OrdinalIgnoreCase);
-                            var importedBooks = _bookService.GetBooksByAuthor(dbAuthor.Id)
-                                .Where(b => GetAllBookProviderIds(b).Any(id => targetProviderIds.Contains(id)))
-                                .ToList();
-
-                            // Handle "None, except this one book" - apply monitoring to the specific book
-                            if (isSpecificBookIntent && importedBooks.Any())
-                            {
-                                foreach (var importedBook in importedBooks)
-                                {
-                                    // Only monitor the specific media type the user is adding
-                                    if (importedBook.MediaType == book.MediaType)
-                                {
-                                    if (importedBook.MediaType == BookMediaType.Audiobook)
-                                    {
-                                        importedBook.AudiobookMonitored = true;
-                                    }
-                                    else if (importedBook.MediaType == BookMediaType.Ebook)
-                                    {
-                                        importedBook.EbookMonitored = true;
-                                    }
-                                    _bookService.UpdateBook(importedBook);
-                                }
-                            }
-                        }
-
-                        // Find the specific instance matching the MediaType we're adding
-                        var matchingBook = importedBooks.FirstOrDefault(b => b.MediaType == book.MediaType);
-                        if (matchingBook != null)
-                        {
-                            var searchForNewBook = book.AddOptions.SearchForNewBook;
-
-                            // Book was imported with the author - use it
-                            book = matchingBook;
-                            book.Author = dbAuthor;
-                            book.AuthorId = dbAuthor.Id;
-
-                            // Monitoring has already been handled by AuthorLibraryService.ProcessBooksForAuthor
-                            // using conditional monitoring at book creation time
-                            _logger.Debug("[MONITOR-DEBUG] Book '{0}' (ID: {1}) monitoring already set by ProcessBooksForAuthor",
-                                book.Title, book.Id);
-
-                            if (searchForNewBook)
-                            {
-                                dbAuthor = EnsureMediaTypeMonitoringForRequestedSearch(dbAuthor, book.MediaType);
-                                book.Author = dbAuthor;
-                                book.SetMonitored(true);
-                                book.Monitored = true;
-                                _bookService.UpdateBook(book);
-
-                                book.AddOptions.AddType = BookAddType.Manual;
-                                book.AddOptions.SearchForNewBook = true;
-                                _bookService.SetAddOptions(new[] { book });
-                                _bookAddedService.SearchForRecentlyAdded(dbAuthor.Id);
-                            }
-
-                            return book;
-                        }
-                        else
-                        {
-                            // Book wasn't imported with author - add it now
-                            book.Author = dbAuthor;
-                            book.AuthorId = dbAuthor.Id;
-
-                            // Apply tri-state monitoring at creation time
-                            // 0=None, 1=All, 2=Selected (monitor physical copies only)
-                            if (book.MediaType == BookMediaType.Audiobook)
-                            {
-                                var mode = dbAuthor.AudiobookMonitorExisting ?? 0;
-                                // For Selected (2), initial add has no files yet, so leave false; it will flip on first file import
-                                var monitor = mode == 1;
-                                book.AudiobookMonitored = monitor;
-                                book.EbookMonitored = false;
-                            }
-                            else if (book.MediaType == BookMediaType.Ebook)
-                            {
-                                var mode = dbAuthor.EbookMonitorExisting ?? 0;
-                                var monitor = mode == 1;
-                                book.EbookMonitored = monitor;
-                                book.AudiobookMonitored = false;
-                            }
-
-                            // Legacy compatibility
-                            book.Monitored = book.AudiobookMonitored || book.EbookMonitored;
-                        }
-                    }
-                }
-                else
-                {
-                    _logger.Error("Cannot add book '{0}' - no provider ID available for author import", book.Title);
-                    throw new InvalidOperationException($"Cannot add book '{book.Title}' - no provider ID for author.");
-                }
+                return await RequestBookThroughAuthorCatalog(book);
             }
 
                 // CRITICAL: Capture monitoring intent BEFORE replacing Author object
@@ -594,7 +255,7 @@ namespace NzbDrone.Core.Books
                 
                 if (book.AddOptions?.SearchForNewBook == true)
                 {
-                    dbAuthor = EnsureMediaTypeMonitoringForRequestedSearch(dbAuthor, bookMediaType);
+                    dbAuthor = EnsureMediaTypeMonitoringForRequestedBook(dbAuthor, bookMediaType);
                     book.Author = dbAuthor;
                     book.AuthorId = dbAuthor.Id;
                     book.SetMonitored(true);
@@ -728,11 +389,223 @@ namespace NzbDrone.Core.Books
             return book;
         }
 
-        private Author EnsureMediaTypeMonitoringForRequestedSearch(Author author, BookMediaType mediaType)
+        private Author EnsureMediaTypeMonitoringForRequestedBook(Author author, BookMediaType mediaType)
         {
             var mediaTypeName = mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
             _authorService.PromoteMediaTypeMonitoringToSelected(author.Id, mediaTypeName);
             return _authorService.GetAuthor(author.Id) ?? author;
+        }
+
+        private async Task<Book> RequestBookThroughAuthorCatalog(Book requestedBook)
+        {
+            var workProviderId = ResolveRequestedWorkProviderId(requestedBook);
+            if (string.IsNullOrWhiteSpace(workProviderId))
+            {
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure("ForeignBookId", "Cannot add book: the selected result does not contain a stable work-level provider ID.")
+                });
+            }
+
+            var authorProviderId = GetAuthorProviderId(requestedBook.Author);
+            if (string.IsNullOrWhiteSpace(authorProviderId))
+            {
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure("Author", "Cannot add book: the selected result does not contain an author provider ID.")
+                });
+            }
+
+            var mediaType = requestedBook.MediaType;
+            var searchRequested = requestedBook.AddOptions?.SearchForNewBook == true;
+            var requestedIds = new List<string> { workProviderId };
+            var config = BuildRequestedBookMonitoringConfig(requestedBook, requestedIds, searchRequested);
+            var author = await _authorLibraryService.AddAuthorAsync(authorProviderId, config);
+            if (author?.Id < 0)
+            {
+                throw new PendingBookRequestException(-author.Id);
+            }
+
+            if (author == null || author.Id <= 0)
+            {
+                throw new InvalidOperationException($"Unable to import author {authorProviderId} for requested work {workProviderId}.");
+            }
+
+            var localBook = ResolveLocalRequestedBook(author.Id, workProviderId, mediaType);
+            if (localBook == null)
+            {
+                // AddAuthorAsync queues this shape when the authoritative author blob does not yet
+                // contain the requested work. Reaching here means that contract was broken.
+                throw new InvalidOperationException($"Requested work {workProviderId} was not found after importing author {authorProviderId}.");
+            }
+
+            author = EnsureMediaTypeMonitoringForRequestedBook(author, mediaType);
+            localBook.Author = author;
+            localBook.SetMonitored(true);
+            localBook.Monitored = true;
+            _bookService.UpdateBook(localBook);
+
+            if (searchRequested)
+            {
+                localBook.AddOptions ??= new AddBookOptions();
+                localBook.AddOptions.AddType = BookAddType.Manual;
+                localBook.AddOptions.SearchForNewBook = true;
+                _bookService.SetAddOptions(new[] { localBook });
+                _bookAddedService.SearchForRecentlyAdded(author.Id);
+            }
+
+            RemoveMatchingImportListExclusions(localBook);
+
+            return localBook;
+        }
+
+        private void RemoveMatchingImportListExclusions(Book book)
+        {
+            var matchingExclusions = _importListExclusionService.FindByForeignId(ImportListExclusionBookMatcher.GetLookupIds(book));
+            var oppositeMediaType = ImportListExclusionBookMatcher.GetOppositeMediaType(book.MediaType);
+
+            foreach (var exclusion in matchingExclusions)
+            {
+                if (exclusion.MediaType == book.MediaType)
+                {
+                    _importListExclusionService.Delete(exclusion.Id);
+                    continue;
+                }
+
+                if (!exclusion.MediaType.HasValue)
+                {
+                    exclusion.MediaType = oppositeMediaType;
+                    _importListExclusionService.Update(exclusion);
+                }
+            }
+
+            if (book.Author != null && !string.IsNullOrEmpty(book.Author.HardcoverAuthorId))
+            {
+                _importListExclusionService.Delete(book.Author.HardcoverAuthorId);
+            }
+        }
+
+        private MonitoringConfig BuildRequestedBookMonitoringConfig(Book book, List<string> requestedIds, bool searchRequested)
+        {
+            var author = book.Author ?? new Author();
+            var mediaType = book.MediaType;
+            var isAudiobook = mediaType == BookMediaType.Audiobook;
+            var isSpecificBook = author.AddOptions?.Monitor == MonitorTypes.SpecificBook ||
+                                 (isAudiobook ? author.AudiobookMonitorExisting : author.EbookMonitorExisting) == 2;
+
+            return new MonitoringConfig
+            {
+                IsManualAddition = true,
+                AuthorName = author.Name,
+                CreateAudiobook = isAudiobook,
+                CreateEbook = !isAudiobook,
+                MonitorNewItems = author.Monitored,
+                AudiobookMonitorExisting = isAudiobook && isSpecificBook ? 2 : author.AudiobookMonitorExisting,
+                AudiobookMonitorFuture = author.AudiobookMonitorFuture,
+                EbookMonitorExisting = !isAudiobook && isSpecificBook ? 2 : author.EbookMonitorExisting,
+                EbookMonitorFuture = author.EbookMonitorFuture,
+                AudiobookQualityProfileId = author.AudiobookQualityProfileId,
+                EbookQualityProfileId = author.EbookQualityProfileId,
+                AudiobookMetadataProfileId = author.AudiobookMetadataProfileId,
+                EbookMetadataProfileId = author.EbookMetadataProfileId,
+                AudiobookRootFolderPath = author.AudiobookRootFolderPath,
+                EbookRootFolderPath = author.EbookRootFolderPath,
+                AudiobookTags = author.AudiobookTags,
+                EbookTags = author.EbookTags,
+                Tags = author.Tags,
+                QueueIfUnavailable = true,
+                MonitorMode = isSpecificBook ? MonitorTypes.SpecificBook : author.AddOptions?.Monitor,
+                SpecificBookProviderIds = new HashSet<string>(requestedIds, StringComparer.OrdinalIgnoreCase),
+                SpecificBookMediaType = mediaType,
+                AudiobookBooksToMonitor = isAudiobook ? requestedIds : null,
+                EbookBooksToMonitor = isAudiobook ? null : requestedIds,
+                AudiobookBooksToSearch = isAudiobook && searchRequested ? requestedIds : null,
+                EbookBooksToSearch = !isAudiobook && searchRequested ? requestedIds : null
+            };
+        }
+
+        private Book ResolveLocalRequestedBook(int authorId, string workProviderId, BookMediaType mediaType)
+        {
+            var separator = workProviderId.IndexOf(':');
+            if (separator <= 0)
+            {
+                return null;
+            }
+
+            var matches = _bookService.FindAllByWorkProviderId(
+                    workProviderId.Substring(0, separator),
+                    ProviderIdHelper.StripPrefix(workProviderId),
+                    mediaType)
+                .Where(book => book.AuthorId == authorId)
+                .GroupBy(book => book.Id)
+                .Select(group => group.First())
+                .ToList();
+
+            if (matches.Count > 1)
+            {
+                throw new InvalidOperationException($"Requested work {workProviderId} resolves to multiple local {mediaType} books.");
+            }
+
+            return matches.SingleOrDefault();
+        }
+
+        private string ResolveRequestedWorkProviderId(Book book)
+        {
+            foreach (var providerId in BookEditionIdentity.GetCanonicalWorkProviderIds(book)
+                         .Concat(book?.RemoteProviderIds ?? Enumerable.Empty<string>()))
+            {
+                var normalized = TryCanonicalizeWorkId(providerId);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    return normalized;
+                }
+            }
+
+            var editionProviderId = BookEditionIdentity.GetCanonicalEditionProviderIds(book, _logger, "AddBookService.ResolveRequestedWork")
+                .FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(editionProviderId))
+            {
+                return null;
+            }
+
+            var resolvedBook = _bookInfo.GetEditionInfo(editionProviderId, book.MediaType)?.Item2;
+            return BookEditionIdentity.GetCanonicalWorkProviderIds(resolvedBook)
+                .Concat(resolvedBook?.RemoteProviderIds ?? Enumerable.Empty<string>())
+                .Select(providerId => TryCanonicalizeWorkId(providerId))
+                .FirstOrDefault(providerId => !string.IsNullOrWhiteSpace(providerId));
+        }
+
+        private static string GetAuthorProviderId(Author author)
+        {
+            if (author == null)
+            {
+                return null;
+            }
+
+            foreach (var (providerId, prefix) in new[]
+                     {
+                         (author.HardcoverAuthorId, "hc"),
+                         (author.GoodreadsAuthorId, "gr"),
+                         (author.OpenLibraryAuthorId, "ol"),
+                         (author.AudnexusAuthorId, "az")
+                     })
+            {
+                if (string.IsNullOrWhiteSpace(providerId))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    return ProviderIdHelper.Canonicalize(providerId, prefix);
+                }
+                catch
+                {
+                    // Try the next provider identity carried by the search result.
+                }
+            }
+
+            return null;
         }
 
         private void EnsureAutoSelectedEdition(Book book)
@@ -1014,84 +887,6 @@ namespace NzbDrone.Core.Books
             return -1;
         }
 
-        private bool ShouldHydrateAddPayload(Book book)
-        {
-            if (book == null)
-            {
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(book.Title) || HasMissingOrEmptyEditionMetadata(book.Editions))
-            {
-                return true;
-            }
-
-            return !SelectRetainedEditionsForAdd(book, book.Editions).Any();
-        }
-
-        private string ResolveAddHydrationLookupId(Book book)
-        {
-            if (book == null)
-            {
-                return null;
-            }
-
-            string FirstValidWorkId(params (string Value, string Prefix)[] ids)
-            {
-                foreach (var (value, prefix) in ids)
-                {
-                    var canonical = TryCanonicalizeWorkId(value, prefix);
-                    if (!string.IsNullOrWhiteSpace(canonical))
-                    {
-                        return canonical;
-                    }
-                }
-
-                return null;
-            }
-
-            var workId = FirstValidWorkId(
-                (book.HardcoverBookId, "hc"),
-                (book.GoodreadsWorkId, "gr"),
-                (book.OpenLibraryWorkId, "ol"));
-            if (!string.IsNullOrWhiteSpace(workId))
-            {
-                return workId;
-            }
-
-            foreach (var providerId in book.RemoteProviderIds ?? Enumerable.Empty<string>())
-            {
-                workId = TryCanonicalizeWorkId(providerId);
-                if (!string.IsNullOrWhiteSpace(workId))
-                {
-                    return workId;
-                }
-            }
-
-            return BookEditionIdentity.GetGoodreadsEditionProviderId(book, _logger, "AddBookService.AddBook.Hydrate")
-                   ?? BookEditionIdentity.GetOpenLibraryEditionId(book, _logger, "AddBookService.AddBook.Hydrate")
-                   ?? BookEditionIdentity.GetGoogleBooksEditionId(book, _logger, "AddBookService.AddBook.Hydrate")
-                   ?? AsProviderLookupId(BookEditionIdentity.GetAudibleAsin(book, _logger, "AddBookService.AddBook.Hydrate"), "az")
-                   ?? AsProviderLookupId(BookEditionIdentity.GetAsin(book, _logger, "AddBookService.AddBook.Hydrate"), "az");
-        }
-
-        private static string AsProviderLookupId(string value, string expectedPrefix)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return null;
-            }
-
-            try
-            {
-                return ProviderIdHelper.Canonicalize(value.Trim(), expectedPrefix);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
         private static string TryCanonicalizeWorkId(string providerId, string expectedPrefix = null)
         {
             if (string.IsNullOrWhiteSpace(providerId))
@@ -1133,27 +928,6 @@ namespace NzbDrone.Core.Books
                 .FirstOrDefault();
 
             return BookEditionIdentity.GetEditionProviderIds(requested);
-        }
-
-        private static bool ResolveAnyEditionOkForAddPayload(Book book)
-        {
-            if (book == null || book.AnyEditionOk)
-            {
-                return true;
-            }
-
-            if (HasMissingOrEmptyEditionMetadata(book.Editions))
-            {
-                // Seerr's Readarr-compatible add flow round-trips the edition id Chaptarr exposed
-                // from lookup, but posts only IDs and hardcodes anyEditionOk=false. That id is our
-                // default monitored edition, not a user-selected pin. Treat IDs-only adds as
-                // work-level so import can switch to the matched edition later. Do not key this on
-                // ManualAdd; in Chaptarr it is also a local preservation marker. If Seerr starts
-                // sending richer edition intent, tighten or remove this compatibility shim.
-                return true;
-            }
-
-            return false;
         }
 
         private static bool HasMissingOrEmptyEditionMetadata(IEnumerable<Edition> editions)

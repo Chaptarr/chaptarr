@@ -23,6 +23,8 @@ import createSetTableOptionReducer from './Creators/Reducers/createSetTableOptio
 // Variables
 
 export const section = 'books';
+let abortCurrentFetchRequest = null;
+let currentFetchRequestId = 0;
 
 export const filters = [
   {
@@ -654,6 +656,13 @@ export const setBookValue = createAction(SET_BOOK_VALUE, (payload) => {
 
 export const actionHandlers = handleThunks({
   [FETCH_BOOKS]: function(getState, payload, dispatch) {
+    const requestId = ++currentFetchRequestId;
+
+    if (abortCurrentFetchRequest) {
+      abortCurrentFetchRequest();
+      abortCurrentFetchRequest = null;
+    }
+
     dispatch(set({ section, isFetching: true }));
 
     const { request, abortRequest } = createAjaxRequest({
@@ -662,7 +671,15 @@ export const actionHandlers = handleThunks({
       traditional: true
     });
 
+    abortCurrentFetchRequest = abortRequest;
+
     request.done((data) => {
+      if (requestId !== currentFetchRequestId) {
+        return;
+      }
+
+      abortCurrentFetchRequest = null;
+
       // Preserve books for other authors we didn't fetch
       if (payload.hasOwnProperty('authorId')) {
         const oldBooks = getState().books.items;
@@ -683,6 +700,12 @@ export const actionHandlers = handleThunks({
     });
 
     request.fail((xhr) => {
+      if (requestId !== currentFetchRequestId) {
+        return;
+      }
+
+      abortCurrentFetchRequest = null;
+
       dispatch(set({
         section,
         isFetching: false,
@@ -905,7 +928,8 @@ export const reducers = createHandleActions({
       isFetching: false,
       isPopulated: false,
       error: null,
-      items: []
+      items: [],
+      itemMap: {}
     });
   }
 

@@ -8,6 +8,7 @@ using Chaptarr.Http;
 using Chaptarr.Http.Middleware;
 using FluentValidation;
 using FluentValidation.Results;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -18,6 +19,7 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
@@ -1170,8 +1172,9 @@ namespace Chaptarr.Api.V1.Books
             };
         }
 
-			        [RestPostById]
-			        [ProducesResponseType(typeof(ProviderAmbiguityResource), ProviderAmbiguityHelper.StatusCode)]
+				        [RestPostById]
+				        [ProducesResponseType(typeof(ProviderAmbiguityResource), ProviderAmbiguityHelper.StatusCode)]
+				        [ProducesResponseType(typeof(PendingBookRequestResource), StatusCodes.Status202Accepted)]
 			        public async Task<ActionResult<BookResource>> AddBook([FromQuery] string mediaType, [FromBody] BookResource bookResource)
 			        {
 			            try
@@ -1226,8 +1229,9 @@ namespace Chaptarr.Api.V1.Books
 
 	                    var originalMediaType = bookResource?.MediaType;
 
-	                    NzbDrone.Core.Books.Book firstAdded = null;
-	                    var didFirstRefresh = false;
+			                    NzbDrone.Core.Books.Book firstAdded = null;
+			                    var didFirstRefresh = false;
+			                    int? pendingId = null;
 
 			                    if (shouldAddAudiobook)
 			                    {
@@ -1249,9 +1253,16 @@ namespace Chaptarr.Api.V1.Books
 			                            return BadRequest("Cannot add book: missing upstream provider book/work ID (Hardcover/Goodreads/OpenLibrary/GoogleBooks).");
 			                        }
 
-				                        firstAdded = await _addBookService.AddBook(model, doRefresh: true);
-				                        EnsureBookCover(firstAdded.Id, "create");
-				                        didFirstRefresh = true;
+					                        try
+					                        {
+					                            firstAdded = await _addBookService.AddBook(model, doRefresh: true);
+					                            EnsureBookCover(firstAdded.Id, "create");
+					                            didFirstRefresh = true;
+					                        }
+					                        catch (PendingBookRequestException ex)
+					                        {
+					                            pendingId = ex.PendingId;
+					                        }
 			                    }
 
 			                    if (shouldAddEbook)
@@ -1274,14 +1285,30 @@ namespace Chaptarr.Api.V1.Books
 			                            return BadRequest("Cannot add book: missing upstream provider book/work ID (Hardcover/Goodreads/OpenLibrary/GoogleBooks).");
 			                        }
 
-				                        var ebook = await _addBookService.AddBook(model, doRefresh: !didFirstRefresh);
-				                        EnsureBookCover(ebook.Id, "create");
-				                        firstAdded ??= ebook;
-			                    }
+					                        try
+					                        {
+					                            var ebook = await _addBookService.AddBook(model, doRefresh: !didFirstRefresh);
+					                            EnsureBookCover(ebook.Id, "create");
+					                            firstAdded ??= ebook;
+					                        }
+					                        catch (PendingBookRequestException ex)
+					                        {
+					                            pendingId ??= ex.PendingId;
+					                        }
+				                    }
 
 	                    bookResource.MediaType = originalMediaType;
 
-	                    return Created(firstAdded.Id);
+			                    if (pendingId.HasValue)
+			                    {
+			                        return Accepted(new PendingBookRequestResource
+			                        {
+			                            PendingId = pendingId.Value,
+			                            Message = PendingBookRequestException.UserMessage
+			                        });
+			                    }
+
+			                    return Created(firstAdded.Id);
 	                }
 
 	                if (!string.Equals(requestedMediaType, "audiobook", StringComparison.OrdinalIgnoreCase) &&
@@ -1332,7 +1359,15 @@ namespace Chaptarr.Api.V1.Books
 
 			                return Created(book.Id);
 				        }
-		            catch (ValidationException ex)
+			            catch (PendingBookRequestException ex)
+			            {
+			                return Accepted(new PendingBookRequestResource
+			                {
+			                    PendingId = ex.PendingId,
+			                    Message = PendingBookRequestException.UserMessage
+			                });
+			            }
+			            catch (ValidationException ex)
 	            {
 	                _logger.Error(ex, "[AddBook] Validation error");
 	                foreach (var error in ex.Errors)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Dapper;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 
@@ -13,6 +14,8 @@ namespace NzbDrone.Core.Books
         List<PendingAuthorImport> GetDueForProcessing(DateTime cutoff, int limit);
         List<PendingAuthorImport> GetByStatus(PendingImportStatus status);
         List<PendingAuthorImport> GetAll();
+        bool TryUpdateRequest(PendingAuthorImport item, long expectedVersion);
+        bool TryDelete(int id, long expectedVersion);
         void DeleteOldCompleted(DateTime cutoff);
     }
 
@@ -57,6 +60,86 @@ namespace NzbDrone.Core.Books
         public List<PendingAuthorImport> GetAll()
         {
             return All().OrderByDescending(x => x.CreatedAt).ToList();
+        }
+
+        public bool TryUpdateRequest(PendingAuthorImport item, long expectedVersion)
+        {
+            item.Version = expectedVersion + 1;
+
+            const string sql = @"
+                UPDATE ""PendingAuthorImport""
+                   SET ""DiscoveredAuthorFolderPath"" = @DiscoveredAuthorFolderPath,
+                       ""AudiobookStatus"" = @AudiobookStatus,
+                       ""EbookStatus"" = @EbookStatus,
+                       ""OverallStatus"" = @OverallStatus,
+                       ""AudiobookMonitorExisting"" = @AudiobookMonitorExisting,
+                       ""AudiobookMonitorFuture"" = @AudiobookMonitorFuture,
+                       ""AudiobookQualityProfileId"" = @AudiobookQualityProfileId,
+                       ""AudiobookMetadataProfileId"" = @AudiobookMetadataProfileId,
+                       ""AudiobookRootFolderPath"" = @AudiobookRootFolderPath,
+                       ""AudiobookBooksToMonitor"" = @AudiobookBooksToMonitor,
+                       ""AudiobookBooksToSearch"" = @AudiobookBooksToSearch,
+                       ""EbookMonitorExisting"" = @EbookMonitorExisting,
+                       ""EbookMonitorFuture"" = @EbookMonitorFuture,
+                       ""EbookQualityProfileId"" = @EbookQualityProfileId,
+                       ""EbookMetadataProfileId"" = @EbookMetadataProfileId,
+                       ""EbookRootFolderPath"" = @EbookRootFolderPath,
+                       ""EbookBooksToMonitor"" = @EbookBooksToMonitor,
+                       ""EbookBooksToSearch"" = @EbookBooksToSearch,
+                       ""SearchForMissingBooks"" = @SearchForMissingBooks,
+                       ""AttemptCount"" = @AttemptCount,
+                       ""MaxAttempts"" = @MaxAttempts,
+                       ""LastAttemptAt"" = @LastAttemptAt,
+                       ""LastError"" = @LastError,
+                       ""UpdatedAt"" = @UpdatedAt,
+                       ""NextAttemptAt"" = @NextAttemptAt,
+                       ""Version"" = @Version
+                 WHERE ""Id"" = @Id
+                   AND ""Version"" = @ExpectedVersion";
+
+            using var connection = _database.OpenConnection();
+            return connection.Execute(sql, new
+            {
+                item.DiscoveredAuthorFolderPath,
+                item.AudiobookStatus,
+                item.EbookStatus,
+                item.OverallStatus,
+                item.AudiobookMonitorExisting,
+                item.AudiobookMonitorFuture,
+                item.AudiobookQualityProfileId,
+                item.AudiobookMetadataProfileId,
+                item.AudiobookRootFolderPath,
+                item.AudiobookBooksToMonitor,
+                item.AudiobookBooksToSearch,
+                item.EbookMonitorExisting,
+                item.EbookMonitorFuture,
+                item.EbookQualityProfileId,
+                item.EbookMetadataProfileId,
+                item.EbookRootFolderPath,
+                item.EbookBooksToMonitor,
+                item.EbookBooksToSearch,
+                item.SearchForMissingBooks,
+                item.AttemptCount,
+                item.MaxAttempts,
+                item.LastAttemptAt,
+                item.LastError,
+                item.UpdatedAt,
+                item.NextAttemptAt,
+                item.Version,
+                item.Id,
+                ExpectedVersion = expectedVersion
+            }) == 1;
+        }
+
+        public bool TryDelete(int id, long expectedVersion)
+        {
+            const string sql = @"
+                DELETE FROM ""PendingAuthorImport""
+                 WHERE ""Id"" = @Id
+                   AND ""Version"" = @Version";
+
+            using var connection = _database.OpenConnection();
+            return connection.Execute(sql, new { Id = id, Version = expectedVersion }) == 1;
         }
 
         public void DeleteOldCompleted(DateTime cutoff)

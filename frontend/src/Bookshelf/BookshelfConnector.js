@@ -2,7 +2,8 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { fetchBooks } from 'Store/Actions/bookActions';
+import { setSelectedMediaType } from 'Store/Actions/appActions';
+import { clearBooks, fetchBooks } from 'Store/Actions/bookActions';
 import { saveBookshelf, setBookshelfFilter, setBookshelfSort } from 'Store/Actions/bookshelfActions';
 import createAuthorClientSideCollectionItemsSelector from 'Store/Selectors/createAuthorClientSideCollectionItemsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
@@ -10,15 +11,17 @@ import Bookshelf from './Bookshelf';
 
 function createBookFetchStateSelector() {
   return createSelector(
-    (state) => state.books.items.length,
+    (state) => state.books.items,
     (state) => state.books.isFetching,
     (state) => state.books.isPopulated,
-    (length, isFetching, isPopulated) => {
-      const bookCount = (!isFetching && isPopulated) ? length : 0;
+    (state) => state.app.selectedMediaType || 'audiobook',
+    (items, isFetching, isPopulated, selectedMediaType) => {
+      const scopedItems = items.filter((book) => book.mediaType === selectedMediaType);
       return {
-        bookCount,
         isFetching,
-        isPopulated
+        isPopulated,
+        items: scopedItems,
+        selectedMediaType
       };
     }
   );
@@ -32,13 +35,19 @@ function createMapStateToProps() {
     (books, author, dimensionsState) => {
       const isPopulated = books.isPopulated && author.isPopulated;
       const isFetching = author.isFetching || books.isFetching;
+      const authorIds = new Set(books.items.map((book) => book.authorId));
+      const items = author.items.filter((item) => authorIds.has(item.id));
+      const visibleAuthorIds = new Set(items.map((item) => item.id));
+      const bookCount = books.items.filter((book) => visibleAuthorIds.has(book.authorId)).length;
+
       return {
         ...author,
+        items,
+        totalItems: authorIds.size,
         isPopulated,
         isFetching,
-        isBookFetching: books.isFetching,
-        isBookPopulated: books.isPopulated,
-        bookCount: books.bookCount,
+        bookCount,
+        selectedMediaType: books.selectedMediaType,
         isSmallScreen: dimensionsState.isSmallScreen
       };
     }
@@ -48,6 +57,8 @@ function createMapStateToProps() {
 const mapDispatchToProps = {
   setBookshelfSort,
   setBookshelfFilter,
+  setSelectedMediaType,
+  clearBooks,
   fetchBooks,
   saveBookshelf
 };
@@ -58,14 +69,26 @@ class BookshelfConnector extends Component {
   // Lifecycle
 
   componentDidMount() {
-    const {
-      isBookFetching,
-      isBookPopulated
-    } = this.props;
+    this.fetchBooksForSelectedMediaType();
+  }
 
-    if (!isBookFetching && !isBookPopulated) {
-      this.props.fetchBooks({ include: 'author' });
+  componentDidUpdate(prevProps) {
+    if (prevProps.selectedMediaType !== this.props.selectedMediaType) {
+      this.fetchBooksForSelectedMediaType();
     }
+  }
+
+  componentWillUnmount() {
+    if (this.abortBooksFetch) {
+      this.abortBooksFetch();
+      this.abortBooksFetch = null;
+    }
+  }
+
+  fetchBooksForSelectedMediaType() {
+    this.abortBooksFetch = this.props.fetchBooks({
+      mediaType: this.props.selectedMediaType
+    });
   }
 
   //
@@ -77,6 +100,11 @@ class BookshelfConnector extends Component {
 
   onFilterSelect = (selectedFilterKey) => {
     this.props.setBookshelfFilter({ selectedFilterKey });
+  };
+
+  onMediaTypeChange = (mediaType) => {
+    this.props.setSelectedMediaType({ mediaType });
+    this.props.clearBooks();
   };
 
   onUpdateSelectedPress = (payload) => {
@@ -92,6 +120,7 @@ class BookshelfConnector extends Component {
         {...this.props}
         onSortPress={this.onSortPress}
         onFilterSelect={this.onFilterSelect}
+        onMediaTypeChange={this.onMediaTypeChange}
         onUpdateSelectedPress={this.onUpdateSelectedPress}
       />
     );
@@ -99,10 +128,11 @@ class BookshelfConnector extends Component {
 }
 
 BookshelfConnector.propTypes = {
-  isBookFetching: PropTypes.bool.isRequired,
-  isBookPopulated: PropTypes.bool.isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
   setBookshelfSort: PropTypes.func.isRequired,
   setBookshelfFilter: PropTypes.func.isRequired,
+  setSelectedMediaType: PropTypes.func.isRequired,
+  clearBooks: PropTypes.func.isRequired,
   fetchBooks: PropTypes.func.isRequired,
   saveBookshelf: PropTypes.func.isRequired
 };

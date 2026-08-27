@@ -4,7 +4,9 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Http;
@@ -143,6 +145,124 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 Assert.That(request.Url.FullUri, Is.EqualTo("https://metadata.test/api/v5/match"));
                 Assert.That(request.Headers.ContentType, Is.EqualTo("application/json"));
                 Assert.That(request.ContentData, Is.Not.Null.And.Not.Empty);
+            });
+        }
+
+        [Test]
+        public void should_remove_embedded_nulls_from_every_outgoing_match_evidence_field()
+        {
+            var httpClient = new RecordingHttpClient();
+            var service = CreateService(httpClient);
+
+            service.SearchV5Matching(
+                "Pi\0ranesi",
+                new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new() { "Existing" },
+                    ["TI\0TLE"] = new() { "Pi\0ranesi" },
+                    ["ALBUM"] = new() { "Pi\0ranesi" },
+                    ["CUS\0TOM"] = new() { "Susanna\0Clarke" },
+                    ["CO\0MMENT"] = new() { "excluded after key sanitation" }
+                },
+                "ebook",
+                "/ebooks/Pi\0ranesi.epub");
+
+            var request = httpClient.Requests.Single();
+            var requestJson = Encoding.UTF8.GetString(request.ContentData);
+            var body = JsonConvert.DeserializeObject<V5MatchRequest>(requestJson);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(requestJson, Does.Not.Contain("\\u0000"));
+                Assert.That(body.q, Is.EqualTo("Pi ranesi"));
+                Assert.That(body.tags["TITLE"], Is.EquivalentTo(new[] { "Existing", "Pi ranesi" }));
+                Assert.That(body.tags["ALBUM"], Is.EqualTo(new[] { "Pi ranesi" }));
+                Assert.That(body.tags["CUSTOM"], Is.EqualTo(new[] { "Susanna Clarke" }));
+                Assert.That(body.tags["file_name"], Is.EqualTo(new[] { "Pi ranesi.epub" }));
+                Assert.That(body.tags.ContainsKey("COMMENT"), Is.False);
+                Assert.That(body.tags.Keys.Any(key => key.Contains('\0')), Is.False);
+                Assert.That(body.tags.Values.SelectMany(values => values).Any(value => value.Contains('\0')), Is.False);
+            });
+        }
+
+        [Test]
+        public void should_remove_embedded_nulls_from_a_query_derived_from_tags()
+        {
+            var httpClient = new RecordingHttpClient();
+            var service = CreateService(httpClient);
+
+            service.SearchV5Matching(
+                string.Empty,
+                new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new() { "Pi\0ranesi" },
+                    ["ARTIST"] = new() { "Susanna Clarke" }
+                },
+                "ebook",
+                null);
+
+            var request = httpClient.Requests.Single();
+            var requestJson = Encoding.UTF8.GetString(request.ContentData);
+            var body = JsonConvert.DeserializeObject<V5MatchRequest>(requestJson);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(requestJson, Does.Not.Contain("\\u0000"));
+                Assert.That(body.q, Is.EqualTo("pi ranesi susanna clarke"));
+            });
+        }
+
+        [Test]
+        public void should_not_truncate_the_effective_query()
+        {
+            var httpClient = new RecordingHttpClient();
+            var service = CreateService(httpClient);
+            var query = $"{new string('a', 300)}\0{new string('b', 300)}";
+
+            service.SearchV5Matching(
+                query,
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { "Piranesi" } },
+                "ebook",
+                null);
+
+            var request = httpClient.Requests.Single();
+            var requestJson = Encoding.UTF8.GetString(request.ContentData);
+            var body = JsonConvert.DeserializeObject<V5MatchRequest>(requestJson);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(requestJson, Does.Not.Contain("\\u0000"));
+                Assert.That(body.q, Is.EqualTo($"{new string('a', 300)} {new string('b', 300)}"));
+                Assert.That(body.q, Has.Length.EqualTo(601));
+            });
+        }
+
+        [Test]
+        public void should_omit_tags_whose_sanitized_key_or_values_are_empty()
+        {
+            var httpClient = new RecordingHttpClient();
+            var service = CreateService(httpClient);
+
+            service.SearchV5Matching(
+                "Piranesi",
+                new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new() { "Piranesi" },
+                    ["EMPTY"] = new() { "\0 \t" },
+                    ["\0\t"] = new() { "must not survive" }
+                },
+                "ebook",
+                null);
+
+            var request = httpClient.Requests.Single();
+            var requestJson = Encoding.UTF8.GetString(request.ContentData);
+            var body = JsonConvert.DeserializeObject<V5MatchRequest>(requestJson);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(requestJson, Does.Not.Contain("\\u0000"));
+                Assert.That(body.tags.Keys, Is.EqualTo(new[] { "TITLE" }));
+                Assert.That(body.tags["TITLE"], Is.EqualTo(new[] { "Piranesi" }));
             });
         }
     }

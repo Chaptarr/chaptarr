@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -20,35 +21,31 @@ namespace Chaptarr.Api.V1.Bookshelf
         [HttpPost]
         public IActionResult UpdateAll([FromBody] BookshelfResource request)
         {
-            //Read from request
-            var authorToUpdate = _authorService.GetAuthors(request.Authors.Select(s => s.Id));
+            var requestedAuthors = request.Authors ?? new List<BookshelfAuthorResource>();
 
-            foreach (var s in request.Authors)
+            if (request.MonitorNewItems.HasValue || requestedAuthors.Any(author => author.Monitored.HasValue))
             {
-                var author = authorToUpdate.Single(c => c.Id == s.Id);
+                return BadRequest("Bookshelf only changes book monitoring. Use Author Editor to change author or future-book monitoring.");
+            }
 
-                if (s.Monitored.HasValue)
-                {
-                    author.Monitored = s.Monitored.Value;
-                }
+            if (request.MonitoringOptions?.Monitor == MonitorTypes.SpecificBook &&
+                (request.MonitoringOptions.BooksToMonitor == null || request.MonitoringOptions.BooksToMonitor.Count == 0))
+            {
+                return BadRequest("Specific-book monitoring requires at least one book ID.");
+            }
 
-                // Legacy behavior: when applying a global "None" monitor option, also unmonitor the author.
-                // When a specific media type is provided, only apply book-level changes for that type.
-                if (request.MonitoringOptions != null &&
-                    request.MonitoringOptions.Monitor == MonitorTypes.None &&
-                    request.MonitoringOptions.MediaType == null)
-                {
-                    author.Monitored = false;
-                }
+            var monitoringOptions = request.MonitoringOptions?.ToModel();
+            if (monitoringOptions == null || requestedAuthors.Count == 0)
+            {
+                return Accepted(request);
+            }
 
-                // TODO: Update for new boolean monitoring system
-                // MonitorNewItems is being replaced with per-media-type boolean monitoring
-                // if (request.MonitorNewItems.HasValue)
-                // {
-                //     author.MonitorNewItems = request.MonitorNewItems.Value;
-                // }
+            var authorToUpdate = _authorService.GetAuthors(requestedAuthors.Select(author => author.Id));
 
-                _bookMonitoredService.SetBookMonitoredStatus(author, request.MonitoringOptions);
+            foreach (var requestedAuthor in requestedAuthors)
+            {
+                var author = authorToUpdate.Single(candidate => candidate.Id == requestedAuthor.Id);
+                _bookMonitoredService.SetBookMonitoredStatus(author, monitoringOptions);
             }
 
             return Accepted(request);

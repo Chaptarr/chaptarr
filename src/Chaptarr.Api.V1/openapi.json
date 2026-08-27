@@ -1401,6 +1401,26 @@
                 }
               }
             }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBookRequestResource"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBookRequestResource"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingBookRequestResource"
+                }
+              }
+            }
           }
         }
       },
@@ -13975,6 +13995,25 @@
         },
         "additionalProperties": false
       },
+      "BookshelfMonitoringOptionsResource": {
+        "type": "object",
+        "properties": {
+          "monitor": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "mediaType": {
+            "$ref": "#/components/schemas/BookMediaType"
+          },
+          "booksToMonitor": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "BookshelfResource": {
         "type": "object",
         "properties": {
@@ -13986,7 +14025,7 @@
             "nullable": true
           },
           "monitoringOptions": {
-            "$ref": "#/components/schemas/MonitoringOptions"
+            "$ref": "#/components/schemas/BookshelfMonitoringOptionsResource"
           },
           "monitorNewItems": {
             "$ref": "#/components/schemas/NewItemMonitorTypes"
@@ -17050,28 +17089,6 @@
         ],
         "type": "string"
       },
-      "MonitoringOptions": {
-        "type": "object",
-        "properties": {
-          "monitor": {
-            "$ref": "#/components/schemas/MonitorTypes"
-          },
-          "mediaType": {
-            "$ref": "#/components/schemas/BookMediaType"
-          },
-          "booksToMonitor": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "nullable": true
-          },
-          "monitored": {
-            "type": "boolean"
-          }
-        },
-        "additionalProperties": false
-      },
       "MonitoringResource": {
         "type": "object",
         "properties": {
@@ -17775,6 +17792,20 @@
             "nullable": true
           },
           "correlationId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PendingBookRequestResource": {
+        "type": "object",
+        "properties": {
+          "pendingId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "message": {
             "type": "string",
             "nullable": true
           }

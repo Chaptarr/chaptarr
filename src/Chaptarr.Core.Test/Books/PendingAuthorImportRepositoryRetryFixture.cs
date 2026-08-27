@@ -43,6 +43,111 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [Test]
+        public void request_update_and_delete_should_require_the_expected_version()
+        {
+            WithCasRepository((repository, connectionString) =>
+            {
+                var item = new PendingAuthorImport
+                {
+                    Id = 1,
+                    ProviderId = "gr:1",
+                    Version = 4,
+                    AudiobookStatus = PendingImportStatus.Pending,
+                    EbookStatus = PendingImportStatus.NotRequested,
+                    OverallStatus = PendingImportStatus.Pending,
+                    AudiobookBooksToMonitor = "[\"gr:first\",\"gr:second\"]",
+                    NextAttemptAt = DateTime.UtcNow
+                };
+
+                Assert.That(repository.TryUpdateRequest(item, expectedVersion: 3), Is.False);
+                Assert.That(repository.TryUpdateRequest(item, expectedVersion: 4), Is.True);
+                Assert.That(item.Version, Is.EqualTo(5));
+                Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
+                Assert.That(repository.TryDelete(item.Id, expectedVersion: 5), Is.True);
+
+                using var connection = new SqliteConnection(connectionString);
+                connection.Open();
+                Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM \"PendingAuthorImport\""), Is.Zero);
+            });
+        }
+
+        private static void WithCasRepository(Action<PendingAuthorImportRepository, string> action)
+        {
+            var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"pending_author_cas_{Guid.NewGuid():N}.db");
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false
+            }.ToString();
+
+            try
+            {
+                using (var connection = new SqliteConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"
+                        CREATE TABLE ""PendingAuthorImport"" (
+                            ""Id"" INTEGER PRIMARY KEY,
+                            ""ProviderId"" TEXT,
+                            ""DiscoveredAuthorFolderPath"" TEXT,
+                            ""AudiobookStatus"" INTEGER,
+                            ""EbookStatus"" INTEGER,
+                            ""OverallStatus"" INTEGER,
+                            ""AudiobookMonitorExisting"" INTEGER,
+                            ""AudiobookMonitorFuture"" INTEGER,
+                            ""AudiobookQualityProfileId"" INTEGER,
+                            ""AudiobookMetadataProfileId"" INTEGER,
+                            ""AudiobookRootFolderPath"" TEXT,
+                            ""AudiobookBooksToMonitor"" TEXT,
+                            ""AudiobookBooksToSearch"" TEXT,
+                            ""EbookMonitorExisting"" INTEGER,
+                            ""EbookMonitorFuture"" INTEGER,
+                            ""EbookQualityProfileId"" INTEGER,
+                            ""EbookMetadataProfileId"" INTEGER,
+                            ""EbookRootFolderPath"" TEXT,
+                            ""EbookBooksToMonitor"" TEXT,
+                            ""EbookBooksToSearch"" TEXT,
+                            ""SearchForMissingBooks"" INTEGER,
+                            ""AttemptCount"" INTEGER,
+                            ""MaxAttempts"" INTEGER,
+                            ""LastAttemptAt"" DATETIME,
+                            ""LastError"" TEXT,
+                            ""UpdatedAt"" DATETIME,
+                            ""NextAttemptAt"" DATETIME,
+                            ""Version"" INTEGER,
+                            ""CreatedAt"" DATETIME
+                        );
+                        INSERT INTO ""PendingAuthorImport""
+                            (""Id"", ""ProviderId"", ""AudiobookStatus"", ""EbookStatus"", ""OverallStatus"", ""SearchForMissingBooks"", ""AttemptCount"", ""MaxAttempts"", ""NextAttemptAt"", ""Version"", ""CreatedAt"")
+                        VALUES
+                            (1, 'gr:1', @Pending, @NotRequested, @Pending, 0, 0, 0, @Now, 4, @Now);",
+                        new
+                        {
+                            Pending = PendingImportStatus.Pending,
+                            NotRequested = PendingImportStatus.NotRequested,
+                            Now = DateTime.UtcNow
+                        });
+                }
+
+                var database = new Database("main", () =>
+                {
+                    var connection = new SqliteConnection(connectionString);
+                    connection.Open();
+                    return connection;
+                });
+                action(new PendingAuthorImportRepository(new MainDatabase(database), new StubEventAggregator()), connectionString);
+            }
+            finally
+            {
+                if (File.Exists(databasePath))
+                {
+                    File.Delete(databasePath);
+                }
+            }
+        }
+
         private static void WithRepository(Action<PendingAuthorImportRepository, string> action)
         {
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"pending_author_retry_{Guid.NewGuid():N}.db");

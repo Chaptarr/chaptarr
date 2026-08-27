@@ -231,28 +231,6 @@ namespace NzbDrone.Core.Books.Services
                 {
                     _logger.Info("Author {0} not available on metadata server, queuing for later import", providerId);
 
-                    // Defensive: if the author is already in the local database, treat as a no-op add.
-                    // This can happen if the metadata server is temporarily inconsistent or the author was imported earlier.
-                    try
-                    {
-                        var colonIndex = providerId?.IndexOf(':') ?? -1;
-                        if (colonIndex > 0)
-                        {
-                            var prefix = providerId.Substring(0, colonIndex).ToLowerInvariant();
-                            var rawId = providerId.Substring(colonIndex + 1);
-                            var existingAuthor = _authorService.FindByProviderId(prefix, rawId);
-                            if (existingAuthor != null)
-                            {
-                                _logger.Info("Author {0} already exists locally (ID: {1}); skipping pending queue", providerId, existingAuthor.Id);
-                                return existingAuthor;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warn(ex, "Failed to check local author existence for {0}; continuing with pending queue", providerId);
-                    }
-
                         var pendingId = await _pendingImportService.EnqueueAsync(
                             providerId,
                             config,
@@ -342,7 +320,8 @@ namespace NzbDrone.Core.Books.Services
                 var existingAuthor = FindExistingAuthor(providerId, author);
                 if (existingAuthor != null)
                 {
-                    return await HandleExistingAuthorAsync(existingAuthor, author, config);
+                    var handledAuthor = await HandleExistingAuthorAsync(existingAuthor, author, config);
+                    return await QueueMissingRequestedWorks(handledAuthor, providerId, config);
                 }
 
                 var usesDiscoveredPath = !string.IsNullOrWhiteSpace(config?.DiscoveredAuthorFolderPath) &&
@@ -392,7 +371,8 @@ namespace NzbDrone.Core.Books.Services
                     var existingAfterConflict = FindExistingAuthor(providerId, author);
                     if (existingAfterConflict != null)
                     {
-                        return await HandleExistingAuthorAsync(existingAfterConflict, author, config);
+                        var handledAuthor = await HandleExistingAuthorAsync(existingAfterConflict, author, config);
+                        return await QueueMissingRequestedWorks(handledAuthor, providerId, config);
                     }
 
                     throw;
@@ -403,7 +383,8 @@ namespace NzbDrone.Core.Books.Services
                     var existingAfterConflict = FindExistingAuthor(providerId, author);
                     if (existingAfterConflict != null)
                     {
-                        return await HandleExistingAuthorAsync(existingAfterConflict, author, config);
+                        var handledAuthor = await HandleExistingAuthorAsync(existingAfterConflict, author, config);
+                        return await QueueMissingRequestedWorks(handledAuthor, providerId, config);
                     }
 
                     throw;
@@ -470,12 +451,87 @@ namespace NzbDrone.Core.Books.Services
                         overallStopwatch.ElapsedMilliseconds / totalEditions);
                 }
 
-                return addedAuthor;
+                return await QueueMissingRequestedWorks(addedAuthor, providerId, config);
             }
             finally
             {
                 writeGate?.Release();
             }
+        }
+
+        private async Task<Author> QueueMissingRequestedWorks(Author author, string authorProviderId, MonitoringConfig config)
+        {
+            if (author == null || author.Id <= 0 || config?.QueueIfUnavailable != true || config.IsFromQueue)
+            {
+                return author;
+            }
+
+            var targets = new[]
+            {
+                (BookMediaType.Audiobook, config.AudiobookBooksToMonitor),
+                (BookMediaType.Audiobook, config.AudiobookBooksToSearch),
+                (BookMediaType.Ebook, config.EbookBooksToMonitor),
+                (BookMediaType.Ebook, config.EbookBooksToSearch)
+            }
+                .SelectMany(entry => (entry.Item2 ?? new List<string>())
+                    .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
+                    .Select(providerId => (MediaType: entry.Item1, ProviderId: providerId.Trim())))
+                .Distinct()
+                .ToList();
+
+            if (!targets.Any())
+            {
+                return author;
+            }
+
+            var missing = targets.Where(target => !RequestedWorkExists(author.Id, target.ProviderId, target.MediaType)).ToList();
+            if (!missing.Any())
+            {
+                return author;
+            }
+
+            _logger.Info(
+                "Author {0} is available, but requested work(s) [{1}] are not yet present in its authoritative catalog; retaining the request",
+                authorProviderId,
+                string.Join(",", missing.Select(target => target.ProviderId)));
+
+            var pendingId = await _pendingImportService.EnqueueAsync(
+                authorProviderId,
+                config,
+                config.RequestedBy ?? "UserInterface");
+            if (pendingId <= 0)
+            {
+                throw new InvalidOperationException($"Unable to retain requested work(s) for author {authorProviderId}.");
+            }
+
+            return new Author
+            {
+                Id = -pendingId,
+                Name = config.AuthorName ?? author.Name ?? "Pending Import",
+                Status = AuthorStatusType.Continuing,
+                Path = "pending",
+                CleanName = (config.AuthorName ?? author.Name)?.CleanAuthorName() ?? "pending_import"
+            };
+        }
+
+        private bool RequestedWorkExists(int authorId, string workProviderId, BookMediaType mediaType)
+        {
+            if (!ProviderIdHelper.TryNormalize(workProviderId, defaultPrefix: null, out var normalized))
+            {
+                return false;
+            }
+
+            var separator = normalized.IndexOf(':');
+            if (separator <= 0)
+            {
+                return false;
+            }
+
+            return _bookService.FindAllByWorkProviderId(
+                    normalized.Substring(0, separator),
+                    ProviderIdHelper.StripPrefix(normalized),
+                    mediaType)
+                .Any(book => book.AuthorId == authorId);
         }
 
         public async Task<UserSelectedEditionMaterialization> MaterializeUserSelectedEditionAsync(

@@ -1,7 +1,9 @@
 import { createAction } from 'redux-actions';
-import { filterBuilderTypes, filterBuilderValueTypes, sortDirections } from 'Helpers/Props';
+import { filterBuilderTypes, filterBuilderValueTypes, filterTypePredicates, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
+import { isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import { SET_SELECTED_MEDIA_TYPE } from './appActions';
 import { filterPredicates, filters } from './authorActions';
 import { set } from './baseActions';
 import createHandleActions from './Creators/createHandleActions';
@@ -23,9 +25,19 @@ export const defaultState = {
   sortDirection: sortDirections.ASCENDING,
   secondarySortKey: 'sortName',
   secondarySortDirection: sortDirections.ASCENDING,
+  selectedMediaType: localStorage.getItem('selectedMediaType') || 'audiobook',
   selectedFilterKey: 'all',
   filters,
-  filterPredicates,
+  filterPredicates: {
+    ...filterPredicates,
+
+    monitored: function(item, filterValue, type, state) {
+      const predicate = filterTypePredicates[type];
+      const monitored = isAuthorMonitoredForSelection(item, state.selectedMediaType);
+
+      return predicate(monitored, filterValue);
+    }
+  },
 
   filterBuilderProps: [
     {
@@ -95,22 +107,17 @@ export const actionHandlers = handleThunks({
   [SAVE_BOOKSHELF]: function(getState, payload, dispatch) {
     const {
       authorIds,
-      monitored,
       monitor,
-      monitorNewItems
+      mediaType
     } = payload;
 
-    const authors = [];
+    const data = {
+      authors: authorIds.map((id) => ({ id }))
+    };
 
-    authorIds.forEach((id) => {
-      const authorToUpdate = { id };
-
-      if (payload.hasOwnProperty('monitored')) {
-        authorToUpdate.monitored = monitored;
-      }
-
-      authors.push(authorToUpdate);
-    });
+    if (monitor != null) {
+      data.monitoringOptions = { monitor, mediaType };
+    }
 
     dispatch(set({
       section,
@@ -120,15 +127,11 @@ export const actionHandlers = handleThunks({
     const promise = createAjaxRequest({
       url: '/bookshelf',
       method: 'POST',
-      data: JSON.stringify({
-        authors,
-        monitoringOptions: { monitor },
-        monitorNewItems
-      }),
+      data: JSON.stringify(data),
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
+    promise.done(() => {
       dispatch(set({
         section,
         isSaving: false,
@@ -152,7 +155,13 @@ export const actionHandlers = handleThunks({
 export const reducers = createHandleActions({
 
   [SET_BOOKSHELF_SORT]: createSetClientSideCollectionSortReducer(section),
-  [SET_BOOKSHELF_FILTER]: createSetClientSideCollectionFilterReducer(section)
+  [SET_BOOKSHELF_FILTER]: createSetClientSideCollectionFilterReducer(section),
+
+  [SET_SELECTED_MEDIA_TYPE]: function(state, { payload }) {
+    return {
+      ...state,
+      selectedMediaType: payload.mediaType
+    };
+  }
 
 }, defaultState, section);
-

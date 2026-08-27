@@ -3,7 +3,6 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { toggleAuthorMonitored } from 'Store/Actions/authorActions';
 import { toggleBooksMonitored } from 'Store/Actions/bookActions';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import BookshelfRow from './BookshelfRow';
@@ -23,17 +22,20 @@ function createMapStateToProps() {
   return createSelector(
     createAuthorSelector(),
     getBookMap,
-    (author, bookMap) => {
+    (state, props) => props.selectedMediaType,
+    (author, bookMap, selectedMediaType) => {
       const booksInAuthor = bookMap.hasOwnProperty(author.id) ? bookMap[author.id] : [];
-      const sortedBooks = _.orderBy(booksInAuthor, 'releaseDate', 'desc');
+      const sortedBooks = _.orderBy(
+        booksInAuthor.filter((book) => book.mediaType === selectedMediaType),
+        'releaseDate',
+        'desc'
+      );
 
       return {
         ...author,
         authorId: author.id,
         authorName: author.authorName,
-        monitored: author.monitored,
         status: author.status,
-        isSaving: author.isSaving,
         books: sortedBooks
       };
     }
@@ -41,7 +43,6 @@ function createMapStateToProps() {
 }
 
 const mapDispatchToProps = {
-  toggleAuthorMonitored,
   toggleBooksMonitored
 };
 
@@ -49,18 +50,6 @@ class BookshelfRowConnector extends Component {
 
   //
   // Listeners
-
-  onAuthorMonitoredPress = () => {
-    const {
-      authorId,
-      monitored
-    } = this.props;
-
-    this.props.toggleAuthorMonitored({
-      authorId,
-      monitored: !monitored
-    });
-  };
 
   onBookMonitoredPress = (bookId, monitored) => {
     const bookIds = [bookId];
@@ -77,7 +66,6 @@ class BookshelfRowConnector extends Component {
     return (
       <BookshelfRow
         {...this.props}
-        onAuthorMonitoredPress={this.onAuthorMonitoredPress}
         onBookMonitoredPress={this.onBookMonitoredPress}
       />
     );
@@ -86,8 +74,7 @@ class BookshelfRowConnector extends Component {
 
 BookshelfRowConnector.propTypes = {
   authorId: PropTypes.number.isRequired,
-  monitored: PropTypes.bool.isRequired,
-  toggleAuthorMonitored: PropTypes.func.isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
   toggleBooksMonitored: PropTypes.func.isRequired
 };
 

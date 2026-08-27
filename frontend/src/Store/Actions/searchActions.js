@@ -130,6 +130,44 @@ function getMediaTypeLabel(mediaType) {
   return mediaType === 'ebook' ? 'eBook' : 'audiobook';
 }
 
+const pendingBookRequestMessage = 'The author and requested book are being prepared by the metadata server. Chaptarr saved your request and will add it automatically when it becomes available.';
+
+function getPendingBookRequest(data, xhr) {
+  const status = (xhr && xhr.status) || (data && data.pendingId ? 202 : null);
+
+  if (status !== 202) {
+    return null;
+  }
+
+  return {
+    pendingId: (data && data.pendingId) || null,
+    message: (data && data.message) || pendingBookRequestMessage
+  };
+}
+
+function getQueuedBookActions(pendingRequest, extraState = {}) {
+  return [
+    showMessage({
+      id: `book-request-queued-${Date.now()}`,
+      name: 'BookRequestQueued',
+      message: pendingRequest.message,
+      type: 'success',
+      hideAfter: 12
+    }),
+    set({
+      section,
+      isAdding: false,
+      isAdded: false,
+      isQueued: true,
+      addNotice: pendingRequest.message,
+      pendingId: pendingRequest.pendingId,
+      addError: null,
+      addFailedMediaType: null,
+      ...extraState
+    })
+  ];
+}
+
 function getAddedMediaTypes(state, ...mediaTypes) {
   const searchState = getSectionState(state, section);
   const added = new Set(Array.isArray(searchState.addedMediaTypes) ? searchState.addedMediaTypes : []);
@@ -858,6 +896,9 @@ export const actionHandlers = handleThunks({
       section,
       isAdding: true,
       isAdded: false,
+      isQueued: false,
+      addNotice: null,
+      pendingId: null,
       addError: null,
       addFailedMediaType: null
     }));
@@ -886,10 +927,37 @@ export const actionHandlers = handleThunks({
     const requestedMediaType = (payload.mediaType || '').toLowerCase();
 
     if (requestedMediaType === 'both') {
-      const addEbook = (currentItem, audiobookError = null) => {
+      const addEbook = (currentItem, audiobookError = null, audiobookPending = null) => {
         const second = postBookForMediaType(currentItem, payload, 'ebook', payload.searchForNewBook);
 
-        second.done((ebookData) => {
+        second.done((ebookData, textStatus, xhr) => {
+          const ebookPending = getPendingBookRequest(ebookData, xhr);
+          const pendingRequest = ebookPending || audiobookPending;
+          if (pendingRequest) {
+            const ebookUpdate = ebookPending ? { actions: [] } : getBookUpdateActions(currentItem, ebookData, 'ebook');
+            const audiobookFailureAction = audiobookError ? showMessage({
+              id: `book-add-audiobook-failed-${Date.now()}`,
+              name: 'BookAddAudiobookFailed',
+              message: `The eBook request was queued, but audiobook failed: ${getAjaxErrorMessage(audiobookError)}. The modal is still open so you can retry audiobook.`,
+              type: 'warning',
+              hideAfter: 14
+            }) : null;
+            dispatch(batchActions([
+              ...ebookUpdate.actions,
+              audiobookFailureAction,
+              ...getQueuedBookActions(pendingRequest, {
+                addError: audiobookError,
+                addFailedMediaType: audiobookError ? 'audiobook' : null,
+                addedMediaTypes: getAddedMediaTypes(
+                  getState(),
+                  ...(audiobookPending ? [] : ['audiobook']),
+                  ...(ebookPending ? [] : ['ebook'])
+                )
+              })
+            ].filter(Boolean)));
+            return;
+          }
+
           const ebookUpdate = getBookUpdateActions(currentItem, ebookData, 'ebook');
 
           if (audiobookError) {
@@ -931,9 +999,18 @@ export const actionHandlers = handleThunks({
 
         second.fail((ebookError) => {
           const error = getAjaxErrorMessage(ebookError);
-          const audiobookMessage = audiobookError ?
-            `Audiobook failed: ${getAjaxErrorMessage(audiobookError)}. ` :
-            'Audiobook added, but ';
+          let audiobookMessage = 'Audiobook added, but ';
+          let addedMediaTypes = getAddedMediaTypes(getState(), 'audiobook');
+
+          if (audiobookPending) {
+            audiobookMessage = 'Audiobook request queued, but ';
+            addedMediaTypes = getAddedMediaTypes(getState());
+          }
+
+          if (audiobookError) {
+            audiobookMessage = `Audiobook failed: ${getAjaxErrorMessage(audiobookError)}. `;
+            addedMediaTypes = getAddedMediaTypes(getState());
+          }
 
           dispatch(batchActions([
             showMessage({
@@ -947,11 +1024,12 @@ export const actionHandlers = handleThunks({
               section,
               isAdding: false,
               isAdded: false,
+              isQueued: !!audiobookPending,
+              addNotice: audiobookPending ? audiobookPending.message : null,
+              pendingId: audiobookPending ? audiobookPending.pendingId : null,
               addError: audiobookError || ebookError,
               addFailedMediaType: audiobookError ? 'audiobook' : 'ebook',
-              addedMediaTypes: audiobookError ?
-                getAddedMediaTypes(getState()) :
-                getAddedMediaTypes(getState(), 'audiobook')
+              addedMediaTypes
             })
           ]));
         });
@@ -959,7 +1037,13 @@ export const actionHandlers = handleThunks({
 
       const first = postBookForMediaType(itemToAdd, payload, 'audiobook', payload.searchForNewBook);
 
-      first.done((audiobookData) => {
+      first.done((audiobookData, textStatus, xhr) => {
+        const audiobookPending = getPendingBookRequest(audiobookData, xhr);
+        if (audiobookPending) {
+          addEbook(itemToAdd, null, audiobookPending);
+          return;
+        }
+
         const audiobookUpdate = getBookUpdateActions(itemToAdd, audiobookData, 'audiobook');
         const currentItem = audiobookUpdate.updatedItem;
 
@@ -987,7 +1071,13 @@ export const actionHandlers = handleThunks({
     const mediaType = requestedMediaType === 'ebook' ? 'ebook' : 'audiobook';
     const promise = postBookForMediaType(itemToAdd, payload, mediaType, payload.searchForNewBook);
 
-    promise.done((data) => {
+    promise.done((data, textStatus, xhr) => {
+      const pendingRequest = getPendingBookRequest(data, xhr);
+      if (pendingRequest) {
+        dispatch(batchActions(getQueuedBookActions(pendingRequest)));
+        return;
+      }
+
       const updateResult = getBookUpdateActions(itemToAdd, data, mediaType);
       dispatch(batchActions([
         ...updateResult.actions,

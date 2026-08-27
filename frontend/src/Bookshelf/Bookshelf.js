@@ -2,7 +2,7 @@ import _ from 'lodash';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { CellMeasurer, CellMeasurerCache } from 'react-virtualized';
-import NoAuthor from 'Author/NoAuthor';
+import MediaTypeToggle from 'Author/Details/MediaTypeToggle';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import FilterMenu from 'Components/Menu/FilterMenu';
 import PageContent from 'Components/Page/PageContent';
@@ -26,10 +26,6 @@ import BookshelfTableHeader from './BookshelfTableHeader';
 import styles from './Bookshelf.css';
 
 const columns = [
-  {
-    name: 'monitored',
-    isVisible: true
-  },
   {
     name: 'status',
     isVisible: true
@@ -81,7 +77,8 @@ class Bookshelf extends Component {
   componentDidUpdate(prevProps) {
     const {
       isSaving,
-      saveError
+      saveError,
+      selectedMediaType
     } = this.props;
 
     const {
@@ -91,6 +88,14 @@ class Bookshelf extends Component {
 
     if (prevProps.isSaving && !isSaving && !saveError) {
       this.onSelectAllChange({ value: false });
+    }
+
+    const mediaTypeChanged = prevProps.selectedMediaType !== selectedMediaType;
+
+    if (mediaTypeChanged) {
+      this.setSelectedState(true);
+      this.setJumpBarItems();
+      this.cache.clearAll();
     }
 
     // nasty hack to fix react-virtualized jumping incorrectly
@@ -173,7 +178,7 @@ class Bookshelf extends Component {
     return getSelectedIds(this.state.selectedState);
   };
 
-  setSelectedState = () => {
+  setSelectedState = (clearSelection = false) => {
     const {
       items
     } = this.props;
@@ -185,7 +190,7 @@ class Bookshelf extends Component {
     const newSelectedState = {};
 
     items.forEach((author) => {
-      const isItemSelected = selectedState[author.id];
+      const isItemSelected = !clearSelection && selectedState[author.id];
 
       if (isItemSelected) {
         newSelectedState[author.id] = isItemSelected;
@@ -219,8 +224,8 @@ class Bookshelf extends Component {
     }
 
     // guess 250px per book entry
-    // available width is total width less 186px for select, status etc
-    const cols = Math.max(Math.floor((width - 186) / 250), 1);
+    // available width is total width less 166px for select, status etc
+    const cols = Math.max(Math.floor((width - 166) / 250), 1);
     const booksPerAuthor = bookCount / items.length;
     const bookRowsPerAuthor = booksPerAuthor / cols;
 
@@ -230,7 +235,8 @@ class Bookshelf extends Component {
 
   rowRenderer = ({ key, rowIndex, parent, style }) => {
     const {
-      items
+      items,
+      selectedMediaType
     } = this.props;
 
     const {
@@ -255,6 +261,7 @@ class Bookshelf extends Component {
             <BookStudioRowConnector
               key={item.id}
               authorId={item.id}
+              selectedMediaType={selectedMediaType}
               isSelected={selectedState[item.id]}
               onSelectedChange={this.onSelectedChange}
             />
@@ -284,6 +291,7 @@ class Bookshelf extends Component {
   onUpdateSelectedPress = (changes) => {
     this.props.onUpdateSelectedPress({
       authorIds: this.getSelectedIds(),
+      mediaType: this.props.selectedMediaType,
       ...changes
     });
   };
@@ -326,8 +334,10 @@ class Bookshelf extends Component {
       isSaving,
       saveError,
       isSmallScreen,
+      selectedMediaType,
       onSortPress,
-      onFilterSelect
+      onFilterSelect,
+      onMediaTypeChange
     } = this.props;
 
     const {
@@ -339,10 +349,23 @@ class Bookshelf extends Component {
       scrollIndex
     } = this.state;
 
+    let emptyMessage = translate('BookshelfNoAudiobooks');
+
+    if (totalItems > 0) {
+      emptyMessage = translate('AllResultsAreHiddenByTheAppliedFilter');
+    } else if (selectedMediaType === 'ebook') {
+      emptyMessage = translate('BookshelfNoEbooks');
+    }
+
     return (
       <PageContent title={translate('BookStudio')}>
         <PageToolbar>
-          <PageToolbarSection />
+          <PageToolbarSection>
+            <MediaTypeToggle
+              selectedMediaType={selectedMediaType}
+              onMediaTypeChange={onMediaTypeChange}
+            />
+          </PageToolbarSection>
           <PageToolbarSection alignContent={align.RIGHT}>
             <FilterMenu
               alignMenu={align.RIGHT}
@@ -405,7 +428,9 @@ class Bookshelf extends Component {
 
             {
               !error && isPopulated && !items.length &&
-                <NoAuthor totalItems={totalItems} />
+                <div className={styles.emptyMessage}>
+                  {emptyMessage}
+                </div>
             }
           </PageContentBody>
 
@@ -436,6 +461,7 @@ Bookshelf.propTypes = {
   totalItems: PropTypes.number.isRequired,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
   bookCount: PropTypes.number.isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
   sortKey: PropTypes.string,
   sortDirection: PropTypes.oneOf(sortDirections.all),
   selectedFilterKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
@@ -446,6 +472,7 @@ Bookshelf.propTypes = {
   isSmallScreen: PropTypes.bool.isRequired,
   onSortPress: PropTypes.func.isRequired,
   onFilterSelect: PropTypes.func.isRequired,
+  onMediaTypeChange: PropTypes.func.isRequired,
   onUpdateSelectedPress: PropTypes.func.isRequired
 };
 

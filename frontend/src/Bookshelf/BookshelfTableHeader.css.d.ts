@@ -2,7 +2,6 @@
 // Please do not change this file!
 interface CssExports {
   'bookCount': string;
-  'monitored': string;
   'sortName': string;
   'status': string;
 }
