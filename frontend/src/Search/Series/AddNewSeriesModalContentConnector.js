@@ -13,7 +13,7 @@ import createRootFolderDefaultsSelector from 'Store/Selectors/createRootFolderDe
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import selectSettings from 'Store/Selectors/selectSettings';
 import { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
-import { normalizeMonitorOption } from 'Utilities/Author/monitorOptions';
+import { normalizeMonitorOption, resolveMonitorOption } from 'Utilities/Author/monitorOptions';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import AddNewSeriesModalContent from './AddNewSeriesModalContent';
 
@@ -43,7 +43,7 @@ function createMapStateToProps() {
       // Defensive defaults for legacy/empty persisted state
       if (!settings.monitor) {
         settings.monitor = {
-          value: 'all',
+          value: 'none',
           errors: [],
           warnings: []
         };
@@ -51,7 +51,7 @@ function createMapStateToProps() {
 
       if (!settings.monitorNewItems) {
         settings.monitorNewItems = {
-          value: 'all',
+          value: 'none',
           errors: [],
           warnings: []
         };
@@ -82,17 +82,6 @@ function createMapStateToProps() {
 
         const rootFolders = rootFoldersState.items || [];
 
-        const monitorExistingToKey = (monitorExistingMode, monitorExistingBooks) => {
-          const normalizedMode = monitorExistingMode?.toString().toLowerCase();
-          return ['all', 'missing', 'existing', 'none'].includes(normalizedMode) ?
-            normalizedMode :
-            (monitorExistingBooks === true ? 'all' : 'none');
-        };
-        const monitorNewItemsToKey = (value) => {
-          const normalized = (value ?? '').toString().trim().toLowerCase();
-          return ['all', 'new', 'none'].includes(normalized) ? normalized : 'none';
-        };
-
         const audiobookRoot = settings.audiobookRootFolderPath?.value;
         const ebookRoot = settings.ebookRootFolderPath?.value;
 
@@ -102,7 +91,7 @@ function createMapStateToProps() {
         if (!settings.audiobookMonitor && audiobookRootFolder) {
           settings.audiobookMonitor = {
             ...(settings.audiobookMonitor || {}),
-            value: monitorExistingToKey(
+            value: resolveMonitorOption(
               audiobookRootFolder.audiobookMonitorExistingMode,
               audiobookRootFolder.audiobookMonitorExistingBooks
             )
@@ -118,14 +107,14 @@ function createMapStateToProps() {
         if (!settings.audiobookMonitorNewItems && audiobookRootFolder) {
           settings.audiobookMonitorNewItems = {
             ...(settings.audiobookMonitorNewItems || {}),
-            value: monitorNewItemsToKey(audiobookRootFolder.audiobookMonitorNewItems)
+            value: normalizeMonitorNewItemsOption(audiobookRootFolder.audiobookMonitorNewItems)
           };
         }
 
         if (!settings.ebookMonitor && ebookRootFolder) {
           settings.ebookMonitor = {
             ...(settings.ebookMonitor || {}),
-            value: monitorExistingToKey(
+            value: resolveMonitorOption(
               ebookRootFolder.ebookMonitorExistingMode,
               ebookRootFolder.ebookMonitorExistingBooks
             )
@@ -141,7 +130,7 @@ function createMapStateToProps() {
         if (!settings.ebookMonitorNewItems && ebookRootFolder) {
           settings.ebookMonitorNewItems = {
             ...(settings.ebookMonitorNewItems || {}),
-            value: monitorNewItemsToKey(ebookRootFolder.ebookMonitorNewItems)
+            value: normalizeMonitorNewItemsOption(ebookRootFolder.ebookMonitorNewItems)
           };
         }
 

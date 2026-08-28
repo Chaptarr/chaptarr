@@ -26,4 +26,12 @@ export function resolveMonitorOptionValue(value, fallbackValue) {
   return normalizeMonitorOption(value ?? fallbackValue);
 }
 
+export function resolveMonitorOption(value, legacyMonitorExistingBooks) {
+  if (value != null) {
+    return normalizeMonitorOption(value);
+  }
+
+  return legacyMonitorExistingBooks === true ? 'all' : 'none';
+}
+
 export default monitorOptions;
