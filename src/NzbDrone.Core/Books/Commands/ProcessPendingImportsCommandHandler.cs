@@ -272,6 +272,7 @@ namespace NzbDrone.Core.Books.Commands
                     }
 
                     addedAuthor = ApplyRequestedMonitoring(item, addedAuthor, requestedWorks);
+                    ResolveLocalBooks(requestedWorks, addedAuthor);
                     var requestedSearchBookIds = GetRequestedSearchBookIds(addedAuthor, requestedWorks);
                     QueueRequestedSearches(item, addedAuthor, requestedSearchBookIds);
 
@@ -343,19 +344,14 @@ namespace NzbDrone.Core.Books.Commands
             var audiobookSearchTargets = DeserializeProviderIds(item.AudiobookBooksToSearch, nameof(item.AudiobookBooksToSearch));
             var ebookMonitorTargets = DeserializeProviderIds(item.EbookBooksToMonitor, nameof(item.EbookBooksToMonitor));
             var ebookSearchTargets = DeserializeProviderIds(item.EbookBooksToSearch, nameof(item.EbookBooksToSearch));
-            var requestedTargets = MergeProviderIds(
-                audiobookMonitorTargets,
-                audiobookSearchTargets,
-                ebookMonitorTargets,
-                ebookSearchTargets);
             var config = new MonitoringConfig
             {
-                AudiobookMonitorExisting = item.AudiobookMonitorExisting,
-                AudiobookMonitorFuture = item.AudiobookMonitorFuture,
-                EbookMonitorExisting = item.EbookMonitorExisting,
-                EbookMonitorFuture = item.EbookMonitorFuture,
-                MonitorExisting = (item.AudiobookMonitorExisting ?? item.EbookMonitorExisting ?? 0) > 0,
-                MonitorFuture = item.AudiobookMonitorFuture ?? item.EbookMonitorFuture ?? true,
+                AudiobookMonitored = item.AudiobookMonitored,
+                AudiobookMonitorNewItems = item.AudiobookMonitorNewItems,
+                AudiobookMonitorExistingMode = item.AudiobookMonitorExistingMode,
+                EbookMonitored = item.EbookMonitored,
+                EbookMonitorNewItems = item.EbookMonitorNewItems,
+                EbookMonitorExistingMode = item.EbookMonitorExistingMode,
                 AudiobookQualityProfileId = item.AudiobookQualityProfileId,
                 EbookQualityProfileId = item.EbookQualityProfileId,
                 AudiobookMetadataProfileId = item.AudiobookMetadataProfileId,
@@ -369,13 +365,7 @@ namespace NzbDrone.Core.Books.Commands
                 AudiobookBooksToMonitor = audiobookMonitorTargets,
                 AudiobookBooksToSearch = audiobookSearchTargets,
                 EbookBooksToMonitor = ebookMonitorTargets,
-                EbookBooksToSearch = ebookSearchTargets,
-                SpecificBookProviderIds = requestedTargets.Any()
-                    ? new HashSet<string>(requestedTargets, StringComparer.OrdinalIgnoreCase)
-                    : null,
-                SpecificBookMediaType = item.HasAudiobook() == item.HasEbook()
-                    ? null
-                    : item.HasAudiobook() ? BookMediaType.Audiobook : BookMediaType.Ebook
+                EbookBooksToSearch = ebookSearchTargets
             };
 
             // Deserialize tags if present
@@ -399,12 +389,12 @@ namespace NzbDrone.Core.Books.Commands
 
             if (item.HasAudiobook() && audiobookTargets.Any())
             {
-                _authorService.PromoteMediaTypeMonitoringToSelected(author.Id, "audiobook");
+                _authorService.EnsureMediaTypeMonitoring(author.Id, "audiobook");
             }
 
             if (item.HasEbook() && ebookTargets.Any())
             {
-                _authorService.PromoteMediaTypeMonitoringToSelected(author.Id, "ebook");
+                _authorService.EnsureMediaTypeMonitoring(author.Id, "ebook");
             }
 
             author = _authorService.GetAuthor(author.Id) ?? author;

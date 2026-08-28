@@ -1,6 +1,8 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
+import AuthorMonitoringGatePopoverContent from 'AddAuthor/AuthorMonitoringGatePopoverContent';
+import AuthorMonitorNewItemsOptionsPopoverContent from 'AddAuthor/AuthorMonitorNewItemsOptionsPopoverContent';
 import MoveAuthorModal from 'Author/MoveAuthor/MoveAuthorModal';
 import MetadataProfileSelectInputConnector from 'Components/Form/MetadataProfileSelectInputConnector';
 import QualityProfileSelectInputConnector from 'Components/Form/QualityProfileSelectInputConnector';
@@ -13,6 +15,7 @@ import Tooltip from 'Components/Tooltip/Tooltip';
 import { kinds } from 'Helpers/Props';
 import { FolderType } from 'Helpers/Props/folderTypes';
 import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
+import authorMonitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
 import translate from 'Utilities/String/translate';
 import AuthorEditorFooterLabel from './AuthorEditorFooterLabel';
 import DeleteAuthorModal from './Delete/DeleteAuthorModal';
@@ -178,26 +181,25 @@ class AuthorEditorFooter extends Component {
 
   buildMonitoringPayload = (monitorValue) => {
     const { selectedMediaType } = this.props;
-    const monitorExistingValue = monitorValue === true ? 1 : 0;
+    const monitored = monitorValue === true;
 
     // Handle media type specific monitoring
     if (selectedMediaType === 'audiobook') {
       return {
-        audiobookMonitorExisting: monitorExistingValue
+        audiobookMonitored: monitored
       };
     }
 
     if (selectedMediaType === 'ebook') {
       return {
-        ebookMonitorExisting: monitorExistingValue
+        ebookMonitored: monitored
       };
     }
 
     // 'all' mode - update both types
     return {
-      monitored: monitorValue === true,
-      audiobookMonitorExisting: monitorExistingValue,
-      ebookMonitorExisting: monitorExistingValue
+      audiobookMonitored: monitored,
+      ebookMonitored: monitored
     };
   };
 
@@ -207,25 +209,23 @@ class AuthorEditorFooter extends Component {
     }
 
     const { selectedMediaType } = this.props;
-    const monitorNewItems = value === 'yes';
-
     // Handle media type specific monitoring for new items
     if (selectedMediaType === 'audiobook') {
       return {
-        audiobookMonitorFuture: monitorNewItems
+        audiobookMonitorNewItems: value
       };
     }
 
     if (selectedMediaType === 'ebook') {
       return {
-        ebookMonitorFuture: monitorNewItems
+        ebookMonitorNewItems: value
       };
     }
 
     // 'all' mode - update both types
     return {
-      audiobookMonitorFuture: monitorNewItems,
-      ebookMonitorFuture: monitorNewItems
+      audiobookMonitorNewItems: value,
+      ebookMonitorNewItems: value
     };
   };
 
@@ -327,25 +327,27 @@ class AuthorEditorFooter extends Component {
     } = this.state;
 
     const isTypeSelectionRequired = !selectedMediaType || selectedMediaType === 'all';
-    const typeSpecificTooltip = 'Select Audiobooks or Ebooks first';
+    const typeSpecificTooltip = translate('SelectAudiobooksOrEbooksFirst');
     const typeSpecificControlsDisabled = !selectedCount || isTypeSelectionRequired;
     const showTypeSpecificTooltip = !!selectedCount && isTypeSelectionRequired;
     const showSyncHelpText = syncMonitoredAcrossFormats === 'enabled';
-    const rootFolderType = selectedMediaType === 'audiobook'
-      ? FolderType.Audiobook
-      : (selectedMediaType === 'ebook' ? FolderType.Ebook : null);
+    let rootFolderType = null;
+    if (selectedMediaType === 'audiobook') {
+      rootFolderType = FolderType.Audiobook;
+    } else if (selectedMediaType === 'ebook') {
+      rootFolderType = FolderType.Ebook;
+    }
     const profileType = (selectedMediaType === 'audiobook' || selectedMediaType === 'ebook') ? selectedMediaType : null;
 
     const monitoredOptions = [
       { key: NO_CHANGE, value: translate('NoChange'), isDisabled: true },
       { key: 'monitored', value: translate('Monitored') },
-      { key: 'notMonitored', value: translate('NotMonitored') }
+      { key: 'notMonitored', value: translate('Unmonitored') }
     ];
 
     const monitorNewItemsOptions = [
       { key: NO_CHANGE, value: translate('NoChange'), isDisabled: true },
-      { key: 'yes', value: translate('Yes') },
-      { key: 'no', value: translate('No') }
+      ...authorMonitorNewItemsOptions
     ];
 
     const syncAcrossFormatsOptions = [
@@ -362,6 +364,7 @@ class AuthorEditorFooter extends Component {
               <AuthorEditorFooterLabel
                 label={translate('MonitorAuthor')}
                 isSaving={isSaving && monitored !== NO_CHANGE}
+                popoverBody={<AuthorMonitoringGatePopoverContent />}
               />
 
               <SelectInput
@@ -375,8 +378,9 @@ class AuthorEditorFooter extends Component {
 
             <div className={styles.inputContainer}>
               <AuthorEditorFooterLabel
-                label={translate('MonitorNewItems')}
+                label={translate('MonitorNewBooks')}
                 isSaving={isSaving && monitorNewItems !== NO_CHANGE}
+                popoverBody={<AuthorMonitorNewItemsOptionsPopoverContent />}
               />
 
               <SelectInput
@@ -390,7 +394,7 @@ class AuthorEditorFooter extends Component {
 
             <div className={styles.inputContainer}>
               <AuthorEditorFooterLabel
-                label="Sync Monitored Audio/eBooks"
+                label={translate('SyncMonitoredAudioEbooks')}
                 isSaving={isSaving && syncMonitoredAcrossFormats !== NO_CHANGE}
               />
 
@@ -518,14 +522,14 @@ class AuthorEditorFooter extends Component {
             </div>
           </div>
 
-            <div className={styles.buttonContainer}>
-              <div className={styles.buttonContainerContent}>
-                <AuthorEditorFooterLabel
-                  label={translate('SelectedCountAuthorsSelectedInterp', [selectedCount])}
-                  isSaving={false}
-                />
+          <div className={styles.buttonContainer}>
+            <div className={styles.buttonContainerContent}>
+              <AuthorEditorFooterLabel
+                label={translate('SelectedCountAuthorsSelectedInterp', [selectedCount])}
+                isSaving={false}
+              />
 
-                <div className={styles.buttons}>
+              <div className={styles.buttons}>
 
                 <SpinnerButton
                   className={styles.organizeSelectedButton}
@@ -594,14 +598,14 @@ class AuthorEditorFooter extends Component {
         <ConfirmModal
           isOpen={isMonitoringConfirmModalOpen}
           kind={kinds.WARNING}
-          title="Confirm Bulk Monitoring Change"
+          title={translate('ConfirmBulkMonitoringChange')}
           message={
             pendingMonitoringChange?.monitored ?
-              `Are you sure you want to set ${selectedCount} selected authors to monitored?` :
-              `Are you sure you want to set ${selectedCount} selected authors to unmonitored?`
+              translate('SetSelectedAuthorsMonitoredConfirm', { selectedCount }) :
+              translate('SetSelectedAuthorsUnmonitoredConfirm', { selectedCount })
           }
-          confirmLabel="Apply Changes"
-          cancelLabel="Cancel"
+          confirmLabel={translate('ApplyChanges')}
+          cancelLabel={translate('Cancel')}
           onConfirm={this.onMonitoringConfirmPress}
           onCancel={this.onMonitoringConfirmModalClose}
         />

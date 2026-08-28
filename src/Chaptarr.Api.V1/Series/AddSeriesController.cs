@@ -22,19 +22,13 @@ namespace Chaptarr.Api.V1.Series
     [V1ApiController("series/add")]
     public class AddSeriesController : Controller
     {
-        private enum SeriesMonitorExistingMode
-        {
-            None,
-            All,
-            Select
-        }
-
         // private readonly IHardcoverSearchProxy _hardcoverSearchProxy; // Removed - using V5 API via BookInfoProxy
         // DEPRECATED-IDENTIFICATION: IAddAuthorService removed - use IAuthorLibraryService instead
         // private readonly IAddAuthorService _addAuthorService;
         private readonly IAuthorLibraryService _authorLibraryService;
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
+        private readonly IBookMonitoredService _bookMonitoredService;
         private readonly IProviderAliasService _providerAliasService;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly Logger _logger;
@@ -44,6 +38,7 @@ namespace Chaptarr.Api.V1.Series
             IAuthorLibraryService authorLibraryService,
             IAuthorService authorService,
             IBookService bookService,
+            IBookMonitoredService bookMonitoredService,
             IManageCommandQueue commandQueueManager,
             Logger logger,
             IProviderAliasService providerAliasService = null)
@@ -52,6 +47,7 @@ namespace Chaptarr.Api.V1.Series
             _authorLibraryService = authorLibraryService;
             _authorService = authorService;
             _bookService = bookService;
+            _bookMonitoredService = bookMonitoredService;
             _providerAliasService = providerAliasService;
             _commandQueueManager = commandQueueManager;
             _logger = logger;
@@ -130,7 +126,19 @@ namespace Chaptarr.Api.V1.Series
                     });
                 }
 
-                var monitorExistingMode = ParseMonitorExistingMode(request);
+                MonitorTypes monitorMode;
+                try
+                {
+                    monitorMode = ParseMonitorMode(request, selectedMediaType);
+                }
+                catch (ArgumentException ex)
+                {
+                    return BadRequest(new AddSeriesResult
+                    {
+                        Success = false,
+                        ErrorMessage = ex.Message
+                    });
+                }
 
                 foreach (var authorProviderId in authorProviderIds)
                 {
@@ -141,7 +149,7 @@ namespace Chaptarr.Api.V1.Series
                     }
                 }
 
-                if (monitorExistingMode == SeriesMonitorExistingMode.Select)
+                if (monitorMode == MonitorTypes.SpecificBook)
                 {
                     foreach (var selectedBookId in selectedBookIds)
                     {
@@ -153,17 +161,14 @@ namespace Chaptarr.Api.V1.Series
                     }
                 }
 
-                var monitorFuture = request.MonitorFuture == true;
-
-                _logger.Info("Adding series {0}: {1} selected books, {2} authors, mediaType={3}, monitorExisting={4}, monitorFuture={5}",
+                _logger.Info("Adding series {0}: {1} selected books, {2} authors, mediaType={3}, monitor={4}",
                     request.ForeignSeriesId,
                     selectedBookIds.Count,
                     authorProviderIds.Count,
                     selectedMediaType,
-                    monitorExistingMode,
-                    monitorFuture);
+                    monitorMode);
 
-                var monitoringConfig = BuildMonitoringConfig(request, selectedMediaType, monitorExistingMode, monitorFuture, selectedBookIds);
+                var monitoringConfig = BuildMonitoringConfig(request, selectedMediaType, monitorMode, selectedBookIds);
 
                 var addedAuthorResources = new List<AuthorResource>();
                 var monitoredBookResources = new List<BookResource>();
@@ -188,16 +193,11 @@ namespace Chaptarr.Api.V1.Series
                         continue;
                     }
 
-                    if (monitorExistingMode == SeriesMonitorExistingMode.All)
-                    {
-                        var monitoredBooks = MonitorAllBooks(dbAuthor, selectedMediaType);
-                        monitoredBookResources.AddRange(monitoredBooks.Select(b => b.ToResource()));
-                    }
-                    else if (monitorExistingMode == SeriesMonitorExistingMode.Select)
-                    {
-                        var monitoredBooks = MonitorSelectedBooks(dbAuthor, selectedMediaType, selectedBookIds);
-                        monitoredBookResources.AddRange(monitoredBooks.Select(b => b.ToResource()));
-                    }
+                    ApplyCurrentBookMonitoring(dbAuthor, selectedMediaType, monitorMode, selectedBookIds);
+                    var monitoredBooks = (_bookService.GetBooksByAuthor(dbAuthor.Id) ?? new List<NzbDrone.Core.Books.Book>())
+                        .Where(book => book.MediaType == selectedMediaType &&
+                            (selectedMediaType == BookMediaType.Audiobook ? book.AudiobookMonitored : book.EbookMonitored));
+                    monitoredBookResources.AddRange(monitoredBooks.Select(book => book.ToResource()));
 
                     addedAuthorResources.Add(dbAuthor.ToResource());
                 }
@@ -227,34 +227,42 @@ namespace Chaptarr.Api.V1.Series
             }
         }
 
-        private static SeriesMonitorExistingMode ParseMonitorExistingMode(AddSeriesRequest request)
+        private static MonitorTypes ParseMonitorMode(AddSeriesRequest request, BookMediaType selectedMediaType)
         {
-            var normalized = (request?.MonitorExisting ?? string.Empty).Trim().ToLowerInvariant();
-            if (!string.IsNullOrWhiteSpace(normalized))
+            var perMediaMode = selectedMediaType == BookMediaType.Audiobook
+                ? request?.AudiobookMonitorExistingMode
+                : request?.EbookMonitorExistingMode;
+            if (perMediaMode.HasValue)
             {
-                return normalized switch
-                {
-                    "all" => SeriesMonitorExistingMode.All,
-                    "select" => SeriesMonitorExistingMode.Select,
-                    "specificbook" => SeriesMonitorExistingMode.Select,
-                    "none" => SeriesMonitorExistingMode.None,
-                    // Legacy monitor options map closest to "All" for series adds.
-                    "existing" => SeriesMonitorExistingMode.All,
-                    "missing" => SeriesMonitorExistingMode.All,
-                    _ => SeriesMonitorExistingMode.Select
-                };
+                return perMediaMode.Value;
             }
 
-            return request?.MonitorAllBooksByAllAuthors == true
-                ? SeriesMonitorExistingMode.All
-                : SeriesMonitorExistingMode.Select;
+            var normalized = (request?.Monitor ?? string.Empty).Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                // The selected books are the natural one-time target when no
+                // explicit current-catalog action is supplied.
+                return MonitorTypes.SpecificBook;
+            }
+
+            return normalized switch
+            {
+                "all" => MonitorTypes.All,
+                "future" => MonitorTypes.Future,
+                "missing" => MonitorTypes.Missing,
+                "existing" => MonitorTypes.Existing,
+                "first" => MonitorTypes.First,
+                "latest" => MonitorTypes.Latest,
+                "none" => MonitorTypes.None,
+                "specificbook" => MonitorTypes.SpecificBook,
+                _ => throw new ArgumentException("Invalid monitor value. Expected all, future, missing, existing, first, latest, none, or specificBook.")
+            };
         }
 
         private MonitoringConfig BuildMonitoringConfig(
             AddSeriesRequest request,
             BookMediaType selectedMediaType,
-            SeriesMonitorExistingMode monitorExistingMode,
-            bool monitorFuture,
+            MonitorTypes monitorMode,
             List<string> selectedBookIds)
         {
             var tags = request.Tags != null ? new HashSet<int>(request.Tags) : null;
@@ -264,7 +272,6 @@ namespace Chaptarr.Api.V1.Series
                 IsManualAddition = true,
                 CreateAudiobook = selectedMediaType == BookMediaType.Audiobook,
                 CreateEbook = selectedMediaType == BookMediaType.Ebook,
-                MonitorNewItems = true,
                 QueueIfUnavailable = true,
                 AudiobookRootFolderPath = request.AudiobookRootFolderPath,
                 EbookRootFolderPath = request.EbookRootFolderPath,
@@ -272,8 +279,19 @@ namespace Chaptarr.Api.V1.Series
                 EbookQualityProfileId = request.EbookQualityProfileId,
                 AudiobookMetadataProfileId = request.AudiobookMetadataProfileId,
                 EbookMetadataProfileId = request.EbookMetadataProfileId,
+                AudiobookMonitored = selectedMediaType == BookMediaType.Audiobook
+                    ? monitorMode == MonitorTypes.SpecificBook ? true : request.AudiobookMonitored
+                    : null,
+                AudiobookMonitorNewItems = selectedMediaType == BookMediaType.Audiobook ? request.AudiobookMonitorNewItems : null,
+                AudiobookMonitorExistingMode = selectedMediaType == BookMediaType.Audiobook ? monitorMode : null,
+                EbookMonitored = selectedMediaType == BookMediaType.Ebook
+                    ? monitorMode == MonitorTypes.SpecificBook ? true : request.EbookMonitored
+                    : null,
+                EbookMonitorNewItems = selectedMediaType == BookMediaType.Ebook ? request.EbookMonitorNewItems : null,
+                EbookMonitorExistingMode = selectedMediaType == BookMediaType.Ebook ? monitorMode : null,
                 Tags = tags,
-                RequestedBy = "ApiV1SeriesAdd"
+                RequestedBy = "ApiV1SeriesAdd",
+                MonitorMode = monitorMode
             };
 
             if (selectedMediaType == BookMediaType.Audiobook)
@@ -283,26 +301,12 @@ namespace Chaptarr.Api.V1.Series
                     config.AudiobookTags = tags;
                 }
 
-                config.AudiobookMonitorFuture = monitorFuture;
-                config.EbookMonitorExisting = 0;
-                config.EbookMonitorFuture = false;
-
-                if (monitorExistingMode == SeriesMonitorExistingMode.All)
+                if (monitorMode == MonitorTypes.SpecificBook)
                 {
-                    config.AudiobookMonitorExisting = 1;
-                }
-                else if (monitorExistingMode == SeriesMonitorExistingMode.Select)
-                {
-                    config.AudiobookMonitorExisting = 2;
-                    config.MonitorMode = MonitorTypes.SpecificBook;
                     config.SpecificBookProviderIds = new HashSet<string>(selectedBookIds, StringComparer.OrdinalIgnoreCase);
                     config.SpecificBookMediaType = BookMediaType.Audiobook;
                     // Pending imports don't persist SpecificBookProviderIds; store an explicit list for later.
                     config.AudiobookBooksToMonitor = selectedBookIds;
-                }
-                else
-                {
-                    config.AudiobookMonitorExisting = 0;
                 }
             }
             else
@@ -312,25 +316,11 @@ namespace Chaptarr.Api.V1.Series
                     config.EbookTags = tags;
                 }
 
-                config.EbookMonitorFuture = monitorFuture;
-                config.AudiobookMonitorExisting = 0;
-                config.AudiobookMonitorFuture = false;
-
-                if (monitorExistingMode == SeriesMonitorExistingMode.All)
+                if (monitorMode == MonitorTypes.SpecificBook)
                 {
-                    config.EbookMonitorExisting = 1;
-                }
-                else if (monitorExistingMode == SeriesMonitorExistingMode.Select)
-                {
-                    config.EbookMonitorExisting = 2;
-                    config.MonitorMode = MonitorTypes.SpecificBook;
                     config.SpecificBookProviderIds = new HashSet<string>(selectedBookIds, StringComparer.OrdinalIgnoreCase);
                     config.SpecificBookMediaType = BookMediaType.Ebook;
                     config.EbookBooksToMonitor = selectedBookIds;
-                }
-                else
-                {
-                    config.EbookMonitorExisting = 0;
                 }
             }
 
@@ -396,13 +386,6 @@ namespace Chaptarr.Api.V1.Series
             var existing = existingMatches.Count == 1 ? existingMatches[0] : null;
             if (existing != null)
             {
-                // Ensure author is monitored so selected books can be monitored.
-                if (!existing.Monitored)
-                {
-                    existing.Monitored = true;
-                    _authorService.UpdateAuthor(existing);
-                }
-
                 // Ensure the requested media type exists locally for this author.
                 // The Series add flow may target a media type the author has never been hydrated for yet.
                 try
@@ -417,7 +400,7 @@ namespace Chaptarr.Api.V1.Series
                         var hydrated = await _authorLibraryService.AddAuthorAsync(authorProviderId, config);
                         if (hydrated != null)
                         {
-                            return hydrated;
+                            existing = hydrated;
                         }
                     }
                     else
@@ -427,12 +410,12 @@ namespace Chaptarr.Api.V1.Series
                             existing,
                             config.CreateAudiobook ? config.AudiobookQualityProfileId : null,
                             config.CreateAudiobook ? config.AudiobookMetadataProfileId : null,
-                            config.CreateAudiobook ? config.AudiobookMonitorExisting : null,
-                            config.CreateAudiobook ? config.AudiobookMonitorFuture : null,
+                            config.CreateAudiobook ? config.AudiobookMonitored : null,
+                            config.CreateAudiobook ? config.AudiobookMonitorNewItems : null,
                             config.CreateEbook ? config.EbookQualityProfileId : null,
                             config.CreateEbook ? config.EbookMetadataProfileId : null,
-                            config.CreateEbook ? config.EbookMonitorExisting : null,
-                            config.CreateEbook ? config.EbookMonitorFuture : null,
+                            config.CreateEbook ? config.EbookMonitored : null,
+                            config.CreateEbook ? config.EbookMonitorNewItems : null,
                             config.AudiobookRootFolderPath ?? config.EbookRootFolderPath
                         );
                     }
@@ -446,79 +429,60 @@ namespace Chaptarr.Api.V1.Series
                     _logger.Warn(ex, "AddSeries: unexpected error hydrating missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
                 }
 
-                return existing;
+                return ApplyRequestedAuthorMonitoring(existing, config, requestedMediaType);
             }
 
             return await _authorLibraryService.AddAuthorAsync(authorProviderId, config);
         }
 
-        private List<NzbDrone.Core.Books.Book> MonitorAllBooks(NzbDrone.Core.Books.Author author, BookMediaType mediaType)
+        private NzbDrone.Core.Books.Author ApplyRequestedAuthorMonitoring(
+            NzbDrone.Core.Books.Author author,
+            MonitoringConfig config,
+            BookMediaType mediaType)
         {
-            var books = _bookService.GetBooksByAuthor(author.Id) ?? new List<NzbDrone.Core.Books.Book>();
-
-            var toUpdate = new List<NzbDrone.Core.Books.Book>();
-            foreach (var book in books)
+            if (author == null || config == null)
             {
-                if (book == null || book.MediaType != mediaType)
-                {
-                    continue;
-                }
-
-                if (mediaType == BookMediaType.Audiobook && !book.AudiobookMonitored)
-                {
-                    book.AudiobookMonitored = true;
-                    toUpdate.Add(book);
-                }
-                else if (mediaType == BookMediaType.Ebook && !book.EbookMonitored)
-                {
-                    book.EbookMonitored = true;
-                    toUpdate.Add(book);
-                }
+                return author;
             }
 
-            if (toUpdate.Any())
+            var monitored = mediaType == BookMediaType.Audiobook ? config.AudiobookMonitored : config.EbookMonitored;
+            var monitorNewItems = mediaType == BookMediaType.Audiobook ? config.AudiobookMonitorNewItems : config.EbookMonitorNewItems;
+            if (!author.ApplyMediaTypeMonitoringSettings(mediaType, monitored, monitorNewItems))
             {
-                _bookService.UpdateMany(toUpdate);
+                return author;
             }
 
-            return toUpdate;
+            return _authorService.UpdateAuthor(author);
         }
 
-        private List<NzbDrone.Core.Books.Book> MonitorSelectedBooks(NzbDrone.Core.Books.Author author, BookMediaType mediaType, List<string> selectedProviderBookIds)
+        private void ApplyCurrentBookMonitoring(
+            NzbDrone.Core.Books.Author author,
+            BookMediaType mediaType,
+            MonitorTypes monitorMode,
+            List<string> selectedProviderBookIds)
         {
             var books = _bookService.GetBooksByAuthor(author.Id) ?? new List<NzbDrone.Core.Books.Book>();
-
-            var toUpdate = new List<NzbDrone.Core.Books.Book>();
-            foreach (var book in books)
+            var options = new MonitoringOptions
             {
-                if (book == null || book.MediaType != mediaType)
-                {
-                    continue;
-                }
+                Monitor = monitorMode,
+                MediaType = mediaType
+            };
 
-                if (!selectedProviderBookIds.Any(id => BookMatchesProviderId(book, id)))
-                {
-                    continue;
-                }
+            if (monitorMode == MonitorTypes.SpecificBook)
+            {
+                options.BooksToMonitor = books
+                    .Where(book => book.MediaType == mediaType && selectedProviderBookIds.Any(id => BookMatchesProviderId(book, id)))
+                    .Select(book => book.Id.ToString())
+                    .ToList();
 
-                if (mediaType == BookMediaType.Audiobook && !book.AudiobookMonitored)
+                if (!options.BooksToMonitor.Any())
                 {
-                    book.AudiobookMonitored = true;
-                    toUpdate.Add(book);
-                }
-                else if (mediaType == BookMediaType.Ebook && !book.EbookMonitored)
-                {
-                    book.EbookMonitored = true;
-                    toUpdate.Add(book);
+                    _logger.Warn("AddSeries: none of the requested {0} books were present for author {1}; leaving current monitoring unchanged", mediaType, author.Id);
+                    return;
                 }
             }
 
-            if (toUpdate.Any())
-            {
-                _bookService.UpdateMany(toUpdate);
-            }
-
-            return toUpdate;
+            _bookMonitoredService.SetBookMonitoredStatus(author, options);
         }
 
         private static bool BookMatchesProviderId(NzbDrone.Core.Books.Book book, string providerId)
@@ -571,10 +535,15 @@ namespace Chaptarr.Api.V1.Series
         public string ForeignSeriesId { get; set; }
         public string SelectedMediaType { get; set; }
         public List<SelectedSeriesBook> SelectedBooks { get; set; }
-        public bool MonitorAllBooksByAllAuthors { get; set; } = false;
-        // New: parity with AddAuthorOptionsForm (all/select/none) + monitor new items
-        public string MonitorExisting { get; set; }
-        public bool? MonitorFuture { get; set; }
+        // One-time action for current catalog rows. It is not persisted as an
+        // author monitoring policy.
+        public string Monitor { get; set; }
+        public MonitorTypes? AudiobookMonitorExistingMode { get; set; }
+        public MonitorTypes? EbookMonitorExistingMode { get; set; }
+        public bool? AudiobookMonitored { get; set; }
+        public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
+        public bool? EbookMonitored { get; set; }
+        public NewItemMonitorTypes? EbookMonitorNewItems { get; set; }
         public string RootFolderPath { get; set; }
 
         // Per-type settings (same shape as author import)

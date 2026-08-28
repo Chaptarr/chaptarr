@@ -54,8 +54,9 @@ namespace NzbDrone.Core.RootFolders
                 {
                     QualityProfileId = mediaSettings.QualityProfileId,
                     MetadataProfileId = mediaSettings.MetadataProfileId,
-                    MonitorExisting = mediaSettings.MonitorExisting,
-                    MonitorFuture = mediaSettings.MonitorFuture,
+                    Monitored = mediaSettings.Monitored,
+                    MonitorExistingMode = mediaSettings.MonitorExistingMode,
+                    MonitorNewItems = mediaSettings.MonitorNewItems,
                     Tags = mediaSettings.Tags ?? new System.Collections.Generic.List<int>(),
                     IsConfigured = true,
                     Source = "MediaSpecific"
@@ -69,6 +70,11 @@ namespace NzbDrone.Core.RootFolders
                 IsConfigured = false,
                 Source = "Unconfigured"
             };
+        }
+
+        public static MonitorTypes? ResolveInitialMonitorMode(MonitorTypes? monitorExistingMode)
+        {
+            return monitorExistingMode;
         }
     }
 }

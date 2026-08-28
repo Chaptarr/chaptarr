@@ -638,7 +638,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             {
                 Id = 23,
                 Name = "Example Author",
-                AudiobookMonitorExisting = 2
+                AudiobookMonitored = true
             };
             var book = new Book
             {

@@ -10,8 +10,14 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
         public string Overview { get; set; }
         public List<MediaCover.MediaCover> Images { get; set; }
         public bool Monitored { get; set; }
+        public bool? AudiobookMonitored { get; set; }
+        public bool? EbookMonitored { get; set; }
         public int QualityProfileId { get; set; }
+        public int? AudiobookQualityProfileId { get; set; }
+        public int? EbookQualityProfileId { get; set; }
         public string RootFolderPath { get; set; }
+        public string AudiobookRootFolderPath { get; set; }
+        public string EbookRootFolderPath { get; set; }
         public HashSet<int> Tags { get; set; }
     }
 
@@ -32,6 +38,9 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
         public string Overview { get; set; }
         public List<MediaCover.MediaCover> Images { get; set; }
         public bool Monitored { get; set; }
+        public bool? AudiobookMonitored { get; set; }
+        public bool? EbookMonitored { get; set; }
+        public string MediaType { get; set; }
         public ChaptarrAuthor Author { get; set; }
         public int AuthorId { get; set; }
         public List<ChaptarrEdition> Editions { get; set; }

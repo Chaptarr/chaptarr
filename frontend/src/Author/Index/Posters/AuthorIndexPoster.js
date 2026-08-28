@@ -21,18 +21,6 @@ function getMediaTypeLabel(mediaType) {
   return translate(mediaType === 'ebook' ? 'Ebooks' : 'Audiobooks');
 }
 
-function getMonitorExistingLabel(value) {
-  if (value === 1) {
-    return translate('AllBooks');
-  }
-
-  if (value === 2) {
-    return translate('SelectBooks');
-  }
-
-  return translate('NoBooks');
-}
-
 function getMediaTypeIcon(mediaType) {
   return mediaType === 'ebook' ? icons.BOOK : icons.HEADPHONES;
 }
@@ -220,9 +208,14 @@ class AuthorIndexPoster extends Component {
     });
     const monitoringTitle = visibleMediaTypeDetails.map((details) => {
       const monitoredLabel = translate(details.monitored ? 'Monitored' : 'Unmonitored');
-      const futureLabel = translate(details.monitorFuture ? 'Yes' : 'No');
+      let newItemsLabel = translate('None');
+      if (details.monitorNewItems === 'all') {
+        newItemsLabel = translate('AllNewBooks');
+      } else if (details.monitorNewItems === 'new') {
+        newItemsLabel = translate('FutureReleases');
+      }
 
-      return `${getMediaTypeLabel(details.mediaType)}: ${monitoredLabel}; ${translate('ExistingBooks')}: ${getMonitorExistingLabel(details.monitorExisting)}; ${translate('MonitorFutureReleases')}: ${futureLabel}`;
+      return `${getMediaTypeLabel(details.mediaType)}: ${monitoredLabel}; ${translate('MonitorNewBooks')}: ${newItemsLabel}`;
     }).join('\n');
     const profileTitle = visibleMediaTypeDetails.map((details) => {
       return `${getMediaTypeLabel(details.mediaType)}: ${details.qualityProfile?.name ?? ''}`;
@@ -290,7 +283,7 @@ class AuthorIndexPoster extends Component {
               status === 'ended' &&
                 <div
                   className={styles.ended}
-                  title={translate('Ended')}
+                  title={translate('Dead')}
                 />
             }
 

@@ -83,7 +83,7 @@ namespace Chaptarr.Core.Test.Api
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
-            public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
+            public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, bool? audiobookMonitored, NewItemMonitorTypes? audiobookMonitorNewItems, int? ebookQualityProfileId, int? ebookMetadataProfileId, bool? ebookMonitored, NewItemMonitorTypes? ebookMonitorNewItems, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
@@ -332,13 +332,48 @@ namespace Chaptarr.Core.Test.Api
                 Path = "/library",
                 FolderType = (int)FolderType.Mixed,
                 DefaultSyncMonitoredAcrossFormats = true,
-                AudiobookMonitorExisting = 1,
-                EbookMonitorExisting = 1
+                AudiobookMonitored = true,
+                AudiobookMonitorExistingMode = MonitorTypes.Missing,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.All,
+                EbookMonitored = false,
+                EbookMonitorExistingMode = MonitorTypes.Existing,
+                EbookMonitorNewItems = NewItemMonitorTypes.None
             };
 
             var model = resource.ToModel();
 
-            Assert.That(model.DefaultSyncMonitoredAcrossFormats, Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(model.DefaultSyncMonitoredAcrossFormats, Is.True);
+                Assert.That(model.GetAudiobookSettings().Monitored, Is.True);
+                Assert.That(model.GetAudiobookSettings().MonitorExistingMode, Is.EqualTo(MonitorTypes.Missing));
+                Assert.That(model.GetAudiobookSettings().MonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
+                Assert.That(model.GetEbookSettings().Monitored, Is.False);
+                Assert.That(model.GetEbookSettings().MonitorExistingMode, Is.EqualTo(MonitorTypes.Existing));
+                Assert.That(model.GetEbookSettings().MonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+            });
+        }
+
+        [Test]
+        public void structured_canonical_initial_mode_should_win_over_the_deprecated_boolean()
+        {
+            var resource = new RootFolderResource
+            {
+                Name = "Audio",
+                Path = "/audio",
+                FolderType = (int)FolderType.Audiobook,
+                Audiobook = new MediaTypeSettingsResource
+                {
+                    Monitored = true,
+                    MonitorExistingMode = MonitorTypes.Missing,
+                    MonitorExistingBooks = false,
+                    MonitorNewItems = NewItemMonitorTypes.None
+                }
+            };
+
+            var settings = resource.ToModel().GetAudiobookSettings();
+
+            Assert.That(settings.MonitorExistingMode, Is.EqualTo(MonitorTypes.Missing));
         }
 
 
@@ -351,8 +386,10 @@ namespace Chaptarr.Core.Test.Api
                 Name = "Mixed",
                 Path = "/library",
                 FolderType = (int)FolderType.Mixed,
-                AudiobookMonitorExisting = 1,
-                EbookMonitorExisting = 1,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.All,
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.New,
                 AudiobookWriteAudioBookShelfMetadataJson = true,
                 AudiobookWriteAudioBookShelfCover = false,
                 EbookWriteAudioBookShelfMetadataJson = false,
@@ -383,7 +420,7 @@ namespace Chaptarr.Core.Test.Api
                 Name = "Audio",
                 Path = "/audio",
                 FolderType = (int)FolderType.Audiobook,
-                AudiobookMonitorExisting = 1,
+                AudiobookMonitored = true,
                 Ebook = new MediaTypeSettingsResource(),
                 EbookTags = new List<int>()
             };
@@ -392,6 +429,94 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.That(model.FolderType, Is.EqualTo(FolderType.Audiobook));
             Assert.That(model.GetEbookSettings(), Is.Null);
+        }
+
+        [Test]
+        public void resource_should_translate_legacy_selected_future_to_binary_settings()
+        {
+            var resource = new RootFolderResource
+            {
+                Name = "Audio",
+                Path = "/audio",
+                FolderType = (int)FolderType.Audiobook,
+                AudiobookMonitorExisting = 2,
+                AudiobookMonitorFuture = true
+            };
+
+            var settings = resource.ToModel().GetAudiobookSettings();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(settings.Monitored, Is.True);
+                Assert.That(settings.MonitorExistingBooks, Is.False);
+                Assert.That(settings.MonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+            });
+        }
+
+        [Test]
+        public void resource_should_project_binary_settings_for_legacy_root_clients()
+        {
+            var root = new RootFolder
+            {
+                Name = "Audio",
+                Path = "/audio",
+                FolderType = FolderType.Audiobook
+            };
+            root.SetAudiobookSettings(new MediaTypeSettings
+            {
+                Monitored = true,
+                MonitorExistingBooks = false,
+                MonitorNewItems = NewItemMonitorTypes.New
+            });
+
+            var resource = root.ToResource();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.AudiobookMonitorExisting, Is.EqualTo(2));
+                Assert.That(resource.AudiobookMonitorFuture, Is.True);
+                Assert.That(resource.Audiobook.MonitorExisting, Is.EqualTo(2));
+                Assert.That(resource.Audiobook.MonitorFuture, Is.True);
+            });
+        }
+
+        [Test]
+        public void legacy_root_monitoring_json_should_migrate_selected_future_to_binary_settings()
+        {
+            var root = new RootFolder
+            {
+                AudiobookSettings = "{\"MonitorExisting\":2,\"MonitorFuture\":true}"
+            };
+
+            var settings = root.GetAudiobookSettings();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(settings.Monitored, Is.True);
+                Assert.That(settings.MonitorExistingBooks, Is.False);
+                Assert.That(settings.MonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+            });
+        }
+
+        [Test]
+        public void canonical_root_json_should_round_trip_the_full_initial_mode_without_writing_the_old_boolean()
+        {
+            var root = new RootFolder();
+            root.SetAudiobookSettings(new MediaTypeSettings
+            {
+                Monitored = true,
+                MonitorExistingMode = MonitorTypes.Missing,
+                MonitorNewItems = NewItemMonitorTypes.All
+            });
+
+            var settings = root.GetAudiobookSettings();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(settings.MonitorExistingMode, Is.EqualTo(MonitorTypes.Missing));
+                Assert.That(root.AudiobookSettings, Does.Contain("\"MonitorExistingMode\""));
+                Assert.That(root.AudiobookSettings, Does.Not.Contain("\"MonitorExistingBooks\""));
+            });
         }
     }
 }

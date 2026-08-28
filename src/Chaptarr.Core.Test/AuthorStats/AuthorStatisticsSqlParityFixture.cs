@@ -32,6 +32,8 @@ namespace Chaptarr.Core.Test.AuthorStats
                 StringAssert.Contains("GROUP BY \"Editions\".\"BookId\"", authorSql);
                 StringAssert.Contains(booleanComparison, authorSql);
                 StringAssert.DoesNotContain("MIN(\"BookFiles\"", authorSql);
+                StringAssert.Contains(@"""Editions"".""BookId"" = ""Books"".""Id""", authorSql);
+                StringAssert.Contains(@"ORDER BY ""Editions"".""Id""", authorSql);
 
                 StringAssert.Contains("FROM \"Books\"", aggregateSql);
                 StringAssert.Contains("FROM \"BookFiles\"", aggregateSql);

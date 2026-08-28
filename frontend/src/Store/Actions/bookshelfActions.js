@@ -3,6 +3,7 @@ import { filterBuilderTypes, filterBuilderValueTypes, filterTypePredicates, sort
 import { createThunk, handleThunks } from 'Store/thunks';
 import { isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 import { SET_SELECTED_MEDIA_TYPE } from './appActions';
 import { filterPredicates, filters } from './authorActions';
 import { set } from './baseActions';
@@ -42,36 +43,36 @@ export const defaultState = {
   filterBuilderProps: [
     {
       name: 'monitored',
-      label: 'Monitored',
+      label: () => translate('Monitored'),
       type: filterBuilderTypes.EXACT,
       valueType: filterBuilderValueTypes.BOOL
     },
     {
       name: 'status',
-      label: 'Status',
+      label: () => translate('Status'),
       type: filterBuilderTypes.EXACT,
       valueType: filterBuilderValueTypes.AUTHOR_STATUS
     },
     {
       name: 'qualityProfileId',
-      label: 'Quality Profile',
+      label: () => translate('QualityProfile'),
       type: filterBuilderTypes.EXACT,
       valueType: filterBuilderValueTypes.QUALITY_PROFILE
     },
     {
       name: 'metadataProfileId',
-      label: 'Metadata Profile',
+      label: () => translate('MetadataProfile'),
       type: filterBuilderTypes.EXACT,
       valueType: filterBuilderValueTypes.METADATA_PROFILE
     },
     {
       name: 'rootFolderPath',
-      label: 'Root Folder Path',
+      label: () => translate('RootFolderPath'),
       type: filterBuilderTypes.EXACT
     },
     {
       name: 'tags',
-      label: 'Tags',
+      label: () => translate('Tags'),
       type: filterBuilderTypes.ARRAY,
       valueType: filterBuilderValueTypes.TAG
     }

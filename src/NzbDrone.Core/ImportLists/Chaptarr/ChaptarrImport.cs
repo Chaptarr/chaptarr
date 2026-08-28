@@ -56,7 +56,13 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
                         continue;
                     }
 
-                    if (Settings.ProfileIds.Any() && !Settings.ProfileIds.Contains(remoteAuthor.QualityProfileId))
+                    var mediaType = remoteBook.MediaType?.Trim().ToLowerInvariant();
+                    var qualityProfileId = mediaType == "audiobook"
+                        ? remoteAuthor.AudiobookQualityProfileId ?? remoteAuthor.QualityProfileId
+                        : mediaType == "ebook"
+                            ? remoteAuthor.EbookQualityProfileId ?? remoteAuthor.QualityProfileId
+                            : remoteAuthor.QualityProfileId;
+                    if (Settings.ProfileIds.Any() && !Settings.ProfileIds.Contains(qualityProfileId))
                     {
                         continue;
                     }
@@ -67,13 +73,27 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
                         continue;
                     }
 
-                    var rootFolderPath = remoteAuthor.RootFolderPath ?? string.Empty;
+                    var rootFolderPath = mediaType == "audiobook"
+                        ? remoteAuthor.AudiobookRootFolderPath ?? remoteAuthor.RootFolderPath ?? string.Empty
+                        : mediaType == "ebook"
+                            ? remoteAuthor.EbookRootFolderPath ?? remoteAuthor.RootFolderPath ?? string.Empty
+                            : remoteAuthor.RootFolderPath ?? string.Empty;
                     if (Settings.RootFolderPaths.Any() && !Settings.RootFolderPaths.Any(rootFolder => rootFolderPath.ContainsIgnoreCase(rootFolder)))
                     {
                         continue;
                     }
 
-                    if (!remoteBook.Monitored || !remoteAuthor.Monitored)
+                    var bookMonitored = mediaType == "audiobook"
+                        ? remoteBook.AudiobookMonitored ?? remoteBook.Monitored
+                        : mediaType == "ebook"
+                            ? remoteBook.EbookMonitored ?? remoteBook.Monitored
+                            : remoteBook.Monitored;
+                    var authorMonitored = mediaType == "audiobook"
+                        ? remoteAuthor.AudiobookMonitored ?? remoteAuthor.Monitored
+                        : mediaType == "ebook"
+                            ? remoteAuthor.EbookMonitored ?? remoteAuthor.Monitored
+                            : remoteAuthor.Monitored;
+                    if (!bookMonitored || !authorMonitored)
                     {
                         continue;
                     }

@@ -3,6 +3,7 @@
 interface CssExports {
   'inputContainer': string;
   'label': string;
+  'labelIcon': string;
   'updateSelectedButton': string;
 }
 export const cssExports: CssExports;

@@ -299,9 +299,12 @@ namespace NzbDrone.Core.MetadataSource
                 // Create monitoring config
                 var config = new MonitoringConfig
                 {
-                    MonitorNewItems = false, // For backward compatibility - Don't auto-monitor
-                    MonitorExisting = false, // Don't auto-monitor existing
-                    MonitorFuture = false,   // Don't auto-monitor future
+                    AudiobookMonitored = false,
+                    AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                    AudiobookMonitorExistingMode = MonitorTypes.None,
+                    EbookMonitored = false,
+                    EbookMonitorNewItems = NewItemMonitorTypes.None,
+                    EbookMonitorExistingMode = MonitorTypes.None,
                     AudiobookQualityProfileId = 1, // Default audiobook profile
                     EbookQualityProfileId = 1, // Default ebook profile
                     AudiobookMetadataProfileId = 1, // Default audiobook metadata profile

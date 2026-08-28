@@ -78,8 +78,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             config = new MonitoringConfig
             {
                 AuthorName = request.AuthorName,
-                MonitorExisting = true,
-                MonitorFuture = true,
                 CreateAudiobook = wantsAudiobook,
                 CreateEbook = wantsEbook,
                 QueueIfUnavailable = request.QueueIfUnavailable,
@@ -175,8 +173,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                 config.AudiobookQualityProfileId = settings.QualityProfileId;
                 config.AudiobookMetadataProfileId = settings.MetadataProfileId;
-                config.AudiobookMonitorExisting = settings.MonitorExisting;
-                config.AudiobookMonitorFuture = settings.MonitorFuture;
+                config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
+                config.AudiobookMonitored = settings.Monitored;
+                config.AudiobookMonitorNewItems = settings.MonitorNewItems;
                 AddTags(config, rootFolder, settings.Tags, request.IncludeRootDefaultTags);
 
                 return true;
@@ -198,8 +197,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
             config.EbookQualityProfileId = ebookSettings.QualityProfileId;
             config.EbookMetadataProfileId = ebookSettings.MetadataProfileId;
-            config.EbookMonitorExisting = ebookSettings.MonitorExisting;
-            config.EbookMonitorFuture = ebookSettings.MonitorFuture;
+            config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(ebookSettings.MonitorExistingMode);
+            config.EbookMonitored = ebookSettings.Monitored;
+            config.EbookMonitorNewItems = ebookSettings.MonitorNewItems;
             AddTags(config, rootFolder, ebookSettings.Tags, request.IncludeRootDefaultTags);
 
             return true;

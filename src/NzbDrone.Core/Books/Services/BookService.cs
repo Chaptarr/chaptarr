@@ -69,7 +69,6 @@ namespace NzbDrone.Core.Books
             List<Book> GetBooksByBaseId(string baseBookId);
             Book AddWantedEdition(int bookId, int editionId);
             bool ShouldSearchForMediaType(Book book, string mediaType);
-            List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType);
             BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
             BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null) => GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
             PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
@@ -1270,11 +1269,10 @@ namespace NzbDrone.Core.Books
                 return false;
             }
 
-            var monitoringEnabled = mediaType == BookMediaType.Audiobook
-                ? (author.AudiobookMonitorExisting ?? 0) > 0
-                : (author.EbookMonitorExisting ?? 0) > 0;
-
-            return monitoringEnabled && HasCompatibleRootFolderForMediaType(author, mediaType);
+            // Book-row state is independent from the author-side gate. The gate is
+            // evaluated by eligibility queries, so an explicit row selection remains
+            // valid while its author side is paused.
+            return HasCompatibleRootFolderForMediaType(author, mediaType);
         }
 
         private void EnsureOneMonitoredOnFormat(List<Book> workGroup, BookMediaType mediaType, Author author)
@@ -2611,11 +2609,6 @@ namespace NzbDrone.Core.Books
         public bool ShouldSearchForMediaType(Book book, string mediaType)
         {
             return book.IsMonitoredForMediaType(mediaType);
-        }
-
-        public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType)
-        {
-            return _bookRepository.GetMonitoredBooksForAuthor(authorId, mediaType);
         }
 
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null)

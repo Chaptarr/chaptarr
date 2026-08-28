@@ -50,7 +50,6 @@ function createMapStateToProps() {
       const bookFile = files[0];
 
       return {
-        authorMonitored: author.monitored,
         authorName: author.authorName,
         audiobookMonitored: !!book?.audiobookMonitored,
         ebookMonitored: !!book?.ebookMonitored,

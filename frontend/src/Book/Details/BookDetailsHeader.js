@@ -231,7 +231,6 @@ class BookDetailsHeader extends Component {
                     monitored={mediaType === 'audiobook' ? audiobookMonitored : ebookMonitored}
                     isSaving={isSaving}
                     size={isSmallScreen ? 30 : 40}
-                    isBinary={true}
                     onPress={onMonitorTogglePress}
                   />
                 </div>

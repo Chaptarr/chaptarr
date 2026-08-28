@@ -21,9 +21,10 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
         public virtual Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
-            if (InteractiveBookSearchSpecificationHelper.IsRequestedBookInteractiveSearch(subject, searchCriteria))
+            if (InteractiveBookSearchSpecificationHelper.IsRequestedBookInteractiveSearch(subject, searchCriteria) ||
+                InteractiveBookSearchSpecificationHelper.IsRequestedBookSearchAllowingUnmonitored(subject, searchCriteria))
             {
-                _logger.Trace("Skipping monitored-book rejection for explicit interactive book search");
+                _logger.Trace("Skipping monitored-book rejection for explicit book search");
                 return Decision.Accept();
             }
 

@@ -306,6 +306,21 @@ namespace NzbDrone.Core.Datastore.Migration
             try
             {
                 settings = JsonConvert.DeserializeObject<MediaTypeSettings>(settingsJson);
+                // The 061 repair runs before migration 104 and therefore still reads
+                // legacy root JSON. MediaTypeSettings intentionally ignores those
+                // compatibility properties when serializing the new shape, so recover
+                // the historical values explicitly for this pre-104 repair only.
+                var payload = JObject.Parse(settingsJson);
+                var legacyExisting = payload.TryGetValue("MonitorExisting", StringComparison.OrdinalIgnoreCase, out var existingToken) &&
+                                     existingToken.Type != JTokenType.Null
+                    ? existingToken.Value<int?>()
+                    : null;
+                var legacyFuture = payload.TryGetValue("MonitorFuture", StringComparison.OrdinalIgnoreCase, out var futureToken) &&
+                                   futureToken.Type != JTokenType.Null
+                    ? futureToken.Value<bool?>()
+                    : null;
+                settings.ApplyLegacyMonitoringSettings(legacyExisting, legacyFuture);
+                settings.SetLegacyCompatibilityValues(legacyExisting, legacyFuture);
                 return true;
             }
             catch (JsonException)

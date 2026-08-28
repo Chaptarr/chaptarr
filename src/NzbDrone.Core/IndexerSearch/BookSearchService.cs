@@ -165,24 +165,12 @@ namespace NzbDrone.Core.IndexerSearch
                 return;
             }
 
-            if (message.Trigger != CommandTrigger.Manual)
-            {
-                var monitoredBookIds = _bookService.GetBooks(bookIds)
-                    .Where(book => book.IsMonitoredWithAuthor())
-                    .Select(book => book.Id)
-                    .ToHashSet();
-
-                foreach (var skippedBookId in bookIds.Where(id => !monitoredBookIds.Contains(id)))
-                {
-                    _logger.Debug("Skipping automatic search for book {0} because its media type is not monitored", skippedBookId);
-                }
-
-                bookIds = bookIds.Where(monitoredBookIds.Contains).ToList();
-            }
+            var allowUnmonitored = message.Trigger == CommandTrigger.Manual && bookIds.Count == 1;
 
             foreach (var bookId in bookIds)
             {
-                var decisions = _releaseSearchService.BookSearch(bookId, false, message.Trigger == CommandTrigger.Manual, false).GetAwaiter().GetResult();
+                var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
+                var decisions = _releaseSearchService.BookSearch(bookId, false, userInvokedSearch, false, allowUnmonitored).GetAwaiter().GetResult();
                 var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
 
                 _logger.ProgressInfo("Book search completed. {0} reports downloaded.", processed.Grabbed.Count);

@@ -85,13 +85,19 @@ export function getRootFolderMediaTypes(folder) {
   const hasAudiobookSettings = audiobook && (
     audiobook.qualityProfileId ||
     audiobook.metadataProfileId ||
-    audiobook.monitorExisting != null
+    audiobook.monitored != null ||
+    audiobook.monitorExistingMode != null ||
+    audiobook.monitorExistingBooks != null ||
+    audiobook.monitorNewItems != null
   );
 
   const hasEbookSettings = ebook && (
     ebook.qualityProfileId ||
     ebook.metadataProfileId ||
-    ebook.monitorExisting != null
+    ebook.monitored != null ||
+    ebook.monitorExistingMode != null ||
+    ebook.monitorExistingBooks != null ||
+    ebook.monitorNewItems != null
   );
 
   if (hasAudiobookSettings) {

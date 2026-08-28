@@ -93,8 +93,6 @@ class AddNewAuthorSearchResult extends Component {
 
     const linkProps = isExistingAuthor ? { to: `/author/${authorId}` } : { onPress: this.onPress };
 
-    const endedString = 'Deceased';
-
     const height = calculateHeight(230, isSmallScreen);
     const foreignProvider = (foreignAuthorId || '').toLowerCase().includes(':') ?
       (foreignAuthorId || '').toLowerCase().split(':')[0] :
@@ -204,7 +202,7 @@ class AddNewAuthorSearchResult extends Component {
                     kind={kinds.DANGER}
                     size={sizes.LARGE}
                   >
-                    {endedString}
+                    {translate('Dead')}
                   </Label> :
                   null
               }

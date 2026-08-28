@@ -136,6 +136,47 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         }
 
         [Test]
+        public void should_map_nested_v5_author_dates_to_domain_status_without_using_server_status()
+        {
+            const string payload = @"{
+  ""author"": {
+    ""id"": ""hc:240859"",
+    ""name"": ""Eno Raud"",
+    ""sortName"": ""Eno Raud"",
+    ""slug"": ""eno-raud"",
+    ""birthDate"": ""1928-02-15"",
+    ""deathDate"": ""1996-07-09"",
+    ""status"": ""alive""
+  },
+  ""books"": [],
+  ""series"": []
+}";
+
+            var httpClient = new RecordingHttpClient(payload);
+            var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            var proxy = new BookInfoProxy(httpClient,
+                cachedHttpClient: null,
+                goodreadsSearchProxy: null,
+                hardcoverSearchClient: null,
+                audibleCatalogProxy: null,
+                authorService: null,
+                bookService: null,
+                editionService: null,
+                configService: configService,
+                requestBuilder: null,
+                logger: LogManager.GetCurrentClassLogger(),
+                cacheManager: new CacheManager(),
+                metadataServerHealthGate: CreateHealthGate(configService));
+
+            var result = proxy.RefreshAuthorInfo("hc:240859", forceRefresh: true);
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.Born, Is.EqualTo(new DateTime(1928, 2, 15)));
+            Assert.That(result.Author.Died, Is.EqualTo(new DateTime(1996, 7, 9)));
+            Assert.That(result.Author.Status, Is.EqualTo(AuthorStatusType.Ended));
+        }
+
+        [Test]
         public void should_bypass_etag_validation_for_local_hydration_refresh_without_server_rebuild()
         {
             const string payload = @"{

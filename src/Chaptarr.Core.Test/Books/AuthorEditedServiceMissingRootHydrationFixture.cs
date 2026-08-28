@@ -19,7 +19,7 @@ namespace Chaptarr.Core.Test.Books
         public void should_queue_forced_metadata_hydration_when_author_gains_ebook_root()
         {
             var commandQueue = new RecordingCommandQueue();
-            var subject = new AuthorEditedService(commandQueue, CreateBookService(), LogManager.GetCurrentClassLogger());
+            var subject = new AuthorEditedService(commandQueue, LogManager.GetCurrentClassLogger());
 
             subject.Handle(new AuthorEditedEvent(
                 new Author
@@ -51,7 +51,7 @@ namespace Chaptarr.Core.Test.Books
         public void should_not_force_refresh_when_author_already_had_both_roots()
         {
             var commandQueue = new RecordingCommandQueue();
-            var subject = new AuthorEditedService(commandQueue, CreateBookService(), LogManager.GetCurrentClassLogger());
+            var subject = new AuthorEditedService(commandQueue, LogManager.GetCurrentClassLogger());
 
             subject.Handle(new AuthorEditedEvent(
                 new Author
@@ -78,7 +78,7 @@ namespace Chaptarr.Core.Test.Books
         public void should_force_refresh_when_metadata_profile_changes()
         {
             var commandQueue = new RecordingCommandQueue();
-            var subject = new AuthorEditedService(commandQueue, CreateBookService(), LogManager.GetCurrentClassLogger());
+            var subject = new AuthorEditedService(commandQueue, LogManager.GetCurrentClassLogger());
 
             subject.Handle(new AuthorEditedEvent(
                 new Author
@@ -106,24 +106,6 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(command.ForceRefresh, Is.True);
         }
 
-        private static IBookService CreateBookService()
-        {
-            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
-            return bookService;
-        }
-
-        private class BookServiceProxy : DispatchProxy
-        {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                return targetMethod?.Name switch
-                {
-                    nameof(IBookService.GetBooksByAuthor) => new List<Book>(),
-                    nameof(IBookService.UpdateMany) => null,
-                    _ => throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}")
-                };
-            }
-        }
 
         private sealed class RecordingCommandQueue : IManageCommandQueue
         {

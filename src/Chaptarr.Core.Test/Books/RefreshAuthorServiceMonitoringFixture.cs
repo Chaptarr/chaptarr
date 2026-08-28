@@ -111,7 +111,7 @@ namespace Chaptarr.Core.Test.Books
                     historyService: null,
                     rootFolderService: null,
                     checkIfAuthorShouldBeRefreshed: null,
-                    monitorNewBookService: null,
+                    monitorNewBookService: new MonitorNewBookService(logger),
                     configService: null,
                     importListExclusionService: null,
                     syncMetadataService: null,
@@ -124,6 +124,11 @@ namespace Chaptarr.Core.Test.Books
             public void PublishRefreshComplete(Author author)
             {
                 base.PublishRefreshCompleteEvent(author);
+            }
+
+            public void ProcessAddedBooks(Author author, SortedChildren children)
+            {
+                base.ProcessChildren(author, children);
             }
         }
 
@@ -148,8 +153,8 @@ namespace Chaptarr.Core.Test.Books
                 Id = 10,
                 Name = "Test Author",
                 Monitored = true,
-                AudiobookMonitorFuture = true,
-                EbookMonitorFuture = true
+                AudiobookMonitorNewItems = NewItemMonitorTypes.New,
+                EbookMonitorNewItems = NewItemMonitorTypes.New
             };
 
             service.PublishRefreshComplete(author);
@@ -157,6 +162,150 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(book.AudiobookMonitored, Is.False);
             Assert.That(book.EbookMonitored, Is.False);
             Assert.That(bookService.UpdateManyCalls, Is.Empty);
+        }
+
+        [Test]
+        public void future_release_policy_should_use_the_author_added_date_without_changing_the_author_gate()
+        {
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book>()),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+            var author = new Author
+            {
+                Name = "Test Author",
+                Added = new DateTime(2021, 6, 1),
+                AudiobookMonitored = false,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.New,
+                EbookMonitorNewItems = NewItemMonitorTypes.New
+            };
+            var added = new Book
+            {
+                MediaType = BookMediaType.Audiobook,
+                ReleaseDate = new DateTime(2021, 6, 2)
+            };
+            var children = new RefreshEntityServiceBase<Author, Book>.SortedChildren
+            {
+                Added = new List<Book> { added },
+                UpToDate = new List<Book>
+                {
+                    new Book { MediaType = BookMediaType.Audiobook, ReleaseDate = new DateTime(2099, 1, 1), AudiobookMonitored = false }
+                }
+            };
+
+            service.ProcessAddedBooks(author, children);
+
+            Assert.That(added.AudiobookMonitored, Is.True);
+            Assert.That(author.AudiobookMonitored, Is.False, "The new-row policy must not change the author gate");
+        }
+
+        [TestCase(NewItemMonitorTypes.All, true)]
+        [TestCase(NewItemMonitorTypes.None, false)]
+        public void newly_discovered_policy_should_not_depend_on_the_author_gate(NewItemMonitorTypes policy, bool expected)
+        {
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book>()),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+            var author = new Author
+            {
+                Name = "Test Author",
+                AudiobookMonitored = false,
+                AudiobookMonitorNewItems = policy
+            };
+            var added = new Book { MediaType = BookMediaType.Audiobook };
+            var children = new RefreshEntityServiceBase<Author, Book>.SortedChildren
+            {
+                Added = new List<Book> { added }
+            };
+
+            service.ProcessAddedBooks(author, children);
+
+            Assert.That(added.AudiobookMonitored, Is.EqualTo(expected));
+            Assert.That(author.AudiobookMonitored, Is.False);
+        }
+
+        [Test]
+        public void initial_refresh_should_defer_book_rows_to_the_one_time_initial_choice()
+        {
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book>()),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+            var author = new Author
+            {
+                Name = "Initial Import",
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.All,
+                AddOptions = new AddAuthorOptions
+                {
+                    AudiobookMonitor = MonitorTypes.None
+                }
+            };
+            var added = new Book { MediaType = BookMediaType.Audiobook };
+            var children = new RefreshEntityServiceBase<Author, Book>.SortedChildren
+            {
+                Added = new List<Book> { added }
+            };
+
+            service.ProcessAddedBooks(author, children);
+
+            Assert.That(added.AudiobookMonitored, Is.False,
+                "the initial disk-scan handler owns the one-time book-row choice while AddOptions is present");
+        }
+
+        [Test]
+        [TestCase(-1, false)]
+        [TestCase(0, false)]
+        [TestCase(1, true)]
+        public void future_release_policy_should_compare_release_date_to_the_author_added_date(int releaseDayOffset, bool expected)
+        {
+            var service = new MonitorNewBookService(LogManager.GetCurrentClassLogger());
+            var author = new Author { Added = new DateTime(2020, 8, 27) };
+            var added = new Book { ReleaseDate = author.Added.Date.AddDays(releaseDayOffset) };
+
+            Assert.That(service.ShouldMonitorNewBook(added, author, NewItemMonitorTypes.New), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void future_release_policy_should_fail_closed_without_a_release_date_or_author_added_date()
+        {
+            var service = new MonitorNewBookService(LogManager.GetCurrentClassLogger());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(service.ShouldMonitorNewBook(new Book(), new Author { Added = DateTime.UtcNow }, NewItemMonitorTypes.New), Is.False);
+                Assert.That(service.ShouldMonitorNewBook(new Book { ReleaseDate = new DateTime(2026, 1, 1) }, new Author(), NewItemMonitorTypes.New), Is.False);
+                Assert.That(service.ShouldMonitorNewBook(new Book { ReleaseDate = new DateTime(2026, 1, 1) }, null, NewItemMonitorTypes.New), Is.False);
+            });
+        }
+
+        [Test]
+        public void later_discovery_policy_should_not_rewrite_existing_book_rows()
+        {
+            var existing = new Book
+            {
+                MediaType = BookMediaType.Audiobook,
+                ReleaseDate = new DateTime(2099, 1, 1),
+                AudiobookMonitored = false
+            };
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book> { existing }),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+            var author = new Author
+            {
+                Added = new DateTime(2020, 1, 1),
+                AudiobookMonitorNewItems = NewItemMonitorTypes.All
+            };
+            var children = new RefreshEntityServiceBase<Author, Book>.SortedChildren
+            {
+                UpToDate = new List<Book> { existing }
+            };
+
+            service.ProcessAddedBooks(author, children);
+
+            Assert.That(existing.AudiobookMonitored, Is.False);
         }
     }
 }

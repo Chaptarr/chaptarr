@@ -128,9 +128,7 @@ namespace Chaptarr.Core.Test.Books
             {
                 Title = "Network Effect",
                 MediaType = "audiobook",
-                Monitored = true,
-                AudiobookMonitored = false,
-                EbookMonitored = false
+                Monitored = true
             };
 
             var model = resource.ToModel();
@@ -138,6 +136,22 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(model.MediaType, Is.EqualTo(BookMediaType.Audiobook));
             Assert.That(model.AudiobookMonitored, Is.True);
             Assert.That(model.EbookMonitored, Is.False);
+        }
+
+        [Test]
+        public void should_prefer_explicit_native_side_monitoring_over_legacy_monitored()
+        {
+            var resource = new BookResource
+            {
+                Title = "Network Effect",
+                MediaType = "audiobook",
+                Monitored = true,
+                AudiobookMonitored = false
+            };
+
+            var model = resource.ToModel();
+
+            Assert.That(model.AudiobookMonitored, Is.False);
         }
 
         [Test]
@@ -417,6 +431,7 @@ namespace Chaptarr.Core.Test.Books
                 Id = 10,
                 MediaType = "ebook",
                 Monitored = true,
+                EbookMonitored = false,
                 Editions = new List<EditionResource>
                 {
                     new EditionResource
@@ -432,6 +447,7 @@ namespace Chaptarr.Core.Test.Books
             var model = resource.ToModel(existing, new ReadarrFacadeContext("hc", "ebook", "/readarr/hc/ebook"));
             var edition = model.Editions.Single();
 
+            Assert.That(model.EbookMonitored, Is.True);
             Assert.That(edition.Monitored, Is.True);
             Assert.That(edition.ForeignEditionId, Is.EqualTo("hc:edition:30643037-ebook"));
             Assert.That(edition.TitleSlug, Is.EqualTo("the-reawakening-ebook"));

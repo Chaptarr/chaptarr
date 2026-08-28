@@ -2,8 +2,8 @@ import _ from 'lodash';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { createThunk, handleThunks } from 'Store/thunks';
-import monitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
-import monitorOptions from 'Utilities/Author/monitorOptions';
+import monitorNewItemsOptions, { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
+import monitorOptions, { normalizeMonitorOption } from 'Utilities/Author/monitorOptions';
 import getNewBook from 'Utilities/Book/getNewBook';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getSectionState from 'Utilities/State/getSectionState';
@@ -40,8 +40,14 @@ export const defaultState = {
   authorDefaults: {
     audiobookRootFolderPath: '',
     ebookRootFolderPath: '',
+    audiobookMonitored: null,
+    ebookMonitored: null,
     monitor: monitorOptions[0].key,
+    audiobookMonitor: null,
+    ebookMonitor: null,
     monitorNewItems: monitorNewItemsOptions[0].key,
+    audiobookMonitorNewItems: null,
+    ebookMonitorNewItems: null,
     audiobookQualityProfileId: 0,
     ebookQualityProfileId: 0,
     audiobookMetadataProfileId: 0,
@@ -55,6 +61,8 @@ export const defaultState = {
     audiobookRootFolderPath: '',
     ebookRootFolderPath: '',
     monitor: monitorOptions[0].key,
+    audiobookMonitored: true,
+    ebookMonitored: true,
     audiobookMonitor: monitorOptions[0].key,
     ebookMonitor: monitorOptions[0].key,
     monitorNewItems: monitorNewItemsOptions[0].key,
@@ -183,13 +191,20 @@ function getAddedMediaTypes(state, ...mediaTypes) {
 
 function getMediaTypePayload(payload, mediaType, searchForNewBook) {
   const isAudiobook = mediaType === 'audiobook';
+  const requestedMonitor = isAudiobook ?
+    (payload.audiobookMonitor || payload.monitor) :
+    (payload.ebookMonitor || payload.monitor);
+  const normalizedRequestedMonitor = (requestedMonitor ?? '').toString().trim().toLowerCase() === 'all' ?
+    'all' : 'specificBook';
 
   return {
     ...payload,
     mediaType,
     searchForNewBook: !!searchForNewBook,
-    monitor: isAudiobook ? (payload.audiobookMonitor || payload.monitor) : (payload.ebookMonitor || payload.monitor),
-    monitorNewItems: isAudiobook ? (payload.audiobookMonitorNewItems || payload.monitorNewItems) : (payload.ebookMonitorNewItems || payload.monitorNewItems),
+    monitor: normalizedRequestedMonitor,
+    monitorNewItems: normalizeMonitorNewItemsOption(isAudiobook ?
+      (payload.audiobookMonitorNewItems || payload.monitorNewItems) :
+      (payload.ebookMonitorNewItems || payload.monitorNewItems)),
     metadataProfileId: isAudiobook ? (payload.audiobookMetadataProfileId || payload.metadataProfileId) : (payload.ebookMetadataProfileId || payload.metadataProfileId),
     tags: isAudiobook ? (payload.audiobookTags || payload.tags) : (payload.ebookTags || payload.tags)
   };
@@ -336,8 +351,8 @@ export const actionHandlers = handleThunks({
     const foreignAuthorId = payload.foreignAuthorId;
 
     // Build V5 import payload based on selected settings
-    const monitor = payload.monitor;
-    const monitorNewItems = payload.monitorNewItems;
+    const monitor = normalizeMonitorOption(payload.monitor);
+    const monitorNewItems = normalizeMonitorNewItemsOption(payload.monitorNewItems);
     const audiobookRoot = payload.audiobookRootFolderPath;
     const ebookRoot = payload.ebookRootFolderPath;
     const audiobookProfile = payload.audiobookQualityProfileId;
@@ -361,20 +376,6 @@ export const actionHandlers = handleThunks({
         data: JSON.stringify(v1Payload)
       }).request;
     };
-
-    const monitorExistingFromUi = (uiValue) => {
-      if (uiValue === 'all') {
-        return 'All';
-      }
-
-      if (uiValue === 'specificBook' || uiValue === 'select') {
-        return 'Select';
-      }
-
-      return 'None';
-    };
-
-    const monitorFutureFromUi = (uiValue) => uiValue === 'all';
 
     const getImportErrorMessage = (xhr) => {
       if (!xhr) {
@@ -404,10 +405,10 @@ export const actionHandlers = handleThunks({
     // Support a "Both" UI option by submitting two sequential imports (audiobook then ebook).
     // Backend expects single mediaType per request.
     if (explicitMediaType === 'both') {
-      const audiobookMonitor = payload.audiobookMonitor || monitor;
-      const ebookMonitor = payload.ebookMonitor || monitor;
-      const audiobookMonitorNew = payload.audiobookMonitorNewItems || monitorNewItems;
-      const ebookMonitorNew = payload.ebookMonitorNewItems || monitorNewItems;
+      const audiobookMonitor = normalizeMonitorOption(payload.audiobookMonitor || monitor);
+      const ebookMonitor = normalizeMonitorOption(payload.ebookMonitor || monitor);
+      const audiobookMonitorNew = normalizeMonitorNewItemsOption(payload.audiobookMonitorNewItems || monitorNewItems);
+      const ebookMonitorNew = normalizeMonitorNewItemsOption(payload.ebookMonitorNewItems || monitorNewItems);
 
       const audiobookMetadataProfileId = audiobookMeta || metadataProfile;
       const ebookMetadataProfileId = ebookMeta || metadataProfile;
@@ -438,8 +439,10 @@ export const actionHandlers = handleThunks({
         rootFolder: audiobookRoot || '',
         qualityProfileId: audiobookProfile || 0,
         metadataProfileId: audiobookMetadataProfileId,
-        monitorExisting: monitorExistingFromUi(audiobookMonitor),
-        monitorFuture: monitorFutureFromUi(audiobookMonitorNew),
+        monitor: audiobookMonitor,
+        audiobookMonitorExistingMode: audiobookMonitor,
+        audiobookMonitored: payload.audiobookMonitored !== false,
+        audiobookMonitorNewItems: audiobookMonitorNew,
         manualFlag: true,
         // Defer missing search until the second import so both media types are hydrated first.
         searchForMissingBooks: false
@@ -451,8 +454,10 @@ export const actionHandlers = handleThunks({
         rootFolder: ebookRoot || '',
         qualityProfileId: ebookProfile || 0,
         metadataProfileId: ebookMetadataProfileId,
-        monitorExisting: monitorExistingFromUi(ebookMonitor),
-        monitorFuture: monitorFutureFromUi(ebookMonitorNew),
+        monitor: ebookMonitor,
+        ebookMonitorExistingMode: ebookMonitor,
+        ebookMonitored: payload.ebookMonitored !== false,
+        ebookMonitorNewItems: ebookMonitorNew,
         manualFlag: true,
         searchForMissingBooks: payload.searchForMissingBooks
       };
@@ -740,8 +745,10 @@ export const actionHandlers = handleThunks({
       return;
     }
 
-    const monitorExisting = monitorExistingFromUi(monitor);
-    const monitorFuture = monitorFutureFromUi(monitorNewItems);
+    const monitored = mediaType === 'audiobook' ? payload.audiobookMonitored : payload.ebookMonitored;
+    const selectedMonitorNewItems = normalizeMonitorNewItemsOption(mediaType === 'audiobook' ?
+      (payload.audiobookMonitorNewItems || monitorNewItems) :
+      (payload.ebookMonitorNewItems || monitorNewItems));
 
     const v1Payload = {
       foreignAuthorId,
@@ -749,8 +756,16 @@ export const actionHandlers = handleThunks({
       rootFolder: rootFolder || '',
       qualityProfileId,
       metadataProfileId,
-      monitorExisting,
-      monitorFuture,
+      monitor,
+      ...(mediaType === 'audiobook' ? {
+        audiobookMonitorExistingMode: monitor,
+        audiobookMonitored: monitored !== false,
+        audiobookMonitorNewItems: selectedMonitorNewItems
+      } : {
+        ebookMonitorExistingMode: monitor,
+        ebookMonitored: monitored !== false,
+        ebookMonitorNewItems: selectedMonitorNewItems
+      }),
       manualFlag: true,
       searchForMissingBooks: payload.searchForMissingBooks
     };

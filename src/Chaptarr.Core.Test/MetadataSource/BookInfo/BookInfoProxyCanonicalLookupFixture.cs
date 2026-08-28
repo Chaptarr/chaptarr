@@ -294,6 +294,35 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         }
 
         [Test]
+        public void should_map_v5_work_author_dates_to_domain_status_without_using_server_status()
+        {
+            const string payload = @"{
+  ""work"": { ""id"": ""gr:3046572"", ""title"": ""Harry Potter and the Goblet of Fire"", ""goodreadsWorkId"": ""gr:3046572"" },
+  ""editions"": [ { ""id"": 10, ""title"": ""Harry Potter and the Goblet of Fire"", ""language"": ""en"", ""formatType"": ""audiobook"", ""providerIds"": { ""goodreads"": ""gr:58613424"" } } ],
+  ""authors"": [ {
+    ""name"": ""J.K. Rowling"",
+    ""birthDate"": ""1965-07-31"",
+    ""deathDate"": ""1996-07-09"",
+    ""status"": ""alive"",
+    ""providerIds"": { ""gr"": ""gr:1077326"" }
+  } ],
+  ""series"": []
+}";
+
+            var httpClient = new RecordingHttpClient(req =>
+                new HttpResponse(req, new HttpHeader { ContentType = "application/json" }, payload, HttpStatusCode.OK));
+
+            var proxy = CreateProxy(httpClient);
+
+            var result = proxy.GetWorkInfo("gr:3046572", BookMediaType.Audiobook);
+            var author = result.Item3.Single();
+
+            Assert.That(author.Born, Is.EqualTo(new DateTime(1965, 7, 31)));
+            Assert.That(author.Died, Is.EqualTo(new DateTime(1996, 7, 9)));
+            Assert.That(author.Status, Is.EqualTo(AuthorStatusType.Ended));
+        }
+
+        [Test]
         public void should_send_matching_hardcover_author_hint_on_v5_book_info_work_lookup()
         {
             var httpClient = new RecordingHttpClient(req =>

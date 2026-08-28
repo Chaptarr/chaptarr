@@ -58,6 +58,7 @@ namespace Chaptarr.Core.Test.Books
             public int FindByNameCalls { get; private set; }
             public int AuthorPathExistsCalls { get; private set; }
             public Author AddedAuthor { get; private set; }
+            public Author UpdatedAuthor { get; private set; }
             private readonly Func<string, string, Author> _findByProviderId;
             private readonly Author _findByName;
             private readonly HashSet<string> _existingPaths;
@@ -105,7 +106,11 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
 	            public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
 	            public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
-	            public Author UpdateAuthor(Author author) => author;
+	            public Author UpdateAuthor(Author author)
+                {
+                    UpdatedAuthor = author;
+                    return author;
+                }
 	            public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
 	            public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
 	            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
@@ -181,8 +186,8 @@ namespace Chaptarr.Core.Test.Books
             {
                 QualityProfileId = 1,
                 MetadataProfileId = 1,
-                MonitorExisting = 2,
-                MonitorFuture = true
+                MonitorExistingBooks = false,
+                MonitorNewItems = NzbDrone.Core.Books.NewItemMonitorTypes.New
             };
 
             if (type == FolderType.Audiobook)
@@ -295,6 +300,64 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(result.Id, Is.EqualTo(existing.Id));
             Assert.That(authorService.AddAuthorCalled, Is.False);
+        }
+
+        [Test]
+        public async Task should_apply_fresh_life_dates_when_the_author_already_exists()
+        {
+            var existing = new Author
+            {
+                Id = 42,
+                Name = "Existing Author",
+                HardcoverAuthorId = "hc:80626",
+                Status = AuthorStatusType.Continuing
+            };
+            var born = new DateTime(1928, 2, 15);
+            var died = new DateTime(1996, 7, 9);
+            var authorInfo = new StubAuthorInfo(new Author
+            {
+                Name = existing.Name,
+                HardcoverAuthorId = existing.HardcoverAuthorId,
+                Born = born,
+                Died = died,
+                Status = AuthorStatusType.Ended
+            });
+            var authorService = new StubAuthorService((provider, providerId) =>
+                provider == "hc" && providerId == "80626" ? existing : null);
+            var bookService = new StubBookService();
+            bookService.SetBooks(existing.Id,
+                new Book { MediaType = BookMediaType.Audiobook },
+                new Book { MediaType = BookMediaType.Ebook });
+            var service = new AuthorLibraryService(
+                authorService: authorService,
+                authorInfo: authorInfo,
+                bookService: bookService,
+                refreshSeriesService: null,
+                editionService: null,
+                narratorLinkService: null,
+                metadataProfileService: null,
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: null,
+                rootFolderService: null,
+                commandQueueManager: null,
+                eventAggregator: new StubEventAggregator(),
+                pendingImportService: null,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger());
+
+            var result = await service.AddAuthorAsync(existing.HardcoverAuthorId);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result, Is.SameAs(existing));
+                Assert.That(authorService.UpdatedAuthor.Born, Is.EqualTo(born));
+                Assert.That(authorService.UpdatedAuthor.Died, Is.EqualTo(died));
+                Assert.That(authorService.UpdatedAuthor.Status, Is.EqualTo(AuthorStatusType.Ended));
+                Assert.That(authorService.UpdatedAuthor.HardcoverAuthorId, Is.EqualTo("hc:80626"));
+            });
         }
 
         [Test]

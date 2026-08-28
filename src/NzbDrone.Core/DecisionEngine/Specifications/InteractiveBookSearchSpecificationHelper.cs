@@ -14,12 +14,28 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return false;
             }
 
+            return IncludesRequestedBook(subject, bookSearch);
+        }
+
+        public static bool IsRequestedBookSearchAllowingUnmonitored(RemoteBook subject, SearchCriteriaBase searchCriteria)
+        {
+            var bookSearch = searchCriteria as BookSearchCriteria;
+            if (bookSearch?.MonitoredBooksOnly != false)
+            {
+                return false;
+            }
+
+            return IncludesRequestedBook(subject, bookSearch);
+        }
+
+        private static bool IncludesRequestedBook(RemoteBook subject, BookSearchCriteria bookSearch)
+        {
             if (subject?.Books == null || subject.Books.Count == 0)
             {
                 return false;
             }
 
-            var requestedBookIds = bookSearch.Books?
+            var requestedBookIds = bookSearch?.Books?
                 .Where(book => book != null && book.Id > 0)
                 .Select(book => book.Id)
                 .ToHashSet();
@@ -34,33 +50,12 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public static bool IsResolvedInteractiveBookSearch(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
-            var bookSearch = searchCriteria as BookSearchCriteria;
-            if (bookSearch?.InteractiveSearch != true)
-            {
-                return false;
-            }
-
             if (subject?.SearchCriteriaMatch?.IsMatch != true)
             {
                 return false;
             }
 
-            if (subject.Books == null || subject.Books.Count == 0)
-            {
-                return false;
-            }
-
-            var requestedBookIds = bookSearch.Books?
-                .Where(book => book != null && book.Id > 0)
-                .Select(book => book.Id)
-                .ToHashSet();
-
-            if (requestedBookIds == null || requestedBookIds.Count == 0)
-            {
-                return false;
-            }
-
-            return subject.Books.Any(book => book != null && requestedBookIds.Contains(book.Id));
+            return IsRequestedBookInteractiveSearch(subject, searchCriteria);
         }
     }
 }

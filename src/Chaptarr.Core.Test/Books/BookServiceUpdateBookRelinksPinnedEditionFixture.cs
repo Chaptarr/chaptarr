@@ -285,8 +285,8 @@ namespace Chaptarr.Core.Test.Books
             {
                 Id = 10,
                 Name = "Susanna Clarke",
-                AudiobookMonitorExisting = 0,
-                EbookMonitorExisting = 0
+                AudiobookMonitored = false,
+                EbookMonitored = false
             };
 
             var storedBook = new Book
@@ -332,7 +332,7 @@ namespace Chaptarr.Core.Test.Books
             {
                 Id = 10,
                 Name = "J.K. Rowling",
-                AudiobookMonitorExisting = 1
+                AudiobookMonitored = true
             };
 
             var storedBook = new Book

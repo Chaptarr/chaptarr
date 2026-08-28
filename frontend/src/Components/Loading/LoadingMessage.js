@@ -16,7 +16,7 @@ const messages = [
   'Dodge-ing these piles of books',
   'Solid. Goldan. Dragon.',
   'Have you ever seen DefinitelyNotRLH and RLH in the same room?',
-  'This won\'t be my Swan song',
+  'A Black Swan and a Goldan Dragon walk into a library...',
   'These old books always get skipped',
   'Something Something Skels'
 ];

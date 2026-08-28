@@ -46,8 +46,6 @@ namespace NzbDrone.Core.Books
         void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored);
         List<Book> GetAuthorBooksWithFiles(Author author);
         List<Book> GetBooksBySeries(int seriesId);
-        List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType);
-	        void SetMonitoringForAuthorBooks(int authorId, string mediaType, bool monitored);
 	        void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null);
             void SetAuthorId(Book book) => throw new NotImplementedException();
             void SetAuthorId(IList<Book> books) => throw new NotImplementedException();
@@ -661,60 +659,6 @@ namespace NzbDrone.Core.Books
                          .OrderBy(b => b.SeriesLinks?.FirstOrDefault()?.SeriesPosition ?? 0).ToList();
         }
 
-        public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType)
-        {
-            var query = Builder()
-                .Where<Book>(b => b.AuthorId == authorId && (b.AudiobookMonitored || b.EbookMonitored) == true);
-
-            // Filter by MediaType enum
-            if (!string.IsNullOrEmpty(mediaType))
-            {
-                var targetMediaType = mediaType.ToLower() == "ebook" ? BookMediaType.Ebook : BookMediaType.Audiobook;
-                query = query.Where<Book>(b => b.MediaType == targetMediaType);
-            }
-
-            return Query(query);
-        }
-
-        public void SetMonitoringForAuthorBooks(int authorId, string mediaType, bool monitored)
-        {
-            var books = GetBooks(authorId);
-            var bookIds = books.Select(b => b.Id).Distinct().ToList();
-            if (!bookIds.Any())
-            {
-                return;
-            }
-
-            var updateSql = mediaType == "audiobook"
-                ? (_database.DatabaseType == DatabaseType.PostgreSQL
-                    ? "UPDATE \"Books\" SET \"AudiobookMonitored\" = @monitored WHERE \"Id\" = ANY(@Ids)"
-                    : "UPDATE \"Books\" SET \"AudiobookMonitored\" = @monitored WHERE \"Id\" IN @Ids")
-                : (_database.DatabaseType == DatabaseType.PostgreSQL
-                    ? "UPDATE \"Books\" SET \"EbookMonitored\" = @monitored WHERE \"Id\" = ANY(@Ids)"
-                    : "UPDATE \"Books\" SET \"EbookMonitored\" = @monitored WHERE \"Id\" IN @Ids");
-
-            using (var conn = _database.OpenConnection())
-            {
-                // SQLite has a default ~999 bind-variable limit; Dapper expands IN lists into many parameters.
-                if (_database.DatabaseType == DatabaseType.SQLite && bookIds.Count > SqliteVariableLimit.MaxParameters)
-                {
-                    using (var tran = conn.BeginTransaction())
-                    {
-                        foreach (var batch in bookIds.Chunk(SqliteVariableLimit.MaxParameters))
-                        {
-                            conn.Execute(updateSql, new { monitored = monitored, Ids = batch.ToArray() }, tran);
-                        }
-
-                        tran.Commit();
-                    }
-                }
-                else
-                {
-                    conn.Execute(updateSql, new { monitored = monitored, Ids = bookIds.ToArray() });
-                }
-            }
-        }
-
         public void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null)
         {
             // Build the SQL query with proper MediaType filtering and exception handling
@@ -870,6 +814,11 @@ namespace NzbDrone.Core.Books
                     parameters.Add("audiobookMediaType", (int)BookMediaType.Audiobook);
                     parameters.Add("ebookMediaType", (int)BookMediaType.Ebook);
                 }
+            }
+
+            if (missingOrWanted)
+            {
+                whereConditions.Add(BuildAuthorMonitoredExistsClause("b", normalizedMediaTypeForFiles));
             }
 
             if (missingOrWanted || downloaded.HasValue)
@@ -1053,6 +1002,11 @@ namespace NzbDrone.Core.Books
                 }
             }
 
+            if (missingOrWanted)
+            {
+                builder.Where(BuildAuthorMonitoredExistsClause($@"""{tableName}""", normalizedMediaTypeForFiles));
+            }
+
             if (missingOrWanted || downloaded.HasValue)
             {
                 var hasFiles = !(missingOrWanted || downloaded == false);
@@ -1075,6 +1029,19 @@ namespace NzbDrone.Core.Books
             }
 
             return builder;
+        }
+
+        private string BuildAuthorMonitoredExistsClause(string bookReference, string normalizedMediaType)
+        {
+            var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
+            var authorGate = normalizedMediaType switch
+            {
+                "audiobook" => $@"monitoring_author.""AudiobookMonitored"" = {trueIndicator}",
+                "ebook" => $@"monitoring_author.""EbookMonitored"" = {trueIndicator}",
+                _ => $@"(({bookReference}.""MediaType"" = {(int)BookMediaType.Audiobook} AND monitoring_author.""AudiobookMonitored"" = {trueIndicator}) OR ({bookReference}.""MediaType"" = {(int)BookMediaType.Ebook} AND monitoring_author.""EbookMonitored"" = {trueIndicator}))"
+            };
+
+            return $@"EXISTS (SELECT 1 FROM ""Authors"" monitoring_author WHERE monitoring_author.""Id"" = {bookReference}.""AuthorId"" AND ({authorGate}))";
         }
 
         public List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null)

@@ -19,18 +19,20 @@ namespace Chaptarr.Api.V1.PendingImport
         public string EbookStatus { get; set; }
         public string OverallStatus { get; set; }
         
-        // Audiobook configuration - TRI-STATE MONITORING
-        public int? AudiobookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? AudiobookMonitorFuture { get; set; } // true=monitor, false=don't monitor
+        // Audiobook configuration: the author gate is yes/no; new-item policy is separate.
+        public bool? AudiobookMonitored { get; set; }
+        public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
+        public MonitorTypes? AudiobookMonitorExistingMode { get; set; }
         public int? AudiobookQualityProfileId { get; set; }
         public int? AudiobookMetadataProfileId { get; set; }
         public string AudiobookRootFolderPath { get; set; }
         public List<string> AudiobookBooksToMonitor { get; set; }
         public List<string> AudiobookBooksToSearch { get; set; }
         
-        // Ebook configuration - TRI-STATE MONITORING
-        public int? EbookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? EbookMonitorFuture { get; set; } // true=monitor, false=don't monitor
+        // Ebook configuration: the author gate is yes/no; new-item policy is separate.
+        public bool? EbookMonitored { get; set; }
+        public NewItemMonitorTypes? EbookMonitorNewItems { get; set; }
+        public MonitorTypes? EbookMonitorExistingMode { get; set; }
         public int? EbookQualityProfileId { get; set; }
         public int? EbookMetadataProfileId { get; set; }
         public string EbookRootFolderPath { get; set; }
@@ -134,14 +136,16 @@ namespace Chaptarr.Api.V1.PendingImport
                 EbookStatus = model.EbookStatus.ToString(),
                 OverallStatus = model.OverallStatus.ToString(),
                 
-                AudiobookMonitorExisting = model.AudiobookMonitorExisting,
-                AudiobookMonitorFuture = model.AudiobookMonitorFuture,
+                AudiobookMonitored = model.AudiobookMonitored,
+                AudiobookMonitorNewItems = model.AudiobookMonitorNewItems,
+                AudiobookMonitorExistingMode = model.AudiobookMonitorExistingMode,
                 AudiobookQualityProfileId = model.AudiobookQualityProfileId,
                 AudiobookMetadataProfileId = model.AudiobookMetadataProfileId,
                 AudiobookRootFolderPath = model.AudiobookRootFolderPath,
                 
-                EbookMonitorExisting = model.EbookMonitorExisting,
-                EbookMonitorFuture = model.EbookMonitorFuture,
+                EbookMonitored = model.EbookMonitored,
+                EbookMonitorNewItems = model.EbookMonitorNewItems,
+                EbookMonitorExistingMode = model.EbookMonitorExistingMode,
                 EbookQualityProfileId = model.EbookQualityProfileId,
                 EbookMetadataProfileId = model.EbookMetadataProfileId,
                 EbookRootFolderPath = model.EbookRootFolderPath,
@@ -225,14 +229,16 @@ namespace Chaptarr.Api.V1.PendingImport
                 EbookStatus = ParseEnumOrDefault(resource.EbookStatus, PendingImportStatus.NotRequested, nameof(resource.EbookStatus), resource.Id),
                 OverallStatus = ParseEnumOrDefault(resource.OverallStatus, PendingImportStatus.NotRequested, nameof(resource.OverallStatus), resource.Id),
                 
-                AudiobookMonitorExisting = resource.AudiobookMonitorExisting,
-                AudiobookMonitorFuture = resource.AudiobookMonitorFuture,
+                AudiobookMonitored = resource.AudiobookMonitored,
+                AudiobookMonitorNewItems = resource.AudiobookMonitorNewItems,
+                AudiobookMonitorExistingMode = resource.AudiobookMonitorExistingMode,
                 AudiobookQualityProfileId = resource.AudiobookQualityProfileId,
                 AudiobookMetadataProfileId = resource.AudiobookMetadataProfileId,
                 AudiobookRootFolderPath = resource.AudiobookRootFolderPath,
                 
-                EbookMonitorExisting = resource.EbookMonitorExisting,
-                EbookMonitorFuture = resource.EbookMonitorFuture,
+                EbookMonitored = resource.EbookMonitored,
+                EbookMonitorNewItems = resource.EbookMonitorNewItems,
+                EbookMonitorExistingMode = resource.EbookMonitorExistingMode,
                 EbookQualityProfileId = resource.EbookQualityProfileId,
                 EbookMetadataProfileId = resource.EbookMetadataProfileId,
                 EbookRootFolderPath = resource.EbookRootFolderPath,

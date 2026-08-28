@@ -91,13 +91,14 @@ export default {
       outputProfile: 'default',
       useSsl: false,
       // REMOVED: defaultQualityProfileId, defaultMetadataProfileId, defaultAudiobookMetadataProfileId, defaultEbookMetadataProfileId - no longer used
-      monitorExisting: true, // Default to "All Books" - legacy, still used for single-type folders
-      monitorFuture: true, // Default to "Monitor Future Releases" checked - legacy
-      // Per-media-type monitoring settings
-      audiobookMonitorExisting: 2, // Default to "Select Books" for audiobooks
-      audiobookMonitorFuture: true, // Default to "Monitor Future Releases" for audiobooks
-      ebookMonitorExisting: 2, // Default to "Select Books" for ebooks (matching audiobook default)
-      ebookMonitorFuture: true, // Default to "Monitor Future Releases" for ebooks
+      // Per-media-type monitoring defaults. The gate is independent from the
+      // one-time current-book seed and the ongoing catalog-relative policy.
+      audiobookMonitored: true,
+      audiobookMonitorExistingMode: 'all',
+      audiobookMonitorNewItems: 'all',
+      ebookMonitored: true,
+      ebookMonitorExistingMode: 'all',
+      ebookMonitorNewItems: 'all',
       // Per-media-type profile settings (null means unconfigured; UI auto-selects defaults)
       audiobookQualityProfileId: null,
       audiobookMetadataProfileId: null,
@@ -209,8 +210,9 @@ export default {
 
       if (folderType === FolderType.Audiobook) {
         // Audiobook-only folder
-        saveData.audiobookMonitorExisting = rawData.audiobookMonitorExisting;
-        saveData.audiobookMonitorFuture = rawData.audiobookMonitorFuture;
+        saveData.audiobookMonitored = rawData.audiobookMonitored;
+        saveData.audiobookMonitorExistingMode = rawData.audiobookMonitorExistingMode;
+        saveData.audiobookMonitorNewItems = rawData.audiobookMonitorNewItems;
         saveData.audiobookQualityProfileId = normalizeOptionalId(rawData.audiobookQualityProfileId);
         saveData.audiobookMetadataProfileId = normalizeOptionalId(rawData.audiobookMetadataProfileId);
         saveData.audiobookWriteAudioBookShelfMetadataJson = !!rawData.audiobookWriteAudioBookShelfMetadataJson;
@@ -218,8 +220,9 @@ export default {
         saveData.audiobookTags = normalizeTags(rawData.audiobookTags);
 
         // Explicitly null ALL ebook fields
-        saveData.ebookMonitorExisting = null;
-        saveData.ebookMonitorFuture = null;
+        saveData.ebookMonitored = null;
+        saveData.ebookMonitorExistingMode = null;
+        saveData.ebookMonitorNewItems = null;
         saveData.ebookQualityProfileId = null;
         saveData.ebookMetadataProfileId = null;
         saveData.ebookWriteAudioBookShelfMetadataJson = null;
@@ -228,8 +231,9 @@ export default {
 
       } else if (folderType === FolderType.Ebook) {
         // Ebook-only folder
-        saveData.ebookMonitorExisting = rawData.ebookMonitorExisting;
-        saveData.ebookMonitorFuture = rawData.ebookMonitorFuture;
+        saveData.ebookMonitored = rawData.ebookMonitored;
+        saveData.ebookMonitorExistingMode = rawData.ebookMonitorExistingMode;
+        saveData.ebookMonitorNewItems = rawData.ebookMonitorNewItems;
         saveData.ebookQualityProfileId = normalizeOptionalId(rawData.ebookQualityProfileId);
         saveData.ebookMetadataProfileId = normalizeOptionalId(rawData.ebookMetadataProfileId);
         saveData.ebookWriteAudioBookShelfMetadataJson = !!rawData.ebookWriteAudioBookShelfMetadataJson;
@@ -237,8 +241,9 @@ export default {
         saveData.ebookTags = normalizeTags(rawData.ebookTags);
 
         // Explicitly null ALL audiobook fields
-        saveData.audiobookMonitorExisting = null;
-        saveData.audiobookMonitorFuture = null;
+        saveData.audiobookMonitored = null;
+        saveData.audiobookMonitorExistingMode = null;
+        saveData.audiobookMonitorNewItems = null;
         saveData.audiobookQualityProfileId = null;
         saveData.audiobookMetadataProfileId = null;
         saveData.audiobookWriteAudioBookShelfMetadataJson = null;
@@ -247,16 +252,18 @@ export default {
 
       } else if (folderType === FolderType.Mixed) {
         // Mixed content folder (folderType=0)
-        saveData.audiobookMonitorExisting = rawData.audiobookMonitorExisting;
-        saveData.audiobookMonitorFuture = rawData.audiobookMonitorFuture;
+        saveData.audiobookMonitored = rawData.audiobookMonitored;
+        saveData.audiobookMonitorExistingMode = rawData.audiobookMonitorExistingMode;
+        saveData.audiobookMonitorNewItems = rawData.audiobookMonitorNewItems;
         saveData.audiobookQualityProfileId = normalizeOptionalId(rawData.audiobookQualityProfileId);
         saveData.audiobookMetadataProfileId = normalizeOptionalId(rawData.audiobookMetadataProfileId);
         saveData.audiobookWriteAudioBookShelfMetadataJson = !!rawData.audiobookWriteAudioBookShelfMetadataJson;
         saveData.audiobookWriteAudioBookShelfCover = !!rawData.audiobookWriteAudioBookShelfCover;
         saveData.audiobookTags = normalizeTags(rawData.audiobookTags);
 
-        saveData.ebookMonitorExisting = rawData.ebookMonitorExisting;
-        saveData.ebookMonitorFuture = rawData.ebookMonitorFuture;
+        saveData.ebookMonitored = rawData.ebookMonitored;
+        saveData.ebookMonitorExistingMode = rawData.ebookMonitorExistingMode;
+        saveData.ebookMonitorNewItems = rawData.ebookMonitorNewItems;
         saveData.ebookQualityProfileId = normalizeOptionalId(rawData.ebookQualityProfileId);
         saveData.ebookMetadataProfileId = normalizeOptionalId(rawData.ebookMetadataProfileId);
         saveData.ebookWriteAudioBookShelfMetadataJson = !!rawData.ebookWriteAudioBookShelfMetadataJson;

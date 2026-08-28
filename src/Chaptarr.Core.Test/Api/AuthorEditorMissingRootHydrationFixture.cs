@@ -68,6 +68,61 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(commandQueue.PushedCommands, Is.Empty);
         }
 
+        [Test]
+        public void should_leave_unconfigured_media_monitoring_unchanged_when_bulk_edit_targets_both_types()
+        {
+            var author = new CoreAuthor
+            {
+                Id = 1,
+                Name = "Martha Wells",
+                AudiobookRootFolderPath = "/library/audiobooks",
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.All,
+                EbookMonitored = null,
+                EbookMonitorNewItems = null
+            };
+            var authorService = CreateAuthorService(author);
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+
+            controller.SaveAll(new AuthorEditorResource
+            {
+                AuthorIds = new List<int> { 1 },
+                AudiobookMonitored = false,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None
+            });
+
+            Assert.That(author.AudiobookMonitored, Is.False);
+            Assert.That(author.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+            Assert.That(author.EbookMonitored, Is.Null);
+            Assert.That(author.EbookMonitorNewItems, Is.Null);
+        }
+
+        [Test]
+        public void should_apply_media_monitoring_when_bulk_edit_configures_that_media_root()
+        {
+            var author = new CoreAuthor
+            {
+                Id = 1,
+                Name = "Martha Wells",
+                AudiobookRootFolderPath = "/library/audiobooks"
+            };
+            var authorService = CreateAuthorService(author);
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+
+            controller.SaveAll(new AuthorEditorResource
+            {
+                AuthorIds = new List<int> { 1 },
+                EbookRootFolderPath = "/library/ebooks",
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.New
+            });
+
+            Assert.That(author.EbookMonitored, Is.True);
+            Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+        }
+
         private static IAuthorService CreateAuthorService(params CoreAuthor[] authors)
         {
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();

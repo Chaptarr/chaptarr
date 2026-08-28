@@ -59,6 +59,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
 
         // Metadata
         public string Bio { get; set; }
+        public string BirthDate { get; set; }
+        public string DeathDate { get; set; }
         public List<V5AuthorPhoto> Photos { get; set; } = new List<V5AuthorPhoto>();
         public ProviderUrlMap ProviderUrls { get; set; } = new ProviderUrlMap();
         public string LastUpdated { get; set; }

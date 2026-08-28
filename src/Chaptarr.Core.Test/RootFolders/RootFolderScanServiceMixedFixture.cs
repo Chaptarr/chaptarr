@@ -58,6 +58,7 @@ namespace Chaptarr.Core.Test.RootFolders
         private class BookServiceProxy : DispatchProxy
         {
             public List<Book> Books { get; set; } = new();
+            public List<Book> BooksWithFiles { get; set; } = new();
             public List<Book> UpdatedBooks { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -71,6 +72,11 @@ namespace Chaptarr.Core.Test.RootFolders
                 {
                     UpdatedBooks = new List<Book>((IEnumerable<Book>)args[0]);
                     return null;
+                }
+
+                if (targetMethod.Name == nameof(IBookService.GetAuthorBooksWithFiles))
+                {
+                    return BooksWithFiles;
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IBookService.{targetMethod?.Name}");
@@ -93,8 +99,9 @@ namespace Chaptarr.Core.Test.RootFolders
                     {
                         QualityProfileId = settings?.QualityProfileId,
                         MetadataProfileId = settings?.MetadataProfileId,
-                        MonitorExisting = settings?.MonitorExisting,
-                        MonitorFuture = settings?.MonitorFuture,
+                        Monitored = settings?.Monitored,
+                        MonitorExistingMode = settings?.MonitorExistingMode,
+                        MonitorNewItems = settings?.MonitorNewItems,
                         Tags = settings?.Tags ?? new List<int>(),
                         IsConfigured = settings != null,
                         Source = settings != null ? "MediaSpecific" : "Unconfigured"
@@ -120,9 +127,13 @@ namespace Chaptarr.Core.Test.RootFolders
                 Assert.That(author.AudiobookRootFolderPath, Is.EqualTo("/library"));
                 Assert.That(author.AudiobookPath, Is.EqualTo("/library/Example Author"));
                 Assert.That(author.AudiobookQualityProfileId, Is.EqualTo(10));
+                Assert.That(author.AudiobookMonitored, Is.True);
+                Assert.That(author.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                 Assert.That(author.EbookRootFolderPath, Is.Null);
                 Assert.That(author.EbookPath, Is.Null);
                 Assert.That(author.EbookQualityProfileId, Is.Null);
+                Assert.That(author.EbookMonitored, Is.Null);
+                Assert.That(author.EbookMonitorNewItems, Is.Null);
             });
         }
 
@@ -151,6 +162,8 @@ namespace Chaptarr.Core.Test.RootFolders
                 Assert.That(author.EbookRootFolderPath, Is.EqualTo("/library"));
                 Assert.That(author.EbookPath, Is.EqualTo("/library/Example Author"));
                 Assert.That(author.EbookQualityProfileId, Is.EqualTo(11));
+                Assert.That(author.EbookMonitored, Is.True);
+                Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
             });
         }
 
@@ -179,12 +192,69 @@ namespace Chaptarr.Core.Test.RootFolders
             });
         }
 
+        [TestCase(MonitorTypes.All, true, true)]
+        [TestCase(MonitorTypes.Missing, false, true)]
+        [TestCase(MonitorTypes.Existing, true, false)]
+        [TestCase(MonitorTypes.None, false, false)]
+        public void root_folder_scan_should_apply_the_one_time_book_mode_without_changing_the_author_gate(
+            MonitorTypes mode,
+            bool fileBackedExpected,
+            bool missingExpected)
+        {
+            var root = BuildMixedRoot();
+            var audiobookSettings = root.GetAudiobookSettings();
+            audiobookSettings.MonitorExistingMode = mode;
+            root.SetAudiobookSettings(audiobookSettings);
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Example Author",
+                AudiobookMonitored = false
+            };
+            var fileBacked = new Book
+            {
+                Id = 10,
+                MediaType = BookMediaType.Audiobook,
+                AudiobookMonitored = !fileBackedExpected
+            };
+            var missing = new Book
+            {
+                Id = 11,
+                MediaType = BookMediaType.Audiobook,
+                AudiobookMonitored = !missingExpected
+            };
+            var service = BuildSubject(
+                new List<string> { "/library/Example Author/Book.mp3" },
+                out _,
+                out var bookService);
+            bookService.Books = new List<Book> { fileBacked, missing };
+            bookService.BooksWithFiles = new List<Book> { fileBacked };
+
+            service.LinkAuthorToFolder(author, root, "/library/Example Author");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(fileBacked.AudiobookMonitored, Is.EqualTo(fileBackedExpected));
+                Assert.That(missing.AudiobookMonitored, Is.EqualTo(missingExpected));
+                Assert.That(author.AudiobookMonitored, Is.False);
+                Assert.That(bookService.UpdatedBooks, Has.Count.EqualTo(2));
+            });
+        }
+
         private static RootFolderScanService BuildSubject(List<string> files)
         {
             return BuildSubject(files, out _);
         }
 
         private static RootFolderScanService BuildSubject(List<string> files, out AuthorServiceProxy authorServiceProxy)
+        {
+            return BuildSubject(files, out authorServiceProxy, out _);
+        }
+
+        private static RootFolderScanService BuildSubject(
+            List<string> files,
+            out AuthorServiceProxy authorServiceProxy,
+            out BookServiceProxy bookServiceProxy)
         {
             var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
             ((DiskProviderProxy)(object)diskProvider).Files = files;
@@ -193,6 +263,7 @@ namespace Chaptarr.Core.Test.RootFolders
             authorServiceProxy = (AuthorServiceProxy)(object)authorService;
 
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            bookServiceProxy = (BookServiceProxy)(object)bookService;
             var settingsResolver = DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsResolverProxy>();
 
             return new RootFolderScanService(
@@ -215,15 +286,17 @@ namespace Chaptarr.Core.Test.RootFolders
             {
                 QualityProfileId = 10,
                 MetadataProfileId = 20,
-                MonitorExisting = 0,
-                MonitorFuture = true
+                MonitorExistingMode = MonitorTypes.None,
+                Monitored = true,
+                MonitorNewItems = NewItemMonitorTypes.New
             });
             root.SetEbookSettings(new MediaTypeSettings
             {
                 QualityProfileId = 11,
                 MetadataProfileId = 21,
-                MonitorExisting = 0,
-                MonitorFuture = true
+                MonitorExistingMode = MonitorTypes.None,
+                Monitored = true,
+                MonitorNewItems = NewItemMonitorTypes.New
             });
 
             return root;

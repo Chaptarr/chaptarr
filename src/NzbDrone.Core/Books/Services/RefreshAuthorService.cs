@@ -1798,11 +1798,11 @@ namespace NzbDrone.Core.Books
             child.AuthorId = entity.Id;
             child.Added = DateTime.UtcNow;
             child.LastInfoSync = null;
-            // Use MonitorExisting for new books - these are existing books in metadata, not future releases
-            // Convert tri-state int? to bool for default monitoring: 0/2/NULL=false, 1=true
-            // "Selected" mode (2) should not auto-monitor new books; selections are persisted per-book.
-            child.AudiobookMonitored = (entity.AudiobookMonitorExisting ?? 0) == 1;
-            child.EbookMonitored = (entity.EbookMonitorExisting ?? 0) == 1;
+            // New-row monitoring is applied in ProcessChildren, after the refresh
+            // sorter has identified the pre-existing catalog. Start unmonitored so
+            // the persistent author policy is the only source of this decision.
+            child.AudiobookMonitored = false;
+            child.EbookMonitored = false;
         }
 
         protected override void PrepareExistingChild(Book local, Book remote, Author entity)
@@ -1837,54 +1837,13 @@ namespace NzbDrone.Core.Books
         {
             _logger.Debug("ProcessChildren: Processing {0} new books for author {1}", children.Added.Count, entity.Name);
 
-            var useRootFolderMonitoringFallback = !entity.AudiobookMonitorExisting.HasValue && !entity.EbookMonitorExisting.HasValue;
-            bool? fallbackAudioMonitor = null;
-            bool? fallbackEbookMonitor = null;
-
-            if (useRootFolderMonitoringFallback)
-            {
-                var rootFolder = _rootFolderService.GetBestRootFolder(entity.Path);
-                if (rootFolder != null)
-                {
-                    var audiobookSettings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Audiobook);
-                    var ebookSettings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Ebook);
-
-                    fallbackAudioMonitor = audiobookSettings.IsConfigured ? (audiobookSettings.MonitorExisting ?? 0) == 1 : false;
-                    fallbackEbookMonitor = ebookSettings.IsConfigured ? (ebookSettings.MonitorExisting ?? 0) == 1 : false;
-
-                    _logger.Debug("[MONITORING-REFRESH] Using resolver settings for {0} new books under author '{1}' - audiobook: {2}, ebook: {3}",
-                        children.Added.Count,
-                        entity.Name,
-                        fallbackAudioMonitor,
-                        fallbackEbookMonitor);
-                }
-                else
-                {
-                    fallbackAudioMonitor = false;
-                    fallbackEbookMonitor = false;
-                    _logger.Debug("[MONITORING-REFRESH] No root folder found for author '{0}', defaulting {1} new books to unmonitored",
-                        entity.Name,
-                        children.Added.Count);
-                }
-            }
-
             foreach (var book in children.Added)
             {
                 // Store original narrator for logging
                 var originalNarrator = book.Narrator;
 
-                // Set initial monitoring from author settings
-                // For NEW books being added, use MonitorExisting (these are existing books in the metadata, not future releases)
-                // Convert tri-state int? to bool for default monitoring: 0/2=false, 1=true
-                var audioMonitor = (entity.AudiobookMonitorExisting ?? 0) == 1;
-                var ebookMonitor = (entity.EbookMonitorExisting ?? 0) == 1;
-
-                // If no specific settings, use root folder fallback via resolver
-                if (useRootFolderMonitoringFallback)
-                {
-                    audioMonitor = fallbackAudioMonitor ?? false;
-                    ebookMonitor = fallbackEbookMonitor ?? false;
-                }
+                var audioMonitor = ShouldMonitorNewBook(book, entity, isAudiobook: true);
+                var ebookMonitor = ShouldMonitorNewBook(book, entity, isAudiobook: false);
 
                 // Set monitoring flags (metadata profile filtering will happen after insertion)
                 book.AudiobookMonitored = audioMonitor;
@@ -1901,6 +1860,27 @@ namespace NzbDrone.Core.Books
 
                 _logger.Info("MISSING_BOOK_CREATED: '{0}' - Original narrator '{1}' -> NULL (preventing metadata pollution)", book.Title, originalNarrator ?? "NULL");
             }
+        }
+
+        private bool ShouldMonitorNewBook(Book addedBook, Author entity, bool isAudiobook)
+        {
+            if (addedBook == null || entity == null || addedBook.MediaType != (isAudiobook ? BookMediaType.Audiobook : BookMediaType.Ebook))
+            {
+                return false;
+            }
+
+            // AddOptions remains present until the initial disk scan completes.
+            // Those rows belong to the one-time initial-book choice, which the scan
+            // handler applies after file links are known; the ongoing policy must
+            // not preempt it during the initial metadata refresh.
+            if (entity.AddOptions != null)
+            {
+                return false;
+            }
+
+            var monitorNewItems = entity.GetMonitorNewItemsForMediaType(isAudiobook);
+            return monitorNewItems.HasValue &&
+                   _monitorNewBookService.ShouldMonitorNewBook(addedBook, entity, monitorNewItems.Value);
         }
 
                 protected override void AddChildren(List<Book> children)
@@ -3053,10 +3033,10 @@ namespace NzbDrone.Core.Books
                 return false;
             }
 
-            if (HasConflict(source.AudiobookMonitorExisting, target.AudiobookMonitorExisting) ||
-                HasConflict(source.EbookMonitorExisting, target.EbookMonitorExisting) ||
-                HasConflict(source.AudiobookMonitorFuture, target.AudiobookMonitorFuture) ||
-                HasConflict(source.EbookMonitorFuture, target.EbookMonitorFuture) ||
+            if (HasConflict(source.AudiobookMonitored, target.AudiobookMonitored) ||
+                HasConflict(source.EbookMonitored, target.EbookMonitored) ||
+                HasConflict(source.AudiobookMonitorNewItems, target.AudiobookMonitorNewItems) ||
+                HasConflict(source.EbookMonitorNewItems, target.EbookMonitorNewItems) ||
                 HasConflict(source.SyncMonitoredAcrossFormats, target.SyncMonitoredAcrossFormats))
             {
                 reason = "different monitoring settings";
@@ -3128,15 +3108,15 @@ namespace NzbDrone.Core.Books
             survivor.AudiobookMetadataProfileId ??= source.AudiobookMetadataProfileId;
             survivor.EbookMetadataProfileId ??= source.EbookMetadataProfileId;
 
-            survivor.AudiobookMonitorExisting ??= source.AudiobookMonitorExisting;
-            survivor.AudiobookMonitorFuture ??= source.AudiobookMonitorFuture;
-            survivor.EbookMonitorExisting ??= source.EbookMonitorExisting;
-            survivor.EbookMonitorFuture ??= source.EbookMonitorFuture;
+            survivor.AudiobookMonitored ??= source.AudiobookMonitored;
+            survivor.AudiobookMonitorNewItems ??= source.AudiobookMonitorNewItems;
+            survivor.EbookMonitored ??= source.EbookMonitored;
+            survivor.EbookMonitorNewItems ??= source.EbookMonitorNewItems;
             survivor.SyncMonitoredAcrossFormats ??= source.SyncMonitoredAcrossFormats;
 
             survivor.AudiobookSettingsManuallyOverridden |= source.AudiobookSettingsManuallyOverridden;
             survivor.EbookSettingsManuallyOverridden |= source.EbookSettingsManuallyOverridden;
-            survivor.Monitored |= source.Monitored;
+            survivor.Monitored = survivor.IsMonitoredFromMediaSettings();
 
             survivor.Tags = MergeTagSet(survivor.Tags, source.Tags);
             survivor.AudiobookTags = MergeTagSet(survivor.AudiobookTags, source.AudiobookTags);
@@ -3319,6 +3299,11 @@ namespace NzbDrone.Core.Books
         }
 
         private static bool HasConflict(bool? left, bool? right)
+        {
+            return left.HasValue && right.HasValue && left.Value != right.Value;
+        }
+
+        private static bool HasConflict(NewItemMonitorTypes? left, NewItemMonitorTypes? right)
         {
             return left.HasValue && right.HasValue && left.Value != right.Value;
         }

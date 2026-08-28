@@ -25,7 +25,7 @@ function MonitorBooksSelectInput(props) {
   if (includeMixed) {
     values.unshift({
       key: 'mixed',
-      value: '(Mixed)',
+      value: `(${translate('Mixed')})`,
       isDisabled: true
     });
   }
@@ -33,7 +33,7 @@ function MonitorBooksSelectInput(props) {
   if (includeSpecificBook) {
     values.push({
       key: 'specificBook',
-      value: 'Only This Book'
+      value: translate('OnlyThisBook')
     });
   }
 

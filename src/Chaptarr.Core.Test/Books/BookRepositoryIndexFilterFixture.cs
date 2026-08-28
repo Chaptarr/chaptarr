@@ -143,6 +143,42 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void missing_and_wanted_filters_should_honor_the_author_media_gate()
+        {
+            WithRepository(sut =>
+            {
+                var missingIds = sut.GetBookIds(
+                    includeUnmonitored: true,
+                    mediaType: "audiobook",
+                    downloaded: null,
+                    monitored: null,
+                    missing: true);
+
+                Assert.That(missingIds, Is.EqualTo(new[] { 7 }));
+
+                var wantedIds = sut.GetBookIds(
+                    includeUnmonitored: true,
+                    mediaType: "audiobook",
+                    downloaded: null,
+                    monitored: null,
+                    wanted: true);
+
+                Assert.That(wantedIds, Is.EqualTo(new[] { 7 }));
+
+                var missingBuckets = sut.GetBookBuckets(
+                    sortKey: "title",
+                    sortDirection: "ASC",
+                    includeUnmonitored: true,
+                    mediaType: "audiobook",
+                    downloaded: null,
+                    monitored: null,
+                    missing: true);
+
+                Assert.That(missingBuckets.TotalCount, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
         public void paged_books_should_sort_by_size_on_disk()
         {
             WithRepository(sut =>
@@ -274,10 +310,10 @@ namespace Chaptarr.Core.Test.Books
             connection.Execute(@"
                 CREATE TABLE ""Authors"" (
                     ""Id"" INTEGER PRIMARY KEY,
-                    ""AudiobookMonitorExisting"" INTEGER NULL,
-                    ""AudiobookMonitorFuture"" INTEGER NULL,
-                    ""EbookMonitorExisting"" INTEGER NULL,
-                    ""EbookMonitorFuture"" INTEGER NULL,
+                    ""AudiobookMonitored"" INTEGER NULL,
+                    ""AudiobookMonitorNewItems"" INTEGER NULL,
+                    ""EbookMonitored"" INTEGER NULL,
+                    ""EbookMonitorNewItems"" INTEGER NULL,
                     ""AudiobookQualityProfileId"" INTEGER NULL,
                     ""EbookQualityProfileId"" INTEGER NULL
                 );
@@ -322,11 +358,11 @@ namespace Chaptarr.Core.Test.Books
             var oldRelease = DateTime.UtcNow.AddDays(-100);
 
             connection.Execute(@"
-                INSERT INTO ""Authors"" (""Id"", ""AudiobookMonitorExisting"", ""AudiobookMonitorFuture"", ""EbookMonitorExisting"", ""EbookMonitorFuture"", ""AudiobookQualityProfileId"", ""EbookQualityProfileId"")
+                INSERT INTO ""Authors"" (""Id"", ""AudiobookMonitored"", ""AudiobookMonitorNewItems"", ""EbookMonitored"", ""EbookMonitorNewItems"", ""AudiobookQualityProfileId"", ""EbookQualityProfileId"")
                 VALUES
-                    (10, 0, 0, 2, 0, 601, 501),
-                    (20, 0, 1, 0, 0, 601, 501),
-                    (30, 0, 0, 2, 0, 602, 502);
+                    (10, 0, 1, 1, 1, 601, 501),
+                    (20, 1, 2, 0, 1, 601, 501),
+                    (30, 0, 1, 1, 1, 602, 502);
             ");
 
             connection.Execute(@"

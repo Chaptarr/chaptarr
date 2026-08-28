@@ -40,7 +40,32 @@ namespace NzbDrone.Core.Books
             // Process immediately - no deferral
             if (author.AddOptions != null)
             {
-                _bookMonitoredService.SetBookMonitoredStatus(author, author.AddOptions);
+                var hasMediaSpecificMode = false;
+
+                if (author.AddOptions.AudiobookMonitor.HasValue)
+                {
+                    hasMediaSpecificMode = true;
+                    _bookMonitoredService.SetBookMonitoredStatus(author, new MonitoringOptions
+                    {
+                        Monitor = author.AddOptions.AudiobookMonitor.Value,
+                        MediaType = BookMediaType.Audiobook
+                    });
+                }
+
+                if (author.AddOptions.EbookMonitor.HasValue)
+                {
+                    hasMediaSpecificMode = true;
+                    _bookMonitoredService.SetBookMonitoredStatus(author, new MonitoringOptions
+                    {
+                        Monitor = author.AddOptions.EbookMonitor.Value,
+                        MediaType = BookMediaType.Ebook
+                    });
+                }
+
+                if (!hasMediaSpecificMode)
+                {
+                    _bookMonitoredService.SetBookMonitoredStatus(author, author.AddOptions);
+                }
 
                 if (author.AddOptions.SearchForMissingBooks)
                 {

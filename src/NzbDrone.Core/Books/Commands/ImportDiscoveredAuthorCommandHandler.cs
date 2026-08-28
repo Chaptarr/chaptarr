@@ -62,57 +62,28 @@ namespace NzbDrone.Core.Books.Commands
                     var a = augmentRoot.GetAudiobookSettings();
                     var e = augmentRoot.GetEbookSettings();
 
-                    // Prepare progressive update args
-                    int? auQp = null, ebQp = null;
-                    int? auMp = null, ebMp = null;
-                    int? auMonExist = null, ebMonExist = null;
-                    bool? auMonFuture = null, ebMonFuture = null;
-
-                    switch (augmentRoot.FolderType)
+                    var before = new
                     {
-                        case FolderType.Audiobook:
-                            if (a != null)
-                            {
-                                auQp = a.QualityProfileId;
-                                auMp = a.MetadataProfileId;
-                                auMonExist = a.MonitorExisting;
-                                auMonFuture = a.MonitorFuture;
-                            }
-                            break;
-                        case FolderType.Ebook:
-                            if (e != null)
-                            {
-                                ebQp = e.QualityProfileId;
-                                ebMp = e.MetadataProfileId;
-                                ebMonExist = e.MonitorExisting;
-                                ebMonFuture = e.MonitorFuture;
-                            }
-                            break;
-                        case FolderType.Mixed:
-                        default:
-                            if (a != null)
-                            {
-                                auQp = a.QualityProfileId;
-                                auMp = a.MetadataProfileId;
-                                auMonExist = a.MonitorExisting;
-                                auMonFuture = a.MonitorFuture;
-                            }
-                            if (e != null)
-                            {
-                                ebQp = e.QualityProfileId;
-                                ebMp = e.MetadataProfileId;
-                                ebMonExist = e.MonitorExisting;
-                                ebMonFuture = e.MonitorFuture;
-                            }
-                            break;
+                        existing.AudiobookQualityProfileId,
+                        existing.EbookQualityProfileId,
+                        existing.AudiobookMonitored,
+                        existing.AudiobookMonitorNewItems,
+                        existing.EbookMonitored,
+                        existing.EbookMonitorNewItems
+                    };
+
+                    var changedSettings = false;
+                    if (augmentRoot.FolderType is FolderType.Audiobook or FolderType.Mixed)
+                    {
+                        changedSettings |= ApplyMediaSettings(existing, BookMediaType.Audiobook, a, augmentRoot.Path);
                     }
 
-                    var before = new { existing.AudiobookQualityProfileId, existing.EbookQualityProfileId, existing.AudiobookMonitorExisting, existing.AudiobookMonitorFuture, existing.EbookMonitorExisting, existing.EbookMonitorFuture };
-                    var updated = _authorService.UpdateAuthorProgressiveSettings(
-                        existing,
-                        auQp, auMp, auMonExist, auMonFuture,
-                        ebQp, ebMp, ebMonExist, ebMonFuture,
-                        augmentRoot.Path);
+                    if (augmentRoot.FolderType is FolderType.Ebook or FolderType.Mixed)
+                    {
+                        changedSettings |= ApplyMediaSettings(existing, BookMediaType.Ebook, e, augmentRoot.Path);
+                    }
+
+                    var updated = changedSettings ? _authorService.UpdateAuthor(existing) : existing;
 
                     // Optionally set discovered media-type path if provided and not already set
                     if (!string.IsNullOrWhiteSpace(message.DiscoveredAuthorFolderPath))
@@ -134,7 +105,15 @@ namespace NzbDrone.Core.Books.Commands
                         }
                     }
 
-                    var after = new { updated.AudiobookQualityProfileId, updated.EbookQualityProfileId, updated.AudiobookMonitorExisting, updated.AudiobookMonitorFuture, updated.EbookMonitorExisting, updated.EbookMonitorFuture };
+                    var after = new
+                    {
+                        updated.AudiobookQualityProfileId,
+                        updated.EbookQualityProfileId,
+                        updated.AudiobookMonitored,
+                        updated.AudiobookMonitorNewItems,
+                        updated.EbookMonitored,
+                        updated.EbookMonitorNewItems
+                    };
                     _logger.Debug("[DISCOVERED-AUTHOR] Augmentation complete for author {0}: {1} -> {2}", updated.Id, Newtonsoft.Json.JsonConvert.SerializeObject(before), Newtonsoft.Json.JsonConvert.SerializeObject(after));
 
                     // Ensure event-driven matching kicks off for existing authors too
@@ -217,8 +196,9 @@ namespace NzbDrone.Core.Books.Commands
             {
                 config.AudiobookQualityProfileId = s.QualityProfileId;
                 config.AudiobookMetadataProfileId = s.MetadataProfileId;
-                config.AudiobookMonitorExisting = s.MonitorExisting;
-                config.AudiobookMonitorFuture = s.MonitorFuture;
+                config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(s.MonitorExistingMode);
+                config.AudiobookMonitored = s.Monitored;
+                config.AudiobookMonitorNewItems = s.MonitorNewItems;
                 if (s.Tags != null && s.Tags.Any())
                 {
                     config.Tags = config.Tags ?? new System.Collections.Generic.HashSet<int>();
@@ -235,14 +215,91 @@ namespace NzbDrone.Core.Books.Commands
             {
                 config.EbookQualityProfileId = s.QualityProfileId;
                 config.EbookMetadataProfileId = s.MetadataProfileId;
-                config.EbookMonitorExisting = s.MonitorExisting;
-                config.EbookMonitorFuture = s.MonitorFuture;
+                config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(s.MonitorExistingMode);
+                config.EbookMonitored = s.Monitored;
+                config.EbookMonitorNewItems = s.MonitorNewItems;
                 if (s.Tags != null && s.Tags.Any())
                 {
                     config.Tags = config.Tags ?? new System.Collections.Generic.HashSet<int>();
                     foreach (var t in s.Tags) config.Tags.Add(t);
                 }
             }
+        }
+
+        private static bool ApplyMediaSettings(Author author, BookMediaType mediaType, MediaTypeSettings settings, string rootFolderPath)
+        {
+            if (author == null || settings == null)
+            {
+                return false;
+            }
+
+            var changed = false;
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                if (!author.AudiobookQualityProfileId.HasValue && settings.QualityProfileId.HasValue)
+                {
+                    author.AudiobookQualityProfileId = settings.QualityProfileId;
+                    changed = true;
+                }
+
+                if (!author.AudiobookMetadataProfileId.HasValue && settings.MetadataProfileId.HasValue)
+                {
+                    author.AudiobookMetadataProfileId = settings.MetadataProfileId;
+                    changed = true;
+                }
+
+                if (!author.AudiobookMonitored.HasValue && settings.Monitored.HasValue)
+                {
+                    author.AudiobookMonitored = settings.Monitored;
+                    changed = true;
+                }
+
+                if (!author.AudiobookMonitorNewItems.HasValue && settings.MonitorNewItems.HasValue)
+                {
+                    author.AudiobookMonitorNewItems = settings.MonitorNewItems;
+                    changed = true;
+                }
+
+                if (string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath) && !string.IsNullOrWhiteSpace(rootFolderPath))
+                {
+                    author.AudiobookRootFolderPath = rootFolderPath;
+                    changed = true;
+                }
+            }
+            else
+            {
+                if (!author.EbookQualityProfileId.HasValue && settings.QualityProfileId.HasValue)
+                {
+                    author.EbookQualityProfileId = settings.QualityProfileId;
+                    changed = true;
+                }
+
+                if (!author.EbookMetadataProfileId.HasValue && settings.MetadataProfileId.HasValue)
+                {
+                    author.EbookMetadataProfileId = settings.MetadataProfileId;
+                    changed = true;
+                }
+
+                if (!author.EbookMonitored.HasValue && settings.Monitored.HasValue)
+                {
+                    author.EbookMonitored = settings.Monitored;
+                    changed = true;
+                }
+
+                if (!author.EbookMonitorNewItems.HasValue && settings.MonitorNewItems.HasValue)
+                {
+                    author.EbookMonitorNewItems = settings.MonitorNewItems;
+                    changed = true;
+                }
+
+                if (string.IsNullOrWhiteSpace(author.EbookRootFolderPath) && !string.IsNullOrWhiteSpace(rootFolderPath))
+                {
+                    author.EbookRootFolderPath = rootFolderPath;
+                    changed = true;
+                }
+            }
+
+            return changed;
         }
 
         private RootFolder ResolveRootFolder(string rootFolderPath)

@@ -585,16 +585,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     config.AudiobookRootFolderPath = rootFolder.Path;
                     config.AudiobookQualityProfileId = settings?.QualityProfileId;
                     config.AudiobookMetadataProfileId = settings?.MetadataProfileId;
-                    config.AudiobookMonitorExisting = settings?.MonitorExisting;
-                    config.AudiobookMonitorFuture = settings?.MonitorFuture;
+                    config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings?.MonitorExistingMode);
+                    config.AudiobookMonitored = settings?.Monitored;
+                    config.AudiobookMonitorNewItems = settings?.MonitorNewItems;
                 }
                 else
                 {
                     config.EbookRootFolderPath = rootFolder.Path;
                     config.EbookQualityProfileId = settings?.QualityProfileId;
                     config.EbookMetadataProfileId = settings?.MetadataProfileId;
-                    config.EbookMonitorExisting = settings?.MonitorExisting;
-                    config.EbookMonitorFuture = settings?.MonitorFuture;
+                    config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings?.MonitorExistingMode);
+                    config.EbookMonitored = settings?.Monitored;
+                    config.EbookMonitorNewItems = settings?.MonitorNewItems;
                 }
 
                 // Preserve the on-disk author folder when the file lives under a root folder.

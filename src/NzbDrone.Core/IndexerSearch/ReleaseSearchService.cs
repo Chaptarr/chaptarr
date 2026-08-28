@@ -17,9 +17,9 @@ namespace NzbDrone.Core.IndexerSearch
 {
     public interface ISearchForReleases
     {
-        Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch);
-        Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch);
-        Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch);
+        Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
+        Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
+        Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch);
     }
 
@@ -45,10 +45,10 @@ namespace NzbDrone.Core.IndexerSearch
             _logger = logger;
         }
 
-        public async Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+        public async Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
         {
             var book = _bookService.GetBook(bookId);
-            return await BookSearch(book, missingOnly, userInvokedSearch, interactiveSearch);
+            return await BookSearch(book, missingOnly, userInvokedSearch, interactiveSearch, allowUnmonitored);
         }
 
         public async Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
@@ -66,7 +66,9 @@ namespace NzbDrone.Core.IndexerSearch
         public async Task<List<DownloadDecision>> AuthorSearch(Author author, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
         {
             var authorCatalog = GetAuthorCatalog(author, null);
-            var books = authorCatalog.Where(book => book.IsMonitored()).ToList();
+            var books = authorCatalog
+                .Where(book => book.IsMonitoredWithAuthor())
+                .ToList();
             books = FilterBooksByConfiguredMediaProfiles(author, books);
 
             if (books.Count == 0)
@@ -79,12 +81,12 @@ namespace NzbDrone.Core.IndexerSearch
             return await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
         }
 
-        public Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+        public Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
         {
-            return BookSearch(book, null, missingOnly, userInvokedSearch, interactiveSearch);
+            return BookSearch(book, null, missingOnly, userInvokedSearch, interactiveSearch, allowUnmonitored);
         }
 
-        public async Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+        public async Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
         {
             _logger.Debug("[RELEASE_SEARCH_SERVICE] ===== BookSearch STARTED =====");
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Book: '{0}' (ID: {1}, AuthorId: {2})", book?.Title ?? "NULL", book?.Id ?? -1, book?.AuthorId ?? -1);
@@ -95,6 +97,16 @@ namespace NzbDrone.Core.IndexerSearch
             {
                 _logger.Debug("[RELEASE_SEARCH_SERVICE] Getting author with ID {0}...", book.AuthorId);
                 author = _authorService.GetAuthor(book.AuthorId);
+            }
+
+            book.Author = author;
+
+            if (!interactiveSearch && !allowUnmonitored && !book.IsMonitoredWithAuthor())
+            {
+                _logger.Debug("[RELEASE_SEARCH_SERVICE] Skipping book search for '{0}' because the book or its author {1} side is not monitored",
+                    book?.Title ?? "NULL",
+                    book?.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook");
+                return new List<DownloadDecision>();
             }
 
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Retrieved author: '{0}' (ID: {1})", author?.Name ?? "NULL", author?.Id ?? -1);
@@ -113,7 +125,7 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Creating search criteria...");
-            var searchSpec = Get<BookSearchCriteria>(author, new List<Book> { book }, authorCatalog, userInvokedSearch, interactiveSearch);
+            var searchSpec = Get<BookSearchCriteria>(author, new List<Book> { book }, authorCatalog, userInvokedSearch, interactiveSearch, !allowUnmonitored);
 
             // Search the same edition the API/UI displays: the single monitored edition.
             var selectedEdition = book.Editions?
@@ -172,7 +184,7 @@ namespace NzbDrone.Core.IndexerSearch
                 .ToList();
         }
 
-        private TSpec Get<TSpec>(Author author, List<Book> books, List<Book> authorCatalog, bool userInvokedSearch, bool interactiveSearch)
+        private TSpec Get<TSpec>(Author author, List<Book> books, List<Book> authorCatalog, bool userInvokedSearch, bool interactiveSearch, bool monitoredBooksOnly = true)
             where TSpec : SearchCriteriaBase, new()
         {
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Creating SearchCriteria of type {0}", typeof(TSpec).Name);
@@ -186,6 +198,7 @@ namespace NzbDrone.Core.IndexerSearch
                 Books = books,
                 Author = author,
                 AuthorCatalog = GetAuthorCatalog(author, authorCatalog),
+                MonitoredBooksOnly = monitoredBooksOnly,
                 UserInvokedSearch = userInvokedSearch,
                 InteractiveSearch = interactiveSearch
             };
@@ -194,6 +207,7 @@ namespace NzbDrone.Core.IndexerSearch
             _logger.Debug("  - Books: {0}", books?.Count ?? 0);
             _logger.Debug("  - Author catalog: {0}", spec.AuthorCatalog?.Count ?? 0);
             _logger.Debug("  - Author: '{0}'", spec.Author?.Name ?? "NULL");
+            _logger.Debug("  - Monitored books only: {0}", spec.MonitoredBooksOnly);
             _logger.Debug("  - Author.AudiobookQualityProfile: {0}",
                 spec.Author?.AudiobookQualityProfileId.HasValue == true ? $"SET ('{spec.Author.AudiobookQualityProfile?.Value?.Name ?? "Unknown"}')" : "NULL");
             _logger.Debug("  - Author.EbookQualityProfile: {0}",

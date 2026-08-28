@@ -17,28 +17,13 @@ function AuthorMonitoringOptionsPopoverContent() {
         />
 
         <DescriptionListItem
-          title={translate('FutureBooks')}
-          data={translate('DataFutureBooks')}
-        />
-
-        <DescriptionListItem
           title={translate('MissingBooks')}
           data={translate('DataMissingBooks')}
         />
 
         <DescriptionListItem
-          title={translate('ExistingBooks')}
+          title={translate('BooksWithFiles')}
           data={translate('DataExistingBooks')}
-        />
-
-        <DescriptionListItem
-          title={translate('FirstBook')}
-          data={translate('DataFirstBook')}
-        />
-
-        <DescriptionListItem
-          title={translate('LatestBook')}
-          data={translate('DataLatestBook')}
         />
 
         <DescriptionListItem

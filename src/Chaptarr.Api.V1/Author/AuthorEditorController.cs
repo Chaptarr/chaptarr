@@ -56,20 +56,17 @@ namespace Chaptarr.Api.V1.Author
 
             foreach (var author in authorsToUpdate)
             {
-                if (resource.Monitored.HasValue)
-                {
-                    author.Monitored = resource.Monitored.Value;
-                }
+                var audiobookConfigured = IsMediaTypeConfigured(author.AudiobookRootFolderPath, resource.AudiobookRootFolderPath);
+                var ebookConfigured = IsMediaTypeConfigured(author.EbookRootFolderPath, resource.EbookRootFolderPath);
 
-                // NEW SIMPLIFIED MONITORING SYSTEM
-                if (resource.AudiobookMonitorExisting.HasValue)
-                    author.AudiobookMonitorExisting = resource.AudiobookMonitorExisting.Value;
-                if (resource.AudiobookMonitorFuture.HasValue)
-                    author.AudiobookMonitorFuture = resource.AudiobookMonitorFuture.Value;
-                if (resource.EbookMonitorExisting.HasValue)
-                    author.EbookMonitorExisting = resource.EbookMonitorExisting.Value;
-                if (resource.EbookMonitorFuture.HasValue)
-                    author.EbookMonitorFuture = resource.EbookMonitorFuture.Value;
+                if (audiobookConfigured && resource.AudiobookMonitored.HasValue)
+                    author.AudiobookMonitored = resource.AudiobookMonitored.Value;
+                if (audiobookConfigured && resource.AudiobookMonitorNewItems.HasValue)
+                    author.AudiobookMonitorNewItems = resource.AudiobookMonitorNewItems.Value;
+                if (ebookConfigured && resource.EbookMonitored.HasValue)
+                    author.EbookMonitored = resource.EbookMonitored.Value;
+                if (ebookConfigured && resource.EbookMonitorNewItems.HasValue)
+                    author.EbookMonitorNewItems = resource.EbookMonitorNewItems.Value;
 
                 if (resource.AudiobookQualityProfileId.HasValue)
                 {
@@ -258,16 +255,6 @@ namespace Chaptarr.Api.V1.Author
 
         private string GetValidationError(AuthorEditorResource resource, List<RootFolder> rootFolders)
         {
-            if (!IsValidMonitorExisting(resource.AudiobookMonitorExisting))
-            {
-                return "AudiobookMonitorExisting must be 0 (None), 1 (All), or 2 (Selected)";
-            }
-
-            if (!IsValidMonitorExisting(resource.EbookMonitorExisting))
-            {
-                return "EbookMonitorExisting must be 0 (None), 1 (All), or 2 (Selected)";
-            }
-
             if (resource.AudiobookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.AudiobookQualityProfileId.Value))
             {
                 return $"Audiobook quality profile {resource.AudiobookQualityProfileId.Value} does not exist";
@@ -306,15 +293,15 @@ namespace Chaptarr.Api.V1.Author
             return null;
         }
 
-        private static bool IsValidMonitorExisting(int? value)
-        {
-            return !value.HasValue || value.Value is 0 or 1 or 2;
-        }
-
         private static bool HasGainedMediaTypeRootFolder(string previousAudiobookRootFolderPath, string previousEbookRootFolderPath, NzbDrone.Core.Books.Author author)
         {
             return (previousAudiobookRootFolderPath.IsNullOrWhiteSpace() && author.AudiobookRootFolderPath.IsNotNullOrWhiteSpace()) ||
                    (previousEbookRootFolderPath.IsNullOrWhiteSpace() && author.EbookRootFolderPath.IsNotNullOrWhiteSpace());
+        }
+
+        private static bool IsMediaTypeConfigured(string existingRootFolderPath, string requestedRootFolderPath)
+        {
+            return existingRootFolderPath.IsNotNullOrWhiteSpace() || requestedRootFolderPath.IsNotNullOrWhiteSpace();
         }
 
         private static bool HasSyncMonitoredAcrossFormatsEligibility(NzbDrone.Core.Books.Author author, List<RootFolder> rootFolders)

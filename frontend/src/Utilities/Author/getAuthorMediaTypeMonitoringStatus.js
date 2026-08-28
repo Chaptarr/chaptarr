@@ -3,25 +3,24 @@ import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaT
 export function getAuthorMediaTypeMonitoringStatus(author, mediaType) {
   const rootFolderStatus = getAuthorMediaTypeRootFolderStatus(author, mediaType);
   const effectiveMediaType = rootFolderStatus.mediaType;
-  const monitorExisting = effectiveMediaType === 'ebook' ?
-    author?.ebookMonitorExisting :
-    author?.audiobookMonitorExisting;
-  const monitorFuture = effectiveMediaType === 'ebook' ?
-    author?.ebookMonitorFuture :
-    author?.audiobookMonitorFuture;
+  const monitored = effectiveMediaType === 'ebook' ?
+    author?.ebookMonitored :
+    author?.audiobookMonitored;
+  const monitorNewItems = effectiveMediaType === 'ebook' ?
+    author?.ebookMonitorNewItems :
+    author?.audiobookMonitorNewItems;
   const isConfigured = !!author && rootFolderStatus.hasRootFolder;
 
   return {
     mediaType: effectiveMediaType,
     isConfigured,
-    monitorExisting: monitorExisting ?? 0,
-    monitorFuture: monitorFuture === true,
-    monitored: isConfigured && ((monitorExisting ?? 0) > 0 || monitorFuture === true)
+    monitored: isConfigured && monitored === true,
+    monitorNewItems: monitorNewItems ?? 'none'
   };
 }
 
-export function getAuthorMonitorExistingValue(author, mediaType) {
-  return getAuthorMediaTypeMonitoringStatus(author, mediaType).monitorExisting;
+export function getAuthorMonitoredValue(author, mediaType) {
+  return getAuthorMediaTypeMonitoringStatus(author, mediaType).monitored;
 }
 
 export function isAuthorMonitoredForMediaType(author, mediaType) {

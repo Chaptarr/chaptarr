@@ -54,10 +54,52 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(completed.Author, Is.SameAs(author));
         }
 
+        [Test]
+        public void media_specific_initial_modes_should_be_applied_once_after_the_scan_without_changing_the_author_gate()
+        {
+            var author = new Author
+            {
+                Id = 7,
+                Name = "New Author",
+                AudiobookMonitored = false,
+                EbookMonitored = true,
+                AddOptions = new AddAuthorOptions
+                {
+                    AudiobookMonitor = MonitorTypes.Missing,
+                    EbookMonitor = MonitorTypes.Existing
+                }
+            };
+            var monitoredService = DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var subject = new AuthorScannedHandler(
+                monitoredService,
+                authorService,
+                new StubCommandQueueManager(),
+                DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
+                new StubEventAggregator(),
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+
+            subject.Handle(new AuthorScannedEvent(author));
+
+            var calls = ((BookMonitoredServiceProxy)(object)monitoredService).Calls;
+            Assert.Multiple(() =>
+            {
+                Assert.That(calls, Has.Count.EqualTo(2));
+                Assert.That(calls[0].Options.Monitor, Is.EqualTo(MonitorTypes.Missing));
+                Assert.That(calls[0].Options.MediaType, Is.EqualTo(BookMediaType.Audiobook));
+                Assert.That(calls[1].Options.Monitor, Is.EqualTo(MonitorTypes.Existing));
+                Assert.That(calls[1].Options.MediaType, Is.EqualTo(BookMediaType.Ebook));
+                Assert.That(author.AudiobookMonitored, Is.False);
+                Assert.That(author.EbookMonitored, Is.True);
+                Assert.That(author.AddOptions, Is.Null);
+            });
+        }
+
         public class BookMonitoredServiceProxy : DispatchProxy
         {
             public Author Author { get; private set; }
             public MonitoringOptions Options { get; private set; }
+            public List<(Author Author, MonitoringOptions Options)> Calls { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -65,6 +107,7 @@ namespace Chaptarr.Core.Test.Books
                 {
                     Author = (Author)args[0];
                     Options = (MonitoringOptions)args[1];
+                    Calls.Add((Author, Options));
                     return null;
                 }
 

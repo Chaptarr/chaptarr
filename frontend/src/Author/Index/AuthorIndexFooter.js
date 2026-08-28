@@ -4,6 +4,7 @@ import React, { PureComponent } from 'react';
 import { ColorImpairedConsumer } from 'App/ColorImpairedContext';
 import DescriptionList from 'Components/DescriptionList/DescriptionList';
 import DescriptionListItem from 'Components/DescriptionList/DescriptionListItem';
+import { isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import formatBytes from 'Utilities/Number/formatBytes';
 import translate from 'Utilities/String/translate';
@@ -130,7 +131,7 @@ class AuthorIndexFooter extends PureComponent {
         continuing++;
       }
 
-      if (s.monitored) {
+      if (isAuthorMonitoredForSelection(s, mediaType)) {
         monitored++;
       }
 
@@ -165,7 +166,7 @@ class AuthorIndexFooter extends PureComponent {
                     )}
                   />
                   <div>
-                    {translate('ContinuingAllBooksDownloaded')}
+                    {translate('Active')}
                   </div>
                 </div>
 
@@ -177,7 +178,7 @@ class AuthorIndexFooter extends PureComponent {
                     )}
                   />
                   <div>
-                    {translate('EndedAllBooksDownloaded')}
+                    {translate('Dead')}
                   </div>
                 </div>
 
@@ -214,12 +215,12 @@ class AuthorIndexFooter extends PureComponent {
                   />
 
                   <DescriptionListItem
-                    title={translate('Ended')}
+                    title={translate('Dead')}
                     data={ended}
                   />
 
                   <DescriptionListItem
-                    title={translate('Continuing')}
+                    title={translate('Active')}
                     data={continuing}
                   />
                 </DescriptionList>

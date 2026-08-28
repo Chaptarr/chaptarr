@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dapper;
@@ -132,52 +133,55 @@ namespace NzbDrone.Core.AuthorStats
 
         private static SqlBuilder Builder(DatabaseType databaseType)
         {
-            var trueIndicator = databaseType == DatabaseType.PostgreSQL ? "true" : "1";
-
             return new SqlBuilder(databaseType)
-                .Select($@"""Authors"".""Id"" AS ""AuthorId"",
-                         ""Books"".""Id"" AS ""BookId"",
-                         COALESCE(""FileStatistics"".""SizeOnDisk"", 0) AS ""SizeOnDisk"",
-                         CASE
-                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} THEN 1
-                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} THEN 1
-                             ELSE 0
-                         END AS ""TotalBookCount"",
-                         CASE
-                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
-                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
-                             ELSE 0
-                         END AS ""AvailableBookCount"",
-                         CASE
-                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} THEN 1
-                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} THEN 1
-                             ELSE 0
-                         END AS ""BookCount"",
-                         COALESCE(""FileStatistics"".""BookFileCount"", 0) AS ""BookFileCount""")
+                .Select(BuildStatisticsSelect(databaseType, includeAuthorId: true))
                 .Join<Book, Author>((book, author) => book.AuthorId == author.Id)
-                .LeftJoin(_fileStatisticsJoin);
+                .LeftJoin(_fileStatisticsJoin)
+                .AddParameters(new { currentDate = DateTime.UtcNow });
         }
 
         private static SqlBuilder AggregateBuilder(DatabaseType databaseType)
         {
-            var trueIndicator = databaseType == DatabaseType.PostgreSQL ? "true" : "1";
-
             return new SqlBuilder(databaseType)
-                .Select($@"""Books"".""Id"" AS ""BookId"",
-                         COALESCE(""FileStatistics"".""SizeOnDisk"", 0) AS ""SizeOnDisk"",
-                         CASE
-                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} THEN 1
-                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} THEN 1
-                             ELSE 0
-                         END AS ""TotalBookCount"",
-                         CASE
-                             WHEN ""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
-                             WHEN ""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator} AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1
-                             ELSE 0
-                         END AS ""AvailableBookCount"",
-                         CASE WHEN COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1 ELSE 0 END AS ""BookCount"",
-                         COALESCE(""FileStatistics"".""BookFileCount"", 0) AS ""BookFileCount""")
-                .LeftJoin(_fileStatisticsJoin);
+                .Select(BuildStatisticsSelect(databaseType, includeAuthorId: false))
+                .LeftJoin(_fileStatisticsJoin)
+                .AddParameters(new { currentDate = DateTime.UtcNow });
+        }
+
+        private static string BuildStatisticsSelect(DatabaseType databaseType, bool includeAuthorId)
+        {
+            var trueIndicator = databaseType == DatabaseType.PostgreSQL ? "true" : "1";
+            var monitoredPredicate = BuildMonitoredPredicate(trueIndicator);
+            var effectiveReleaseDate = BuildEffectiveReleaseDate(trueIndicator);
+            var authorColumn = includeAuthorId ? @"""Authors"".""Id"" AS ""AuthorId""," : string.Empty;
+
+            return $@"{authorColumn}
+                     ""Books"".""Id"" AS ""BookId"",
+                     COALESCE(""FileStatistics"".""SizeOnDisk"", 0) AS ""SizeOnDisk"",
+                     CASE WHEN {monitoredPredicate} THEN 1 ELSE 0 END AS ""TotalBookCount"",
+                     CASE WHEN ({monitoredPredicate}) AND COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0 THEN 1 ELSE 0 END AS ""AvailableBookCount"",
+                     CASE WHEN ({monitoredPredicate}) AND
+                               ({effectiveReleaseDate} IS NULL OR {effectiveReleaseDate} <= @currentDate OR COALESCE(""FileStatistics"".""BookFileCount"", 0) > 0)
+                          THEN 1 ELSE 0 END AS ""BookCount"",
+                     COALESCE(""FileStatistics"".""BookFileCount"", 0) AS ""BookFileCount""";
+        }
+
+        private static string BuildMonitoredPredicate(string trueIndicator)
+        {
+            return $@"(""Books"".""MediaType"" = 0 AND ""Books"".""AudiobookMonitored"" = {trueIndicator}) OR
+                    (""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator})";
+        }
+
+        private static string BuildEffectiveReleaseDate(string trueIndicator)
+        {
+            return $@"COALESCE(
+                        (SELECT ""Editions"".""ReleaseDate""
+                         FROM ""Editions""
+                         WHERE ""Editions"".""BookId"" = ""Books"".""Id""
+                           AND ""Editions"".""Monitored"" = {trueIndicator}
+                         ORDER BY ""Editions"".""Id""
+                         LIMIT 1),
+                        ""Books"".""ReleaseDate"")";
         }
     }
 }

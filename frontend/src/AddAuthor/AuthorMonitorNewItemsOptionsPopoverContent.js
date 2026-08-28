@@ -1,26 +1,33 @@
 import React from 'react';
+import Alert from 'Components/Alert';
 import DescriptionList from 'Components/DescriptionList/DescriptionList';
 import DescriptionListItem from 'Components/DescriptionList/DescriptionListItem';
 import translate from 'Utilities/String/translate';
 
 function AuthorMonitorNewItemsOptionsPopoverContent() {
   return (
-    <DescriptionList>
-      <DescriptionListItem
-        title={translate('AllBooks')}
-        data={translate('DataNewAllBooks')}
-      />
+    <>
+      <Alert>
+        {translate('MonitorNewItemsHelpText')}
+      </Alert>
 
-      <DescriptionListItem
-        title={translate('NewBooks')}
-        data={translate('DataNewBooks')}
-      />
+      <DescriptionList>
+        <DescriptionListItem
+          title={translate('AllNewBooks')}
+          data={translate('DataNewAllBooks')}
+        />
 
-      <DescriptionListItem
-        title={translate('None')}
-        data={translate('DataNewNone')}
-      />
-    </DescriptionList>
+        <DescriptionListItem
+          title={translate('FutureReleases')}
+          data={translate('DataNewBooks')}
+        />
+
+        <DescriptionListItem
+          title={translate('None')}
+          data={translate('DataNewNone')}
+        />
+      </DescriptionList>
+    </>
   );
 }
 

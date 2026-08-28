@@ -26,7 +26,7 @@ function AuthorIndexSortMenu(props) {
           sortDirection={sortDirection}
           onPress={onSortSelect}
         >
-          {translate('MonitoredStatus')}
+          {translate('Status')}
         </SortMenuItem>
 
         <SortMenuItem

@@ -31,7 +31,6 @@ function createMapStateToProps() {
       const isAvailable = book ? Date.parse(book.releaseDate) < new Date() : false;
 
       return {
-        authorMonitored: author ? author.monitored : false,
         isSearching,
         bookFiles: book ? book.bookFiles : [],
         isAvailable

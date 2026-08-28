@@ -58,6 +58,7 @@ namespace Chaptarr.Core.Test.Api
                 signalRBroadcaster: null,
                 authorService: authorService,
                 bookService: null,
+                bookMonitoredService: null,
                 seriesService: null,
                 authorLibraryService: libraryService,
                 authorStatisticsService: null,

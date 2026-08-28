@@ -96,7 +96,13 @@ namespace Chaptarr.Core.Test.MetadataSource
 
         private const string EnrichmentPayload = @"{
             ""data"": {
-                ""authors"": [{ ""id"": 241306, ""bio"": ""Author bio"", ""image"": null }],
+                ""authors"": [{
+                    ""id"": 241306,
+                    ""bio"": ""Author bio"",
+                    ""born_date"": ""1975-01-01"",
+                    ""death_date"": null,
+                    ""image"": null
+                }],
                 ""series"": [{ ""id"": 12717, ""primary_book_series"": [], ""book_series"": [] }]
             }
         }";
@@ -269,6 +275,8 @@ namespace Chaptarr.Core.Test.MetadataSource
             Assert.That(results[0], Is.TypeOf<HardcoverAuthorResult>());
             Assert.That(((HardcoverAuthorResult)results[0]).Id, Is.EqualTo("241306"));
             Assert.That(((HardcoverAuthorResult)results[0]).Name, Is.EqualTo("Matt Dinniman"));
+            Assert.That(((HardcoverAuthorResult)results[0]).BornDate, Is.EqualTo("1975-01-01"));
+            Assert.That(((HardcoverAuthorResult)results[0]).DeathDate, Is.Null);
             Assert.That(results[1], Is.TypeOf<HardcoverBookResult>());
             Assert.That(((HardcoverBookResult)results[1]).Id, Is.EqualTo("446681"));
             Assert.That(((HardcoverBookResult)results[1]).Title, Is.EqualTo("Dungeon Crawler Carl"));

@@ -1,13 +1,11 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using NLog;
 
 namespace NzbDrone.Core.Books
 {
     public interface IMonitorNewBookService
     {
-        bool ShouldMonitorNewBook(Book addedBook, List<Book> existingBooks, NewItemMonitorTypes author);
+        bool ShouldMonitorNewBook(Book addedBook, Author author, NewItemMonitorTypes monitorNewItems);
     }
 
     public class MonitorNewBookService : IMonitorNewBookService
@@ -19,7 +17,7 @@ namespace NzbDrone.Core.Books
             _logger = logger;
         }
 
-        public bool ShouldMonitorNewBook(Book addedBook, List<Book> existingBooks, NewItemMonitorTypes monitorNewItems)
+        public bool ShouldMonitorNewBook(Book addedBook, Author author, NewItemMonitorTypes monitorNewItems)
         {
             if (monitorNewItems == NewItemMonitorTypes.None)
             {
@@ -33,9 +31,17 @@ namespace NzbDrone.Core.Books
 
             if (monitorNewItems == NewItemMonitorTypes.New)
             {
-                var newest = existingBooks.MaxBy(x => x.ReleaseDate ?? DateTime.MinValue)?.ReleaseDate ?? DateTime.MinValue;
+                if (!addedBook.ReleaseDate.HasValue || author == null || author.Added == default)
+                {
+                    _logger.Debug(
+                        "Not monitoring newly inserted book '{0}' as a future release because its release date or the author's added date is unavailable",
+                        addedBook.Title);
+                    return false;
+                }
 
-                return (addedBook.ReleaseDate ?? DateTime.MinValue) >= newest;
+                // ReleaseDate is day-granular metadata. Compare dates so the time of day
+                // when the author was added cannot change the result.
+                return addedBook.ReleaseDate.Value.Date > author.Added.Date;
             }
 
             throw new NotImplementedException($"Unknown new item monitor type {monitorNewItems}");

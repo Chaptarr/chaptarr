@@ -37,13 +37,12 @@ namespace NzbDrone.Core.Books
         public string CleanName { get; set; }
         public bool Monitored { get; set; } // Legacy compatibility field
 
-        // TRI-STATE MONITORING SYSTEM - Integer per media type
-        // Values: 0 = None (monitor nothing), 1 = All (monitor everything), 2 = Selected (monitor specific books only)
-        // NULL = not configured for this media type yet (treated as unmonitored until root-folder discovery or user config)
-        public int? AudiobookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected, NULL=unconfigured
-        public bool? AudiobookMonitorFuture { get; set; } // true=monitor, false=don't monitor, NULL=unconfigured
-        public int? EbookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected, NULL=unconfigured
-        public bool? EbookMonitorFuture { get; set; } // true=monitor, false=don't monitor, NULL=unconfigured
+        // Author-level monitoring gates. NULL means the media type has not been configured;
+        // false is an explicit pause and true enables automatic monitoring for that media type.
+        public bool? AudiobookMonitored { get; set; }
+        public bool? EbookMonitored { get; set; }
+        public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
+        public NewItemMonitorTypes? EbookMonitorNewItems { get; set; }
         public bool? SyncMonitoredAcrossFormats { get; set; }
         public bool AudiobookSettingsManuallyOverridden { get; set; }
         public bool EbookSettingsManuallyOverridden { get; set; }
@@ -239,11 +238,10 @@ namespace NzbDrone.Core.Books
         {
             Id = other.Id;
             Monitored = other.Monitored;
-            // NEW SIMPLIFIED MONITORING SYSTEM
-            AudiobookMonitorExisting = other.AudiobookMonitorExisting;
-            AudiobookMonitorFuture = other.AudiobookMonitorFuture;
-            EbookMonitorExisting = other.EbookMonitorExisting;
-            EbookMonitorFuture = other.EbookMonitorFuture;
+            AudiobookMonitored = other.AudiobookMonitored;
+            EbookMonitored = other.EbookMonitored;
+            AudiobookMonitorNewItems = other.AudiobookMonitorNewItems;
+            EbookMonitorNewItems = other.EbookMonitorNewItems;
             AudiobookSettingsManuallyOverridden = other.AudiobookSettingsManuallyOverridden;
             EbookSettingsManuallyOverridden = other.EbookSettingsManuallyOverridden;
             SyncMonitoredAcrossFormats = other.SyncMonitoredAcrossFormats;
@@ -329,26 +327,26 @@ namespace NzbDrone.Core.Books
             AudiobookRootFolderPath = other.AudiobookRootFolderPath;
             EbookRootFolderPath = other.EbookRootFolderPath;
             Monitored = other.Monitored;
-            // TRI-STATE MONITORING SYSTEM - Copy only when explicitly provided (not null).
-            // This prevents partial updates from wiping existing monitoring values.
-            if (other.AudiobookMonitorExisting.HasValue)
+            // Copy optional monitoring values only when explicitly provided. This keeps
+            // partial metadata updates from wiping a user's monitoring choices.
+            if (other.AudiobookMonitored.HasValue)
             {
-                AudiobookMonitorExisting = other.AudiobookMonitorExisting;
+                AudiobookMonitored = other.AudiobookMonitored;
                 AudiobookSettingsManuallyOverridden = true;
             }
-            if (other.AudiobookMonitorFuture.HasValue)
+            if (other.AudiobookMonitorNewItems.HasValue)
             {
-                AudiobookMonitorFuture = other.AudiobookMonitorFuture;
+                AudiobookMonitorNewItems = other.AudiobookMonitorNewItems;
                 AudiobookSettingsManuallyOverridden = true;
             }
-            if (other.EbookMonitorExisting.HasValue)
+            if (other.EbookMonitored.HasValue)
             {
-                EbookMonitorExisting = other.EbookMonitorExisting;
+                EbookMonitored = other.EbookMonitored;
                 EbookSettingsManuallyOverridden = true;
             }
-            if (other.EbookMonitorFuture.HasValue)
+            if (other.EbookMonitorNewItems.HasValue)
             {
-                EbookMonitorFuture = other.EbookMonitorFuture;
+                EbookMonitorNewItems = other.EbookMonitorNewItems;
                 EbookSettingsManuallyOverridden = true;
             }
             if (other.SyncMonitoredAcrossFormats.HasValue)

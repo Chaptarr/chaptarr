@@ -52,6 +52,8 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                 authors(where: { id: { _in: $author_ids } }) {
                     id
                     bio
+                    born_date
+                    death_date
                     image { url }
                 }
                 series(where: { id: { _in: $series_ids } }) {
@@ -1267,7 +1269,7 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                     data.TryGetProperty("authors", out var authorsArray) &&
                     authorsArray.ValueKind == JsonValueKind.Array)
                 {
-                    var byId = new Dictionary<string, (string bio, string imageUrl)>();
+                    var byId = new Dictionary<string, (string bio, string imageUrl, string bornDate, string deathDate)>();
                     foreach (var authorElement in authorsArray.EnumerateArray())
                     {
                         if (!authorElement.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.Number)
@@ -1278,7 +1280,9 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                         var id = idElement.GetInt32().ToString();
                         var bio = GetStringValue(authorElement, "bio");
                         var imageUrl = GetImageUrl(authorElement);
-                        byId[id] = (bio, imageUrl);
+                        var bornDate = GetStringValue(authorElement, "born_date");
+                        var deathDate = GetStringValue(authorElement, "death_date");
+                        byId[id] = (bio, imageUrl, bornDate, deathDate);
                     }
 
                     foreach (var author in authors)
@@ -1301,6 +1305,16 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                         if (string.IsNullOrWhiteSpace(author.ImageUrl) && !string.IsNullOrWhiteSpace(details.imageUrl))
                         {
                             author.ImageUrl = details.imageUrl;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(author.BornDate) && !string.IsNullOrWhiteSpace(details.bornDate))
+                        {
+                            author.BornDate = details.bornDate;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(author.DeathDate) && !string.IsNullOrWhiteSpace(details.deathDate))
+                        {
+                            author.DeathDate = details.deathDate;
                         }
                     }
                 }

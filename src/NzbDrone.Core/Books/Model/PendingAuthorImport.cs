@@ -34,9 +34,14 @@ namespace NzbDrone.Core.Books
         public PendingImportStatus EbookStatus { get; set; }
         public PendingImportStatus OverallStatus { get; set; }
 
-        // Audiobook configuration
-        public int? AudiobookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? AudiobookMonitorFuture { get; set; } // true=monitor, false=don't monitor
+        // Audiobook configuration. The author-side gate is a simple yes/no; new-item
+        // policy is independent so an exact-book request cannot accidentally select
+        // the old three-state "existing" mode.
+        public bool? AudiobookMonitored { get; set; }
+        public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
+        // One-time seed policy for books already in the imported catalog. This is
+        // deliberately separate from the author gate and future/new-row policy.
+        public MonitorTypes? AudiobookMonitorExistingMode { get; set; }
         public int? AudiobookQualityProfileId { get; set; }
         public int? AudiobookMetadataProfileId { get; set; }
         public string AudiobookRootFolderPath { get; set; }
@@ -44,8 +49,10 @@ namespace NzbDrone.Core.Books
         public string AudiobookBooksToSearch { get; set; } // JSON serialized List<string>
 
         // Ebook configuration
-        public int? EbookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? EbookMonitorFuture { get; set; } // true=monitor, false=don't monitor
+        public bool? EbookMonitored { get; set; }
+        public NewItemMonitorTypes? EbookMonitorNewItems { get; set; }
+        // One-time seed policy for books already in the imported catalog.
+        public MonitorTypes? EbookMonitorExistingMode { get; set; }
         public int? EbookQualityProfileId { get; set; }
         public int? EbookMetadataProfileId { get; set; }
         public string EbookRootFolderPath { get; set; }

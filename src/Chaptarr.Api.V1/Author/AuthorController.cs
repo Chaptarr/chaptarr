@@ -94,6 +94,7 @@ namespace Chaptarr.Api.V1.Author
     {
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
+        private readonly IBookMonitoredService _bookMonitoredService;
         private readonly ISeriesService _seriesService;
         // DEPRECATED-IDENTIFICATION: IAddAuthorService removed - use IAuthorLibraryService instead
         // private readonly IAddAuthorService _addAuthorService;
@@ -115,6 +116,7 @@ namespace Chaptarr.Api.V1.Author
 	        public AuthorController(IBroadcastSignalRMessage signalRBroadcaster,
 	                            IAuthorService authorService,
 	                            IBookService bookService,
+                            IBookMonitoredService bookMonitoredService,
                             ISeriesService seriesService,
                             IAuthorLibraryService authorLibraryService,
                             IAuthorStatisticsService authorStatisticsService,
@@ -140,6 +142,7 @@ namespace Chaptarr.Api.V1.Author
         {
             _authorService = authorService;
             _bookService = bookService;
+            _bookMonitoredService = bookMonitoredService;
             _seriesService = seriesService;
             _authorLibraryService = authorLibraryService;
             _authorStatisticsService = authorStatisticsService;
@@ -193,13 +196,6 @@ namespace Chaptarr.Api.V1.Author
 	            SharedValidator.RuleFor(s => s.EbookMetadataProfileId)
 	                           .SetValidator(metadataProfileExistsValidator)
 	                           .When(s => s.EbookMetadataProfileId.HasValue && s.EbookMetadataProfileId.Value > 0);
-	            SharedValidator.RuleFor(s => s.AudiobookMonitorExisting)
-	                           .Must(v => !v.HasValue || v.Value is 0 or 1 or 2)
-	                           .WithMessage("AudiobookMonitorExisting must be 0 (None), 1 (All), or 2 (Selected)");
-	            SharedValidator.RuleFor(s => s.EbookMonitorExisting)
-	                           .Must(v => !v.HasValue || v.Value is 0 or 1 or 2)
-	                           .WithMessage("EbookMonitorExisting must be 0 (None), 1 (All), or 2 (Selected)");
-
 	            PostValidator.RuleFor(s => s.Path).IsValidPath().When(s => s.AudiobookRootFolderPath.IsNullOrWhiteSpace() && s.EbookRootFolderPath.IsNullOrWhiteSpace());
             PostValidator.RuleFor(s => s.AudiobookRootFolderPath)
                          .IsValidPath()
@@ -358,17 +354,35 @@ namespace Chaptarr.Api.V1.Author
                 authorResource.AudiobookQualityProfileId ??= authorResource.QualityProfileId;
                 authorResource.AudiobookRootFolderPath ??= authorResource.RootFolderPath;
                 authorResource.AudiobookTags ??= authorResource.Tags;
-                authorResource.AudiobookMonitorExisting ??= authorResource.Monitored ? 1 : 0;
-                authorResource.AudiobookMonitorFuture ??= authorResource.Monitored;
+                authorResource.AudiobookMonitored = authorResource.Monitored;
+                authorResource.AudiobookMonitorNewItems = ParseMonitorNewItems(authorResource.MonitorNewItems) ?? authorResource.AudiobookMonitorNewItems;
             }
             else if (facadeContext.MediaType == "ebook")
             {
                 authorResource.EbookQualityProfileId ??= authorResource.QualityProfileId;
                 authorResource.EbookRootFolderPath ??= authorResource.RootFolderPath;
                 authorResource.EbookTags ??= authorResource.Tags;
-                authorResource.EbookMonitorExisting ??= authorResource.Monitored ? 1 : 0;
-                authorResource.EbookMonitorFuture ??= authorResource.Monitored;
+                authorResource.EbookMonitored = authorResource.Monitored;
+                authorResource.EbookMonitorNewItems = ParseMonitorNewItems(authorResource.MonitorNewItems) ?? authorResource.EbookMonitorNewItems;
             }
+
+            AuthorResourceMapper.NormalizeFacadeBooksToMonitor(authorResource.AddOptions, facadeContext);
+        }
+
+        private static NewItemMonitorTypes? ParseMonitorNewItems(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "all" => NewItemMonitorTypes.All,
+                "new" => NewItemMonitorTypes.New,
+                "none" => NewItemMonitorTypes.None,
+                _ => null
+            };
         }
 
         private ActionResult GetProviderAmbiguityResult(ProviderAmbiguityResource ambiguity)
@@ -382,6 +396,7 @@ namespace Chaptarr.Api.V1.Author
         {
             var facadeContext = HttpContext.GetReadarrFacadeContext();
             ApplyFacadeAuthorSingleFields(authorResource, facadeContext);
+            AuthorResourceMapper.NormalizeLegacySingleFields(authorResource, facadeContext);
             if (ReadarrFacadeProviderIdTranslator.RequiresProviderPrefix(authorResource.ForeignAuthorId, facadeContext))
             {
                 throw new ValidationException(new[]
@@ -412,16 +427,41 @@ namespace Chaptarr.Api.V1.Author
                 return ambiguity;
             }
 
+            var existingAuthorBeforeAdd = ProviderAmbiguityHelper
+                .FindAuthorProviderMatches(_authorService, _providerAliasService, authorProvider, authorId, _logger)
+                .SingleOrDefault();
+            var existingBooksBeforeAdd = existingAuthorBeforeAdd == null
+                ? new List<NzbDrone.Core.Books.Book>()
+                : _bookService.GetBooksByAuthor(existingAuthorBeforeAdd.Id) ?? new List<NzbDrone.Core.Books.Book>();
+            var hadAudiobookCatalog = existingBooksBeforeAdd.Any(book => book.MediaType == BookMediaType.Audiobook);
+            var hadEbookCatalog = existingBooksBeforeAdd.Any(book => book.MediaType == BookMediaType.Ebook);
+
+            var addOptions = authorResource.AddOptions;
+            var addMonitorMode = addOptions?.Monitor;
+            var audiobookMonitorExistingMode = authorResource.AudiobookMonitorExistingMode ??
+                (addOptions?.MediaType is null || addOptions.MediaType == BookMediaType.Audiobook ? addMonitorMode : null);
+            var ebookMonitorExistingMode = authorResource.EbookMonitorExistingMode ??
+                (addOptions?.MediaType is null || addOptions.MediaType == BookMediaType.Ebook ? addMonitorMode : null);
+            var specificBookProviderIds = addOptions?.Monitor == MonitorTypes.SpecificBook
+                ? addOptions.BooksToMonitor?.Where(id => !string.IsNullOrWhiteSpace(id))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
+            var exactAudiobookRequest = specificBookProviderIds?.Any() == true && addOptions?.MediaType == BookMediaType.Audiobook;
+            var exactEbookRequest = specificBookProviderIds?.Any() == true && addOptions?.MediaType == BookMediaType.Ebook;
+            var audiobookSpecificBookProviderIds = addOptions?.MediaType == BookMediaType.Ebook ? null : specificBookProviderIds;
+            var ebookSpecificBookProviderIds = addOptions?.MediaType == BookMediaType.Audiobook ? null : specificBookProviderIds;
+
             var config = new MonitoringConfig
             {
-                MonitorNewItems = authorResource.Monitored,
                 IsManualAddition = true,
                 CreateAudiobook = !string.IsNullOrWhiteSpace(authorResource.AudiobookRootFolderPath),
                 CreateEbook = !string.IsNullOrWhiteSpace(authorResource.EbookRootFolderPath),
-                AudiobookMonitorExisting = authorResource.AudiobookMonitorExisting,
-                AudiobookMonitorFuture = authorResource.AudiobookMonitorFuture,
-                EbookMonitorExisting = authorResource.EbookMonitorExisting,
-                EbookMonitorFuture = authorResource.EbookMonitorFuture,
+                AudiobookMonitored = exactAudiobookRequest ? true : authorResource.AudiobookMonitored,
+                AudiobookMonitorNewItems = authorResource.AudiobookMonitorNewItems,
+                AudiobookMonitorExistingMode = audiobookMonitorExistingMode,
+                EbookMonitored = exactEbookRequest ? true : authorResource.EbookMonitored,
+                EbookMonitorNewItems = authorResource.EbookMonitorNewItems,
+                EbookMonitorExistingMode = ebookMonitorExistingMode,
                 AudiobookQualityProfileId = authorResource.AudiobookQualityProfileId,
                 EbookQualityProfileId = authorResource.EbookQualityProfileId,
                 AudiobookMetadataProfileId = authorResource.AudiobookMetadataProfileId,
@@ -432,7 +472,12 @@ namespace Chaptarr.Api.V1.Author
                 Tags = authorResource.Tags,
                 SearchForMissingBooks = authorResource.AddOptions?.SearchForMissingBooks,
                 RequestedBy = "ApiV1AuthorAdd",
-                AuthorName = authorResource.AuthorName
+                AuthorName = authorResource.AuthorName,
+                MonitorMode = addOptions?.Monitor,
+                AudiobookBooksToMonitor = audiobookSpecificBookProviderIds?.ToList(),
+                EbookBooksToMonitor = ebookSpecificBookProviderIds?.ToList(),
+                SpecificBookProviderIds = specificBookProviderIds,
+                SpecificBookMediaType = addOptions?.MediaType
             };
 
             NzbDrone.Core.Books.Author author;
@@ -459,6 +504,24 @@ namespace Chaptarr.Api.V1.Author
                     pendingId,
                     message = "The author isn't available yet on the metadata server. Chaptarr has queued the import and will automatically add them when they become available (you can visit the chaptarrbot channel in our discord to ask for updates)."
                 });
+            }
+
+            if (config.CreateAudiobook)
+            {
+                author = ApplyRequestedAuthorMonitoring(author, BookMediaType.Audiobook, config.AudiobookMonitored, config.AudiobookMonitorNewItems);
+                if (ShouldApplyInitialBookMonitoring(hadAudiobookCatalog, audiobookMonitorExistingMode))
+                {
+                    ApplyCurrentBookMonitoring(author, BookMediaType.Audiobook, audiobookMonitorExistingMode, audiobookSpecificBookProviderIds);
+                }
+            }
+
+            if (config.CreateEbook)
+            {
+                author = ApplyRequestedAuthorMonitoring(author, BookMediaType.Ebook, config.EbookMonitored, config.EbookMonitorNewItems);
+                if (ShouldApplyInitialBookMonitoring(hadEbookCatalog, ebookMonitorExistingMode))
+                {
+                    ApplyCurrentBookMonitoring(author, BookMediaType.Ebook, ebookMonitorExistingMode, ebookSpecificBookProviderIds);
+                }
             }
 
             return Created(author.Id);
@@ -568,17 +631,19 @@ namespace Chaptarr.Api.V1.Author
 
                 var selectedRootFolderPath = selectedRootFolder?.Path;
 
-                var monitorExisting = importResource.MonitorExisting ?? string.Empty;
-                var monitorExistingMode = monitorExisting.Trim().ToLowerInvariant() switch
+                var monitoring = ResolveImportMonitoring(importResource, bookMediaType);
+                var monitored = monitoring.Monitored;
+                var monitorNewItems = monitoring.MonitorNewItems;
+                var monitorExistingMode = monitoring.MonitorExistingMode;
+                if (monitorExistingMode == MonitorTypes.SpecificBook)
                 {
-                    "all" => 1,
-                    "select" => 2,
-                    "none" => 0,
-                    _ => 0
-                };
+                    throw new ValidationException(new[]
+                    {
+                        new ValidationFailure("Monitor", "Specific-book monitoring requires book provider IDs; use the book add endpoint instead.")
+                    });
+                }
 
-                var monitorAll = monitorExistingMode == 1;
-                var shouldSearchForMissingBooks = importResource.SearchForMissingBooks ?? monitorAll;
+                var shouldSearchForMissingBooks = importResource.SearchForMissingBooks ?? monitorExistingMode == MonitorTypes.All;
 
 	                var importAmbiguity = GetProviderAmbiguityResult(ProviderAmbiguityHelper.GetAuthorAmbiguity(
                     _authorService,
@@ -606,8 +671,15 @@ namespace Chaptarr.Api.V1.Author
                         existingAuthor.AudiobookRootFolderPath = selectedRootFolderPath;
                         existingAuthor.AudiobookQualityProfileId = importResource.QualityProfileId;
                         existingAuthor.AudiobookMetadataProfileId = importResource.MetadataProfileId;
-                        existingAuthor.AudiobookMonitorExisting = monitorExistingMode;
-                        existingAuthor.AudiobookMonitorFuture = importResource.MonitorFuture;
+                        if (monitored.HasValue)
+                        {
+                            existingAuthor.AudiobookMonitored = monitored;
+                        }
+
+                        if (monitorNewItems.HasValue)
+                        {
+                            existingAuthor.AudiobookMonitorNewItems = monitorNewItems;
+                        }
 
                         if (importResource.ManualFlag)
                         {
@@ -619,18 +691,20 @@ namespace Chaptarr.Api.V1.Author
                         existingAuthor.EbookRootFolderPath = selectedRootFolderPath;
                         existingAuthor.EbookQualityProfileId = importResource.QualityProfileId;
                         existingAuthor.EbookMetadataProfileId = importResource.MetadataProfileId;
-                        existingAuthor.EbookMonitorExisting = monitorExistingMode;
-                        existingAuthor.EbookMonitorFuture = importResource.MonitorFuture;
+                        if (monitored.HasValue)
+                        {
+                            existingAuthor.EbookMonitored = monitored;
+                        }
+
+                        if (monitorNewItems.HasValue)
+                        {
+                            existingAuthor.EbookMonitorNewItems = monitorNewItems;
+                        }
 
                         if (importResource.ManualFlag)
                         {
                             existingAuthor.EbookSettingsManuallyOverridden = true;
                         }
-                    }
-
-                    if (monitorExistingMode > 0 || importResource.MonitorFuture)
-                    {
-                        existingAuthor.Monitored = true;
                     }
 
                     existingAuthor = _authorService.UpdateAuthor(existingAuthor);
@@ -659,16 +733,18 @@ namespace Chaptarr.Api.V1.Author
                             hydrateConfig.AudiobookRootFolderPath = selectedRootFolderPath;
                             hydrateConfig.AudiobookQualityProfileId = importResource.QualityProfileId;
                             hydrateConfig.AudiobookMetadataProfileId = importResource.MetadataProfileId;
-                            hydrateConfig.AudiobookMonitorExisting = monitorExistingMode;
-                            hydrateConfig.AudiobookMonitorFuture = importResource.MonitorFuture;
+                            hydrateConfig.AudiobookMonitored = monitored;
+                            hydrateConfig.AudiobookMonitorNewItems = monitorNewItems;
+                            hydrateConfig.AudiobookMonitorExistingMode = monitorExistingMode;
                         }
                         else
                         {
                             hydrateConfig.EbookRootFolderPath = selectedRootFolderPath;
                             hydrateConfig.EbookQualityProfileId = importResource.QualityProfileId;
                             hydrateConfig.EbookMetadataProfileId = importResource.MetadataProfileId;
-                            hydrateConfig.EbookMonitorExisting = monitorExistingMode;
-                            hydrateConfig.EbookMonitorFuture = importResource.MonitorFuture;
+                            hydrateConfig.EbookMonitored = monitored;
+                            hydrateConfig.EbookMonitorNewItems = monitorNewItems;
+                            hydrateConfig.EbookMonitorExistingMode = monitorExistingMode;
                         }
 
 	                        try
@@ -689,6 +765,11 @@ namespace Chaptarr.Api.V1.Author
                             hydrationWarning = $"Author settings were saved, but the {mediaLabel} catalog could not be loaded due to an unexpected error. You may need to refresh the author later.";
                             _logger.Error(ex, "[V1-AUTHOR-IMPORT] Unexpected error while hydrating existing author: {0}", importResource.ForeignAuthorId);
                         }
+                    }
+
+                    if (ShouldApplyInitialBookMonitoring(hasRequestedMediaType, monitorExistingMode))
+                    {
+                        ApplyCurrentBookMonitoring(existingAuthor, bookMediaType, monitorExistingMode, null);
                     }
 
                     if (shouldSearchForMissingBooks)
@@ -712,9 +793,7 @@ namespace Chaptarr.Api.V1.Author
 
                 var config = new MonitoringConfig
                 {
-                    MonitorNewItems = monitorExistingMode > 0 || importResource.MonitorFuture,
-                    MonitorExisting = monitorAll,
-                    MonitorFuture = importResource.MonitorFuture,
+                    MonitorMode = monitorExistingMode,
                     IsManualAddition = true,
                     QueueIfUnavailable = true,
                     RequestedBy = "UserInterface",
@@ -745,16 +824,18 @@ namespace Chaptarr.Api.V1.Author
                     config.AudiobookRootFolderPath = selectedRootFolderPath;
                     config.AudiobookQualityProfileId = importResource.QualityProfileId;
                     config.AudiobookMetadataProfileId = importResource.MetadataProfileId;
-                    config.AudiobookMonitorExisting = monitorExistingMode;
-                    config.AudiobookMonitorFuture = importResource.MonitorFuture;
+                    config.AudiobookMonitored = monitored;
+                    config.AudiobookMonitorNewItems = monitorNewItems;
+                    config.AudiobookMonitorExistingMode = monitorExistingMode;
                 }
                 else
                 {
                     config.EbookRootFolderPath = selectedRootFolderPath;
                     config.EbookQualityProfileId = importResource.QualityProfileId;
                     config.EbookMetadataProfileId = importResource.MetadataProfileId;
-                    config.EbookMonitorExisting = monitorExistingMode;
-                    config.EbookMonitorFuture = importResource.MonitorFuture;
+                    config.EbookMonitored = monitored;
+                    config.EbookMonitorNewItems = monitorNewItems;
+                    config.EbookMonitorExistingMode = monitorExistingMode;
                 }
 
 	                _logger.Debug("[V1-AUTHOR-IMPORT] Calling AuthorLibraryService to import author");
@@ -782,6 +863,8 @@ namespace Chaptarr.Api.V1.Author
                     });
                 }
 
+                ApplyCurrentBookMonitoring(importedAuthor, bookMediaType, monitorExistingMode, null);
+
                 if (shouldSearchForMissingBooks)
                 {
                     _commandQueueManager.Push(new MissingBookSearchCommand
@@ -805,6 +888,141 @@ namespace Chaptarr.Api.V1.Author
                     new ValidationFailure("Import", $"Failed to import author: {ex.Message}")
                 });
             }
+        }
+
+        private void ApplyCurrentBookMonitoring(
+            NzbDrone.Core.Books.Author author,
+            BookMediaType mediaType,
+            MonitorTypes? monitorMode,
+            IEnumerable<string> selectedProviderBookIds)
+        {
+            if (author == null || !monitorMode.HasValue || _bookMonitoredService == null)
+            {
+                return;
+            }
+
+            var options = new MonitoringOptions
+            {
+                Monitor = monitorMode.Value,
+                MediaType = mediaType
+            };
+
+            if (monitorMode == MonitorTypes.SpecificBook)
+            {
+                var providerIds = (selectedProviderBookIds ?? Enumerable.Empty<string>())
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .ToList();
+                options.BooksToMonitor = (_bookService.GetBooksByAuthor(author.Id) ?? new List<NzbDrone.Core.Books.Book>())
+                    .Where(book => book.MediaType == mediaType && providerIds.Any(id => BookMatchesProviderId(book, id)))
+                    .Select(book => book.Id.ToString())
+                    .ToList();
+
+                if (!options.BooksToMonitor.Any())
+                {
+                    _logger.Warn("No requested {0} book was present for author {1}; leaving current monitoring unchanged", mediaType, author.Id);
+                    return;
+                }
+            }
+
+            _bookMonitoredService.SetBookMonitoredStatus(author, options);
+        }
+
+        internal static bool ShouldApplyInitialBookMonitoring(bool mediaTypeCatalogAlreadyPresent, MonitorTypes? monitorMode)
+        {
+            return monitorMode.HasValue &&
+                   (!mediaTypeCatalogAlreadyPresent || monitorMode == MonitorTypes.SpecificBook);
+        }
+
+        private NzbDrone.Core.Books.Author ApplyRequestedAuthorMonitoring(
+            NzbDrone.Core.Books.Author author,
+            BookMediaType mediaType,
+            bool? monitored,
+            NewItemMonitorTypes? monitorNewItems)
+        {
+            if (author == null || !author.ApplyMediaTypeMonitoringSettings(mediaType, monitored, monitorNewItems))
+            {
+                return author;
+            }
+
+            return _authorService.UpdateAuthor(author);
+        }
+
+        private static bool BookMatchesProviderId(NzbDrone.Core.Books.Book book, string providerId)
+        {
+            return BookIdentity.GetProviderIdentityTokens(book)
+                .Contains(providerId.Trim().Trim('{', '}'), StringComparer.OrdinalIgnoreCase);
+        }
+
+        internal static (bool? Monitored, NewItemMonitorTypes? MonitorNewItems, MonitorTypes? MonitorExistingMode) ResolveImportMonitoring(
+            AuthorImportResource resource,
+            BookMediaType mediaType,
+            bool legacySelectTargetsSpecificBook = false)
+        {
+            var monitored = mediaType == BookMediaType.Audiobook
+                ? resource.AudiobookMonitored
+                : resource.EbookMonitored;
+            var legacySelected = string.Equals(resource.MonitorExisting?.Trim(), "select", StringComparison.OrdinalIgnoreCase);
+            var legacyMode = ParseLegacyMonitorExistingMode(resource.MonitorExisting, legacySelectTargetsSpecificBook);
+            var monitorNewItems = mediaType == BookMediaType.Audiobook
+                ? resource.AudiobookMonitorNewItems
+                : resource.EbookMonitorNewItems;
+            var monitorExistingMode = mediaType == BookMediaType.Audiobook
+                ? resource.AudiobookMonitorExistingMode
+                : resource.EbookMonitorExistingMode;
+
+            monitored ??= legacyMode.HasValue
+                ? legacySelected || legacyMode.Value != MonitorTypes.None || resource.MonitorFuture == true
+                : resource.MonitorFuture == true ? true : null;
+            monitorNewItems ??= legacyMode == MonitorTypes.All
+                ? NewItemMonitorTypes.All
+                : resource.MonitorFuture == true
+                    ? NewItemMonitorTypes.New
+                    : legacyMode.HasValue || resource.MonitorFuture.HasValue
+                        ? NewItemMonitorTypes.None
+                        : null;
+            monitorExistingMode ??= ParseMonitorMode(resource.Monitor) ?? legacyMode;
+
+            return (monitored, monitorNewItems, monitorExistingMode);
+        }
+
+        private static MonitorTypes? ParseLegacyMonitorExistingMode(string value, bool selectTargetsSpecificBook)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "all" => MonitorTypes.All,
+                "select" => selectTargetsSpecificBook ? MonitorTypes.SpecificBook : MonitorTypes.None,
+                "none" => MonitorTypes.None,
+                _ => null
+            };
+        }
+
+        private static MonitorTypes? ParseMonitorMode(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "all" => MonitorTypes.All,
+                "future" => MonitorTypes.Future,
+                "missing" => MonitorTypes.Missing,
+                "existing" => MonitorTypes.Existing,
+                "first" => MonitorTypes.First,
+                "latest" => MonitorTypes.Latest,
+                "none" => MonitorTypes.None,
+                "specificbook" => MonitorTypes.SpecificBook,
+                _ => throw new ValidationException(new[]
+                {
+                    new ValidationFailure("Monitor", "Invalid monitor value. Expected all, future, missing, existing, first, latest, none, or specificBook.")
+                })
+            };
         }
 
 	        [RestPutById]
@@ -920,14 +1138,13 @@ namespace Chaptarr.Api.V1.Author
 
                 var config = new MonitoringConfig
                 {
-                    MonitorNewItems = author.Monitored,
                     IsManualAddition = true,
                     CreateAudiobook = !string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath),
                     CreateEbook = !string.IsNullOrWhiteSpace(author.EbookRootFolderPath),
-                    AudiobookMonitorExisting = author.AudiobookMonitorExisting,
-                    AudiobookMonitorFuture = author.AudiobookMonitorFuture,
-                    EbookMonitorExisting = author.EbookMonitorExisting,
-                    EbookMonitorFuture = author.EbookMonitorFuture,
+                    AudiobookMonitored = author.AudiobookMonitored,
+                    AudiobookMonitorNewItems = author.AudiobookMonitorNewItems,
+                    EbookMonitored = author.EbookMonitored,
+                    EbookMonitorNewItems = author.EbookMonitorNewItems,
                     AudiobookQualityProfileId = author.AudiobookQualityProfileId,
                     EbookQualityProfileId = author.EbookQualityProfileId,
                     AudiobookMetadataProfileId = author.AudiobookMetadataProfileId,

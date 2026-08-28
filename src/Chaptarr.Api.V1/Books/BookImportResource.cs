@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using Chaptarr.Http.REST;
+using NzbDrone.Core.Books;
 
 namespace Chaptarr.Api.V1.Books
 {
@@ -16,9 +18,36 @@ namespace Chaptarr.Api.V1.Books
 
     public class BookImportAuthorMonitoring
     {
+        // One-time action for the current catalog; it is separate from the
+        // persistent per-media author gate and new-row policy.
+        [JsonPropertyName("monitor")]
+        public string Monitor { get; set; }
+
+        // Deprecated pre-binary-monitoring fields retained for older automation clients.
+        [JsonPropertyName("monitorExisting")]
         public string MonitorExisting { get; set; }
-        public bool MonitorFuture { get; set; }
+
+        [JsonPropertyName("monitorFuture")]
+        public bool? MonitorFuture { get; set; }
+
+        [JsonPropertyName("audiobookMonitored")]
+        public bool? AudiobookMonitored { get; set; }
+
+        [JsonPropertyName("audiobookMonitorNewItems")]
+        public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
+
+        [JsonPropertyName("audiobookMonitorExistingMode")]
+        public MonitorTypes? AudiobookMonitorExistingMode { get; set; }
+
+        [JsonPropertyName("ebookMonitored")]
+        public bool? EbookMonitored { get; set; }
+
+        [JsonPropertyName("ebookMonitorNewItems")]
+        public NewItemMonitorTypes? EbookMonitorNewItems { get; set; }
+
+        [JsonPropertyName("ebookMonitorExistingMode")]
+        public MonitorTypes? EbookMonitorExistingMode { get; set; }
+
         public bool SearchForMissing { get; set; }
     }
 }
-

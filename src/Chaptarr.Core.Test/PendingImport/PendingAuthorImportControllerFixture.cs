@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Chaptarr.Api.V1.PendingImport;
 using Microsoft.AspNetCore.Mvc;
 using NUnit.Framework;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Messaging.Commands;
@@ -87,7 +88,13 @@ namespace Chaptarr.Core.Test.PendingImport
 
         private sealed class StubPendingAuthorImportService : IPendingAuthorImportService
         {
-            public Task<int> EnqueueAsync(string providerId, MonitoringConfig config, string sourceApplication) => throw new NotImplementedException();
+            public MonitoringConfig EnqueuedConfig { get; private set; }
+
+            public Task<int> EnqueueAsync(string providerId, MonitoringConfig config, string sourceApplication)
+            {
+                EnqueuedConfig = config;
+                return Task.FromResult(42);
+            }
             public List<PendingAuthorImport> GetAll() => new();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
             public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
@@ -166,6 +173,184 @@ namespace Chaptarr.Core.Test.PendingImport
 
             Assert.That(model.AudiobookBooksToSearch, Is.EqualTo("[\"gr:audio\"]"));
             Assert.That(model.EbookBooksToSearch, Is.EqualTo("[\"gr:ebook\"]"));
+        }
+
+        [Test]
+        public void per_media_monitoring_settings_should_round_trip_without_legacy_monitoring_fields()
+        {
+            var resource = new PendingAuthorImport
+            {
+                Id = 43,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.New,
+                AudiobookMonitorExistingMode = MonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitorExistingMode = MonitorTypes.All
+            }.ToResource();
+
+            Assert.That(resource.AudiobookMonitored, Is.True);
+            Assert.That(resource.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+            Assert.That(resource.AudiobookMonitorExistingMode, Is.EqualTo(MonitorTypes.None));
+            Assert.That(resource.EbookMonitored, Is.False);
+            Assert.That(resource.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+            Assert.That(resource.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.All));
+
+            var model = resource.ToModel();
+            Assert.That(model.AudiobookMonitored, Is.True);
+            Assert.That(model.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+            Assert.That(model.AudiobookMonitorExistingMode, Is.EqualTo(MonitorTypes.None));
+            Assert.That(model.EbookMonitored, Is.False);
+            Assert.That(model.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+            Assert.That(model.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.All));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task exact_book_target_should_enable_and_queue_its_media_side(bool monitor)
+        {
+            var pendingService = new StubPendingAuthorImportService();
+            var controller = new PendingAuthorImportController(
+                new StubSignalRBroadcaster(),
+                pendingService,
+                authorService: null,
+                new StubQualityProfileService(),
+                new StubMetadataProfileService(),
+                new StubRootFolderService());
+
+            var result = await controller.QueueAuthor(new QueueAuthorRequest
+            {
+                ProviderId = "gr:123",
+                Audiobook = new MediaTypeConfig
+                {
+                    Monitor = monitor,
+                    BooksToMonitor = new List<string> { "gr:456" }
+                }
+            });
+
+            Assert.That(result.Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(pendingService.EnqueuedConfig.CreateAudiobook, Is.True);
+            Assert.That(pendingService.EnqueuedConfig.AudiobookMonitored, Is.True);
+            Assert.That(pendingService.EnqueuedConfig.AudiobookMonitorExistingMode, Is.EqualTo(MonitorTypes.SpecificBook));
+            Assert.That(pendingService.EnqueuedConfig.AudiobookBooksToMonitor, Is.EqualTo(new[] { "gr:456" }));
+        }
+
+        [Test]
+        public async Task bare_monitor_true_should_enable_the_media_side()
+        {
+            var pendingService = new StubPendingAuthorImportService();
+            var controller = new PendingAuthorImportController(
+                new StubSignalRBroadcaster(),
+                pendingService,
+                authorService: null,
+                new StubQualityProfileService(),
+                new StubMetadataProfileService(),
+                new StubRootFolderService());
+
+            var result = await controller.QueueAuthor(new QueueAuthorRequest
+            {
+                ProviderId = "gr:123",
+                Ebook = new MediaTypeConfig { Monitor = true }
+            });
+
+            Assert.That(result.Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(pendingService.EnqueuedConfig.CreateEbook, Is.True);
+            Assert.That(pendingService.EnqueuedConfig.EbookMonitored, Is.True);
+        }
+
+        [Test]
+        public async Task explicit_off_side_should_remain_configured_and_paused()
+        {
+            var pendingService = new StubPendingAuthorImportService();
+            var controller = new PendingAuthorImportController(
+                new StubSignalRBroadcaster(),
+                pendingService,
+                authorService: null,
+                new StubQualityProfileService(),
+                new StubMetadataProfileService(),
+                new StubRootFolderService());
+
+            var result = await controller.QueueAuthor(new QueueAuthorRequest
+            {
+                ProviderId = "gr:123",
+                Ebook = new MediaTypeConfig
+                {
+                    Monitor = false,
+                    MonitorExistingMode = MonitorTypes.None,
+                    MonitorNewItems = NewItemMonitorTypes.None,
+                    RootFolderPath = "/ebooks"
+                }
+            });
+
+            Assert.That(result.Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(pendingService.EnqueuedConfig.CreateEbook, Is.True);
+            Assert.That(pendingService.EnqueuedConfig.EbookMonitored, Is.False);
+            Assert.That(pendingService.EnqueuedConfig.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.None));
+            Assert.That(pendingService.EnqueuedConfig.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+        }
+
+        [Test]
+        public async Task legacy_monitor_false_should_not_create_the_media_side()
+        {
+            var pendingService = new StubPendingAuthorImportService();
+            var controller = new PendingAuthorImportController(
+                new StubSignalRBroadcaster(),
+                pendingService,
+                authorService: null,
+                new StubQualityProfileService(),
+                new StubMetadataProfileService(),
+                new StubRootFolderService());
+
+            var result = await controller.QueueAuthor(new QueueAuthorRequest
+            {
+                ProviderId = "gr:123",
+                Audiobook = new MediaTypeConfig
+                {
+                    Monitor = false,
+                    MonitorExisting = 1,
+                    MonitorFuture = true,
+                    BooksToMonitor = new List<string> { "gr:456" }
+                }
+            });
+
+            Assert.That(result.Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(pendingService.EnqueuedConfig.CreateAudiobook, Is.False);
+            Assert.That(pendingService.EnqueuedConfig.AudiobookMonitored, Is.Null);
+        }
+
+        [Test]
+        public async Task legacy_monitoring_fields_should_translate_to_the_binary_model()
+        {
+            var pendingService = new StubPendingAuthorImportService();
+            var controller = new PendingAuthorImportController(
+                new StubSignalRBroadcaster(),
+                pendingService,
+                authorService: null,
+                new StubQualityProfileService(),
+                new StubMetadataProfileService(),
+                new StubRootFolderService());
+
+            var request = STJson.Deserialize<QueueAuthorRequest>(
+                """
+                {
+                  "providerId": "gr:123",
+                  "ebook": {
+                    "monitor": true,
+                    "monitorExisting": 2,
+                    "monitorFuture": true,
+                    "booksToMonitor": ["gr:456"]
+                  }
+                }
+                """);
+
+            var result = await controller.QueueAuthor(request);
+
+            Assert.That(result.Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(pendingService.EnqueuedConfig.CreateEbook, Is.True);
+            Assert.That(pendingService.EnqueuedConfig.EbookMonitored, Is.True);
+            Assert.That(pendingService.EnqueuedConfig.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.SpecificBook));
+            Assert.That(pendingService.EnqueuedConfig.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+            Assert.That(pendingService.EnqueuedConfig.EbookBooksToMonitor, Is.EqualTo(new[] { "gr:456" }));
         }
 
         private static QualityProfile CreateQualityProfile(int id, string name, ProfileType type)

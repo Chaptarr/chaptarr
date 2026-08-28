@@ -155,8 +155,8 @@ namespace Chaptarr.Core.Test.Api.Wanted
             var monitoredAuthor = new Author
             {
                 Monitored = true,
-                AudiobookMonitorExisting = 2,
-                EbookMonitorExisting = 2
+                AudiobookMonitored = true,
+                EbookMonitored = true
             };
 
             // "Wrong-side" flag should not make the record count as monitored.
@@ -189,9 +189,9 @@ namespace Chaptarr.Core.Test.Api.Wanted
                 Author = new Author
                 {
                     Monitored = true,
-                    AudiobookMonitorExisting = 0,
-                    AudiobookMonitorFuture = false,
-                    EbookMonitorExisting = 2
+                    AudiobookMonitored = false,
+                    AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                    EbookMonitored = true
                 },
                 MediaType = BookMediaType.Audiobook,
                 AudiobookMonitored = true
@@ -201,12 +201,12 @@ namespace Chaptarr.Core.Test.Api.Wanted
             {
                 Author = new Author
                 {
-                    AudiobookMonitorExisting = 0,
-                    AudiobookMonitorFuture = true
+                    AudiobookMonitored = false,
+                    AudiobookMonitorNewItems = NewItemMonitorTypes.New
                 },
                 MediaType = BookMediaType.Audiobook,
                 AudiobookMonitored = true
-            }), Is.True, "future monitoring keeps the audiobook side enabled");
+            }), Is.False, "an author-side pause overrides the new-row policy");
         }
 
         [Test]
@@ -229,9 +229,9 @@ namespace Chaptarr.Core.Test.Api.Wanted
                 Author = new Author
                 {
                     Monitored = true,
-                    AudiobookMonitorExisting = 0,
-                    AudiobookMonitorFuture = false,
-                    EbookMonitorExisting = 2
+                    AudiobookMonitored = false,
+                    AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                    EbookMonitored = true
                 },
                 MediaType = BookMediaType.Audiobook,
                 AudiobookMonitored = true
@@ -239,7 +239,7 @@ namespace Chaptarr.Core.Test.Api.Wanted
 
             Assert.That(predicate(new Book
             {
-                Author = new Author { AudiobookMonitorExisting = 2 },
+                Author = new Author { AudiobookMonitored = true },
                 MediaType = BookMediaType.Audiobook,
                 AudiobookMonitored = true
             }), Is.False);
@@ -265,7 +265,7 @@ namespace Chaptarr.Core.Test.Api.Wanted
             var monitoredAuthor = new Author
             {
                 Monitored = true,
-                AudiobookMonitorExisting = 2
+                AudiobookMonitored = true
             };
 
             Assert.That(predicate(new Book
@@ -281,8 +281,8 @@ namespace Chaptarr.Core.Test.Api.Wanted
                 Author = new Author
                 {
                     Monitored = true,
-                    AudiobookMonitorExisting = 0,
-                    EbookMonitorExisting = 2
+                    AudiobookMonitored = false,
+                    EbookMonitored = true
                 },
                 MediaType = BookMediaType.Audiobook,
                 AudiobookMonitored = true

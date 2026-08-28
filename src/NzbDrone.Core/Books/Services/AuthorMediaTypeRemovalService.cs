@@ -67,8 +67,8 @@ namespace NzbDrone.Core.Books
                 author.AudiobookRootFolderPath = null;
                 author.AudiobookPath = null;
                 author.AudiobookQualityProfileId = null;
-                author.AudiobookMonitorExisting = null;
-                author.AudiobookMonitorFuture = null;
+                author.AudiobookMonitored = null;
+                author.AudiobookMonitorNewItems = null;
                 author.AudiobookSettingsManuallyOverridden = false;
             }
             else
@@ -78,11 +78,10 @@ namespace NzbDrone.Core.Books
                 author.EbookRootFolderPath = null;
                 author.EbookPath = null;
                 author.EbookQualityProfileId = null;
-                author.EbookMonitorExisting = null;
-                author.EbookMonitorFuture = null;
+                author.EbookMonitored = null;
+                author.EbookMonitorNewItems = null;
                 author.EbookSettingsManuallyOverridden = false;
             }
         }
     }
 }
-

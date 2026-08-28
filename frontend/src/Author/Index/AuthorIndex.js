@@ -371,7 +371,6 @@ class AuthorIndex extends Component {
     } = this.state;
 
     const filteredItems = filterAuthorsByMediaType(items, selectedMediaType);
-
     const selectedAuthorIds = this.getSelectedIds();
 
     const ViewComponent = getViewComponent(view);

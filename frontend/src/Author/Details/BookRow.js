@@ -136,7 +136,6 @@ class BookRow extends Component {
                     monitored={isMonitored}
                     isDisabled={false}
                     isSaving={isSaving}
-                    isBinary={true}
                     onPress={this.onMonitorBookPress}
                   />
                 </TableRowCell>

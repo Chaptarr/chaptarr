@@ -56,20 +56,20 @@ namespace Chaptarr.Core.Test.Books
                 Author author,
                 int? audiobookQualityProfileId,
                 int? audiobookMetadataProfileId,
-                int? audiobookMonitorExisting,
-                bool? audiobookMonitorFuture,
+                bool? audiobookMonitored,
+                NewItemMonitorTypes? audiobookMonitorNewItems,
                 int? ebookQualityProfileId,
                 int? ebookMetadataProfileId,
-                int? ebookMonitorExisting,
-                bool? ebookMonitorFuture,
+                bool? ebookMonitored,
+                NewItemMonitorTypes? ebookMonitorNewItems,
                 string rootFolderPath)
             {
                 if (audiobookQualityProfileId > 0)
                 {
                     author.AudiobookQualityProfileId ??= audiobookQualityProfileId;
                     author.AudiobookMetadataProfileId ??= audiobookMetadataProfileId;
-                    author.AudiobookMonitorExisting ??= audiobookMonitorExisting;
-                    author.AudiobookMonitorFuture ??= audiobookMonitorFuture;
+                    author.AudiobookMonitored ??= audiobookMonitored;
+                    author.AudiobookMonitorNewItems ??= audiobookMonitorNewItems;
                     if (string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath))
                     {
                         author.AudiobookRootFolderPath = rootFolderPath;
@@ -80,8 +80,8 @@ namespace Chaptarr.Core.Test.Books
                 {
                     author.EbookQualityProfileId ??= ebookQualityProfileId;
                     author.EbookMetadataProfileId ??= ebookMetadataProfileId;
-                    author.EbookMonitorExisting ??= ebookMonitorExisting;
-                    author.EbookMonitorFuture ??= ebookMonitorFuture;
+                    author.EbookMonitored ??= ebookMonitored;
+                    author.EbookMonitorNewItems ??= ebookMonitorNewItems;
                     if (string.IsNullOrWhiteSpace(author.EbookRootFolderPath))
                     {
                         author.EbookRootFolderPath = rootFolderPath;
@@ -92,7 +92,7 @@ namespace Chaptarr.Core.Test.Books
                 return author;
             }
 
-            public Author GetAuthor(int authorId) => throw new NotImplementedException();
+            public Author GetAuthor(int authorId) => ExistingAuthor?.Id == authorId ? ExistingAuthor : null;
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByName(string title) => null;
@@ -289,6 +289,87 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
+        private sealed class StubRefreshAuthorService : IRefreshAuthorService
+        {
+            private readonly StubBookService _bookService;
+
+            public StubRefreshAuthorService(StubBookService bookService)
+            {
+                _bookService = bookService;
+            }
+
+            public bool Reconciled { get; private set; }
+
+            public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor)
+            {
+                Reconciled = true;
+                var knownIds = _bookService.ExistingBooks
+                    .SelectMany(BookEditionIdentity.GetCanonicalWorkProviderIds)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                _bookService.ExistingBooks.AddRange(authoritativeRemoteAuthor.Books
+                    .Where(book => !BookEditionIdentity.GetCanonicalWorkProviderIds(book).Any(knownIds.Contains)));
+                return true;
+            }
+        }
+
+        [Test]
+        public async Task existing_author_should_reconcile_media_scoped_pending_target_from_the_author_blob()
+        {
+            var existingAuthor = new Author
+            {
+                Id = 77,
+                Name = "Existing Author",
+                EbookQualityProfileId = 4,
+                EbookMetadataProfileId = 3,
+                EbookRootFolderPath = "/ebooks",
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.None
+            };
+            var existingBook = BuildEbook("Existing Ebook", "hc:2001");
+            existingBook.AuthorId = existingAuthor.Id;
+            var requestedBook = BuildEbook("Requested Ebook", "hc:2002");
+            requestedBook.AuthorId = existingAuthor.Id;
+            var remoteAuthor = new Author
+            {
+                Name = existingAuthor.Name,
+                Books = new List<Book> { existingBook, requestedBook },
+                Series = new List<Series>()
+            };
+            var authorService = new StubAuthorService { ExistingAuthor = existingAuthor };
+            var bookService = new StubBookService { ExistingBooks = new List<Book> { existingBook } };
+            var refreshAuthorService = new StubRefreshAuthorService(bookService);
+            var service = new AuthorLibraryService(
+                authorService,
+                new StubAuthorInfo(remoteAuthor),
+                bookService,
+                refreshSeriesService: null,
+                editionService: new StubEditionService(),
+                narratorLinkService: null,
+                metadataProfileService: new StubMetadataProfileService(),
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: new StubAuthorPathBuilder(),
+                rootFolderService: new StubRootFolderService(BuildEbookRoot("/ebooks")),
+                commandQueueManager: null,
+                eventAggregator: new StubEventAggregator(),
+                pendingImportService: null,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger(),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()),
+                refreshAuthorService: refreshAuthorService);
+
+            await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
+            {
+                CreateEbook = true,
+                EbookBooksToSearch = new List<string> { "hc:2002" }
+            });
+
+            Assert.That(refreshAuthorService.Reconciled, Is.True);
+            Assert.That(bookService.ExistingBooks.Select(book => book.HardcoverBookId), Does.Contain("hc:2002"));
+        }
+
         [Test]
         public async Task add_author_should_not_hydrate_unconfigured_media_type_from_stray_profile()
         {
@@ -328,14 +409,13 @@ namespace Chaptarr.Core.Test.Books
             await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = true,
                 CreateEbook = false,
                 AudiobookQualityProfileId = 2,
                 AudiobookMetadataProfileId = 1,
                 AudiobookRootFolderPath = "/audiobooks",
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
                 EbookMetadataProfileId = 3
             });
 
@@ -407,14 +487,13 @@ namespace Chaptarr.Core.Test.Books
             await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = true,
                 CreateEbook = false,
                 AudiobookQualityProfileId = 2,
                 AudiobookMetadataProfileId = 1,
                 AudiobookRootFolderPath = "/audiobooks",
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None
             });
 
             var insertedBook = bookService.InsertedBooks.Single();
@@ -448,13 +527,13 @@ namespace Chaptarr.Core.Test.Books
                 Monitored = true,
                 AudiobookQualityProfileId = hasManualTargetSettings ? 77 : null,
                 AudiobookMetadataProfileId = hasManualTargetSettings ? 78 : null,
-                AudiobookMonitorExisting = hasManualTargetSettings ? 1 : null,
-                AudiobookMonitorFuture = hasManualTargetSettings ? true : null,
+                AudiobookMonitored = hasManualTargetSettings ? true : null,
+                AudiobookMonitorNewItems = hasManualTargetSettings ? NewItemMonitorTypes.New : null,
                 AudiobookRootFolderPath = hasManualTargetSettings ? "/manual-audiobooks" : null,
                 EbookQualityProfileId = 9,
                 EbookMetadataProfileId = 8,
-                EbookMonitorExisting = 2,
-                EbookMonitorFuture = false,
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 EbookRootFolderPath = "/manual-ebooks"
             };
 
@@ -496,14 +575,14 @@ namespace Chaptarr.Core.Test.Books
             await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = true,
                 CreateEbook = false,
                 AudiobookQualityProfileId = 2,
                 AudiobookMetadataProfileId = 1,
                 AudiobookRootFolderPath = "/audiobooks",
-                AudiobookMonitorExisting = 1,
-                AudiobookMonitorFuture = true
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.New,
+                AudiobookMonitorExistingMode = MonitorTypes.All
             });
 
             var insertedBook = bookService.InsertedBooks.Single();
@@ -518,12 +597,12 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(authorService.ExistingAuthor.AudiobookQualityProfileId, Is.EqualTo(expectedQualityProfileId));
                 Assert.That(authorService.ExistingAuthor.AudiobookMetadataProfileId, Is.EqualTo(expectedMetadataProfileId));
                 Assert.That(authorService.ExistingAuthor.AudiobookRootFolderPath, Is.EqualTo(expectedRootFolderPath));
-                Assert.That(authorService.ExistingAuthor.AudiobookMonitorExisting, Is.EqualTo(1));
-                Assert.That(authorService.ExistingAuthor.AudiobookMonitorFuture, Is.True);
+                Assert.That(authorService.ExistingAuthor.AudiobookMonitored, Is.True);
+                Assert.That(authorService.ExistingAuthor.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                 Assert.That(authorService.ExistingAuthor.EbookQualityProfileId, Is.EqualTo(9));
                 Assert.That(authorService.ExistingAuthor.EbookMetadataProfileId, Is.EqualTo(8));
-                Assert.That(authorService.ExistingAuthor.EbookMonitorExisting, Is.EqualTo(2));
-                Assert.That(authorService.ExistingAuthor.EbookMonitorFuture, Is.False);
+                Assert.That(authorService.ExistingAuthor.EbookMonitored, Is.True);
+                Assert.That(authorService.ExistingAuthor.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
                 Assert.That(authorService.ExistingAuthor.EbookRootFolderPath, Is.EqualTo("/manual-ebooks"));
                 Assert.That(metadataProfileService.FilterProfileIds, Does.Contain(expectedMetadataProfileId));
             });
@@ -568,14 +647,13 @@ namespace Chaptarr.Core.Test.Books
             var addedAuthor = await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = true,
                 CreateEbook = false,
                 AudiobookQualityProfileId = 2,
                 AudiobookMetadataProfileId = 1,
                 AudiobookRootFolderPath = "/audiobooks",
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookBooksToMonitor = new List<string> { "hc:1001" }
             });
 
@@ -592,6 +670,59 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(selectedBook.EbookMonitored, Is.False);
                 Assert.That(otherBook.EbookMonitored, Is.False);
             });
+        }
+
+        [Test]
+        public async Task all_initial_mode_should_not_be_narrowed_by_the_requested_work_rescue_id()
+        {
+            var remoteAuthor = new Author
+            {
+                Name = "Shelf Author",
+                Books = new List<Book>
+                {
+                    BuildAudiobook("Requested Book", "hc:1001"),
+                    BuildAudiobook("Other Book", "hc:1002")
+                },
+                Series = new List<Series>()
+            };
+
+            var bookService = new StubBookService();
+            var service = new AuthorLibraryService(
+                authorService: new StubAuthorService(),
+                authorInfo: new StubAuthorInfo(remoteAuthor),
+                bookService: bookService,
+                refreshSeriesService: null,
+                editionService: new StubEditionService(),
+                narratorLinkService: null,
+                metadataProfileService: new StubMetadataProfileService(),
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: new StubAuthorPathBuilder(),
+                rootFolderService: new StubRootFolderService(BuildAudiobookRoot("/audiobooks")),
+                commandQueueManager: null,
+                eventAggregator: new StubEventAggregator(),
+                pendingImportService: null,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger(),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()));
+
+            await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
+            {
+                AuthorName = remoteAuthor.Name,
+                CreateAudiobook = true,
+                AudiobookQualityProfileId = 2,
+                AudiobookMetadataProfileId = 1,
+                AudiobookRootFolderPath = "/audiobooks",
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                AudiobookMonitorExistingMode = MonitorTypes.All,
+                AudiobookBooksToMonitor = new List<string> { "hc:1001" }
+            });
+
+            Assert.That(bookService.InsertedBooks, Has.Count.EqualTo(2));
+            Assert.That(bookService.InsertedBooks.All(book => book.AudiobookMonitored), Is.True);
         }
 
         // "Only This Book" limits MONITORING, not the catalog. Readarr paired it with the built-in
@@ -641,14 +772,13 @@ namespace Chaptarr.Core.Test.Books
             var addedAuthor = await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = true,
                 CreateEbook = false,
                 AudiobookQualityProfileId = 2,
                 AudiobookMetadataProfileId = 1,
                 AudiobookRootFolderPath = "/audiobooks",
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookBooksToMonitor = new List<string> { "hc:1001" }
             });
 
@@ -711,14 +841,13 @@ namespace Chaptarr.Core.Test.Books
             var addedAuthor = await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = false,
                 CreateEbook = true,
                 EbookQualityProfileId = 4,
                 EbookMetadataProfileId = 3,
                 EbookRootFolderPath = "/ebooks",
-                EbookMonitorExisting = 2,
-                EbookMonitorFuture = false,
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 EbookBooksToMonitor = new List<string> { "hc:2001" }
             });
 
@@ -777,14 +906,13 @@ namespace Chaptarr.Core.Test.Books
             await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = true,
                 CreateEbook = false,
                 AudiobookQualityProfileId = 2,
                 AudiobookMetadataProfileId = 1,
                 AudiobookRootFolderPath = "/audiobooks",
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookBooksToMonitor = new List<string> { "gr:3046572" }
             });
 
@@ -843,14 +971,13 @@ namespace Chaptarr.Core.Test.Books
             await service.AddAuthorAsync("gr:4785", new MonitoringConfig
             {
                 AuthorName = remoteAuthor.Name,
-                MonitorNewItems = true,
                 CreateAudiobook = true,
                 CreateEbook = false,
                 AudiobookQualityProfileId = 2,
                 AudiobookMetadataProfileId = 1,
                 AudiobookRootFolderPath = "/audiobooks",
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookBooksToMonitor = new List<string> { "gr:391568" }
             });
 
@@ -930,8 +1057,8 @@ namespace Chaptarr.Core.Test.Books
             {
                 QualityProfileId = 2,
                 MetadataProfileId = 1,
-                MonitorExisting = 2,
-                MonitorFuture = false
+                MonitorExistingBooks = false,
+                MonitorNewItems = NewItemMonitorTypes.None
             });
 
             return root;
@@ -949,8 +1076,8 @@ namespace Chaptarr.Core.Test.Books
             {
                 QualityProfileId = 4,
                 MetadataProfileId = 3,
-                MonitorExisting = 2,
-                MonitorFuture = false
+                MonitorExistingBooks = false,
+                MonitorNewItems = NewItemMonitorTypes.None
             });
 
             return root;

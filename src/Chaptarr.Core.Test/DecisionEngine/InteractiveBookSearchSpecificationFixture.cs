@@ -58,10 +58,25 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
+        public void monitored_book_should_accept_explicit_unmonitored_book_search()
+        {
+            var author = BuildAuthor(monitored: false);
+            var book = BuildBook(author);
+            var subject = BuildRemoteBook(author, book, Quality.M4B, Quality.M4B);
+            var criteria = BuildBookSearchCriteria(author, book, interactiveSearch: false);
+            criteria.MonitoredBooksOnly = false;
+
+            var result = new NzbDrone.Core.DecisionEngine.Specifications.RssSync.MonitoredBookSpecification(LogManager.GetCurrentClassLogger())
+                .IsSatisfiedBy(subject, criteria);
+
+            Assert.That(result.Accepted, Is.True);
+        }
+
+        [Test]
         public void monitored_book_should_use_media_settings_instead_of_the_legacy_author_rollup()
         {
             var author = BuildAuthor(monitored: false);
-            author.AudiobookMonitorExisting = 2;
+            author.AudiobookMonitored = true;
             var book = BuildBook(author, audiobookMonitored: true);
             var subject = BuildRemoteBook(author, book, Quality.M4B, Quality.M4B);
 
@@ -75,7 +90,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         public void monitored_book_should_use_the_remote_author_without_loading_the_book_author()
         {
             var author = BuildAuthor(monitored: false);
-            author.AudiobookMonitorExisting = 2;
+            author.AudiobookMonitored = true;
             var book = BuildBook(author, audiobookMonitored: true);
             book.LazyAuthor = null;
             var subject = BuildRemoteBook(author, book, Quality.M4B, Quality.M4B);
@@ -90,8 +105,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
         public void monitored_book_should_report_when_the_author_media_side_is_not_monitored()
         {
             var author = BuildAuthor(monitored: true);
-            author.AudiobookMonitorExisting = 0;
-            author.EbookMonitorExisting = 2;
+            author.AudiobookMonitored = false;
+            author.EbookMonitored = true;
             var book = BuildBook(author, audiobookMonitored: true);
             var subject = BuildRemoteBook(author, book, Quality.M4B, Quality.M4B);
 
@@ -109,7 +124,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         public void monitored_book_should_report_when_only_the_book_is_not_monitored()
         {
             var author = BuildAuthor(monitored: true);
-            author.AudiobookMonitorExisting = 2;
+            author.AudiobookMonitored = true;
             var book = BuildBook(author, audiobookMonitored: false);
             var subject = BuildRemoteBook(author, book, Quality.M4B, Quality.M4B);
 
@@ -181,6 +196,21 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
+        public void monitored_media_type_should_accept_explicit_unmonitored_book_search()
+        {
+            var author = BuildAuthor(monitored: false);
+            var book = BuildBook(author);
+            var subject = BuildRemoteBook(author, book, Quality.M4B, Quality.M4B);
+            var criteria = BuildBookSearchCriteria(author, book, interactiveSearch: false);
+            criteria.MonitoredBooksOnly = false;
+
+            var result = new MonitoredMediaTypeSpecification(LogManager.GetCurrentClassLogger())
+                .IsSatisfiedBy(subject, criteria);
+
+            Assert.That(result.Accepted, Is.True);
+        }
+
+        [Test]
         public void monitored_media_type_should_accept_explicit_interactive_book_search_even_when_match_is_soft_rejected()
         {
             var author = BuildAuthor(monitored: true);
@@ -198,8 +228,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
         [TestCase("ebook", 0, false, false)]
         [TestCase("audiobook", 2, false, true)]
         [TestCase("ebook", 2, false, true)]
-        [TestCase("audiobook", 0, true, true)]
-        [TestCase("ebook", 0, true, true)]
+        [TestCase("audiobook", 0, true, false)]
+        [TestCase("ebook", 0, true, false)]
         public void monitored_media_type_should_respect_requested_author_side(
             string mediaType,
             int monitorExisting,
@@ -208,10 +238,14 @@ namespace Chaptarr.Core.Test.DecisionEngine
         {
             var isAudiobook = mediaType == "audiobook";
             var author = BuildAuthor(monitored: true);
-            author.AudiobookMonitorExisting = isAudiobook ? monitorExisting : 2;
-            author.AudiobookMonitorFuture = isAudiobook && monitorFuture;
-            author.EbookMonitorExisting = isAudiobook ? 2 : monitorExisting;
-            author.EbookMonitorFuture = !isAudiobook && monitorFuture;
+            author.AudiobookMonitored = isAudiobook ? monitorExisting != 0 : true;
+            author.AudiobookMonitorNewItems = isAudiobook && monitorFuture
+                ? NewItemMonitorTypes.New
+                : NewItemMonitorTypes.None;
+            author.EbookMonitored = isAudiobook ? true : monitorExisting != 0;
+            author.EbookMonitorNewItems = !isAudiobook && monitorFuture
+                ? NewItemMonitorTypes.New
+                : NewItemMonitorTypes.None;
 
             var book = BuildBook(author, audiobookMonitored: isAudiobook, ebookMonitored: !isAudiobook);
             var quality = isAudiobook ? Quality.M4B : Quality.EPUB;
@@ -383,6 +417,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             {
                 Author = author,
                 Books = new List<Book> { book },
+                MonitoredBooksOnly = true,
                 InteractiveSearch = interactiveSearch,
                 UserInvokedSearch = true
             };

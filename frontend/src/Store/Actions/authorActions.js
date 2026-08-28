@@ -3,15 +3,14 @@ import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { filterTypePredicates, filterTypes, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
+import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import dateFilterPredicate from 'Utilities/Date/dateFilterPredicate';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
-import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
-import coerceMonitorExistingValue from 'Utilities/Monitoring/coerceMonitorExistingValue';
+import translate from 'Utilities/String/translate';
+import { showMessage } from './appActions';
 import { set, update, updateItem } from './baseActions';
 import { fetchBooks } from './bookActions';
-import { showMessage } from './appActions';
-import createFetchHandler from './Creators/createFetchHandler';
 import createHandleActions from './Creators/createHandleActions';
 import createRemoveItemHandler from './Creators/createRemoveItemHandler';
 import createSaveProviderHandler from './Creators/createSaveProviderHandler';
@@ -25,12 +24,12 @@ export const section = 'authors';
 export const filters = [
   {
     key: 'all',
-    label: 'All',
+    label: () => translate('All'),
     filters: []
   },
   {
     key: 'monitored',
-    label: 'Monitored Only',
+    label: () => translate('Monitored'),
     filters: [
       {
         key: 'monitored',
@@ -41,7 +40,7 @@ export const filters = [
   },
   {
     key: 'unmonitored',
-    label: 'Unmonitored Only',
+    label: () => translate('Unmonitored'),
     filters: [
       {
         key: 'monitored',
@@ -52,7 +51,7 @@ export const filters = [
   },
   {
     key: 'continuing',
-    label: 'Continuing Only',
+    label: () => translate('ActiveOnly'),
     filters: [
       {
         key: 'status',
@@ -63,7 +62,7 @@ export const filters = [
   },
   {
     key: 'ended',
-    label: 'Ended Only',
+    label: () => translate('DeadOnly'),
     filters: [
       {
         key: 'status',
@@ -74,7 +73,7 @@ export const filters = [
   },
   {
     key: 'missing',
-    label: 'Missing Books',
+    label: () => translate('MissingBooks'),
     filters: [
       {
         key: 'missing',
@@ -85,11 +84,51 @@ export const filters = [
   }
 ];
 
-export const filterPredicates = {
-  missing: function(item) {
-    const { statistics = {} } = item;
+function getAuthorMediaValues(item, state, audiobookKey, ebookKey) {
+  if (state?.selectedMediaType === 'audiobook') {
+    return [item[audiobookKey]];
+  }
 
-    return statistics.bookCount - statistics.bookFileCount > 0;
+  if (state?.selectedMediaType === 'ebook') {
+    return [item[ebookKey]];
+  }
+
+  return [item[audiobookKey], item[ebookKey]];
+}
+
+function matchesAuthorMediaValue(item, filterValue, type, state, audiobookKey, ebookKey) {
+  const predicate = filterTypePredicates[type];
+  const values = getAuthorMediaValues(item, state, audiobookKey, ebookKey)
+    .filter((value) => value != null);
+  const isNegative = type === filterTypes.NOT_EQUAL ||
+    type === filterTypes.NOT_CONTAINS ||
+    type === filterTypes.NOT_STARTS_WITH ||
+    type === filterTypes.NOT_ENDS_WITH;
+
+  return isNegative ?
+    values.every((value) => predicate(value, filterValue)) :
+    values.some((value) => predicate(value, filterValue));
+}
+
+function getAuthorMediaValue(item, selectedMediaType, audiobookKey, ebookKey) {
+  const mediaType = selectedMediaType === 'audiobook' || selectedMediaType === 'ebook' ?
+    selectedMediaType :
+    item.lastSelectedMediaType;
+
+  return mediaType === 'ebook' ? item[ebookKey] : item[audiobookKey];
+}
+
+export const filterPredicates = {
+  missing: function(item, filterValue, type, state) {
+    const { statistics = {} } = item;
+    let mediaStatistics = statistics;
+    if (state?.selectedMediaType === 'audiobook' && item.audiobookStatistics) {
+      mediaStatistics = item.audiobookStatistics;
+    } else if (state?.selectedMediaType === 'ebook' && item.ebookStatistics) {
+      mediaStatistics = item.ebookStatistics;
+    }
+
+    return (mediaStatistics.bookCount || 0) > (mediaStatistics.availableBookCount || 0);
   },
 
   nextBook: function(item, filterValue, type) {
@@ -124,28 +163,55 @@ export const filterPredicates = {
       0;
 
     return predicate(sizeOnDisk, filterValue);
+  },
+
+  qualityProfileId: function(item, filterValue, type, state) {
+    return matchesAuthorMediaValue(item, filterValue, type, state, 'audiobookQualityProfileId', 'ebookQualityProfileId');
+  },
+
+  metadataProfileId: function(item, filterValue, type, state) {
+    return matchesAuthorMediaValue(item, filterValue, type, state, 'audiobookMetadataProfileId', 'ebookMetadataProfileId');
+  },
+
+  path: function(item, filterValue, type, state) {
+    return matchesAuthorMediaValue(item, filterValue, type, state, 'audiobookFolder', 'ebookFolder');
+  },
+
+  rootFolderPath: function(item, filterValue, type, state) {
+    return matchesAuthorMediaValue(item, filterValue, type, state, 'audiobookRootFolderPath', 'ebookRootFolderPath');
+  },
+
+  tags: function(item, filterValue, type, state) {
+    const predicate = filterTypePredicates[type];
+    const tags = getAuthorMediaValues(item, state, 'audiobookTags', 'ebookTags')
+      .flatMap((value) => value || []);
+
+    return predicate(tags, filterValue);
   }
 };
 
 export const sortPredicates = {
   status: function(item) {
-    let result = 0;
-
-    if (item.monitored) {
-      result += 2;
-    }
-
-    if (item.status === 'continuing') {
-      result++;
-    }
-
-    return result;
+    // Status sorting is life-status only.
+    return item.status === 'continuing' ? 1 : 0;
   },
 
   sizeOnDisk: function(item) {
     const { statistics = {} } = item;
 
     return statistics.sizeOnDisk || 0;
+  },
+
+  qualityProfileId: function(item, _direction, selectedMediaType) {
+    return getAuthorMediaValue(item, selectedMediaType, 'audiobookQualityProfileId', 'ebookQualityProfileId') || 0;
+  },
+
+  metadataProfileId: function(item, _direction, selectedMediaType) {
+    return getAuthorMediaValue(item, selectedMediaType, 'audiobookMetadataProfileId', 'ebookMetadataProfileId') || 0;
+  },
+
+  path: function(item, _direction, selectedMediaType) {
+    return getAuthorMediaValue(item, selectedMediaType, 'audiobookFolder', 'ebookFolder') || '';
   }
 };
 
@@ -316,21 +382,19 @@ export const actionHandlers = handleThunks({
       isSaving: true
     }));
 
-    const monitorExistingValue = coerceMonitorExistingValue(monitored);
-
-    // CONTEXT-AWARE MONITORING: Update the correct media-type-specific field
-    // Backend requires full object for PUT, but we need to preserve nulls
+    // Update only the author-level gate for the selected media type. Book-row
+    // monitoring remains independent and is never changed by this control.
     const updateData = { ...author };
 
     // Remove read-only nested objects; they can include LazyLoaded<> metadata that isn't valid to send back on PUT.
     delete updateData.nextBook;
     delete updateData.lastBook;
-    
+
     if (effectiveMediaType === 'audiobook') {
-      updateData.audiobookMonitorExisting = monitorExistingValue;
+      updateData.audiobookMonitored = monitored === true;
       updateData.audiobookSettingsManuallyOverridden = true; // Mark as manually set
     } else if (effectiveMediaType === 'ebook') {
-      updateData.ebookMonitorExisting = monitorExistingValue;
+      updateData.ebookMonitored = monitored === true;
       updateData.ebookSettingsManuallyOverridden = true; // Mark as manually set
     }
 
@@ -354,7 +418,7 @@ export const actionHandlers = handleThunks({
         section,
         isSaving: false
       };
-      
+
       // Only update fields that are actually returned from the server
       // Don't overwrite images if they're not in the response
       if (data) {
@@ -365,16 +429,16 @@ export const actionHandlers = handleThunks({
         // Merge the rest of the data
         Object.assign(stateUpdate, data);
       }
-      
+
       // Ensure the specific media type monitoring field is updated in Redux state
       if (effectiveMediaType === 'audiobook') {
-        stateUpdate.audiobookMonitorExisting = monitorExistingValue;
+        stateUpdate.audiobookMonitored = monitored === true;
         stateUpdate.audiobookSettingsManuallyOverridden = true;
       } else if (effectiveMediaType === 'ebook') {
-        stateUpdate.ebookMonitorExisting = monitorExistingValue;
+        stateUpdate.ebookMonitored = monitored === true;
         stateUpdate.ebookSettingsManuallyOverridden = true;
       }
-      
+
       dispatch(updateItem(stateUpdate));
     });
 

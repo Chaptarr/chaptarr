@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import { icons } from 'Helpers/Props';
 import dimensions from 'Styles/Variables/dimensions';
+import getBookAuthorPath from 'Utilities/Book/getBookAuthorPath';
 import formatDateTime from 'Utilities/Date/formatDateTime';
 import getRelativeDate from 'Utilities/Date/getRelativeDate';
 import formatBytes from 'Utilities/Number/formatBytes';
@@ -64,7 +65,7 @@ function getInfoRowProps(row, props) {
 
   if (name === 'monitored') {
     const isMonitored = props.audiobookMonitored || props.ebookMonitored;
-    const monitoredText = isMonitored ? 'Monitored' : 'All';
+    const monitoredText = translate(isMonitored ? 'Monitored' : 'Unmonitored');
 
     return {
       title: monitoredText,
@@ -133,7 +134,7 @@ function getInfoRowProps(row, props) {
     return {
       title: 'Path',
       iconName: icons.FOLDER,
-      label: props.author.path
+      label: getBookAuthorPath(props)
     };
   }
 
@@ -195,6 +196,7 @@ BookIndexOverviewInfo.propTypes = {
   ebookMonitored: PropTypes.bool,
   qualityProfile: PropTypes.object.isRequired,
   author: PropTypes.object.isRequired,
+  mediaType: PropTypes.string.isRequired,
   releaseDate: PropTypes.string,
   added: PropTypes.string,
   sizeOnDisk: PropTypes.number,

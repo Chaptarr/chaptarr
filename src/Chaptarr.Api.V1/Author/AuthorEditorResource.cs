@@ -6,13 +6,12 @@ namespace Chaptarr.Api.V1.Author
     public class AuthorEditorResource
     {
         public List<int> AuthorIds { get; set; }
-        public bool? Monitored { get; set; }
-        // TRI-STATE MONITORING SYSTEM - Integer per media type
-        // Values: 0 = None (monitor nothing), 1 = All (monitor everything), 2 = Selected (monitor specific books only)
-        public int? AudiobookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? AudiobookMonitorFuture { get; set; } // true=monitor, false=don't monitor
-        public int? EbookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? EbookMonitorFuture { get; set; } // true=monitor, false=don't monitor
+        // Nullable means "leave this media side unchanged" in a bulk edit. False is
+        // an explicit pause, distinct from an unconfigured side.
+        public bool? AudiobookMonitored { get; set; }
+        public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
+        public bool? EbookMonitored { get; set; }
+        public NewItemMonitorTypes? EbookMonitorNewItems { get; set; }
         public bool? SyncMonitoredAcrossFormats { get; set; }
         public int? AudiobookQualityProfileId { get; set; }
         public int? EbookQualityProfileId { get; set; }

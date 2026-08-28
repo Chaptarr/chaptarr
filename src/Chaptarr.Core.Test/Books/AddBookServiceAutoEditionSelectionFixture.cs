@@ -32,11 +32,13 @@ namespace Chaptarr.Core.Test.Books
             public Author AddedAuthor { get; set; }
             public string ProviderId { get; private set; }
             public MonitoringConfig Config { get; private set; }
+            public Action BeforeAdd { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IAuthorLibraryService.AddAuthorAsync))
                 {
+                    BeforeAdd?.Invoke();
                     ProviderId = (string)args[0];
                     Config = (MonitoringConfig)args[1];
                     return Task.FromResult(AddedAuthor);
@@ -56,20 +58,46 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
+        private sealed class RecordingBookMonitoredService : IBookMonitoredService
+        {
+            public Author Author { get; private set; }
+            public MonitoringOptions Options { get; private set; }
+
+            public void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions)
+            {
+                Author = author;
+                Options = monitoringOptions;
+            }
+        }
+
         private class ImportListExclusionServiceProxy : DispatchProxy
         {
+            public List<ImportListExclusion> Exclusions { get; set; } = new();
+            public List<int> DeletedIds { get; } = new();
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IImportListExclusionService.FindByForeignId))
                 {
                     return targetMethod.ReturnType == typeof(List<ImportListExclusion>) ?
-                        new List<ImportListExclusion>() :
-                        null;
+                        Exclusions.ToList() :
+                        Exclusions.FirstOrDefault();
                 }
 
                 if (targetMethod?.Name == nameof(IImportListExclusionService.Delete))
                 {
+                    if (args[0] is int id)
+                    {
+                        DeletedIds.Add(id);
+                        Exclusions.RemoveAll(exclusion => exclusion.Id == id);
+                    }
+
                     return null;
+                }
+
+                if (targetMethod?.Name == nameof(IImportListExclusionService.Update))
+                {
+                    return args[0];
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IImportListExclusionService.{targetMethod?.Name}");
@@ -108,7 +136,7 @@ namespace Chaptarr.Core.Test.Books
             public void RemoveAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
 
-            public void PromoteMediaTypeMonitoringToSelected(int authorId, string mediaType)
+            public void EnsureMediaTypeMonitoring(int authorId, string mediaType)
             {
                 if (_author == null || _author.Id != authorId)
                 {
@@ -116,14 +144,14 @@ namespace Chaptarr.Core.Test.Books
                 }
 
                 if (string.Equals(mediaType, "audiobook", StringComparison.OrdinalIgnoreCase) &&
-                    (_author.AudiobookMonitorExisting ?? 0) <= 0)
+                    _author.AudiobookMonitored != true)
                 {
-                    _author.AudiobookMonitorExisting = 2;
+                    _author.AudiobookMonitored = true;
                 }
                 else if (string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase) &&
-                         (_author.EbookMonitorExisting ?? 0) <= 0)
+                         _author.EbookMonitored != true)
                 {
-                    _author.EbookMonitorExisting = 2;
+                    _author.EbookMonitored = true;
                 }
 
                 _author.Monitored = _author.IsMonitoredFromMediaSettings();
@@ -287,12 +315,14 @@ namespace Chaptarr.Core.Test.Books
             IAuthorLibraryService authorLibraryService = null,
             IBookAddedService bookAddedService = null,
             IImportListExclusionService importListExclusionService = null,
-            IProvideBookInfo bookInfo = null)
+            IProvideBookInfo bookInfo = null,
+            IBookMonitoredService bookMonitoredService = null)
         {
             return new AddBookService(
                 authorService,
                 authorLibraryService ?? DispatchProxy.Create<IAuthorLibraryService, ThrowingProxy<IAuthorLibraryService>>(),
                 bookService,
+                bookMonitoredService ?? new RecordingBookMonitoredService(),
                 bookAddedService ?? DispatchProxy.Create<IBookAddedService, ThrowingProxy<IBookAddedService>>(),
                 bookInfo ?? DispatchProxy.Create<IProvideBookInfo, ThrowingProxy<IProvideBookInfo>>(),
                 importListExclusionService ?? DispatchProxy.Create<IImportListExclusionService, ThrowingProxy<IImportListExclusionService>>(),
@@ -1151,8 +1181,8 @@ namespace Chaptarr.Core.Test.Books
                 HardcoverAuthorId = "hc:777",
                 AudiobookMetadataProfileId = 1,
                 EbookMetadataProfileId = 2,
-                AudiobookMonitorExisting = 0,
-                EbookMonitorExisting = 0
+                AudiobookMonitored = false,
+                EbookMonitored = false
             };
             var requestedAuthor = new Author
             {
@@ -1162,11 +1192,11 @@ namespace Chaptarr.Core.Test.Books
             };
             if (mediaType == BookMediaType.Audiobook)
             {
-                requestedAuthor.AudiobookMonitorExisting = 2;
+                requestedAuthor.AudiobookMonitored = true;
             }
             else
             {
-                requestedAuthor.EbookMonitorExisting = 2;
+                requestedAuthor.EbookMonitored = true;
             }
 
             var requestedEdition = new Edition
@@ -1232,14 +1262,14 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(result.IsMonitoredWithAuthor(), Is.True);
             Assert.That(
                 mediaType == BookMediaType.Audiobook
-                    ? existingAuthor.AudiobookMonitorExisting
-                    : existingAuthor.EbookMonitorExisting,
-                Is.EqualTo(2));
+                    ? existingAuthor.AudiobookMonitored
+                    : existingAuthor.EbookMonitored,
+                Is.True);
             Assert.That(
                 mediaType == BookMediaType.Audiobook
-                    ? existingAuthor.EbookMonitorExisting
-                    : existingAuthor.AudiobookMonitorExisting,
-                Is.EqualTo(0));
+                    ? existingAuthor.EbookMonitored
+                    : existingAuthor.AudiobookMonitored,
+                Is.False);
             var config = ((AuthorLibraryProxy)authorLibraryService).Config;
             Assert.That(mediaType == BookMediaType.Audiobook ? config.AudiobookBooksToMonitor : config.EbookBooksToMonitor,
                 Is.EqualTo(new[] { "hc:1001" }));
@@ -1347,7 +1377,7 @@ namespace Chaptarr.Core.Test.Books
                     Name = "Pending Author",
                     HardcoverAuthorId = " ",
                     GoodreadsAuthorId = "777",
-                    EbookMonitorExisting = 2,
+                    EbookMonitored = true,
                     EbookQualityProfileId = 1,
                     EbookMetadataProfileId = 2,
                     EbookRootFolderPath = "/ebooks",
@@ -1366,8 +1396,93 @@ namespace Chaptarr.Core.Test.Books
             var config = authorLibraryProxy.Config;
             Assert.That(config.EbookBooksToMonitor, Is.EqualTo(new[] { "hc:1001" }));
             Assert.That(config.EbookBooksToSearch, Is.EqualTo(new[] { "hc:1001" }));
+            Assert.That(config.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.SpecificBook));
             Assert.That(config.AudiobookBooksToMonitor, Is.Null);
             Assert.That(config.QueueIfUnavailable, Is.True);
+        }
+
+        [Test]
+        public void unavailable_all_books_request_should_preserve_all_mode_and_the_requested_work_for_rescue()
+        {
+            var pendingAuthor = new Author { Id = -77, Name = "Pending Import" };
+            var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = pendingAuthor;
+            var service = BuildService(
+                new StubAuthorService(null, (_, _) => null),
+                new StubBookService(),
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(),
+                authorLibraryService,
+                new RecordingBookAddedService(),
+                DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+            var request = new Book
+            {
+                Title = "Requested Book",
+                HardcoverBookId = "hc:1001",
+                MediaType = BookMediaType.Ebook,
+                Author = new Author
+                {
+                    Name = "Pending Author",
+                    GoodreadsAuthorId = "777",
+                    EbookMonitored = true,
+                    EbookQualityProfileId = 1,
+                    EbookMetadataProfileId = 2,
+                    EbookRootFolderPath = "/ebooks",
+                    AddOptions = new AddAuthorOptions { Monitor = MonitorTypes.All }
+                }
+            };
+
+            Assert.ThrowsAsync<PendingBookRequestException>(() => service.AddBook(request));
+
+            var config = ((AuthorLibraryProxy)authorLibraryService).Config;
+            Assert.That(config.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.All));
+            Assert.That(config.EbookBooksToMonitor, Is.EqualTo(new[] { "hc:1001" }));
+        }
+
+        [Test]
+        public void exact_book_request_should_remove_matching_exclusion_before_importing_the_author_blob()
+        {
+            var pendingAuthor = new Author { Id = -77, Name = "Pending Import" };
+            var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = pendingAuthor;
+            var exclusionService = DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>();
+            var exclusionProxy = (ImportListExclusionServiceProxy)exclusionService;
+            exclusionProxy.Exclusions.Add(new ImportListExclusion
+            {
+                Id = 9,
+                ForeignId = "hc:1001",
+                MediaType = BookMediaType.Ebook
+            });
+            ((AuthorLibraryProxy)authorLibraryService).BeforeAdd = () =>
+                Assert.That(exclusionProxy.DeletedIds, Does.Contain(9), "the requested work must survive author-blob filtering");
+
+            var service = BuildService(
+                new StubAuthorService(null, (_, _) => null),
+                new StubBookService(),
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(),
+                authorLibraryService,
+                new RecordingBookAddedService(),
+                exclusionService);
+            var request = new Book
+            {
+                Title = "Requested Book",
+                HardcoverBookId = "hc:1001",
+                MediaType = BookMediaType.Ebook,
+                Author = new Author
+                {
+                    Name = "Pending Author",
+                    HardcoverAuthorId = "hc:777",
+                    EbookMonitored = true,
+                    EbookQualityProfileId = 1,
+                    EbookMetadataProfileId = 2,
+                    EbookRootFolderPath = "/ebooks",
+                    AddOptions = new AddAuthorOptions { Monitor = MonitorTypes.SpecificBook }
+                }
+            };
+
+            Assert.ThrowsAsync<PendingBookRequestException>(() => service.AddBook(request));
+            Assert.That(exclusionProxy.DeletedIds, Is.EqualTo(new[] { 9 }));
         }
     }
 }

@@ -16,11 +16,11 @@ function BookStatusCell(props) {
   } = props;
 
   let iconName = icons.UNMONITORED;
-  let iconTitle = translate('MonitoredAuthorIsUnmonitored');
+  let iconTitle = translate('Unmonitored');
 
   if (monitored) {
     iconName = icons.MONITORED;
-    iconTitle = translate('MonitoredAuthorIsMonitored');
+    iconTitle = translate('Monitored');
   }
 
   if (grabbed) {

@@ -3552,8 +3552,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     Overview = originalBook.Overview,
                     AuthorId = author.Id,
                     Author = author,
-                    AudiobookMonitored = localBook.Quality.Quality.Id > 4,
-                    EbookMonitored = localBook.Quality.Quality.Id <= 4,
+                    // A physical-copy row inherits the user's monitoring choice from
+                    // the canonical row. The imported file selects its edition below;
+                    // file ownership must not create new book-monitoring intent.
+                    AudiobookMonitored = originalBook.AudiobookMonitored,
+                    EbookMonitored = originalBook.EbookMonitored,
                     AnyEditionOk = anyEditionOk,
                     Added = DateTime.UtcNow,
                     ReleaseDate = originalBook.ReleaseDate,

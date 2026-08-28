@@ -7,6 +7,7 @@ import bookEntities from 'Book/bookEntities';
 import Icon from 'Components/Icon';
 import { filterTypePredicates, filterTypes, icons, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
+import getBookAuthorPath from 'Utilities/Book/getBookAuthorPath';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import dateFilterPredicate from 'Utilities/Date/dateFilterPredicate';
 import coerceMonitoredBoolean from 'Utilities/Monitoring/coerceMonitoredBoolean';
@@ -121,11 +122,9 @@ export const filterPredicates = {
 
   qualityProfileId: function(item, filterValue, type) {
     const predicate = filterTypePredicates[type];
-
-    // Determine which quality profile to use based on lastSelectedMediaType
-    const qualityProfileId = item.author.lastSelectedMediaType === 'ebook' 
-      ? item.author.ebookQualityProfileId 
-      : item.author.audiobookQualityProfileId;
+    const qualityProfileId = item.mediaType === 'ebook' ?
+      item.author?.ebookQualityProfileId :
+      item.author?.audiobookQualityProfileId;
 
     return predicate(qualityProfileId, filterValue);
   },
@@ -139,7 +138,7 @@ export const filterPredicates = {
   path: function(item, filterValue, type) {
     const predicate = filterTypePredicates[type];
 
-    return predicate(item.author.path, filterValue);
+    return predicate(getBookAuthorPath(item), filterValue);
   },
 
   bookFileCount: function(item, filterValue, type) {
@@ -172,6 +171,12 @@ export const sortPredicates = {
     return isMonitored ? 1 : 0;
   },
 
+  qualityProfileId: function(item) {
+    return item.mediaType === 'ebook' ?
+      item.author?.ebookQualityProfileId || 0 :
+      item.author?.audiobookQualityProfileId || 0;
+  },
+
   sizeOnDisk: function(item) {
     const { statistics = {} } = item;
 
@@ -179,7 +184,7 @@ export const sortPredicates = {
   },
 
   path: function(item, direction) {
-    const path = (item.author && item.author.path ? item.author.path : '').toString().toLowerCase();
+    const path = getBookAuthorPath(item).toLowerCase();
 
     // Keep missing paths at the end regardless of direction
     if (!path) {
@@ -262,79 +267,30 @@ export const sortPredicates = {
   },
 
   status: function(item, _direction, selectedMediaType) {
-    // Sort by the actual status displayed in BookStatus component
-    // Group statuses properly so they sort together:
-    // 1. Books with files (grouped by format from EditionInfo if available)
-    // 2. Missing books (grouped together)
-    // 3. Not Monitored books (grouped together)
-    // 4. Future releases (grouped together)
-    
-    // Check multiple indicators for whether book has files
-    // This handles both regular books and multi-edition expanded books
-    const hasStatisticsFiles = item.statistics?.bookFileCount > 0;
-    const hasEditionFiles = item.editionInfo?.bookFileCount > 0;
-    const hasAnyFormats = Array.isArray(item.formats) && item.formats.length > 0;
-    
-    // Prefer media-type aware detection when possible
-    let hasFilesForSelectedType = hasStatisticsFiles || hasEditionFiles;
-    let selectedFormat = 'Unknown';
-    
-    if (hasAnyFormats) {
-      const formats = item.formats.map((f) => (typeof f === 'string' ? f.toUpperCase() : String(f).toUpperCase()));
-      const audioFormats = ['M4B', 'MP3', 'FLAC', 'AAC', 'OGG', 'WAV'];
-      const ebookFormats = ['EPUB', 'PDF', 'MOBI', 'AZW', 'AZW3', 'KEPUB'];
-      if (selectedMediaType === 'audiobook') {
-        const audioHit = formats.find((f) => audioFormats.includes(f));
-        if (audioHit) { hasFilesForSelectedType = true; selectedFormat = audioHit; }
-      }
-      else if (selectedMediaType === 'ebook') {
-        const ebookHit = formats.find((f) => ebookFormats.includes(f));
-        if (ebookHit) { hasFilesForSelectedType = true; selectedFormat = ebookHit; }
-      }
-    }
-    
+    const effectiveMediaType = selectedMediaType === 'audiobook' || selectedMediaType === 'ebook' ?
+      selectedMediaType :
+      item.mediaType;
+    const isMonitored = effectiveMediaType === 'ebook' ?
+      item.ebookMonitored :
+      item.audiobookMonitored;
+    const hasFiles = (item.statistics?.bookFileCount || 0) > 0 ||
+      (item.editionInfo?.bookFileCount || 0) > 0;
     const isAvailable = !item.releaseDate || Date.parse(item.releaseDate) < new Date();
-    
-    if (hasFilesForSelectedType) {
-      // Has files - group first, then by preferred format order per media type
-      let format = selectedFormat;
-      if (format === 'Unknown' || !format) {
-        // Try editionInfo formats
-        if (item.editionInfo?.formats && item.editionInfo.formats.length > 0) {
-          format = item.editionInfo.formats[0];
-        }
-        // Default based on selected media type
-        if (!format) {
-          if (selectedMediaType === 'audiobook') format = 'M4B';
-          else if (selectedMediaType === 'ebook') format = 'EPUB';
-          else format = 'Unknown';
-        }
-      }
+    let result = 0;
 
-      const fmt = (typeof format === 'string' ? format.toUpperCase() : String(format).toUpperCase());
-      // Lower number = higher priority within the "has files" group
-      const audioOrder = { M4B: 0, MP3: 1, FLAC: 2, AAC: 3, OGG: 4, WAV: 5 };
-      const ebookOrder = { EPUB: 0, KEPUB: 1, AZW3: 2, MOBI: 3, PDF: 4 };
-      const priority = selectedMediaType === 'ebook' ? (ebookOrder[fmt] ?? 9) : (audioOrder[fmt] ?? 9);
-
-      return `1_${String(priority).padStart(2, '0')}_${fmt}`;
-    }
-    
-    // Respect selected media type for monitored flag
-    let isMonitored;
-    if (selectedMediaType === 'audiobook') isMonitored = !!item.audiobookMonitored;
-    else if (selectedMediaType === 'ebook') isMonitored = !!item.ebookMonitored;
-    else isMonitored = !!(item.audiobookMonitored || item.ebookMonitored);
-    
-    if (!isMonitored) {
-      return '3_Not Monitored';
-    }
-    
     if (isAvailable) {
-      return '2_Missing';
+      result++;
     }
-    
-    return '4_Future Release';
+
+    if (isMonitored) {
+      result += 2;
+    }
+
+    if (hasFiles) {
+      result += 4;
+    }
+
+    return result;
   }
 };
 

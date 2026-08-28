@@ -42,8 +42,8 @@ namespace Chaptarr.Api.V1.Books
         public string AudibleASIN { get; set; }
         public string TitleSlug { get; set; }
         public bool Monitored { get; set; }
-        public bool AudiobookMonitored { get; set; }
-        public bool EbookMonitored { get; set; }
+        public bool? AudiobookMonitored { get; set; }
+        public bool? EbookMonitored { get; set; }
         public bool AnyEditionOk { get; set; }
         public Ratings Ratings { get; set; }
         public DateTime? ReleaseDate { get; set; }
@@ -723,8 +723,8 @@ namespace Chaptarr.Api.V1.Books
                 CleanTitle = (resource.Title ?? string.Empty).CleanBookTitle().CleanAuthorName(),
                 ReleaseDate = resource.ReleaseDate,
                 Ratings = resource.Ratings ?? new Ratings(),
-                AudiobookMonitored = resource.AudiobookMonitored || (mediaType == BookMediaType.Audiobook && resource.Monitored),
-                EbookMonitored = resource.EbookMonitored || (mediaType == BookMediaType.Ebook && resource.Monitored),
+                AudiobookMonitored = resource.AudiobookMonitored ?? (mediaType == BookMediaType.Audiobook && resource.Monitored),
+                EbookMonitored = resource.EbookMonitored ?? (mediaType == BookMediaType.Ebook && resource.Monitored),
                 MediaType = mediaType,
                 AnyEditionOk = resource.AnyEditionOk,
                 AddOptions = resource.AddOptions,
@@ -980,14 +980,35 @@ namespace Chaptarr.Api.V1.Books
                 // Do not overwrite it from the API resource (which may carry an edition-specific title).
                 book.ReleaseDate = resource.ReleaseDate;
                 book.Ratings = resource.Ratings ?? new Ratings();
-            // Set monitoring based on book's MediaType
-            if (book.MediaType == BookMediaType.Audiobook)
+            // Native clients may address each side explicitly. Readarr-compatible clients address
+            // only the selected facade side through the legacy Monitored field.
+            if (facadeContext?.MediaType == "audiobook")
             {
                 book.AudiobookMonitored = resource.Monitored;
             }
-            else if (book.MediaType == BookMediaType.Ebook)
+            else if (facadeContext?.MediaType == "ebook")
             {
                 book.EbookMonitored = resource.Monitored;
+            }
+            else
+            {
+                if (resource.AudiobookMonitored.HasValue)
+                {
+                    book.AudiobookMonitored = resource.AudiobookMonitored.Value;
+                }
+                else if (book.MediaType == BookMediaType.Audiobook)
+                {
+                    book.AudiobookMonitored = resource.Monitored;
+                }
+
+                if (resource.EbookMonitored.HasValue)
+                {
+                    book.EbookMonitored = resource.EbookMonitored.Value;
+                }
+                else if (book.MediaType == BookMediaType.Ebook)
+                {
+                    book.EbookMonitored = resource.Monitored;
+                }
             }
             book.AnyEditionOk = resource.AnyEditionOk;
             book.AddOptions = resource.AddOptions;

@@ -1,6 +1,9 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import AuthorMetadataProfilePopoverContent from 'AddAuthor/AuthorMetadataProfilePopoverContent';
+import AuthorMonitoringGatePopoverContent from 'AddAuthor/AuthorMonitoringGatePopoverContent';
+import AuthorMonitoringOptionsPopoverContent from 'AddAuthor/AuthorMonitoringOptionsPopoverContent';
+import AuthorMonitorNewItemsOptionsPopoverContent from 'AddAuthor/AuthorMonitorNewItemsOptionsPopoverContent';
 import Alert from 'Components/Alert';
 import FieldSet from 'Components/FieldSet';
 import Form from 'Components/Form/Form';
@@ -19,6 +22,8 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import Popover from 'Components/Tooltip/Popover';
 import { calibreProfiles, icons, inputTypes, kinds, tooltipPositions } from 'Helpers/Props';
 import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
+import monitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
+import monitorOptions from 'Utilities/Author/monitorOptions';
 import translate from 'Utilities/String/translate';
 import styles from './EditRootFolderModalContent.css';
 
@@ -184,10 +189,12 @@ class EditRootFolderModalContent extends Component {
       outputFormat,
       outputProfile,
       useSsl,
-      audiobookMonitorExisting,
-      audiobookMonitorFuture,
-      ebookMonitorExisting,
-      ebookMonitorFuture,
+      audiobookMonitored,
+      audiobookMonitorExistingMode,
+      audiobookMonitorNewItems,
+      ebookMonitored,
+      ebookMonitorExistingMode,
+      ebookMonitorNewItems,
       audiobookQualityProfileId,
       audiobookMetadataProfileId,
       ebookQualityProfileId,
@@ -377,33 +384,59 @@ class EditRootFolderModalContent extends Component {
                     <div key="audiobook-settings">
                       <FormGroup>
                         <FormLabel>
-                          {translate('MonitorAudiobooks')}
+                          {translate('MonitorAuthorAudiobooks')}
+                          <Popover
+                            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                            title={translate('MonitorAuthorAudiobooks')}
+                            body={<AuthorMonitoringGatePopoverContent />}
+                            position={tooltipPositions.RIGHT}
+                          />
                         </FormLabel>
 
                         <FormInputGroup
-                          type={inputTypes.SELECT}
-                          name="audiobookMonitorExisting"
-                          values={[
-                            { key: 1, value: translate('AllBooks') },
-                            { key: 2, value: translate('SelectBooks') },
-                            { key: 0, value: translate('NoBooks') }
-                          ]}
-                          helpText={translate('RootFolderAudiobookMonitorExistingHelpText')}
-                          {...audiobookMonitorExisting}
+                          type={inputTypes.CHECK}
+                          name="audiobookMonitored"
+                          {...(audiobookMonitored || { value: true })}
                           onChange={onInputChange}
                         />
                       </FormGroup>
 
                       <FormGroup>
                         <FormLabel>
-                          {translate('MonitorFutureAudiobookReleases')}
+                          {translate('InitialBookMonitoring')}
+                          <Popover
+                            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                            title={translate('InitialBookMonitoring')}
+                            body={<AuthorMonitoringOptionsPopoverContent />}
+                            position={tooltipPositions.RIGHT}
+                          />
                         </FormLabel>
 
                         <FormInputGroup
-                          type={inputTypes.CHECK}
-                          name="audiobookMonitorFuture"
-                          helpText={translate('RootFolderAudiobookMonitorFutureHelpText')}
-                          {...audiobookMonitorFuture}
+                          type={inputTypes.SELECT}
+                          name="audiobookMonitorExistingMode"
+                          values={monitorOptions}
+                          {...(audiobookMonitorExistingMode || { value: 'all' })}
+                          onChange={onInputChange}
+                        />
+                      </FormGroup>
+
+                      <FormGroup>
+                        <FormLabel>
+                          {translate('MonitorNewBooks')}
+                          <Popover
+                            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                            title={translate('MonitorNewBooks')}
+                            body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+                            position={tooltipPositions.RIGHT}
+                          />
+                        </FormLabel>
+
+                        <FormInputGroup
+                          type={inputTypes.SELECT}
+                          name="audiobookMonitorNewItems"
+                          values={monitorNewItemsOptions}
+                          {...(audiobookMonitorNewItems || { value: 'none' })}
                           onChange={onInputChange}
                         />
                       </FormGroup>
@@ -496,33 +529,59 @@ class EditRootFolderModalContent extends Component {
                     <>
                       <FormGroup>
                         <FormLabel>
-                          {translate('MonitorEbooks')}
+                          {translate('MonitorAuthorEbooks')}
+                          <Popover
+                            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                            title={translate('MonitorAuthorEbooks')}
+                            body={<AuthorMonitoringGatePopoverContent />}
+                            position={tooltipPositions.RIGHT}
+                          />
                         </FormLabel>
 
                         <FormInputGroup
-                          type={inputTypes.SELECT}
-                          name="ebookMonitorExisting"
-                          values={[
-                            { key: 1, value: translate('AllBooks') },
-                            { key: 2, value: translate('SelectBooks') },
-                            { key: 0, value: translate('NoBooks') }
-                          ]}
-                          helpText={translate('RootFolderEbookMonitorExistingHelpText')}
-                          {...ebookMonitorExisting}
+                          type={inputTypes.CHECK}
+                          name="ebookMonitored"
+                          {...(ebookMonitored || { value: true })}
                           onChange={onInputChange}
                         />
                       </FormGroup>
 
                       <FormGroup>
                         <FormLabel>
-                          {translate('MonitorFutureEbookReleases')}
+                          {translate('InitialBookMonitoring')}
+                          <Popover
+                            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                            title={translate('InitialBookMonitoring')}
+                            body={<AuthorMonitoringOptionsPopoverContent />}
+                            position={tooltipPositions.RIGHT}
+                          />
                         </FormLabel>
 
                         <FormInputGroup
-                          type={inputTypes.CHECK}
-                          name="ebookMonitorFuture"
-                          helpText={translate('RootFolderEbookMonitorFutureHelpText')}
-                          {...ebookMonitorFuture}
+                          type={inputTypes.SELECT}
+                          name="ebookMonitorExistingMode"
+                          values={monitorOptions}
+                          {...(ebookMonitorExistingMode || { value: 'all' })}
+                          onChange={onInputChange}
+                        />
+                      </FormGroup>
+
+                      <FormGroup>
+                        <FormLabel>
+                          {translate('MonitorNewBooks')}
+                          <Popover
+                            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                            title={translate('MonitorNewBooks')}
+                            body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+                            position={tooltipPositions.RIGHT}
+                          />
+                        </FormLabel>
+
+                        <FormInputGroup
+                          type={inputTypes.SELECT}
+                          name="ebookMonitorNewItems"
+                          values={monitorNewItemsOptions}
+                          {...(ebookMonitorNewItems || { value: 'none' })}
                           onChange={onInputChange}
                         />
                       </FormGroup>

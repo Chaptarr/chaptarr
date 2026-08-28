@@ -57,14 +57,14 @@ class AuthorDetailsSeries extends Component {
 
   isSeriesMonitored(series) {
     const { selectedMediaType } = this.props;
-    
+
     // Use media-type specific monitoring field
     if (selectedMediaType === 'audiobook') {
       return series.items.every((book) => book.audiobookMonitored);
     } else if (selectedMediaType === 'ebook') {
       return series.items.every((book) => book.ebookMonitored);
     }
-    
+
     // Fallback: check if any media type is monitored
     return series.items.every((book) => book.audiobookMonitored || book.ebookMonitored);
   }
@@ -124,7 +124,6 @@ class AuthorDetailsSeries extends Component {
       onSortPress,
       isSmallScreen,
       onTableOptionChange,
-      authorMonitored,
       selectedMediaType
     } = this.props;
 
@@ -136,9 +135,7 @@ class AuthorDetailsSeries extends Component {
           <MonitorToggleButton
             size={24}
             monitored={this.isSeriesMonitored(this.props)}
-            isDisabled={!authorMonitored}
             isSaving={this.isSeriesSaving(this.props)}
-            isBinary={true}
             onPress={this.onMonitorSeriesPress}
           />
 
@@ -240,7 +237,6 @@ AuthorDetailsSeries.propTypes = {
   onSortPress: PropTypes.func.isRequired,
   onMonitorBookPress: PropTypes.func.isRequired,
   uiSettings: PropTypes.object.isRequired,
-  authorMonitored: PropTypes.bool.isRequired,
   selectedMediaType: PropTypes.string
 };
 

@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { FolderType, coerceFolderType } from 'Helpers/Props/folderTypes';
+import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
 import { saveAuthor, setAuthorValue } from 'Store/Actions/authorActions';
 import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
@@ -44,10 +44,10 @@ function createMapStateToProps() {
 
       const authorSettings = _.pick(author, [
         'monitored',
-        'audiobookMonitorExisting',
-        'audiobookMonitorFuture',
-        'ebookMonitorExisting',
-        'ebookMonitorFuture',
+        'audiobookMonitored',
+        'audiobookMonitorNewItems',
+        'ebookMonitored',
+        'ebookMonitorNewItems',
         'syncMonitoredAcrossFormats',
         'audiobookQualityProfileId',
         'ebookQualityProfileId',

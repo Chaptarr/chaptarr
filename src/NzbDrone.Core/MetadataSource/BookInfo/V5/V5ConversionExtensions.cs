@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using NLog;
@@ -97,6 +98,29 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
 
             _logger.Warn($"Invalid DateTime format: {dateTimeString}");
             return null;
+        }
+
+        // Canonical author dates are date-only values. Keep parsing strict so
+        // malformed or future provider metadata cannot become local state.
+        public static DateTime? ToValidAuthorDate(this string dateString, DateTime? utcNow = null)
+        {
+            if (string.IsNullOrWhiteSpace(dateString))
+            {
+                return null;
+            }
+
+            if (!DateTime.TryParseExact(
+                    dateString.Trim(),
+                    "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var parsed))
+            {
+                return null;
+            }
+
+            var today = (utcNow ?? DateTime.UtcNow).ToUniversalTime().Date;
+            return parsed.Date <= today ? parsed.Date : null;
         }
 
         // Provider URLs normalization and size validation.

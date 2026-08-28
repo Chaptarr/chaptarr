@@ -974,7 +974,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void clone_creation_should_stamp_copy_slug_unit_key_hash_and_provider_aliases()
+        public void clone_creation_should_stamp_identity_and_preserve_book_monitoring_while_selecting_the_edition()
         {
             var author = new Author
             {
@@ -1049,10 +1049,14 @@ namespace Chaptarr.Core.Test.MediaFiles
             method.Invoke(service, new object[] { new ImportDecision<LocalBook>(localBook), book, author, true });
 
             var insertedBook = bookProxy.InsertedBooks.Single();
+            var insertedEdition = ((EditionServiceProxy)(object)editionService).InsertedEditions.Single();
             Assert.That(insertedBook.TitleSlug, Does.StartWith("best-served-cold_copy_"));
             Assert.That(insertedBook.UnitKeyHash, Is.Not.Null.And.Not.Empty);
             Assert.That(insertedBook.UnitKeyHash, Has.Length.EqualTo(64));
             Assert.That(insertedBook.MediaType, Is.EqualTo(BookMediaType.Ebook));
+            Assert.That(insertedBook.AudiobookMonitored, Is.False);
+            Assert.That(insertedBook.EbookMonitored, Is.False);
+            Assert.That(insertedEdition.Monitored, Is.True);
             Assert.That(insertedBook.RemoteProviderIds, Is.EquivalentTo(book.RemoteProviderIds));
             Assert.That(insertedBook.RemoteProviderIds, Is.Not.SameAs(book.RemoteProviderIds));
         }

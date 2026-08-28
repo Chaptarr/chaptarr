@@ -178,8 +178,8 @@ namespace Chaptarr.Core.Test.Api
             {
                 QualityProfileId = 1,
                 MetadataProfileId = 2,
-                MonitorExisting = 2,
-                MonitorFuture = true
+                MonitorExistingBooks = false,
+                MonitorNewItems = NzbDrone.Core.Books.NewItemMonitorTypes.New
             });
 
             var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { ebookRoot }));
@@ -219,15 +219,15 @@ namespace Chaptarr.Core.Test.Api
             {
                 QualityProfileId = 10,
                 MetadataProfileId = 20,
-                MonitorExisting = 1,
-                MonitorFuture = true
+                MonitorExistingBooks = true,
+                MonitorNewItems = NzbDrone.Core.Books.NewItemMonitorTypes.All
             });
             root.SetEbookSettings(new MediaTypeSettings
             {
                 QualityProfileId = 11,
                 MetadataProfileId = 21,
-                MonitorExisting = 1,
-                MonitorFuture = true
+                MonitorExistingBooks = true,
+                MonitorNewItems = NzbDrone.Core.Books.NewItemMonitorTypes.All
             });
 
             return root;

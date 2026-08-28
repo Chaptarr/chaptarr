@@ -107,7 +107,6 @@ function BookFormatAction(props) {
             className={styles.existingFormat}
             title={translate('OpenFormatOfTitle', { format: label, title })}
             onMouseDown={stopMouseDown}
-            onClick={stopEvent}
           >
             <Icon
               name={icon}
@@ -120,6 +119,7 @@ function BookFormatAction(props) {
         body={body}
         position={tooltipPositions.BOTTOM}
         canFlip={true}
+        isAnchorFocusable={false}
       />
     );
   }

@@ -228,6 +228,8 @@ namespace Chaptarr.Core.Test.ImportLists
 
         private class RootFolderSettingsResolverProxy : DispatchProxy
         {
+            public bool? Monitored { get; set; }
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IRootFolderSettingsResolver.ResolveSettings))
@@ -236,8 +238,9 @@ namespace Chaptarr.Core.Test.ImportLists
                     {
                         QualityProfileId = 1,
                         MetadataProfileId = 1,
-                        MonitorExisting = 2,
-                        MonitorFuture = false,
+                        Monitored = Monitored,
+                        MonitorExistingBooks = false,
+                        MonitorNewItems = NzbDrone.Core.Books.NewItemMonitorTypes.None,
                         IsConfigured = true,
                         Source = "Test"
                     };
@@ -346,6 +349,174 @@ namespace Chaptarr.Core.Test.ImportLists
                        string.Equals(rawProviderId, normalizedCandidate, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(rawProviderId, rawCandidate, StringComparison.OrdinalIgnoreCase);
             }
+        }
+
+        private static ImportListSyncService BuildExistingAuthorService(
+            ImportListDefinition definition,
+            Author author,
+            List<Book> books,
+            List<ImportListItemInfo> items,
+            StubCommandQueueManager commandQueue = null)
+        {
+            var importListFactory = DispatchProxy.Create<IImportListFactory, ImportListFactoryProxy>();
+            ((ImportListFactoryProxy)(object)importListFactory).Definition = definition;
+
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)(object)authorService).Author = author;
+
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Books = books ?? new List<Book>();
+
+            return new ImportListSyncService(
+                importListFactory: importListFactory,
+                importListExclusionService: new StubImportListExclusionService(),
+                listFetcherAndParser: new StubFetchAndParseImportList { Items = items ?? new List<ImportListItemInfo>() },
+                bookInfoProxy: DispatchProxy.Create<NzbDrone.Core.MetadataSource.IProvideBookInfo, ThrowingProxy<NzbDrone.Core.MetadataSource.IProvideBookInfo>>(),
+                authorService: authorService,
+                bookService: bookService,
+                bookRepository: DispatchProxy.Create<IBookRepository, ThrowingProxy<IBookRepository>>(),
+                editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()),
+                authorLibraryService: new StubAuthorLibraryService(),
+                pendingAuthorImportService: DispatchProxy.Create<IPendingAuthorImportService, ThrowingProxy<IPendingAuthorImportService>>(),
+                rootFolderService: DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
+                rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, ThrowingProxy<IRootFolderSettingsResolver>>(),
+                eventAggregator: new StubEventAggregator(),
+                commandQueueManager: commandQueue ?? new StubCommandQueueManager(),
+                logger: LogManager.GetCurrentClassLogger(),
+                bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
+        }
+
+        [Test]
+        public void should_not_enable_an_existing_author_when_the_list_monitor_choice_is_none()
+        {
+            var definition = new ImportListDefinition
+            {
+                Id = 20,
+                Name = "Do not monitor",
+                EnableAutomaticAdd = true,
+                ShouldMonitor = ImportListMonitorType.None,
+                ShouldMonitorExisting = true
+            };
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Existing Author",
+                GoodreadsAuthorId = "gr:562254",
+                AudiobookMonitored = false,
+                EbookMonitored = false,
+                Monitored = false
+            };
+            var books = new List<Book>
+            {
+                new()
+                {
+                    Id = 101,
+                    AuthorId = author.Id,
+                    Author = author,
+                    MediaType = BookMediaType.Audiobook,
+                    AudiobookMonitored = false,
+                    EbookMonitored = false
+                }
+            };
+            var service = BuildExistingAuthorService(
+                definition,
+                author,
+                books,
+                new List<ImportListItemInfo>
+                {
+                    new()
+                    {
+                        ImportListId = definition.Id,
+                        ImportList = definition.Name,
+                        Author = author.Name,
+                        AuthorProviderId = author.GoodreadsAuthorId
+                    }
+                });
+
+            service.Execute(new ImportListSyncCommand(definition.Id));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.AudiobookMonitored, Is.False);
+                Assert.That(author.EbookMonitored, Is.False);
+                Assert.That(author.Monitored, Is.False);
+                Assert.That(books.Single().AudiobookMonitored, Is.False);
+            });
+        }
+
+        [Test]
+        public void should_apply_entire_author_to_existing_book_rows_without_changing_the_author_gate()
+        {
+            var definition = new ImportListDefinition
+            {
+                Id = 21,
+                Name = "Monitor the author",
+                EnableAutomaticAdd = true,
+                ShouldMonitor = ImportListMonitorType.EntireAuthor,
+                ShouldMonitorExisting = true,
+                Settings = new GoodreadsBookshelfImportListSettings
+                {
+                    MonitorAudiobooks = true,
+                    MonitorEbooks = false
+                }
+            };
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Existing Author",
+                GoodreadsAuthorId = "gr:562254",
+                AudiobookMonitored = false,
+                EbookMonitored = false,
+                Monitored = false
+            };
+            var books = new List<Book>
+            {
+                new()
+                {
+                    Id = 101,
+                    AuthorId = author.Id,
+                    Author = author,
+                    MediaType = BookMediaType.Audiobook,
+                    AudiobookMonitored = false,
+                    EbookMonitored = false
+                },
+                new()
+                {
+                    Id = 102,
+                    AuthorId = author.Id,
+                    Author = author,
+                    MediaType = BookMediaType.Ebook,
+                    AudiobookMonitored = false,
+                    EbookMonitored = false
+                }
+            };
+            var service = BuildExistingAuthorService(
+                definition,
+                author,
+                books,
+                new List<ImportListItemInfo>
+                {
+                    new()
+                    {
+                        ImportListId = definition.Id,
+                        ImportList = definition.Name,
+                        Author = author.Name,
+                        AuthorProviderId = author.GoodreadsAuthorId
+                    }
+                });
+
+            service.Execute(new ImportListSyncCommand(definition.Id));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.AudiobookMonitored, Is.False);
+                Assert.That(author.EbookMonitored, Is.False);
+                Assert.That(author.Monitored, Is.False);
+                Assert.That(books.Single(book => book.MediaType == BookMediaType.Audiobook).AudiobookMonitored, Is.True);
+                Assert.That(books.Single(book => book.MediaType == BookMediaType.Ebook).EbookMonitored, Is.False);
+            });
         }
 
         [Test]
@@ -549,8 +720,9 @@ namespace Chaptarr.Core.Test.ImportLists
             Assert.That(author.Monitored, Is.False);
         }
 
-        [Test]
-        public void should_queue_book_search_when_import_list_monitors_existing_book_and_should_search_enabled()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_queue_book_search_when_import_list_makes_existing_book_eligible_and_should_search_enabled(bool bookWasAlreadyMonitored)
         {
             var definition = new ImportListDefinition
             {
@@ -565,7 +737,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     UserId = "12345678",
                     BookshelfIds = new[] { "to-read" },
                     MonitorAudiobooks = true,
-                    MonitorEbooks = false,
+                    MonitorEbooks = true,
                     AudiobookQualityProfileId = 1,
                     EbookQualityProfileId = 1,
                     AudiobookMetadataProfileId = 1,
@@ -580,7 +752,9 @@ namespace Chaptarr.Core.Test.ImportLists
                 Id = 1,
                 Name = "Nate Bargatze",
                 GoodreadsAuthorId = "562254",
-                Monitored = false
+                Monitored = false,
+                AudiobookMonitored = false,
+                EbookMonitored = false
             };
 
             var existingBookId = 100;
@@ -595,7 +769,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     MediaType = BookMediaType.Audiobook,
                     GoodreadsWorkId = "123",
                     Title = "Big Dumb Eyes",
-                    AudiobookMonitored = false,
+                    AudiobookMonitored = bookWasAlreadyMonitored,
                     EbookMonitored = false
                 }
             };
@@ -654,6 +828,9 @@ namespace Chaptarr.Core.Test.ImportLists
             var bookSearch = commandQueue.Pushed.OfType<BookSearchCommand>().ToList();
             Assert.That(bookSearch, Has.Count.EqualTo(1));
             Assert.That(bookSearch.Single().BookIds, Contains.Item(existingBookId));
+            Assert.That(author.AudiobookMonitored, Is.True);
+            Assert.That(author.EbookMonitored, Is.False,
+                "A specific audiobook request must not enable the list's other configured media side.");
         }
 
         [Test]
@@ -734,13 +911,94 @@ namespace Chaptarr.Core.Test.ImportLists
             Assert.That(pendingImportService.Enqueued.Select(x => x.ProviderId), Is.All.EqualTo("gr:562254"));
 
             var finalConfig = pendingImportService.Enqueued.Last().Config;
+            Assert.That(finalConfig.AudiobookMonitored, Is.True);
+            Assert.That(finalConfig.AudiobookMonitorExistingMode, Is.EqualTo(MonitorTypes.SpecificBook));
             Assert.That(finalConfig.AudiobookBooksToMonitor, Is.EqualTo(new[] { "gr:123" }));
+            Assert.That(finalConfig.EbookMonitored, Is.Null);
+            Assert.That(finalConfig.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.None));
             Assert.That(finalConfig.EbookBooksToMonitor, Is.Empty);
             Assert.That(finalConfig.SearchForMissingBooks, Is.True);
 
             var pendingDrain = commandQueue.Pushed.OfType<ProcessPendingImportsCommand>().Single();
             Assert.That(pendingDrain.ContinueUntilEmpty, Is.True);
             Assert.That(pendingDrain.BatchSize, Is.EqualTo(10));
+        }
+
+        [Test]
+        public void should_inherit_the_author_gate_from_the_root_independently_of_initial_book_monitoring()
+        {
+            var definition = new ImportListDefinition
+            {
+                Id = 4,
+                Name = "Goodreads Bookshelves",
+                EnableAutomaticAdd = true,
+                ShouldMonitor = ImportListMonitorType.None,
+                MonitorNewItems = NewItemMonitorTypes.All,
+                Settings = new GoodreadsBookshelfImportListSettings
+                {
+                    UserId = "12345678",
+                    BookshelfIds = new[] { "to-read" },
+                    MonitorAudiobooks = true,
+                    MonitorEbooks = false,
+                    AudiobookQualityProfileId = 1,
+                    EbookQualityProfileId = 1,
+                    AudiobookMetadataProfileId = 1,
+                    EbookMetadataProfileId = 1,
+                    AudiobookRootFolderPath = "/audiobooks",
+                    EbookRootFolderPath = "/ebooks"
+                }
+            };
+
+            var fetcher = new StubFetchAndParseImportList
+            {
+                Items = new List<ImportListItemInfo>
+                {
+                    new()
+                    {
+                        ImportListId = definition.Id,
+                        ImportList = definition.Name,
+                        Author = "Nate Bargatze",
+                        AuthorGoodreadsId = "562254"
+                    }
+                }
+            };
+
+            var importListFactory = DispatchProxy.Create<IImportListFactory, ImportListFactoryProxy>();
+            ((ImportListFactoryProxy)(object)importListFactory).Definition = definition;
+            var pendingImportService = new RecordingPendingAuthorImportService();
+            var rootFolderSettingsResolver = DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsResolverProxy>();
+            ((RootFolderSettingsResolverProxy)(object)rootFolderSettingsResolver).Monitored = true;
+
+            var service = new ImportListSyncService(
+                importListFactory: importListFactory,
+                importListExclusionService: new StubImportListExclusionService(),
+                listFetcherAndParser: fetcher,
+                bookInfoProxy: DispatchProxy.Create<NzbDrone.Core.MetadataSource.IProvideBookInfo, ThrowingProxy<NzbDrone.Core.MetadataSource.IProvideBookInfo>>(),
+                authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                bookService: DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                bookRepository: DispatchProxy.Create<IBookRepository, ThrowingProxy<IBookRepository>>(),
+                editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()),
+                authorLibraryService: new StubAuthorLibraryService(),
+                pendingAuthorImportService: pendingImportService,
+                rootFolderService: DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
+                rootFolderSettingsResolver: rootFolderSettingsResolver,
+                eventAggregator: new StubEventAggregator(),
+                commandQueueManager: new StubCommandQueueManager(),
+                logger: LogManager.GetCurrentClassLogger(),
+                bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
+
+            service.Execute(new ImportListSyncCommand(definition.Id));
+
+            var config = pendingImportService.Enqueued.Last().Config;
+            Assert.Multiple(() =>
+            {
+                Assert.That(config.AudiobookMonitored, Is.True);
+                Assert.That(config.AudiobookMonitorExistingMode, Is.EqualTo(MonitorTypes.None));
+                Assert.That(config.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
+                Assert.That(config.EbookMonitored, Is.Null);
+            });
         }
 
         [Test]

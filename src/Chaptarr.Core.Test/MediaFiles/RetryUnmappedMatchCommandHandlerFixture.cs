@@ -558,7 +558,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(queued.Config.CreateAudiobook, Is.True);
             Assert.That(queued.Config.CreateEbook, Is.False);
             Assert.That(queued.Config.AudiobookRootFolderPath, Is.EqualTo("/books"));
-            Assert.That(queued.Config.AudiobookMonitorExisting, Is.EqualTo(1));
+            Assert.That(queued.Config.AudiobookMonitored, Is.True);
             Assert.That(queued.Config.AudiobookBooksToMonitor, Is.Null);
             Assert.That(queued.Config.SpecificBookProviderIds, Is.Null);
             Assert.That(queued.Config.MonitorMode, Is.Null);
@@ -904,8 +904,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(add.Config.EbookRootFolderPath, Is.EqualTo("/books"));
                     Assert.That(add.Config.EbookQualityProfileId, Is.EqualTo(3));
                     Assert.That(add.Config.EbookMetadataProfileId, Is.EqualTo(4));
-                    Assert.That(add.Config.EbookMonitorExisting, Is.EqualTo(0));
-                    Assert.That(add.Config.EbookMonitorFuture, Is.False);
+                    Assert.That(add.Config.EbookMonitored, Is.False);
+                    Assert.That(add.Config.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
                 });
             }
             else
@@ -915,8 +915,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(add.Config.AudiobookRootFolderPath, Is.EqualTo("/books"));
                     Assert.That(add.Config.AudiobookQualityProfileId, Is.EqualTo(1));
                     Assert.That(add.Config.AudiobookMetadataProfileId, Is.EqualTo(2));
-                    Assert.That(add.Config.AudiobookMonitorExisting, Is.EqualTo(1));
-                    Assert.That(add.Config.AudiobookMonitorFuture, Is.True);
+                    Assert.That(add.Config.AudiobookMonitored, Is.True);
+                    Assert.That(add.Config.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
                 });
             }
 
@@ -1228,8 +1228,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 QualityProfileId = 1,
                 MetadataProfileId = 2,
-                MonitorExisting = 1,
-                MonitorFuture = true,
+                Monitored = true,
+                MonitorExistingBooks = true,
+                MonitorNewItems = NewItemMonitorTypes.All,
                 Tags = new List<int> { 8 }
             });
 
@@ -1249,8 +1250,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 QualityProfileId = 1,
                 MetadataProfileId = 2,
-                MonitorExisting = 1,
-                MonitorFuture = true,
+                Monitored = true,
+                MonitorExistingBooks = true,
+                MonitorNewItems = NewItemMonitorTypes.All,
                 Tags = new List<int> { 8 }
             });
 
@@ -1258,8 +1260,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 QualityProfileId = 3,
                 MetadataProfileId = 4,
-                MonitorExisting = 0,
-                MonitorFuture = false,
+                Monitored = false,
+                MonitorExistingBooks = false,
+                MonitorNewItems = NewItemMonitorTypes.None,
                 Tags = new List<int> { 9 }
             });
 

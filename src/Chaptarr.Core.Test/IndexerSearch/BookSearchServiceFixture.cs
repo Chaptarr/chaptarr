@@ -35,74 +35,47 @@ namespace Chaptarr.Core.Test.IndexerSearch
             });
 
             Assert.That(releaseSearch.BookSearchIds, Is.EqualTo(new List<int> { 5792 }));
+            Assert.That(releaseSearch.AllowUnmonitoredValues, Is.EqualTo(new[] { true }));
         }
 
         [Test]
-        public void automatic_book_search_should_skip_a_book_on_a_paused_media_side()
+        public void automatic_exact_book_search_should_not_bypass_monitoring()
         {
             var releaseSearch = new RecordingReleaseSearch();
-            var bookService = CreateBookService(new Book
+            var subject = new BookSearchService(
+                releaseSearch,
+                null,
+                null,
+                null,
+                new EmptyDecisionProcessor(),
+                LogManager.GetLogger("BookSearchServiceFixture"));
+
+            subject.Execute(new BookSearchCommand(new List<int> { 5792 })
             {
-                Id = 42,
-                MediaType = BookMediaType.Audiobook,
-                AudiobookMonitored = true,
-                Author = new Author
-                {
-                    Monitored = true,
-                    AudiobookMonitorExisting = 0,
-                    AudiobookMonitorFuture = false,
-                    EbookMonitorExisting = 2
-                }
+                Trigger = CommandTrigger.Unspecified
             });
-            var subject = CreateSubject(releaseSearch, bookService);
 
-            subject.Execute(new BookSearchCommand(new List<int> { 42 }));
-
-            Assert.That(releaseSearch.BookSearchIds, Is.Empty);
+            Assert.That(releaseSearch.AllowUnmonitoredValues, Is.EqualTo(new[] { false }));
         }
 
         [Test]
-        public void automatic_book_search_should_allow_selected_monitoring_for_the_book_media_side()
+        public void manual_multi_book_search_should_not_bypass_monitoring()
         {
             var releaseSearch = new RecordingReleaseSearch();
-            var bookService = CreateBookService(new Book
+            var subject = new BookSearchService(
+                releaseSearch,
+                null,
+                null,
+                null,
+                new EmptyDecisionProcessor(),
+                LogManager.GetLogger("BookSearchServiceFixture"));
+
+            subject.Execute(new BookSearchCommand(new List<int> { 5792, 5793 })
             {
-                Id = 44,
-                MediaType = BookMediaType.Audiobook,
-                AudiobookMonitored = true,
-                Author = new Author
-                {
-                    AudiobookMonitorExisting = 2,
-                    AudiobookMonitorFuture = false
-                }
+                Trigger = CommandTrigger.Manual
             });
-            var subject = CreateSubject(releaseSearch, bookService);
 
-            subject.Execute(new BookSearchCommand(new List<int> { 44 }));
-
-            Assert.That(releaseSearch.BookSearchIds, Is.EqualTo(new List<int> { 44 }));
-        }
-
-        [Test]
-        public void automatic_book_search_should_allow_future_monitoring_for_the_book_media_side()
-        {
-            var releaseSearch = new RecordingReleaseSearch();
-            var bookService = CreateBookService(new Book
-            {
-                Id = 43,
-                MediaType = BookMediaType.Audiobook,
-                AudiobookMonitored = true,
-                Author = new Author
-                {
-                    AudiobookMonitorExisting = 0,
-                    AudiobookMonitorFuture = true
-                }
-            });
-            var subject = CreateSubject(releaseSearch, bookService);
-
-            subject.Execute(new BookSearchCommand(new List<int> { 43 }));
-
-            Assert.That(releaseSearch.BookSearchIds, Is.EqualTo(new List<int> { 43 }));
+            Assert.That(releaseSearch.AllowUnmonitoredValues, Is.EqualTo(new[] { false, false }));
         }
 
         [Test]
@@ -146,6 +119,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             Assert.That(bookServiceProxy.AuthorCatalogRequests, Is.EqualTo(new[] { 10, 20 }));
             Assert.That(releaseSearch.BookSearchBooks.Select(book => book.Id), Is.EqualTo(new[] { 102, 101, 201 }));
             Assert.That(releaseSearch.AuthorCatalogSizes, Is.EqualTo(new[] { 3, 3, 1 }));
+            Assert.That(releaseSearch.AllowUnmonitoredValues, Is.All.EqualTo(false));
         }
 
         [Test]
@@ -263,27 +237,8 @@ namespace Chaptarr.Core.Test.IndexerSearch
             Assert.That(new CutoffUnmetBookSearchCommand(10).IsTypeExclusive, Is.False);
         }
 
-        private static BookSearchService CreateSubject(RecordingReleaseSearch releaseSearch, IBookService bookService)
-        {
-            return new BookSearchService(
-                releaseSearch,
-                bookService,
-                null,
-                null,
-                new EmptyDecisionProcessor(),
-                LogManager.GetLogger("BookSearchServiceFixture"));
-        }
-
-        private static IBookService CreateBookService(params Book[] books)
-        {
-            var service = DispatchProxy.Create<IBookService, BookServiceProxy>();
-            ((BookServiceProxy)(object)service).Books = books.ToList();
-            return service;
-        }
-
         private class BookServiceProxy : DispatchProxy
         {
-            public List<Book> Books { get; set; } = new();
             public List<BookSearchTarget> SearchTargets { get; set; } = new();
             public Func<BookMediaType?, int?, List<BookSearchTarget>> MissingTargetSelector { get; set; }
             public Dictionary<int, List<Book>> AuthorBooks { get; } = new();
@@ -291,12 +246,6 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod.Name == nameof(IBookService.GetBooks))
-                {
-                    var ids = ((IEnumerable<int>)args[0]).ToHashSet();
-                    return Books.Where(book => ids.Contains(book.Id)).ToList();
-                }
-
                 if (targetMethod.Name == nameof(IBookService.GetMissingBookSearchTargets))
                 {
                     return (MissingTargetSelector?.Invoke((BookMediaType?)args[0], (int?)args[1]) ?? SearchTargets).ToList();
@@ -318,24 +267,28 @@ namespace Chaptarr.Core.Test.IndexerSearch
             public List<int> BookSearchIds { get; } = new();
             public List<Book> BookSearchBooks { get; } = new();
             public List<int> AuthorCatalogSizes { get; } = new();
+            public List<bool> AllowUnmonitoredValues { get; } = new();
 
-            public Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+            public Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
             {
                 BookSearchIds.Add(bookId);
+                AllowUnmonitoredValues.Add(allowUnmonitored);
                 return Task.FromResult(new List<DownloadDecision>());
             }
 
-            public Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+            public Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
             {
                 BookSearchBooks.Add(book);
                 AuthorCatalogSizes.Add(book.Author?.Books?.Count ?? 0);
+                AllowUnmonitoredValues.Add(allowUnmonitored);
                 return Task.FromResult(new List<DownloadDecision>());
             }
 
-            public Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+            public Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
             {
                 BookSearchBooks.Add(book);
                 AuthorCatalogSizes.Add(authorCatalog?.Count ?? 0);
+                AllowUnmonitoredValues.Add(allowUnmonitored);
                 return Task.FromResult(new List<DownloadDecision>());
             }
 

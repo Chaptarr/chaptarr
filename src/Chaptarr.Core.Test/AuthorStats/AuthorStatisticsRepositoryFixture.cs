@@ -78,6 +78,50 @@ namespace Chaptarr.Core.Test.AuthorStats
         }
 
         [Test]
+        public void should_use_monitored_edition_date_and_file_escape_with_book_date_fallback()
+        {
+            WithRepository((repository, connectionString) =>
+            {
+                using (var connection = new SqliteConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"
+INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"", ""ReleaseDate"") VALUES
+    (30, 1, 0, 1, 0, '2000-01-01'),
+    (31, 1, 0, 1, 0, '2099-01-01'),
+    (32, 1, 0, 1, 0, '2000-01-01'),
+    (33, 1, 0, 1, 0, '2099-01-01');
+INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"", ""ReleaseDate"") VALUES
+    (300, 30, 1, '2099-01-01'),
+    (310, 31, 0, '2099-01-01'),
+    (320, 32, 0, NULL),
+    (330, 33, 1, '2000-01-01');
+INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
+    (3000, 300, 50);
+");
+                }
+
+                var stats = repository.AuthorStatistics(1, "audiobook").ToDictionary(stat => stat.BookId);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(stats[30].TotalBookCount, Is.EqualTo(1));
+                    Assert.That(stats[30].BookCount, Is.EqualTo(1), "A file makes a future monitored edition count as available");
+                    Assert.That(stats[30].AvailableBookCount, Is.EqualTo(1));
+                    Assert.That(stats[31].TotalBookCount, Is.EqualTo(1));
+                    Assert.That(stats[31].BookCount, Is.Zero, "A future book date is not yet in the progress denominator");
+                    Assert.That(stats[31].AvailableBookCount, Is.Zero);
+                    Assert.That(stats[32].TotalBookCount, Is.EqualTo(1));
+                    Assert.That(stats[32].BookCount, Is.EqualTo(1), "The book date is used when no monitored edition exists");
+                    Assert.That(stats[32].AvailableBookCount, Is.Zero);
+                    Assert.That(stats[33].TotalBookCount, Is.EqualTo(1));
+                    Assert.That(stats[33].BookCount, Is.EqualTo(1), "The monitored edition date takes precedence over the book date");
+                    Assert.That(stats[33].AvailableBookCount, Is.Zero);
+                });
+            });
+        }
+
+        [Test]
         public void aggregate_should_count_file_bearing_books_once()
         {
             WithRepository((repository, _) =>
@@ -89,6 +133,28 @@ namespace Chaptarr.Core.Test.AuthorStats
                     Assert.That(aggregate.BookCount, Is.EqualTo(2));
                     Assert.That(aggregate.BookFileCount, Is.EqualTo(3));
                     Assert.That(aggregate.SizeOnDisk, Is.EqualTo(60));
+                });
+            });
+        }
+
+        [Test]
+        public void progress_should_preserve_book_row_selections_while_the_author_side_is_paused()
+        {
+            WithRepository((repository, connectionString) =>
+            {
+                using (var connection = new SqliteConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"UPDATE ""Authors"" SET ""AudiobookMonitored"" = 0, ""EbookMonitored"" = NULL WHERE ""Id"" = 1;");
+                }
+
+                var stats = repository.AuthorStatistics(1).ToDictionary(stat => stat.BookId);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(stats[10].TotalBookCount, Is.EqualTo(1), "progress describes the saved audiobook row selection");
+                    Assert.That(stats[11].TotalBookCount, Is.EqualTo(1), "an unconfigured author side does not erase its saved ebook row selection");
+                    Assert.That(stats[10].AvailableBookCount, Is.EqualTo(1));
                 });
             });
         }
@@ -110,6 +176,26 @@ namespace Chaptarr.Core.Test.AuthorStats
             });
         }
 
+        [Test]
+        public void should_use_the_composite_index_for_each_monitored_edition_release_date_lookup()
+        {
+            WithRepository((repository, connectionString) =>
+            {
+                using var connection = new SqliteConnection(connectionString);
+                connection.Open();
+
+                var sql = AuthorStatisticsRepository.BuildBaseSql(DatabaseType.SQLite, aggregate: false);
+                var plan = connection.Query<SqliteQueryPlanRow>(
+                    "EXPLAIN QUERY PLAN " + sql,
+                    new { currentDate = DateTime.UtcNow }).ToList();
+
+                Assert.That(
+                    plan.Count(row => row.Detail.Contains("IX_Editions_BookId_Monitored_Id")),
+                    Is.EqualTo(2),
+                    "The release-date expression appears twice and both lookups must use the BookId-first composite index");
+            });
+        }
+
         private static void WithRepository(Action<AuthorStatisticsRepository, string> action)
         {
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"author_stats_{Guid.NewGuid():N}.db");
@@ -126,19 +212,23 @@ namespace Chaptarr.Core.Test.AuthorStats
                     connection.Open();
                     connection.Execute(@"
 CREATE TABLE ""Authors"" (
-    ""Id"" INTEGER PRIMARY KEY
+    ""Id"" INTEGER PRIMARY KEY,
+    ""AudiobookMonitored"" INTEGER NULL,
+    ""EbookMonitored"" INTEGER NULL
 );
 CREATE TABLE ""Books"" (
     ""Id"" INTEGER PRIMARY KEY,
     ""AuthorId"" INTEGER NOT NULL,
     ""MediaType"" INTEGER NOT NULL,
     ""AudiobookMonitored"" INTEGER NOT NULL,
-    ""EbookMonitored"" INTEGER NOT NULL
+    ""EbookMonitored"" INTEGER NOT NULL,
+    ""ReleaseDate"" TEXT NULL
 );
 CREATE TABLE ""Editions"" (
     ""Id"" INTEGER PRIMARY KEY,
     ""BookId"" INTEGER NOT NULL,
-    ""Monitored"" INTEGER NOT NULL
+    ""Monitored"" INTEGER NOT NULL,
+    ""ReleaseDate"" TEXT NULL
 );
 CREATE TABLE ""BookFiles"" (
     ""Id"" INTEGER PRIMARY KEY,
@@ -146,7 +236,12 @@ CREATE TABLE ""BookFiles"" (
     ""Size"" INTEGER NOT NULL
 );
 
-INSERT INTO ""Authors"" (""Id"") VALUES (1), (2);
+CREATE INDEX ""IX_Editions_BookId_Monitored_Id""
+    ON ""Editions"" (""BookId"", ""Monitored"", ""Id"");
+
+INSERT INTO ""Authors"" (""Id"", ""AudiobookMonitored"", ""EbookMonitored"") VALUES
+    (1, 1, 1),
+    (2, 1, 1);
 INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"") VALUES
     (10, 1, 0, 1, 0),
     (11, 1, 1, 0, 1),
@@ -187,6 +282,11 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
                 {
                 }
             }
+        }
+
+        private sealed class SqliteQueryPlanRow
+        {
+            public string Detail { get; set; }
         }
     }
 }

@@ -193,21 +193,24 @@ namespace Chaptarr.Api.V1.PendingImport
                 return BadRequest(new ApiErrorResource { Error = errorMessage });
             }
 
+            var audiobookSettings = ResolveMediaTypeSettings(request.Audiobook);
+            var ebookSettings = ResolveMediaTypeSettings(request.Ebook);
             var config = new MonitoringConfig
             {
                 QueueIfUnavailable = true,
                 AuthorName = request.AuthorName,
                 RequestedBy = request.RequestedBy ?? "3rdPartyApp",
-                CreateAudiobook = request.Audiobook?.Monitor ?? false,
-                CreateEbook = request.Ebook?.Monitor ?? false,
+                CreateAudiobook = audiobookSettings != null,
+                CreateEbook = ebookSettings != null,
                 Tags = request.Tags
             };
 
             // Set audiobook configuration
-            if (request.Audiobook != null && request.Audiobook.Monitor)
+            if (audiobookSettings != null)
             {
-                config.AudiobookMonitorExisting = request.Audiobook.MonitorExisting; // Already int
-                config.AudiobookMonitorFuture = request.Audiobook.MonitorFuture; // Boolean
+                config.AudiobookMonitored = audiobookSettings.Monitored;
+                config.AudiobookMonitorNewItems = audiobookSettings.MonitorNewItems;
+                config.AudiobookMonitorExistingMode = audiobookSettings.MonitorExistingMode;
                 config.AudiobookQualityProfileId = request.Audiobook.QualityProfileId;
                 config.AudiobookMetadataProfileId = request.Audiobook.MetadataProfileId;
                 config.AudiobookRootFolderPath = request.Audiobook.RootFolderPath;
@@ -215,10 +218,11 @@ namespace Chaptarr.Api.V1.PendingImport
             }
 
             // Set ebook configuration
-            if (request.Ebook != null && request.Ebook.Monitor)
+            if (ebookSettings != null)
             {
-                config.EbookMonitorExisting = request.Ebook.MonitorExisting; // Already int
-                config.EbookMonitorFuture = request.Ebook.MonitorFuture; // Boolean
+                config.EbookMonitored = ebookSettings.Monitored;
+                config.EbookMonitorNewItems = ebookSettings.MonitorNewItems;
+                config.EbookMonitorExistingMode = ebookSettings.MonitorExistingMode;
                 config.EbookQualityProfileId = request.Ebook.QualityProfileId;
                 config.EbookMetadataProfileId = request.Ebook.MetadataProfileId;
                 config.EbookRootFolderPath = request.Ebook.RootFolderPath;
@@ -240,6 +244,56 @@ namespace Chaptarr.Api.V1.PendingImport
                 ProviderId = normalizedProviderId,
                 Status = "Pending"
             });
+        }
+
+        private static MediaTypeSettings ResolveMediaTypeSettings(MediaTypeConfig request)
+        {
+            if (request == null)
+            {
+                return null;
+            }
+
+            var hasExactBookRequest = request.BooksToMonitor?.Any() == true;
+            var usesLegacyContract = request.MonitorExisting.HasValue ||
+                                     request.MonitorFuture.HasValue;
+
+            // The published contract used Monitor=false to mean that the media side
+            // was not requested at all. Preserve that meaning for legacy-shaped input.
+            if (usesLegacyContract)
+            {
+                if (!request.Monitor)
+                {
+                    return null;
+                }
+
+                var legacySettings = new MediaTypeSettings();
+                legacySettings.ApplyLegacyMonitoringSettings(
+                    request.MonitorExisting ?? 0,
+                    request.MonitorFuture ?? false);
+                if (request.MonitorExisting == 2)
+                {
+                    legacySettings.MonitorExistingMode = MonitorTypes.SpecificBook;
+                }
+
+                return legacySettings;
+            }
+
+            var configuresMediaSide = request.Monitor ||
+                                      hasExactBookRequest ||
+                                      request.MonitorExistingMode.HasValue ||
+                                      request.MonitorNewItems.HasValue;
+            if (!configuresMediaSide)
+            {
+                return null;
+            }
+
+            return new MediaTypeSettings
+            {
+                Monitored = request.Monitor || hasExactBookRequest,
+                MonitorNewItems = request.MonitorNewItems,
+                MonitorExistingMode = request.MonitorExistingMode ??
+                    (hasExactBookRequest ? MonitorTypes.SpecificBook : null)
+            };
         }
 
         [HttpPost("{id}/retry")]
@@ -275,8 +329,10 @@ namespace Chaptarr.Api.V1.PendingImport
     public class MediaTypeConfig
     {
         public bool Monitor { get; set; }
-        public int MonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool MonitorFuture { get; set; } // true=monitor, false=don't monitor
+        public int? MonitorExisting { get; set; }
+        public bool? MonitorFuture { get; set; }
+        public NewItemMonitorTypes? MonitorNewItems { get; set; }
+        public MonitorTypes? MonitorExistingMode { get; set; }
         public int? QualityProfileId { get; set; }
         public int? MetadataProfileId { get; set; }
         public string RootFolderPath { get; set; }

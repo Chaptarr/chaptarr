@@ -47,18 +47,21 @@ namespace NzbDrone.Core.Books
         Dictionary<int, List<int>> GetAllAuthorTags();
         List<Author> AllForTag(int tagId);
         Author UpdateAuthor(Author author);
-        Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, 
-            int? audiobookMonitorExisting, bool? audiobookMonitorFuture,
+        Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId,
+            bool? audiobookMonitored, NewItemMonitorTypes? audiobookMonitorNewItems,
             int? ebookQualityProfileId, int? ebookMetadataProfileId,
-            int? ebookMonitorExisting, bool? ebookMonitorFuture,
-            string rootFolderPath);
+            bool? ebookMonitored, NewItemMonitorTypes? ebookMonitorNewItems,
+            string rootFolderPath)
+        {
+            throw new NotSupportedException();
+        }
         List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder);
         Dictionary<int, string> AllAuthorPaths();
         bool AuthorPathExists(string folder);
         void RemoveAddOptions(Author author);
         void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored);
         // The default exists only for lightweight test doubles. Every production implementation must override it.
-        void PromoteMediaTypeMonitoringToSelected(int authorId, string mediaType)
+        void EnsureMediaTypeMonitoring(int authorId, string mediaType)
         {
             throw new NotSupportedException();
         }
@@ -84,7 +87,6 @@ namespace NzbDrone.Core.Books
 	        private readonly IBookRepository _bookRepository;
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IProviderAliasService _providerAliasService;
-            private const int SelectedMonitorExisting = 2;
 
         // Single-author cache fields
         private volatile int _currentAuthorId = -1;
@@ -642,12 +644,9 @@ namespace NzbDrone.Core.Books
                     ApplyRootFolderDefaultsForUnsetMediaTypeSettings(author, rootFolders);
                     ApplySyncMonitoredAcrossFormatsDefaultWhenAuthorBecomesEligible(author, storedAuthor, rootFolders);
                     NormalizeOrValidateSyncMonitoredAcrossFormats(author, storedAuthor, rootFolders);
-                    SeedSelectedMonitorExistingWhenSyncEnabled(author, storedAuthor, rootFolders);
                 }
 
-	            // Keep the legacy Author.Monitored flag consistent with the per-media-type monitoring settings.
-	            // This prevents drift when clients send stale values (e.g. editing monitor-existing tri-state without
-	            // explicitly changing Author.Monitored).
+	            // Keep the legacy aggregate projection consistent with the per-media-type gates.
 	            author.Monitored = author.IsMonitoredFromMediaSettings();
 
 	            // Keep per-media-type and primary paths consistent with configured root folders.
@@ -674,10 +673,10 @@ namespace NzbDrone.Core.Books
 	            return updatedAuthor;
 	        }
 
-        public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, 
-            int? audiobookMonitorExisting, bool? audiobookMonitorFuture,
+        public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId,
+            bool? audiobookMonitored, NewItemMonitorTypes? audiobookMonitorNewItems,
             int? ebookQualityProfileId, int? ebookMetadataProfileId,
-            int? ebookMonitorExisting, bool? ebookMonitorFuture,
+            bool? ebookMonitored, NewItemMonitorTypes? ebookMonitorNewItems,
             string rootFolderPath)
         {
             var settingsChanged = false;
@@ -699,15 +698,15 @@ namespace NzbDrone.Core.Books
                     settingsChanged = true;
                 }
 
-                if (!author.AudiobookMonitorExisting.HasValue && audiobookMonitorExisting.HasValue)
+                if (!author.AudiobookMonitored.HasValue && audiobookMonitored.HasValue)
                 {
-                    author.AudiobookMonitorExisting = audiobookMonitorExisting;
+                    author.AudiobookMonitored = audiobookMonitored;
                     settingsChanged = true;
                 }
 
-                if (!author.AudiobookMonitorFuture.HasValue && audiobookMonitorFuture.HasValue)
+                if (!author.AudiobookMonitorNewItems.HasValue && audiobookMonitorNewItems.HasValue)
                 {
-                    author.AudiobookMonitorFuture = audiobookMonitorFuture;
+                    author.AudiobookMonitorNewItems = audiobookMonitorNewItems;
                     settingsChanged = true;
                 }
 
@@ -736,15 +735,15 @@ namespace NzbDrone.Core.Books
                     settingsChanged = true;
                 }
 
-                if (!author.EbookMonitorExisting.HasValue && ebookMonitorExisting.HasValue)
+                if (!author.EbookMonitored.HasValue && ebookMonitored.HasValue)
                 {
-                    author.EbookMonitorExisting = ebookMonitorExisting;
+                    author.EbookMonitored = ebookMonitored;
                     settingsChanged = true;
                 }
 
-                if (!author.EbookMonitorFuture.HasValue && ebookMonitorFuture.HasValue)
+                if (!author.EbookMonitorNewItems.HasValue && ebookMonitorNewItems.HasValue)
                 {
-                    author.EbookMonitorFuture = ebookMonitorFuture;
+                    author.EbookMonitorNewItems = ebookMonitorNewItems;
                     settingsChanged = true;
                 }
 
@@ -785,7 +784,6 @@ namespace NzbDrone.Core.Books
 
                     ApplyRootFolderDefaultsForUnsetMediaTypeSettings(s, rootFolders);
                     NormalizeOrValidateSyncMonitoredAcrossFormats(s, storedAuthors.GetValueOrDefault(s.Id), rootFolders);
-                    SeedSelectedMonitorExistingWhenSyncEnabled(s, storedAuthors.GetValueOrDefault(s.Id), rootFolders);
                     EnsureAuthorDbFields(s, ensurePaths: false, requirePath: false);
 
 	                // Keep legacy Author.Monitored consistent with per-media settings for bulk updates too.
@@ -920,8 +918,8 @@ namespace NzbDrone.Core.Books
                 var needsAudiobookDefaults =
                     IsMissingProfileId(author.AudiobookQualityProfileId) ||
                     IsMissingProfileId(author.AudiobookMetadataProfileId) ||
-                    !author.AudiobookMonitorExisting.HasValue ||
-                    !author.AudiobookMonitorFuture.HasValue;
+                    !author.AudiobookMonitored.HasValue ||
+                    !author.AudiobookMonitorNewItems.HasValue;
 
                 if (needsAudiobookDefaults)
                 {
@@ -940,14 +938,14 @@ namespace NzbDrone.Core.Books
                             author.AudiobookMetadataProfileId = settings.MetadataProfileId;
                         }
 
-                        if (!author.AudiobookMonitorExisting.HasValue && settings.MonitorExisting.HasValue)
+                        if (!author.AudiobookMonitored.HasValue && settings.Monitored.HasValue)
                         {
-                            author.AudiobookMonitorExisting = settings.MonitorExisting;
+                            author.AudiobookMonitored = settings.Monitored;
                         }
 
-                        if (!author.AudiobookMonitorFuture.HasValue && settings.MonitorFuture.HasValue)
+                        if (!author.AudiobookMonitorNewItems.HasValue && settings.MonitorNewItems.HasValue)
                         {
-                            author.AudiobookMonitorFuture = settings.MonitorFuture;
+                            author.AudiobookMonitorNewItems = settings.MonitorNewItems;
                         }
                     }
                 }
@@ -958,8 +956,8 @@ namespace NzbDrone.Core.Books
                 var needsEbookDefaults =
                     IsMissingProfileId(author.EbookQualityProfileId) ||
                     IsMissingProfileId(author.EbookMetadataProfileId) ||
-                    !author.EbookMonitorExisting.HasValue ||
-                    !author.EbookMonitorFuture.HasValue;
+                    !author.EbookMonitored.HasValue ||
+                    !author.EbookMonitorNewItems.HasValue;
 
                 if (needsEbookDefaults)
                 {
@@ -978,14 +976,14 @@ namespace NzbDrone.Core.Books
                             author.EbookMetadataProfileId = settings.MetadataProfileId;
                         }
 
-                        if (!author.EbookMonitorExisting.HasValue && settings.MonitorExisting.HasValue)
+                        if (!author.EbookMonitored.HasValue && settings.Monitored.HasValue)
                         {
-                            author.EbookMonitorExisting = settings.MonitorExisting;
+                            author.EbookMonitored = settings.Monitored;
                         }
 
-                        if (!author.EbookMonitorFuture.HasValue && settings.MonitorFuture.HasValue)
+                        if (!author.EbookMonitorNewItems.HasValue && settings.MonitorNewItems.HasValue)
                         {
-                            author.EbookMonitorFuture = settings.MonitorFuture;
+                            author.EbookMonitorNewItems = settings.MonitorNewItems;
                         }
                     }
                 }
@@ -1047,34 +1045,6 @@ namespace NzbDrone.Core.Books
             {
                 new ValidationFailure(nameof(Author.SyncMonitoredAcrossFormats), "Sync monitored across formats requires both audiobook and ebook root folders to be configured for this author.")
             });
-        }
-
-        private void SeedSelectedMonitorExistingWhenSyncEnabled(Author author, Author storedAuthor, List<RootFolder> rootFolders)
-        {
-            if (author?.SyncMonitoredAcrossFormats != true ||
-                storedAuthor == null ||
-                storedAuthor.SyncMonitoredAcrossFormats == true ||
-                !HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders))
-            {
-                return;
-            }
-
-            var audiobookTracked = (author.AudiobookMonitorExisting ?? 0) > 0;
-            var ebookTracked = (author.EbookMonitorExisting ?? 0) > 0;
-
-            // This is intentionally a one-time off->on bridge. Sync should have a valid
-            // target media type to reconcile into, but a later explicit "None" must remain
-            // authoritative and continue blocking cross-format monitoring.
-            if (audiobookTracked && !ebookTracked)
-            {
-                author.EbookMonitorExisting = SelectedMonitorExisting;
-                _logger.Debug("Set ebook MonitorExisting=Selected for author {0} when enabling SyncMonitoredAcrossFormats", author.Name);
-            }
-            else if (ebookTracked && !audiobookTracked)
-            {
-                author.AudiobookMonitorExisting = SelectedMonitorExisting;
-                _logger.Debug("Set audiobook MonitorExisting=Selected for author {0} when enabling SyncMonitoredAcrossFormats", author.Name);
-            }
         }
 
         private void ApplySyncMonitoredAcrossFormatsDefaultWhenAuthorBecomesEligible(Author author, Author storedAuthor, List<RootFolder> rootFolders)
@@ -1146,13 +1116,31 @@ namespace NzbDrone.Core.Books
 
 	        public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored)
 	        {
-	            _bookRepository.SetMonitoringForAuthorBooks(authorId, mediaType, monitored);
+	            var isAudiobook = string.Equals(mediaType, "audiobook", StringComparison.OrdinalIgnoreCase);
+	            var isEbook = string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase);
+	            if (!isAudiobook && !isEbook)
+	            {
+	                throw new ArgumentException($"Unknown media type '{mediaType}'", nameof(mediaType));
+	            }
+
+	            var author = GetAuthor(authorId);
+            if (isAudiobook)
+            {
+                author.AudiobookMonitored = monitored;
+            }
+            else
+            {
+                author.EbookMonitored = monitored;
+            }
+
+            author.Monitored = author.IsMonitoredFromMediaSettings();
+            _authorRepository.Update(author);
 	            _cache.Clear();
 	            _authorByIdCache.Remove(authorId.ToString());
-	            _eventAggregator.PublishEvent(new AuthorEditedEvent(GetAuthor(authorId), GetAuthor(authorId)));
+	            _eventAggregator.PublishEvent(new AuthorEditedEvent(author, author));
 	        }
 
-        public void PromoteMediaTypeMonitoringToSelected(int authorId, string mediaType)
+        public void EnsureMediaTypeMonitoring(int authorId, string mediaType)
         {
             var isAudiobook = string.Equals(mediaType, "audiobook", StringComparison.OrdinalIgnoreCase);
             var isEbook = string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase);
@@ -1162,23 +1150,24 @@ namespace NzbDrone.Core.Books
             }
 
             var author = GetAuthor(authorId);
-            var currentMode = isAudiobook
-                ? author.AudiobookMonitorExisting
-                : author.EbookMonitorExisting;
+            var currentMonitoring = isAudiobook
+                ? author.AudiobookMonitored
+                : author.EbookMonitored;
 
-            // Preserve an existing All or Selected choice. Only None/unconfigured is promoted.
-            if ((currentMode ?? 0) > 0)
+            // An explicit book request enables only the named side. The opposite side and
+            // all book-row selections remain unchanged.
+            if (currentMonitoring == true)
             {
                 return;
             }
 
             if (isAudiobook)
             {
-                author.AudiobookMonitorExisting = SelectedMonitorExisting;
+                author.AudiobookMonitored = true;
             }
             else
             {
-                author.EbookMonitorExisting = SelectedMonitorExisting;
+                author.EbookMonitored = true;
             }
 
             author.Monitored = author.IsMonitoredFromMediaSettings();

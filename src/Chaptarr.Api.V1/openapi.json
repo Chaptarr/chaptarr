@@ -12405,6 +12405,12 @@
           "monitored": {
             "type": "boolean"
           },
+          "audiobookMonitor": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "ebookMonitor": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
           "searchForMissingBooks": {
             "type": "boolean"
           }
@@ -12441,16 +12447,29 @@
             },
             "nullable": true
           },
-          "monitorAllBooksByAllAuthors": {
-            "type": "boolean"
-          },
-          "monitorExisting": {
+          "monitor": {
             "type": "string",
             "nullable": true
           },
-          "monitorFuture": {
+          "audiobookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "ebookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "audiobookMonitored": {
             "type": "boolean",
             "nullable": true
+          },
+          "audiobookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "ebookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "ebookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
           "rootFolderPath": {
             "type": "string",
@@ -12651,27 +12670,19 @@
             },
             "nullable": true
           },
-          "monitored": {
+          "audiobookMonitored": {
             "type": "boolean",
             "nullable": true
           },
-          "audiobookMonitorExisting": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
+          "audiobookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
-          "audiobookMonitorFuture": {
+          "ebookMonitored": {
             "type": "boolean",
             "nullable": true
           },
-          "ebookMonitorExisting": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "ebookMonitorFuture": {
-            "type": "boolean",
-            "nullable": true
+          "ebookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
           "syncMonitoredAcrossFormats": {
             "type": "boolean",
@@ -12757,12 +12768,37 @@
             "type": "integer",
             "format": "int32"
           },
+          "monitor": {
+            "type": "string",
+            "nullable": true
+          },
           "monitorExisting": {
             "type": "string",
             "nullable": true
           },
           "monitorFuture": {
-            "type": "boolean"
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "audiobookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "ebookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "ebookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "ebookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
           },
           "manualFlag": {
             "type": "boolean"
@@ -12841,6 +12877,16 @@
             "type": "string",
             "nullable": true
           },
+          "born": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "died": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
           "links": {
             "type": "array",
             "items": {
@@ -12901,6 +12947,26 @@
           },
           "monitored": {
             "type": "boolean"
+          },
+          "audiobookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "ebookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "ebookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "audiobookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "ebookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
           "audiobookMonitorExisting": {
             "type": "integer",
@@ -13452,12 +13518,37 @@
       "BookImportAuthorMonitoring": {
         "type": "object",
         "properties": {
+          "monitor": {
+            "type": "string",
+            "nullable": true
+          },
           "monitorExisting": {
             "type": "string",
             "nullable": true
           },
           "monitorFuture": {
-            "type": "boolean"
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "audiobookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "ebookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "ebookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "ebookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
           },
           "searchForMissing": {
             "type": "boolean"
@@ -13661,10 +13752,12 @@
             "type": "boolean"
           },
           "audiobookMonitored": {
-            "type": "boolean"
+            "type": "boolean",
+            "nullable": true
           },
           "ebookMonitored": {
-            "type": "boolean"
+            "type": "boolean",
+            "nullable": true
           },
           "anyEditionOk": {
             "type": "boolean"
@@ -16858,12 +16951,11 @@
           "monitor": {
             "type": "boolean"
           },
-          "monitorExisting": {
-            "type": "integer",
-            "format": "int32"
+          "monitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
-          "monitorFuture": {
-            "type": "boolean"
+          "monitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
           },
           "qualityProfileId": {
             "type": "integer",
@@ -16902,6 +16994,17 @@
             "format": "int32",
             "nullable": true
           },
+          "monitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "monitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "monitorExistingBooks": {
+            "type": "boolean",
+            "nullable": true
+          },
           "monitorExisting": {
             "type": "integer",
             "format": "int32",
@@ -16910,6 +17013,9 @@
           "monitorFuture": {
             "type": "boolean",
             "nullable": true
+          },
+          "monitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
           "writeAudioBookShelfMetadataJson": {
             "type": "boolean"
@@ -17665,14 +17771,15 @@
             "type": "string",
             "nullable": true
           },
-          "audiobookMonitorExisting": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "audiobookMonitorFuture": {
+          "audiobookMonitored": {
             "type": "boolean",
             "nullable": true
+          },
+          "audiobookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "audiobookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
           },
           "audiobookQualityProfileId": {
             "type": "integer",
@@ -17702,14 +17809,15 @@
             },
             "nullable": true
           },
-          "ebookMonitorExisting": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
-          },
-          "ebookMonitorFuture": {
+          "ebookMonitored": {
             "type": "boolean",
             "nullable": true
+          },
+          "ebookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "ebookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
           },
           "ebookQualityProfileId": {
             "type": "integer",
@@ -19269,12 +19377,37 @@
           "ebook": {
             "$ref": "#/components/schemas/MediaTypeSettingsResource"
           },
+          "audiobookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "audiobookMonitorExistingBooks": {
+            "type": "boolean",
+            "nullable": true
+          },
           "audiobookMonitorExisting": {
             "type": "integer",
             "format": "int32",
             "nullable": true
           },
           "audiobookMonitorFuture": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
+          },
+          "ebookMonitored": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "ebookMonitorExistingMode": {
+            "$ref": "#/components/schemas/MonitorTypes"
+          },
+          "ebookMonitorExistingBooks": {
             "type": "boolean",
             "nullable": true
           },
@@ -19286,6 +19419,9 @@
           "ebookMonitorFuture": {
             "type": "boolean",
             "nullable": true
+          },
+          "ebookMonitorNewItems": {
+            "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
           "audiobookQualityProfileId": {
             "type": "integer",

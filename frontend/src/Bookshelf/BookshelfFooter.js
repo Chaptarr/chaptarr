@@ -1,9 +1,11 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import MonitorBooksSelectInput from 'Components/Form/MonitorBooksSelectInput';
+import Icon from 'Components/Icon';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import PageContentFooter from 'Components/Page/PageContentFooter';
-import { kinds } from 'Helpers/Props';
+import Popover from 'Components/Tooltip/Popover';
+import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import styles from './BookshelfFooter.css';
 
@@ -61,7 +63,13 @@ class BookshelfFooter extends Component {
       <PageContentFooter>
         <div className={styles.inputContainer}>
           <div className={styles.label}>
-            {translate('MonitorExistingBooks')}
+            {translate('BookMonitoring')}
+            <Popover
+              anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+              title={translate('BookMonitoring')}
+              body={<div>{translate('BookshelfBookMonitoringHelpText')}</div>}
+              position={tooltipPositions.RIGHT}
+            />
           </div>
 
           <MonitorBooksSelectInput

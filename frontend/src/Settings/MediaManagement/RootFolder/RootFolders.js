@@ -81,8 +81,12 @@ class RootFolders extends Component {
     // Set minimal default values - user will configure per-media-type settings via toggle
     if (setRootFolderValue) {
       setRootFolderValue({ name: 'name', value: 'Media Library' });
-      setRootFolderValue({ name: 'monitorExisting', value: 1 }); // TRI-STATE: 1 = All books
-      setRootFolderValue({ name: 'monitorFuture', value: true });
+      setRootFolderValue({ name: 'audiobookMonitored', value: true });
+      setRootFolderValue({ name: 'audiobookMonitorExistingMode', value: 'all' });
+      setRootFolderValue({ name: 'audiobookMonitorNewItems', value: 'all' });
+      setRootFolderValue({ name: 'ebookMonitored', value: true });
+      setRootFolderValue({ name: 'ebookMonitorExistingMode', value: 'all' });
+      setRootFolderValue({ name: 'ebookMonitorNewItems', value: 'all' });
       setRootFolderValue({ name: 'defaultTags', value: [] });
     }
 

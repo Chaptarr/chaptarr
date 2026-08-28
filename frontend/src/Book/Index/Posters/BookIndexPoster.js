@@ -295,7 +295,7 @@ class BookIndexPoster extends Component {
           {
             showMonitored &&
               <div className={styles.title}>
-                {(audiobookMonitored || ebookMonitored) ? 'Monitored' : 'All'}
+                {translate((audiobookMonitored || ebookMonitored) ? 'Monitored' : 'Unmonitored')}
               </div>
           }
 

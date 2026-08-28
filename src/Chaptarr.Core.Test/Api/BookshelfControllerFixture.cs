@@ -132,6 +132,76 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(GetBookServiceProxy(bookService).UpdatedBooks.Select(book => book.Id), Is.EqualTo(new[] { ebook.Id }));
         }
 
+        [Test]
+        public void should_keep_the_legacy_future_action_date_based_without_changing_missing_semantics()
+        {
+            var now = DateTime.UtcNow;
+            var author = new Author { Id = 42, Name = "Martha Wells" };
+            var withFile = BuildAudiobook(1, author, now.AddYears(-1));
+            var released = BuildAudiobook(2, author, now.AddDays(-1));
+            var future = BuildAudiobook(3, author, now.AddDays(1));
+            var undated = BuildAudiobook(4, author, null);
+            var authorService = CreateAuthorService(author);
+            var bookService = CreateBookService(withFile, released, future, undated);
+            GetBookServiceProxy(bookService).BooksWithFiles.Add(withFile);
+            var subject = new BookMonitoredService(authorService, bookService, LogManager.GetCurrentClassLogger());
+
+            subject.SetBookMonitoredStatus(author, new MonitoringOptions
+            {
+                Monitor = MonitorTypes.Future,
+                MediaType = BookMediaType.Audiobook
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(withFile.AudiobookMonitored, Is.False);
+                Assert.That(released.AudiobookMonitored, Is.False);
+                Assert.That(future.AudiobookMonitored, Is.True);
+                Assert.That(undated.AudiobookMonitored, Is.True);
+            });
+        }
+
+        [Test]
+        public void missing_should_monitor_every_fileless_current_book_regardless_of_release_date()
+        {
+            var now = DateTime.UtcNow;
+            var author = new Author { Id = 42, Name = "Martha Wells" };
+            var withFile = BuildAudiobook(1, author, now.AddYears(-1));
+            var released = BuildAudiobook(2, author, now.AddDays(-1), monitored: false);
+            var future = BuildAudiobook(3, author, now.AddDays(1), monitored: false);
+            var undated = BuildAudiobook(4, author, null, monitored: false);
+            var authorService = CreateAuthorService(author);
+            var bookService = CreateBookService(withFile, released, future, undated);
+            GetBookServiceProxy(bookService).BooksWithFiles.Add(withFile);
+            var subject = new BookMonitoredService(authorService, bookService, LogManager.GetCurrentClassLogger());
+
+            subject.SetBookMonitoredStatus(author, new MonitoringOptions
+            {
+                Monitor = MonitorTypes.Missing,
+                MediaType = BookMediaType.Audiobook
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(withFile.AudiobookMonitored, Is.False);
+                Assert.That(released.AudiobookMonitored, Is.True);
+                Assert.That(future.AudiobookMonitored, Is.True);
+                Assert.That(undated.AudiobookMonitored, Is.True);
+            });
+        }
+
+        private static Book BuildAudiobook(int id, Author author, DateTime? releaseDate, bool monitored = true)
+        {
+            return new Book
+            {
+                Id = id,
+                AuthorId = author.Id,
+                MediaType = BookMediaType.Audiobook,
+                AudiobookMonitored = monitored,
+                ReleaseDate = releaseDate
+            };
+        }
+
         private static IAuthorService CreateAuthorService(params Author[] authors)
         {
             var service = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
@@ -192,6 +262,7 @@ namespace Chaptarr.Core.Test.Api
         private class BookServiceProxy : DispatchProxy
         {
             public List<Book> Books { get; set; } = new();
+            public List<Book> BooksWithFiles { get; } = new();
             public List<Book> UpdatedBooks { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -202,7 +273,7 @@ namespace Chaptarr.Core.Test.Api
                         var authorId = (int)args[0];
                         return Books.Where(book => book.AuthorId == authorId).ToList();
                     case nameof(IBookService.GetAuthorBooksWithFiles):
-                        return new List<Book>();
+                        return BooksWithFiles;
                     case nameof(IBookService.UpdateBook):
                         var book = (Book)args[0];
                         UpdatedBooks.Add(book);

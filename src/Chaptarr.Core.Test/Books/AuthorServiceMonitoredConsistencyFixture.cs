@@ -230,10 +230,10 @@ namespace Chaptarr.Core.Test.Books
                 Id = 1,
                 Name = "Test Author",
                 Monitored = false,
-                AudiobookMonitorExisting = 0,
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = 0,
-                EbookMonitorFuture = false
+                AudiobookMonitored = false,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None
             };
 
             var repository = new StubAuthorRepository(new Dictionary<int, Author> { { stored.Id, stored } });
@@ -244,10 +244,10 @@ namespace Chaptarr.Core.Test.Books
                 Id = 1,
                 Name = "Test Author",
                 Monitored = false, // stale legacy value from client
-                AudiobookMonitorExisting = 1, // user switched to "All"
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = 0,
-                EbookMonitorFuture = false
+                AudiobookMonitored = true, // user switched to "All"
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None
             };
 
             service.UpdateAuthor(update);
@@ -263,10 +263,10 @@ namespace Chaptarr.Core.Test.Books
                 Id = 2,
                 Name = "Another Author",
                 Monitored = true,
-                AudiobookMonitorExisting = 1,
-                AudiobookMonitorFuture = true,
-                EbookMonitorExisting = 1,
-                EbookMonitorFuture = true
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.New,
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.New
             };
 
             var repository = new StubAuthorRepository(new Dictionary<int, Author> { { stored.Id, stored } });
@@ -277,10 +277,10 @@ namespace Chaptarr.Core.Test.Books
                 Id = 2,
                 Name = "Another Author",
                 Monitored = true, // stale legacy value from client
-                AudiobookMonitorExisting = 0,
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = 0,
-                EbookMonitorFuture = false
+                AudiobookMonitored = false,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None
             };
 
             service.UpdateAuthor(update);
@@ -318,17 +318,17 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void update_author_should_seed_opposite_monitor_existing_selected_when_sync_is_enabled()
+        public void update_author_should_not_change_media_gates_when_sync_is_enabled()
         {
             var stored = new Author
             {
                 Id = 3,
                 Name = "Sync Author",
                 SyncMonitoredAcrossFormats = false,
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = 0,
-                EbookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookRootFolderPath = "/audiobooks",
                 EbookRootFolderPath = "/ebooks"
             };
@@ -341,18 +341,18 @@ namespace Chaptarr.Core.Test.Books
                 Id = 3,
                 Name = "Sync Author",
                 SyncMonitoredAcrossFormats = true,
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = 0,
-                EbookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookRootFolderPath = "/audiobooks",
                 EbookRootFolderPath = "/ebooks"
             };
 
             service.UpdateAuthor(update);
 
-            Assert.That(repository.LastUpdatedAuthor.AudiobookMonitorExisting, Is.EqualTo(2));
-            Assert.That(repository.LastUpdatedAuthor.EbookMonitorExisting, Is.EqualTo(2));
+            Assert.That(repository.LastUpdatedAuthor.AudiobookMonitored, Is.True);
+            Assert.That(repository.LastUpdatedAuthor.EbookMonitored, Is.False);
         }
 
         [Test]
@@ -363,10 +363,10 @@ namespace Chaptarr.Core.Test.Books
                 Id = 4,
                 Name = "Sync Author",
                 SyncMonitoredAcrossFormats = true,
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = 2,
-                EbookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookRootFolderPath = "/audiobooks",
                 EbookRootFolderPath = "/ebooks"
             };
@@ -379,18 +379,18 @@ namespace Chaptarr.Core.Test.Books
                 Id = 4,
                 Name = "Sync Author",
                 SyncMonitoredAcrossFormats = true,
-                AudiobookMonitorExisting = 2,
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = 0,
-                EbookMonitorFuture = false,
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = false,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookRootFolderPath = "/audiobooks",
                 EbookRootFolderPath = "/ebooks"
             };
 
             service.UpdateAuthor(update);
 
-            Assert.That(repository.LastUpdatedAuthor.AudiobookMonitorExisting, Is.EqualTo(2));
-            Assert.That(repository.LastUpdatedAuthor.EbookMonitorExisting, Is.EqualTo(0));
+            Assert.That(repository.LastUpdatedAuthor.AudiobookMonitored, Is.True);
+            Assert.That(repository.LastUpdatedAuthor.EbookMonitored, Is.False);
         }
 
         [Test]
@@ -401,8 +401,8 @@ namespace Chaptarr.Core.Test.Books
                 Id = 5,
                 Name = "Manual Settings Author",
                 EbookMetadataProfileId = 88,
-                EbookMonitorExisting = 2,
-                EbookMonitorFuture = true,
+                EbookMonitored = true,
+                EbookMonitorNewItems = NewItemMonitorTypes.New,
                 EbookRootFolderPath = "/ebooks/manual"
             };
             var repository = new StubAuthorRepository(new Dictionary<int, Author> { { author.Id, author } });
@@ -412,12 +412,12 @@ namespace Chaptarr.Core.Test.Books
                 author,
                 audiobookQualityProfileId: null,
                 audiobookMetadataProfileId: null,
-                audiobookMonitorExisting: null,
-                audiobookMonitorFuture: null,
+                audiobookMonitored: null,
+                audiobookMonitorNewItems: null,
                 ebookQualityProfileId: 3,
                 ebookMetadataProfileId: 4,
-                ebookMonitorExisting: 0,
-                ebookMonitorFuture: false,
+                ebookMonitored: false,
+                ebookMonitorNewItems: NewItemMonitorTypes.None,
                 rootFolderPath: "/ebooks/root-default");
 
             Assert.Multiple(() =>
@@ -425,8 +425,8 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(result, Is.SameAs(repository.LastUpdatedAuthor));
                 Assert.That(author.EbookQualityProfileId, Is.EqualTo(3));
                 Assert.That(author.EbookMetadataProfileId, Is.EqualTo(88));
-                Assert.That(author.EbookMonitorExisting, Is.EqualTo(2));
-                Assert.That(author.EbookMonitorFuture, Is.True);
+                Assert.That(author.EbookMonitored, Is.True);
+                Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                 Assert.That(author.EbookRootFolderPath, Is.EqualTo("/ebooks/manual"));
                 Assert.That(repository.LastUpdatedAuthor, Is.Not.Null);
             });
@@ -436,17 +436,21 @@ namespace Chaptarr.Core.Test.Books
         [TestCase("audiobook", 0)]
         [TestCase("ebook", null)]
         [TestCase("ebook", 0)]
-        public void promote_media_type_monitoring_should_set_only_requested_side_to_selected(string mediaType, int? existingMode)
+        public void ensure_media_type_monitoring_should_set_only_requested_side(string mediaType, int? existingMode)
         {
             var isAudiobook = mediaType == "audiobook";
             var author = new Author
             {
                 Id = 6,
                 Name = "Scoped Author",
-                AudiobookMonitorExisting = isAudiobook ? existingMode : null,
-                AudiobookMonitorFuture = false,
-                EbookMonitorExisting = isAudiobook ? null : existingMode,
-                EbookMonitorFuture = false,
+                AudiobookMonitored = isAudiobook
+                    ? (existingMode.HasValue ? existingMode.Value != 0 : (bool?)null)
+                    : null,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitored = isAudiobook
+                    ? null
+                    : (existingMode.HasValue ? existingMode.Value != 0 : (bool?)null),
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 AudiobookRootFolderPath = "/audiobooks",
                 EbookRootFolderPath = "/ebooks",
                 SyncMonitoredAcrossFormats = true
@@ -454,46 +458,46 @@ namespace Chaptarr.Core.Test.Books
             var repository = new StubAuthorRepository(new Dictionary<int, Author> { { author.Id, author } });
             var service = BuildService(repository, new StubRootFolderService());
 
-            service.PromoteMediaTypeMonitoringToSelected(author.Id, mediaType);
+            service.EnsureMediaTypeMonitoring(author.Id, mediaType);
 
             Assert.Multiple(() =>
             {
                 Assert.That(
                     isAudiobook
-                        ? repository.LastUpdatedAuthor.AudiobookMonitorExisting
-                        : repository.LastUpdatedAuthor.EbookMonitorExisting,
-                    Is.EqualTo(2));
+                        ? repository.LastUpdatedAuthor.AudiobookMonitored
+                        : repository.LastUpdatedAuthor.EbookMonitored,
+                    Is.True);
                 Assert.That(
                     isAudiobook
-                        ? repository.LastUpdatedAuthor.EbookMonitorExisting
-                        : repository.LastUpdatedAuthor.AudiobookMonitorExisting,
+                        ? repository.LastUpdatedAuthor.EbookMonitored
+                        : repository.LastUpdatedAuthor.AudiobookMonitored,
                     Is.Null);
                 Assert.That(repository.LastUpdatedAuthor.SyncMonitoredAcrossFormats, Is.True);
                 Assert.That(repository.LastUpdatedAuthor.Monitored, Is.True);
             });
         }
 
-        [TestCase(1)]
-        [TestCase(2)]
-        public void promote_media_type_monitoring_should_preserve_all_or_selected(int existingMode)
+        [TestCase(true)]
+        [TestCase(false)]
+        public void ensure_media_type_monitoring_should_preserve_or_enable_existing_gate(bool existingMode)
         {
             var author = new Author
             {
                 Id = 7,
                 Name = "Already Configured Author",
-                AudiobookMonitorExisting = existingMode,
-                EbookMonitorExisting = 0
+                AudiobookMonitored = existingMode,
+                EbookMonitored = false
             };
             var repository = new StubAuthorRepository(new Dictionary<int, Author> { { author.Id, author } });
             var service = BuildService(repository);
 
-            service.PromoteMediaTypeMonitoringToSelected(author.Id, "audiobook");
+            service.EnsureMediaTypeMonitoring(author.Id, "audiobook");
 
             Assert.Multiple(() =>
             {
-                Assert.That(author.AudiobookMonitorExisting, Is.EqualTo(existingMode));
-                Assert.That(author.EbookMonitorExisting, Is.EqualTo(0));
-                Assert.That(repository.LastUpdatedAuthor, Is.Null);
+                Assert.That(author.AudiobookMonitored, Is.True);
+                Assert.That(author.EbookMonitored, Is.False);
+                Assert.That(repository.LastUpdatedAuthor, Is.EqualTo(existingMode ? null : author));
             });
         }
     }

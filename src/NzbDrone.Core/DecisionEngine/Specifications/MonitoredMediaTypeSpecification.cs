@@ -21,9 +21,10 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
-            if (InteractiveBookSearchSpecificationHelper.IsRequestedBookInteractiveSearch(subject, searchCriteria))
+            if (InteractiveBookSearchSpecificationHelper.IsRequestedBookInteractiveSearch(subject, searchCriteria) ||
+                InteractiveBookSearchSpecificationHelper.IsRequestedBookSearchAllowingUnmonitored(subject, searchCriteria))
             {
-                _logger.Trace("Skipping media-type monitoring rejection for explicit interactive book search");
+                _logger.Trace("Skipping media-type monitoring rejection for explicit book search");
                 return Decision.Accept();
             }
 

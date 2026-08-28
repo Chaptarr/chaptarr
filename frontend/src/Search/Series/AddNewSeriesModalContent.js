@@ -193,6 +193,8 @@ class AddNewSeriesModalContent extends Component {
       audiobookMetadataProfileId,
       ebookMetadataProfileId,
       monitor,
+      audiobookMonitored,
+      ebookMonitored,
       audiobookMonitor,
       ebookMonitor,
       monitorNewItems,
@@ -253,6 +255,8 @@ class AddNewSeriesModalContent extends Component {
                 audiobookMetadataProfileId={audiobookMetadataProfileId}
                 ebookMetadataProfileId={ebookMetadataProfileId}
                 monitor={monitor}
+                audiobookMonitored={audiobookMonitored}
+                ebookMonitored={ebookMonitored}
                 audiobookMonitor={audiobookMonitor}
                 ebookMonitor={ebookMonitor}
                 monitorNewItems={monitorNewItems}
@@ -449,6 +453,8 @@ AddNewSeriesModalContent.propTypes = {
   audiobookMetadataProfileId: PropTypes.object,
   ebookMetadataProfileId: PropTypes.object,
   monitor: PropTypes.object,
+  audiobookMonitored: PropTypes.object,
+  ebookMonitored: PropTypes.object,
   audiobookMonitor: PropTypes.object,
   ebookMonitor: PropTypes.object,
   monitorNewItems: PropTypes.object,

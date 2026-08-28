@@ -1,10 +1,10 @@
 import _ from 'lodash';
 import { sortDirections } from 'Helpers/Props';
 
-function getSortClause(sortKey, sortDirection, sortPredicates) {
+function getSortClause(sortKey, sortDirection, sortPredicates, selectedMediaType) {
   if (sortPredicates && sortPredicates.hasOwnProperty(sortKey)) {
     return function(item) {
-      return sortPredicates[sortKey](item, sortDirection);
+      return sortPredicates[sortKey](item, sortDirection, selectedMediaType);
     };
   }
 
@@ -25,14 +25,14 @@ function sortCollection(items, state) {
   const clauses = [];
   const orders = [];
 
-  clauses.push(getSortClause(sortKey, sortDirection, sortPredicates));
+  clauses.push(getSortClause(sortKey, sortDirection, sortPredicates, state.selectedMediaType));
   orders.push(sortDirection === sortDirections.ASCENDING ? 'asc' : 'desc');
 
   if (secondarySortKey &&
         secondarySortDirection &&
         (sortKey !== secondarySortKey ||
          sortDirection !== secondarySortDirection)) {
-    clauses.push(getSortClause(secondarySortKey, secondarySortDirection, sortPredicates));
+    clauses.push(getSortClause(secondarySortKey, secondarySortDirection, sortPredicates, state.selectedMediaType));
     orders.push(secondarySortDirection === sortDirections.ASCENDING ? 'asc' : 'desc');
   }
 

@@ -151,7 +151,7 @@ namespace Chaptarr.Core.Test.Books
                 using (var connection = new SqliteConnection(connectionString))
                 {
                     connection.Open();
-                    connection.Execute("UPDATE Books SET EbookMonitored = 0 WHERE Id = 2");
+                    connection.Execute("UPDATE Books SET EbookMonitored = false WHERE Id = 2");
                 }
 
                 monitored = repository.RecallBooks(
@@ -166,7 +166,7 @@ namespace Chaptarr.Core.Test.Books
                 using (var connection = new SqliteConnection(connectionString))
                 {
                     connection.Open();
-                    connection.Execute("UPDATE Authors SET EbookMonitorExisting = 0, EbookMonitorFuture = 0 WHERE Id = 1");
+                    connection.Execute("UPDATE Authors SET EbookMonitored = false, EbookMonitorNewItems = 0 WHERE Id = 1");
                 }
 
                 monitored = repository.RecallBooks(
@@ -181,7 +181,7 @@ namespace Chaptarr.Core.Test.Books
                 using (var connection = new SqliteConnection(connectionString))
                 {
                     connection.Open();
-                    connection.Execute("UPDATE Authors SET EbookMonitorExisting = 1 WHERE Id = 1");
+                    connection.Execute("UPDATE Authors SET EbookMonitored = true WHERE Id = 1");
                     connection.Execute(@"
                         INSERT INTO Editions (Id, ForeignEditionId, BookId, Monitored, Language, Title, MatchingTitle, NarratorNames, Narrator, Publisher, Images, DurationSeconds, ReleaseDate, ReadingFormatId)
                         VALUES (12, 'hc:edition:poison', 1, 0, 'eng', 'Dune Messiah', 'dune messiah', '[]', '', '', '[]', 0, '2026-01-01', 3);
@@ -224,10 +224,10 @@ namespace Chaptarr.Core.Test.Books
                 CREATE TABLE Authors (
                     Id INTEGER PRIMARY KEY,
                     Name TEXT NOT NULL,
-                    AudiobookMonitorExisting INTEGER,
-                    AudiobookMonitorFuture INTEGER,
-                    EbookMonitorExisting INTEGER,
-                    EbookMonitorFuture INTEGER
+                    AudiobookMonitored INTEGER,
+                    AudiobookMonitorNewItems INTEGER,
+                    EbookMonitored INTEGER,
+                    EbookMonitorNewItems INTEGER
                 );
                 CREATE TABLE Books (
                     Id INTEGER PRIMARY KEY,
@@ -265,7 +265,7 @@ namespace Chaptarr.Core.Test.Books
                     Publisher
                 );
 
-                INSERT INTO Authors (Id, Name, AudiobookMonitorExisting, AudiobookMonitorFuture, EbookMonitorExisting, EbookMonitorFuture)
+                INSERT INTO Authors (Id, Name, AudiobookMonitored, AudiobookMonitorNewItems, EbookMonitored, EbookMonitorNewItems)
                 VALUES (1, 'Freida McFadden', 0, 0, 1, 0);
                 INSERT INTO Books (Id, AuthorId, Title, MediaType, AudiobookMonitored, EbookMonitored) VALUES
                     (1, 1, 'The Boyfriend', 1, 0, 1),

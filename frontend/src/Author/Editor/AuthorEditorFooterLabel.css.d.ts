@@ -2,6 +2,7 @@
 // Please do not change this file!
 interface CssExports {
   'label': string;
+  'labelIcon': string;
   'savingIcon': string;
 }
 export const cssExports: CssExports;

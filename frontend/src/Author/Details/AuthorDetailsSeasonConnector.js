@@ -148,7 +148,6 @@ function createMapStateToProps() {
         columns,
         sortKey: books.sortKey,
         sortDirection: books.sortDirection,
-        authorMonitored: author.monitored,
         isSmallScreen: dimensions.isSmallScreen,
         uiSettings,
         selectedMediaType: effectiveMediaType, // Pass the effective media type to child

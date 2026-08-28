@@ -37,19 +37,21 @@ namespace NzbDrone.Core.Books
         public void SearchForRecentlyAdded(int authorId)
         {
             var allBooks = _bookService.GetBooksByAuthor(authorId);
-            var toSearch = allBooks.Where(x => x.AddOptions.SearchForNewBook).ToList();
+            var searchRequested = allBooks.Where(x => x.AddOptions.SearchForNewBook).ToList();
 
-            if (toSearch.Any())
+            if (searchRequested.Any())
             {
-                toSearch.ForEach(x => x.AddOptions.SearchForNewBook = false);
+                searchRequested.ForEach(x => x.AddOptions.SearchForNewBook = false);
 
-                _bookService.SetAddOptions(toSearch);
+                _bookService.SetAddOptions(searchRequested);
             }
+
+            var toSearch = searchRequested.Where(x => x.IsMonitoredWithAuthor()).ToList();
 
             var recentlyAddedIds = _addedBooksCache.Find(authorId.ToString());
             if (recentlyAddedIds != null)
             {
-                toSearch.AddRange(allBooks.Where(x => recentlyAddedIds.Contains(x.Id)));
+                toSearch.AddRange(allBooks.Where(x => recentlyAddedIds.Contains(x.Id) && x.IsMonitoredWithAuthor()));
             }
 
             if (toSearch.Any())
@@ -64,12 +66,6 @@ namespace NzbDrone.Core.Books
         {
             if (message.Author.AddOptions == null)
             {
-                if (!message.Author.Monitored)
-                {
-                    _logger.Debug("Author is not monitored");
-                    return;
-                }
-
                 if (message.Added.Empty())
                 {
                     _logger.Debug("No new books, skipping search");
@@ -82,11 +78,11 @@ namespace NzbDrone.Core.Books
                     return;
                 }
 
-                var previouslyReleased = message.Added.Where(a => a.ReleaseDate.HasValue && a.ReleaseDate.Value.Before(DateTime.UtcNow.AddDays(1)) && a.IsMonitored()).ToList();
+                var previouslyReleased = message.Added.Where(a => a.ReleaseDate.HasValue && a.ReleaseDate.Value.Before(DateTime.UtcNow.AddDays(1)) && a.IsMonitoredWithAuthor()).ToList();
 
                 if (previouslyReleased.Empty())
                 {
-                    _logger.Debug("Newly added books all release in the future");
+                    _logger.Debug("No newly added released books are eligible for search");
                     return;
                 }
 

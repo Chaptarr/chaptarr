@@ -100,9 +100,9 @@ namespace NzbDrone.Core.Books.Services
                     if (config.CreateAudiobook && !existing.HasAudiobook())
                     {
                         existing.AudiobookStatus = PendingImportStatus.Pending;
-                        // Convert bool to int?: true=1 (All), false=0 (None)
-                        existing.AudiobookMonitorExisting = config.AudiobookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                        existing.AudiobookMonitorFuture = config.AudiobookMonitorFuture ?? config.MonitorFuture;
+                        existing.AudiobookMonitored = config.AudiobookMonitored;
+                        existing.AudiobookMonitorNewItems = config.AudiobookMonitorNewItems;
+                        existing.AudiobookMonitorExistingMode = config.AudiobookMonitorExistingMode;
                         existing.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
                         existing.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
                         existing.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
@@ -124,13 +124,40 @@ namespace NzbDrone.Core.Books.Services
                         updated = true;
                     }
 
+                    if (config.CreateAudiobook && MergeExistingMonitorMode(
+                            existing.AudiobookMonitorExistingMode,
+                            config.AudiobookMonitorExistingMode,
+                            out var audiobookMonitorExistingMode))
+                    {
+                        existing.AudiobookMonitorExistingMode = audiobookMonitorExistingMode;
+                        updated = true;
+                    }
+
+                    // An additional request may enable the side, but never turns an
+                    // already-enabled side off. This is important when two exact-book
+                    // requests for the same unavailable author merge into one row.
+                    if (config.CreateAudiobook && config.AudiobookMonitored == true && existing.AudiobookMonitored != true)
+                    {
+                        existing.AudiobookMonitored = true;
+                        updated = true;
+                    }
+
+                    if (config.CreateAudiobook && MergeNewItemMonitorType(
+                            existing.AudiobookMonitorNewItems,
+                            config.AudiobookMonitorNewItems,
+                            out var audiobookMonitorNewItems))
+                    {
+                        existing.AudiobookMonitorNewItems = audiobookMonitorNewItems;
+                        updated = true;
+                    }
+
                     // Enable ebook if requested and not already
                     if (config.CreateEbook && !existing.HasEbook())
                     {
                         existing.EbookStatus = PendingImportStatus.Pending;
-                        // Convert bool to int?: true=1 (All), false=0 (None)
-                        existing.EbookMonitorExisting = config.EbookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                        existing.EbookMonitorFuture = config.EbookMonitorFuture ?? config.MonitorFuture;
+                        existing.EbookMonitored = config.EbookMonitored;
+                        existing.EbookMonitorNewItems = config.EbookMonitorNewItems;
+                        existing.EbookMonitorExistingMode = config.EbookMonitorExistingMode;
                         existing.EbookQualityProfileId = config.EbookQualityProfileId;
                         existing.EbookMetadataProfileId = config.EbookMetadataProfileId;
                         existing.EbookRootFolderPath = config.EbookRootFolderPath;
@@ -160,6 +187,30 @@ namespace NzbDrone.Core.Books.Services
                             out var audiobookBooksToSearch))
                     {
                         existing.AudiobookBooksToSearch = audiobookBooksToSearch;
+                        updated = true;
+                    }
+
+                    if (config.CreateEbook && config.EbookMonitored == true && existing.EbookMonitored != true)
+                    {
+                        existing.EbookMonitored = true;
+                        updated = true;
+                    }
+
+                    if (config.CreateEbook && MergeNewItemMonitorType(
+                            existing.EbookMonitorNewItems,
+                            config.EbookMonitorNewItems,
+                            out var ebookMonitorNewItems))
+                    {
+                        existing.EbookMonitorNewItems = ebookMonitorNewItems;
+                        updated = true;
+                    }
+
+                    if (config.CreateEbook && MergeExistingMonitorMode(
+                            existing.EbookMonitorExistingMode,
+                            config.EbookMonitorExistingMode,
+                            out var ebookMonitorExistingMode))
+                    {
+                        existing.EbookMonitorExistingMode = ebookMonitorExistingMode;
                         updated = true;
                     }
 
@@ -232,9 +283,9 @@ namespace NzbDrone.Core.Books.Services
                 if (config.CreateAudiobook)
                 {
                     pending.AudiobookStatus = PendingImportStatus.Pending;
-                    // Convert bool to int?: true=1 (All), false=0 (None)
-                    pending.AudiobookMonitorExisting = config.AudiobookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                    pending.AudiobookMonitorFuture = config.AudiobookMonitorFuture ?? config.MonitorFuture;
+                    pending.AudiobookMonitored = config.AudiobookMonitored;
+                    pending.AudiobookMonitorNewItems = config.AudiobookMonitorNewItems;
+                    pending.AudiobookMonitorExistingMode = config.AudiobookMonitorExistingMode;
                     pending.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
                     pending.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
                     pending.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
@@ -254,9 +305,9 @@ namespace NzbDrone.Core.Books.Services
                 if (config.CreateEbook)
                 {
                     pending.EbookStatus = PendingImportStatus.Pending;
-                    // Convert bool to int?: true=1 (All), false=0 (None)
-                    pending.EbookMonitorExisting = config.EbookMonitorExisting ?? (config.MonitorExisting ? 1 : 0);
-                    pending.EbookMonitorFuture = config.EbookMonitorFuture ?? config.MonitorFuture;
+                    pending.EbookMonitored = config.EbookMonitored;
+                    pending.EbookMonitorNewItems = config.EbookMonitorNewItems;
+                    pending.EbookMonitorExistingMode = config.EbookMonitorExistingMode;
                     pending.EbookQualityProfileId = config.EbookQualityProfileId;
                     pending.EbookMetadataProfileId = config.EbookMetadataProfileId;
                     pending.EbookRootFolderPath = config.EbookRootFolderPath;
@@ -307,6 +358,61 @@ namespace NzbDrone.Core.Books.Services
                    config?.AudiobookBooksToSearch?.Any() == true ||
                    config?.EbookBooksToMonitor?.Any() == true ||
                    config?.EbookBooksToSearch?.Any() == true;
+        }
+
+        private static bool MergeExistingMonitorMode(
+            MonitorTypes? existing,
+            MonitorTypes? incoming,
+            out MonitorTypes? merged)
+        {
+            merged = existing;
+            if (!incoming.HasValue)
+            {
+                return false;
+            }
+
+            if (!existing.HasValue || existing == MonitorTypes.None)
+            {
+                merged = incoming;
+                return existing != incoming;
+            }
+
+            // An all-books seed is the strongest current-book intent and must not
+            // be narrowed by a later exact/none request. Other existing modes are
+            // retained unless the incoming request explicitly widens them to All.
+            if (incoming == MonitorTypes.All && existing != MonitorTypes.All)
+            {
+                merged = MonitorTypes.All;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool MergeNewItemMonitorType(
+            NewItemMonitorTypes? existing,
+            NewItemMonitorTypes? incoming,
+            out NewItemMonitorTypes? merged)
+        {
+            merged = existing;
+            if (!incoming.HasValue)
+            {
+                return false;
+            }
+
+            if (!existing.HasValue || existing == NewItemMonitorTypes.None)
+            {
+                merged = incoming;
+                return existing != incoming;
+            }
+
+            if (incoming == NewItemMonitorTypes.All && existing != NewItemMonitorTypes.All)
+            {
+                merged = NewItemMonitorTypes.All;
+                return true;
+            }
+
+            return false;
         }
 
         private static bool IsActiveProviderUniqueViolation(SqliteException ex)

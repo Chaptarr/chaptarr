@@ -77,7 +77,6 @@ class MonitoringOptionsModalContent extends Component {
   render() {
     const {
       isSaving,
-      onInputChange,
       onModalClose,
       ...otherProps
     } = this.props;
@@ -137,7 +136,6 @@ MonitoringOptionsModalContent.propTypes = {
   authorId: PropTypes.number.isRequired,
   saveError: PropTypes.object,
   isSaving: PropTypes.bool.isRequired,
-  onInputChange: PropTypes.func.isRequired,
   onSavePress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

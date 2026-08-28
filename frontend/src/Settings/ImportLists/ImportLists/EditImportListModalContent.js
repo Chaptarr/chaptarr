@@ -19,9 +19,9 @@ import ModalBody from 'Components/Modal/ModalBody';
 import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
-import { FolderType } from 'Helpers/Props/folderTypes';
 import Popover from 'Components/Tooltip/Popover';
 import { icons, inputTypes, kinds, tooltipPositions } from 'Helpers/Props';
+import { FolderType } from 'Helpers/Props/folderTypes';
 import AdvancedSettingsButton from 'Settings/AdvancedSettingsButton';
 import HardcoverApiKeyModal from 'System/Quickstart/HardcoverApiKeyModal';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
@@ -30,22 +30,28 @@ import styles from './EditImportListModalContent.css';
 
 function ImportListMonitoringOptionsPopoverContent() {
   return (
-    <DescriptionList>
-      <DescriptionListItem
-        title={translate('None')}
-        data={translate('DataListMonitorNone')}
-      />
+    <>
+      <Alert>
+        {translate('ShouldMonitorHelpText')}
+      </Alert>
 
-      <DescriptionListItem
-        title={translate('SpecificBook')}
-        data={translate('DataListMonitorSpecificBook')}
-      />
+      <DescriptionList>
+        <DescriptionListItem
+          title={translate('None')}
+          data={translate('DataListMonitorNone')}
+        />
 
-      <DescriptionListItem
-        title={translate('AllAuthorBooks')}
-        data={translate('DataListMonitorAll')}
-      />
-    </DescriptionList>
+        <DescriptionListItem
+          title={translate('SpecificBook')}
+          data={translate('DataListMonitorSpecificBook')}
+        />
+
+        <DescriptionListItem
+          title={translate('AllAuthorBooks')}
+          data={translate('DataListMonitorAll')}
+        />
+      </DescriptionList>
+    </>
   );
 }
 
@@ -95,7 +101,7 @@ function EditImportListModalContent(props) {
   } = item;
 
   const isHardcoverLibraryImportList = (implementation?.value === 'HardcoverLibraryImportList') ||
-	    (implementationName === 'Hardcover Library');
+    (implementationName === 'Hardcover Library');
 
   const isGoodreadsBookshelfImportList = (implementation?.value === 'GoodreadsBookshelf') ||
     (implementationName === 'Goodreads Bookshelves');
@@ -338,7 +344,10 @@ function EditImportListModalContent(props) {
     const hasEbookSettings = !!monitorEbooksField;
 
     const hasMediaToggle = hasAudiobookSettings && hasEbookSettings;
-    const activeMediaType = hasMediaToggle ? dualMediaSelectedMediaType : (hasAudiobookSettings ? 'audiobook' : 'ebook');
+    let activeMediaType = dualMediaSelectedMediaType;
+    if (!hasMediaToggle) {
+      activeMediaType = hasAudiobookSettings ? 'audiobook' : 'ebook';
+    }
 
     const onMediaTypeChange = (mediaType) => {
       if (monitorAudiobooksField) {
@@ -450,11 +459,15 @@ function EditImportListModalContent(props) {
     const isConnected = hardcoverIdentity?.hasToken === true;
     const isMissingToken = hardcoverIdentity?.hasToken === false;
     const hasUsername = !!hardcoverIdentity?.username;
+    let alertKind = kinds.INFO;
+    if (!isConnected && isMissingToken) {
+      alertKind = kinds.WARNING;
+    }
 
     return (
       <>
         <Alert
-          kind={isConnected ? kinds.INFO : (isMissingToken ? kinds.WARNING : kinds.INFO)}
+          kind={alertKind}
           className={styles.hardcoverInfo}
         >
           {
@@ -599,7 +612,7 @@ function EditImportListModalContent(props) {
 
                 <FormGroup>
                   <FormLabel>
-                    {translate('Monitor')}
+                    {translate('ImportListMonitoring')}
 
                     <Popover
                       anchor={
@@ -618,33 +631,37 @@ function EditImportListModalContent(props) {
                     type={inputTypes.SELECT}
                     name="shouldMonitor"
                     values={monitorOptions}
-                    helpText={translate('ShouldMonitorHelpText')}
                     {...shouldMonitor}
                     onChange={onInputChange}
                   />
                 </FormGroup>
 
-                <FormGroup
-                  advancedSettings={advancedSettings}
-                  isAdvanced={isHardcoverLibraryImportList}
-                >
+                <FormGroup>
                   <FormLabel>
                     {translate('ShouldMonitorExisting')}
+
+                    <Popover
+                      anchor={
+                        <Icon
+                          className={styles.labelIcon}
+                          name={icons.INFO}
+                        />
+                      }
+                      title={translate('ShouldMonitorExisting')}
+                      body={<Alert>{translate('ShouldMonitorExistingHelpText')}</Alert>}
+                      position={tooltipPositions.RIGHT}
+                    />
                   </FormLabel>
 
                   <FormInputGroup
                     type={inputTypes.CHECK}
                     name="shouldMonitorExisting"
-                    helpText={translate('ShouldMonitorExistingHelpText')}
                     {...shouldMonitorExisting}
                     onChange={onInputChange}
                   />
                 </FormGroup>
 
-                <FormGroup
-                  advancedSettings={advancedSettings}
-                  isAdvanced={isHardcoverLibraryImportList}
-                >
+                <FormGroup>
                   <FormLabel>
                     {translate('SearchForNewItems')}
                   </FormLabel>
@@ -654,6 +671,30 @@ function EditImportListModalContent(props) {
                     name="shouldSearch"
                     helpText={translate('ShouldSearchHelpText')}
                     {...shouldSearch}
+                    onChange={onInputChange}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>
+                    {translate('MonitorNewItems')}
+                    <Popover
+                      anchor={
+                        <Icon
+                          className={styles.labelIcon}
+                          name={icons.INFO}
+                        />
+                      }
+                      title={translate('MonitorNewItems')}
+                      body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+                      position={tooltipPositions.RIGHT}
+                    />
+                  </FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.MONITOR_NEW_ITEMS_SELECT}
+                    name="monitorNewItems"
+                    {...monitorNewItems}
                     onChange={onInputChange}
                   />
                 </FormGroup>
@@ -673,31 +714,6 @@ function EditImportListModalContent(props) {
                         helpText={translate('RootFolderPathHelpText')}
                         {...rootFolderPath}
                         includeMissingValue={true}
-                        onChange={onInputChange}
-                      />
-                    </FormGroup>
-
-                    <FormGroup>
-                      <FormLabel>
-                        {translate('MonitorNewItems')}
-                        <Popover
-                          anchor={
-                            <Icon
-                              className={styles.labelIcon}
-                              name={icons.INFO}
-                            />
-                          }
-                          title={translate('MonitorNewItems')}
-                          body={<AuthorMonitorNewItemsOptionsPopoverContent />}
-                          position={tooltipPositions.RIGHT}
-                        />
-                      </FormLabel>
-
-                      <FormInputGroup
-                        type={inputTypes.MONITOR_NEW_ITEMS_SELECT}
-                        name="monitorNewItems"
-                        helpText={translate('MonitorNewItemsHelpText')}
-                        {...monitorNewItems}
                         onChange={onInputChange}
                       />
                     </FormGroup>
@@ -750,13 +766,13 @@ function EditImportListModalContent(props) {
               {
                 !!fields && !!fields.length &&
                   <FieldSet legend={translate('ImportListSpecificSettings')} >
-	                    {
-	                      isDualMediaImportList ?
-	                        renderDualMediaImportListFields() :
-	                        fields.map(renderProviderField)
-	                    }
-	                  </FieldSet>
-	              }
+                    {
+                      isDualMediaImportList ?
+                        renderDualMediaImportListFields() :
+                        fields.map(renderProviderField)
+                    }
+                  </FieldSet>
+              }
 
             </Form>
         }

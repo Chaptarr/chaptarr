@@ -85,8 +85,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                         IsConfigured = true,
                         QualityProfileId = 1,
                         MetadataProfileId = 1,
-                        MonitorExisting = 2,
-                        MonitorFuture = false,
+                        MonitorExistingBooks = false,
+                        MonitorNewItems = NzbDrone.Core.Books.NewItemMonitorTypes.None,
                         Tags = new List<int>()
                     };
                 }

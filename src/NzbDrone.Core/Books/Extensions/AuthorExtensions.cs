@@ -7,6 +7,13 @@ namespace NzbDrone.Core.Books
 {
     public static class AuthorExtensions
     {
+        public static AuthorStatusType GetLifeStatus(DateTime? deathDate, DateTime? utcNow = null)
+        {
+            return deathDate.HasValue && deathDate.Value.Date <= (utcNow ?? DateTime.UtcNow).Date
+                ? AuthorStatusType.Ended
+                : AuthorStatusType.Continuing;
+        }
+
         public static bool IsMonitoredFromMediaSettings(this Author author)
         {
             return author.IsMonitoredForMediaType(isAudiobook: true) ||
@@ -20,22 +27,23 @@ namespace NzbDrone.Core.Books
                 return false;
             }
 
-            // TRI-STATE + FUTURE monitoring model:
-            // - MonitorExisting: 0=None, 1=All, 2=Selected. Any value > 0 means the author is tracked for that media type.
-            // - MonitorFuture: true means the author is tracked for that media type (even if existing is None).
-            return (author.GetMonitorExistingForMediaType(isAudiobook) ?? 0) > 0 ||
-                   (author.GetMonitorFutureForMediaType(isAudiobook) ?? false);
+            return author.GetMonitoredForMediaType(isAudiobook) == true;
         }
 
         public static bool IsMonitoredWithAuthor(this Book book)
         {
-            if (book?.Author == null)
+            return book.IsMonitoredWithAuthor(book?.Author);
+        }
+
+        public static bool IsMonitoredWithAuthor(this Book book, Author author)
+        {
+            if (book == null || author == null)
             {
                 return false;
             }
 
             var isAudiobook = book.MediaType == BookMediaType.Audiobook;
-            return book.IsMonitored() && book.Author.IsMonitoredForMediaType(isAudiobook);
+            return book.IsMonitored() && author.IsMonitoredForMediaType(isAudiobook);
         }
 
         public static Expression<Func<Book, bool>> GetBookMonitoringFilter(BookMediaType? mediaType, bool monitored)
@@ -45,14 +53,11 @@ namespace NzbDrone.Core.Books
                 return monitored
                     ? book => book.MediaType == BookMediaType.Audiobook &&
                               book.AudiobookMonitored == true &&
-                              (book.Author.AudiobookMonitorExisting > 0 ||
-                               book.Author.AudiobookMonitorFuture == true)
+                              book.Author.AudiobookMonitored == true
                     : book => book.MediaType == BookMediaType.Audiobook &&
                               (book.AudiobookMonitored == false ||
-                               ((book.Author.AudiobookMonitorExisting == null ||
-                                 book.Author.AudiobookMonitorExisting <= 0) &&
-                                (book.Author.AudiobookMonitorFuture == null ||
-                                 book.Author.AudiobookMonitorFuture == false)));
+                               book.Author.AudiobookMonitored == false ||
+                               book.Author.AudiobookMonitored == null);
             }
 
             if (mediaType == BookMediaType.Ebook)
@@ -60,37 +65,28 @@ namespace NzbDrone.Core.Books
                 return monitored
                     ? book => book.MediaType == BookMediaType.Ebook &&
                               book.EbookMonitored == true &&
-                              (book.Author.EbookMonitorExisting > 0 ||
-                               book.Author.EbookMonitorFuture == true)
+                              book.Author.EbookMonitored == true
                     : book => book.MediaType == BookMediaType.Ebook &&
                               (book.EbookMonitored == false ||
-                               ((book.Author.EbookMonitorExisting == null ||
-                                 book.Author.EbookMonitorExisting <= 0) &&
-                                (book.Author.EbookMonitorFuture == null ||
-                                 book.Author.EbookMonitorFuture == false)));
+                               book.Author.EbookMonitored == false ||
+                               book.Author.EbookMonitored == null);
             }
 
             return monitored
                 ? book => (book.MediaType == BookMediaType.Audiobook &&
                            book.AudiobookMonitored == true &&
-                           (book.Author.AudiobookMonitorExisting > 0 ||
-                            book.Author.AudiobookMonitorFuture == true)) ||
+                           book.Author.AudiobookMonitored == true) ||
                           (book.MediaType == BookMediaType.Ebook &&
                            book.EbookMonitored == true &&
-                           (book.Author.EbookMonitorExisting > 0 ||
-                            book.Author.EbookMonitorFuture == true))
+                           book.Author.EbookMonitored == true)
                 : book => (book.MediaType == BookMediaType.Audiobook &&
                            (book.AudiobookMonitored == false ||
-                            ((book.Author.AudiobookMonitorExisting == null ||
-                              book.Author.AudiobookMonitorExisting <= 0) &&
-                             (book.Author.AudiobookMonitorFuture == null ||
-                              book.Author.AudiobookMonitorFuture == false)))) ||
+                            book.Author.AudiobookMonitored == false ||
+                            book.Author.AudiobookMonitored == null)) ||
                           (book.MediaType == BookMediaType.Ebook &&
                            (book.EbookMonitored == false ||
-                            ((book.Author.EbookMonitorExisting == null ||
-                              book.Author.EbookMonitorExisting <= 0) &&
-                             (book.Author.EbookMonitorFuture == null ||
-                              book.Author.EbookMonitorFuture == false))));
+                            book.Author.EbookMonitored == false ||
+                            book.Author.EbookMonitored == null));
         }
 
         public static QualityProfile GetQualityProfileForQuality(this Author author, Quality quality)
@@ -135,28 +131,63 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        public static int? GetMonitorExistingForMediaType(this Author author, bool isAudiobook)
+        public static bool? GetMonitoredForMediaType(this Author author, bool isAudiobook)
         {
-            if (isAudiobook)
-            {
-                return author.AudiobookMonitorExisting;
-            }
-            else
-            {
-                return author.EbookMonitorExisting;
-            }
+            return isAudiobook ? author?.AudiobookMonitored : author?.EbookMonitored;
         }
 
-        public static bool? GetMonitorFutureForMediaType(this Author author, bool isAudiobook)
+        public static NewItemMonitorTypes? GetMonitorNewItemsForMediaType(this Author author, bool isAudiobook)
         {
-            if (isAudiobook)
+            return isAudiobook ? author?.AudiobookMonitorNewItems : author?.EbookMonitorNewItems;
+        }
+
+        public static bool ApplyMediaTypeMonitoringSettings(
+            this Author author,
+            BookMediaType mediaType,
+            bool? monitored,
+            NewItemMonitorTypes? monitorNewItems)
+        {
+            if (author == null)
             {
-                return author.AudiobookMonitorFuture;
+                return false;
             }
-            else
+
+            var changed = false;
+            if (mediaType == BookMediaType.Audiobook)
             {
-                return author.EbookMonitorFuture;
+                if (monitored.HasValue && author.AudiobookMonitored != monitored)
+                {
+                    author.AudiobookMonitored = monitored;
+                    changed = true;
+                }
+
+                if (monitorNewItems.HasValue && author.AudiobookMonitorNewItems != monitorNewItems)
+                {
+                    author.AudiobookMonitorNewItems = monitorNewItems;
+                    changed = true;
+                }
             }
+            else if (mediaType == BookMediaType.Ebook)
+            {
+                if (monitored.HasValue && author.EbookMonitored != monitored)
+                {
+                    author.EbookMonitored = monitored;
+                    changed = true;
+                }
+
+                if (monitorNewItems.HasValue && author.EbookMonitorNewItems != monitorNewItems)
+                {
+                    author.EbookMonitorNewItems = monitorNewItems;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                author.Monitored = author.IsMonitoredFromMediaSettings();
+            }
+
+            return changed;
         }
 
         private static BookMediaType GetEffectiveMediaType(Quality quality)

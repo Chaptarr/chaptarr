@@ -249,15 +249,15 @@ namespace Chaptarr.Core.Test.Books
             public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders) => GetBestRootFolder(path, allRootFolders)?.Path;
         }
 
-        private static Author BuildAuthor(int id, bool? sync = true, int? audiobookMonitorExisting = 1, int? ebookMonitorExisting = 1, string audiobookRootFolderPath = "/audiobooks", string ebookRootFolderPath = "/ebooks")
+        private static Author BuildAuthor(int id, bool? sync = true, bool? audiobookMonitored = true, bool? ebookMonitored = true, string audiobookRootFolderPath = "/audiobooks", string ebookRootFolderPath = "/ebooks")
         {
             return new Author
             {
                 Id = id,
                 Name = $"Author {id}",
                 SyncMonitoredAcrossFormats = sync,
-                AudiobookMonitorExisting = audiobookMonitorExisting,
-                EbookMonitorExisting = ebookMonitorExisting,
+                AudiobookMonitored = audiobookMonitored,
+                EbookMonitored = ebookMonitored,
                 AudiobookRootFolderPath = audiobookRootFolderPath,
                 EbookRootFolderPath = ebookRootFolderPath
             };
@@ -371,7 +371,7 @@ namespace Chaptarr.Core.Test.Books
         [Test]
         public void bulk_reconcile_should_not_enable_missing_sibling_when_target_monitor_existing_is_none()
         {
-            var author = BuildAuthor(1, ebookMonitorExisting: 0);
+            var author = BuildAuthor(1, sync: false, ebookMonitored: false);
             var audiobook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
             var ebook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: false);
             var repository = new StubBookRepository(new[] { audiobook, ebook });
@@ -385,7 +385,7 @@ namespace Chaptarr.Core.Test.Books
         [Test]
         public void set_book_monitored_should_not_enable_sibling_when_target_monitor_existing_is_none()
         {
-            var author = BuildAuthor(1, ebookMonitorExisting: 0);
+            var author = BuildAuthor(1, sync: false, ebookMonitored: false);
             var audiobook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
             var ebook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: false);
             var repository = new StubBookRepository(new[] { audiobook, ebook });

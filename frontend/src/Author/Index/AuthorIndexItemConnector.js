@@ -98,12 +98,14 @@ function createMapStateToProps() {
         selectedMediaType :
         author.lastSelectedMediaType;
       const qualityProfile = mediaTypeDetails.find((details) => details.mediaType === profileMediaType)?.qualityProfile;
+      const path = profileMediaType === 'ebook' ? author.ebookFolder : author.audiobookFolder;
 
       return {
         ...author,
         monitored: isAuthorMonitoredForSelection(author, selectedMediaType),
         statistics,
         qualityProfile,
+        path: path || '',
         mediaTypeDetails,
         metadataProfile,
         latestBook,

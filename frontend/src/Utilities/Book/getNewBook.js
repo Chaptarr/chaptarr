@@ -11,26 +11,16 @@ function getNewBook(book, payload, mediaType) {
     book.author = getNewAuthor(book.author, payload, mediaType);
 
     if (payload.monitor === 'specificBook') {
-      // "None (Just this one)" means:
-      // - Monitor the author for this media type (already handled by getNewAuthor)
-      // - Don't monitor any existing books
-      // - Don't monitor future books
-      // - Only monitor this specific book
-
-      book.author.addOptions.monitor = 'specificBook';
+      // "Only This Book" is an add-time row selection. The author gate stays
+      // independent from the selected book and the ongoing new-item policy.
+      book.author.addOptions = {
+        ...book.author.addOptions,
+        monitor: 'specificBook'
+      };
       const bookToMonitor = book.foreignId || book.foreignBookId || book.hardcoverBookId || book.goodreadsBookId;
       book.author.addOptions.booksToMonitor = [bookToMonitor];
-      console.log('[getNewBook] Setting up "None (Just this one)" monitoring:', {
-        monitor: 'specificBook',
-        booksToMonitor: [bookToMonitor],
-        foreignId: book.foreignId,
-        hardcoverBookId: book.hardcoverBookId,
-        goodreadsBookId: book.goodreadsBookId,
-        ebookMonitorExisting: book.author.ebookMonitorExisting,
-        audiobookMonitorExisting: book.author.audiobookMonitorExisting
-      });
 
-      // Make sure the book itself is monitored when using "None (Just this one)"
+      // The requested book row is always monitored for "Only This Book".
       book.monitored = true;
     }
   }
@@ -42,6 +32,7 @@ function getNewBook(book, payload, mediaType) {
   book.localBookId = null;
 
   book.addOptions = {
+    ...book.addOptions,
     searchForNewBook
   };
 
@@ -60,7 +51,7 @@ function getNewBook(book, payload, mediaType) {
 
   book.monitored = book.audiobookMonitored || book.ebookMonitored;
 
-  // Override if using "None (Just this one)" - ensure the book is monitored
+  // Keep the exact requested row monitored for "Only This Book".
   if (payload.monitor === 'specificBook') {
     book.monitored = true;
     // Media-type specific monitoring was already set above

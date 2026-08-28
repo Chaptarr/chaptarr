@@ -71,7 +71,7 @@ class AuthorDetailsHeader extends Component {
     // Photo selection is now handled by localStorage in AuthorPoster component
     // This handler is no longer needed but kept for backward compatibility
     console.log('Photo changed for author', authorId, 'to URL:', imageUrl, 'Photo ID:', photoId);
-    
+
     if (this.props.onPhotoChange) {
       this.props.onPhotoChange(authorId, imageUrl, photoId);
     }
@@ -210,38 +210,38 @@ class AuthorDetailsHeader extends Component {
             <div className={styles.detailsLabels}>
               {
                 selectedMediaType === 'audiobook' && (audiobookFolder || audiobookRootFolderPath) &&
-                <Label
-                  className={styles.detailsLabel}
-                  title={`Audiobook: ${audiobookFolder || audiobookRootFolderPath}`}
-                  size={sizes.LARGE}
-                >
-                  <Icon
-                    name={icons.TRACK_FILE}
-                    size={17}
-                  />
+                  <Label
+                    className={styles.detailsLabel}
+                    title={`Audiobook: ${audiobookFolder || audiobookRootFolderPath}`}
+                    size={sizes.LARGE}
+                  >
+                    <Icon
+                      name={icons.TRACK_FILE}
+                      size={17}
+                    />
 
-                  <span className={styles.path}>
-                    {audiobookFolder || audiobookRootFolderPath}
-                  </span>
-                </Label>
+                    <span className={styles.path}>
+                      {audiobookFolder || audiobookRootFolderPath}
+                    </span>
+                  </Label>
               }
 
               {
                 selectedMediaType === 'ebook' && (ebookFolder || ebookRootFolderPath) &&
-                <Label
-                  className={styles.detailsLabel}
-                  title={`Ebook: ${ebookFolder || ebookRootFolderPath}`}
-                  size={sizes.LARGE}
-                >
-                  <Icon
-                    name={icons.BOOK}
-                    size={17}
-                  />
+                  <Label
+                    className={styles.detailsLabel}
+                    title={`Ebook: ${ebookFolder || ebookRootFolderPath}`}
+                    size={sizes.LARGE}
+                  >
+                    <Icon
+                      name={icons.BOOK}
+                      size={17}
+                    />
 
-                  <span className={styles.path}>
-                    {ebookFolder || ebookRootFolderPath}
-                  </span>
-                </Label>
+                    <span className={styles.path}>
+                      {ebookFolder || ebookRootFolderPath}
+                    </span>
+                  </Label>
               }
 
               <Label
@@ -285,12 +285,12 @@ class AuthorDetailsHeader extends Component {
                 size={sizes.LARGE}
               >
                 <Icon
-                  name={monitored === 2 ? icons.MONITORED : (monitored === 1 ? icons.MONITORED : icons.UNMONITORED)}
+                  name={monitored ? icons.MONITORED : icons.UNMONITORED}
                   size={17}
                 />
 
                 <span className={styles.qualityProfileName}>
-                  {monitored === 0 ? 'None' : (monitored === 1 ? 'All' : (monitored === 2 ? 'Selected' : 'Unknown'))}
+                  {translate(monitored ? 'Monitored' : 'Unmonitored')}
                 </span>
               </Label>
 
@@ -389,7 +389,7 @@ AuthorDetailsHeader.propTypes = {
   qualityProfileId: PropTypes.number,
   audiobookQualityProfileId: PropTypes.number,
   ebookQualityProfileId: PropTypes.number,
-  monitored: PropTypes.oneOfType([PropTypes.bool, PropTypes.number]).isRequired,
+  monitored: PropTypes.bool.isRequired,
   status: PropTypes.string.isRequired,
   overview: PropTypes.string,
   links: PropTypes.arrayOf(PropTypes.object).isRequired,

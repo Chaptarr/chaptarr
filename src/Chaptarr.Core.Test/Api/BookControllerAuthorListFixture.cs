@@ -151,8 +151,8 @@ namespace Chaptarr.Core.Test.Api
             {
                 Id = 42,
                 Name = "Susanna Clarke",
-                AudiobookMonitorExisting = 0,
-                EbookMonitorExisting = 0,
+                AudiobookMonitored = false,
+                EbookMonitored = false,
                 SyncMonitoredAcrossFormats = true,
                 AudiobookRootFolderPath = "/audiobooks",
                 EbookRootFolderPath = "/ebooks"
@@ -207,11 +207,11 @@ namespace Chaptarr.Core.Test.Api
             var controller = new BookController(
                 authorService: Proxy<IAuthorService>(new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
-                    [nameof(IAuthorService.PromoteMediaTypeMonitoringToSelected)] = (_, args) =>
+                    [nameof(IAuthorService.EnsureMediaTypeMonitoring)] = (_, args) =>
                     {
                         Assert.That(args[0], Is.EqualTo(author.Id));
                         Assert.That(args[1], Is.EqualTo("audiobook"));
-                        author.AudiobookMonitorExisting = 2;
+                        author.AudiobookMonitored = true;
                         author.Monitored = true;
                         authorUpdateCount++;
                         return null;
@@ -284,8 +284,8 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(authorUpdateCount, Is.EqualTo(1));
                 Assert.That(scopedBookUpdateCount, Is.EqualTo(1));
                 Assert.That(genericBookUpdateCount, Is.Zero);
-                Assert.That(author.AudiobookMonitorExisting, Is.EqualTo(2));
-                Assert.That(author.EbookMonitorExisting, Is.EqualTo(0));
+                Assert.That(author.AudiobookMonitored, Is.True);
+                Assert.That(author.EbookMonitored, Is.False);
                 Assert.That(author.SyncMonitoredAcrossFormats, Is.True);
                 Assert.That(book.AudiobookMonitored, Is.True);
                 Assert.That(book.EbookMonitored, Is.False);

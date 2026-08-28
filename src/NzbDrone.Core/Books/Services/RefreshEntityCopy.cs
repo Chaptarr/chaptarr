@@ -197,6 +197,9 @@ namespace NzbDrone.Core.Books
                 {
                     Name = source.Author.Name,
                     TitleSlug = source.Author.TitleSlug,
+                    Born = source.Author.Born,
+                    Died = source.Author.Died,
+                    Status = source.Author.Status,
                     GoodreadsAuthorId = source.Author.GoodreadsAuthorId,
                     HardcoverAuthorId = source.Author.HardcoverAuthorId,
                     OpenLibraryAuthorId = source.Author.OpenLibraryAuthorId,

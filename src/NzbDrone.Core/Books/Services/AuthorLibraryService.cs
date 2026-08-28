@@ -61,18 +61,19 @@ namespace NzbDrone.Core.Books.Services
 
     public class MonitoringConfig
     {
-        public bool MonitorNewItems { get; set; } = true; // For backward compatibility
-        public bool MonitorExisting { get; set; } = true; // Monitor existing books
-        public bool MonitorFuture { get; set; } = true;   // Monitor future releases
-        
         // Flag to indicate this is a manual addition from modal (not disc scan)
         public bool IsManualAddition { get; set; } = false;
 
-        // TRI-STATE monitoring settings (0=None, 1=All, 2=Selected)
-        public int? AudiobookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? AudiobookMonitorFuture { get; set; } // true=monitor, false=don't monitor
-        public int? EbookMonitorExisting { get; set; } // 0=None, 1=All, 2=Selected
-        public bool? EbookMonitorFuture { get; set; } // true=monitor, false=don't monitor
+        // Author-side monitoring gates are intentionally separate from the policy for
+        // newly discovered catalog rows. The per-side MonitorExistingMode is the
+        // one-time action for the catalog being added; MonitorNewItems is the ongoing
+        // policy for later rows.
+        public bool? AudiobookMonitored { get; set; }
+        public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
+        public MonitorTypes? AudiobookMonitorExistingMode { get; set; }
+        public bool? EbookMonitored { get; set; }
+        public NewItemMonitorTypes? EbookMonitorNewItems { get; set; }
+        public MonitorTypes? EbookMonitorExistingMode { get; set; }
 
         public int? AudiobookQualityProfileId { get; set; }
         public int? EbookQualityProfileId { get; set; }
@@ -1033,6 +1034,7 @@ namespace NzbDrone.Core.Books.Services
         private async Task<Author> HandleExistingAuthorAsync(Author existingAuthor, Author remoteAuthor, MonitoringConfig config)
         {
             existingAuthor = MergeMissingProviderIds(existingAuthor, remoteAuthor);
+            existingAuthor = ApplyAuthorMetadata(existingAuthor, remoteAuthor);
             SeedAuthorSyncMetadata(existingAuthor, remoteAuthor, null);
 
             if (config != null)
@@ -1048,14 +1050,12 @@ namespace NzbDrone.Core.Books.Services
             // the canonical profile/retention pipeline.
             var existingBooks = _bookService.GetBooksByAuthor(existingAuthor.Id) ?? new List<Book>();
 
-            var requestedProviderIds = config?.SpecificBookProviderIds?
-                .Where(providerId => !string.IsNullOrWhiteSpace(providerId))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (requestedProviderIds?.Count > 0 &&
-                remoteAuthor?.Books?.Any(remoteBook =>
-                    remoteBook != null &&
-                    (!config.SpecificBookMediaType.HasValue || remoteBook.MediaType == config.SpecificBookMediaType.Value) &&
-                    requestedProviderIds.Any(providerId => BookMatchesProviderId(remoteBook, providerId))) == true &&
+            var requestedProviderIds = GetRequestedBookProviderIdsByMediaType(config);
+            if (requestedProviderIds.Any(requested =>
+                    remoteAuthor?.Books?.Any(remoteBook =>
+                        remoteBook != null &&
+                        remoteBook.MediaType == requested.Key &&
+                        requested.Value.Any(providerId => BookMatchesProviderId(remoteBook, providerId))) == true) &&
                 _refreshAuthorService != null)
             {
                 // The full author blob remains authoritative. A specific-work request may ask an
@@ -1064,7 +1064,9 @@ namespace NzbDrone.Core.Books.Services
                 _logger.Debug(
                     "[HYDRATE] Reconciling authoritative author blob for existing author '{0}' before resolving requested work(s) [{1}]",
                     existingAuthor.Name,
-                    string.Join(",", requestedProviderIds.OrderBy(id => id, StringComparer.OrdinalIgnoreCase)));
+                    string.Join(",", requestedProviderIds
+                        .SelectMany(requested => requested.Value.Select(providerId => $"{requested.Key}:{providerId}"))
+                        .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)));
                 _refreshAuthorService.ReconcileAuthorBlob(existingAuthor, remoteAuthor);
                 existingAuthor = _authorService.GetAuthor(existingAuthor.Id) ?? existingAuthor;
                 existingBooks = _bookService.GetBooksByAuthor(existingAuthor.Id) ?? new List<Book>();
@@ -1114,6 +1116,32 @@ namespace NzbDrone.Core.Books.Services
             return existingAuthor;
         }
 
+        private Author ApplyAuthorMetadata(Author existingAuthor, Author remoteAuthor)
+        {
+            if (existingAuthor == null || remoteAuthor == null)
+            {
+                return existingAuthor;
+            }
+
+            // Use the same metadata-copy contract as refresh, while leaving provider-ID
+            // attachment to MergeMissingProviderIds and its uniqueness safeguards.
+            var hardcoverAuthorId = existingAuthor.HardcoverAuthorId;
+            var goodreadsAuthorId = existingAuthor.GoodreadsAuthorId;
+            var audnexusAuthorId = existingAuthor.AudnexusAuthorId;
+            var openLibraryAuthorId = existingAuthor.OpenLibraryAuthorId;
+            var googleBooksAuthorId = existingAuthor.GoogleBooksAuthorId;
+
+            existingAuthor.UseMetadataFrom(remoteAuthor);
+            existingAuthor.HardcoverAuthorId = hardcoverAuthorId;
+            existingAuthor.GoodreadsAuthorId = goodreadsAuthorId;
+            existingAuthor.AudnexusAuthorId = audnexusAuthorId;
+            existingAuthor.OpenLibraryAuthorId = openLibraryAuthorId;
+            existingAuthor.GoogleBooksAuthorId = googleBooksAuthorId;
+            existingAuthor.LastInfoSync = DateTime.UtcNow;
+
+            return _authorService.UpdateAuthor(existingAuthor);
+        }
+
         private Author ApplyExistingAuthorProgressiveSettings(Author existingAuthor, MonitoringConfig config)
         {
             if (config == null)
@@ -1127,12 +1155,12 @@ namespace NzbDrone.Core.Books.Services
                     existingAuthor,
                     config.CreateAudiobook ? config.AudiobookQualityProfileId : null,
                     config.CreateAudiobook ? config.AudiobookMetadataProfileId : null,
-                    config.CreateAudiobook ? config.AudiobookMonitorExisting : null,
-                    config.CreateAudiobook ? config.AudiobookMonitorFuture : null,
+                    config.CreateAudiobook ? config.AudiobookMonitored : null,
+                    config.CreateAudiobook ? config.AudiobookMonitorNewItems : null,
                     config.CreateEbook ? config.EbookQualityProfileId : null,
                     config.CreateEbook ? config.EbookMetadataProfileId : null,
-                    config.CreateEbook ? config.EbookMonitorExisting : null,
-                    config.CreateEbook ? config.EbookMonitorFuture : null,
+                    config.CreateEbook ? config.EbookMonitored : null,
+                    config.CreateEbook ? config.EbookMonitorNewItems : null,
                     // Single path param: prefer audiobook path if present else ebook
                     config.AudiobookRootFolderPath ?? config.EbookRootFolderPath);
 
@@ -1241,6 +1269,20 @@ namespace NzbDrone.Core.Books.Services
                 return;
             }
 
+            // Older callers expressed an exact-book request with only the provider-ID
+            // list. Preserve that intent before root defaults fill an otherwise-null
+            // initial mode. An explicit mode always wins; in particular, All may carry
+            // the same IDs solely so a missing requested work can be rescued later.
+            if (!config.AudiobookMonitorExistingMode.HasValue && config.AudiobookBooksToMonitor?.Any() == true)
+            {
+                config.AudiobookMonitorExistingMode = MonitorTypes.SpecificBook;
+            }
+
+            if (!config.EbookMonitorExistingMode.HasValue && config.EbookBooksToMonitor?.Any() == true)
+            {
+                config.EbookMonitorExistingMode = MonitorTypes.SpecificBook;
+            }
+
             config.AudiobookQualityProfileId = NormalizeProfileId(config.AudiobookQualityProfileId);
             config.AudiobookMetadataProfileId = NormalizeProfileId(config.AudiobookMetadataProfileId);
             config.EbookQualityProfileId = NormalizeProfileId(config.EbookQualityProfileId);
@@ -1291,8 +1333,9 @@ namespace NzbDrone.Core.Books.Services
             {
                 config.AudiobookQualityProfileId ??= NormalizeProfileId(settings.QualityProfileId);
                 config.AudiobookMetadataProfileId ??= NormalizeProfileId(settings.MetadataProfileId);
-                config.AudiobookMonitorExisting ??= settings.MonitorExisting;
-                config.AudiobookMonitorFuture ??= settings.MonitorFuture;
+                config.AudiobookMonitored ??= settings.Monitored;
+                config.AudiobookMonitorNewItems ??= settings.MonitorNewItems;
+                config.AudiobookMonitorExistingMode ??= RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
 
                 if (!config.AudiobookQualityProfileId.HasValue)
                 {
@@ -1305,14 +1348,15 @@ namespace NzbDrone.Core.Books.Services
                 }
 
                 ValidateMonitoringProfileIds(mediaType, nameof(config.AudiobookQualityProfileId), config.AudiobookQualityProfileId.Value, nameof(config.AudiobookMetadataProfileId), config.AudiobookMetadataProfileId.Value);
-                ValidateMonitorExisting(mediaType, nameof(config.AudiobookMonitorExisting), config.AudiobookMonitorExisting);
+                ValidateMonitorMode(mediaType, nameof(config.AudiobookMonitorExistingMode), config.AudiobookMonitorExistingMode);
             }
             else
             {
                 config.EbookQualityProfileId ??= NormalizeProfileId(settings.QualityProfileId);
                 config.EbookMetadataProfileId ??= NormalizeProfileId(settings.MetadataProfileId);
-                config.EbookMonitorExisting ??= settings.MonitorExisting;
-                config.EbookMonitorFuture ??= settings.MonitorFuture;
+                config.EbookMonitored ??= settings.Monitored;
+                config.EbookMonitorNewItems ??= settings.MonitorNewItems;
+                config.EbookMonitorExistingMode ??= RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
 
                 if (!config.EbookQualityProfileId.HasValue)
                 {
@@ -1325,7 +1369,7 @@ namespace NzbDrone.Core.Books.Services
                 }
 
                 ValidateMonitoringProfileIds(mediaType, nameof(config.EbookQualityProfileId), config.EbookQualityProfileId.Value, nameof(config.EbookMetadataProfileId), config.EbookMetadataProfileId.Value);
-                ValidateMonitorExisting(mediaType, nameof(config.EbookMonitorExisting), config.EbookMonitorExisting);
+                ValidateMonitorMode(mediaType, nameof(config.EbookMonitorExistingMode), config.EbookMonitorExistingMode);
             }
         }
 
@@ -1342,14 +1386,14 @@ namespace NzbDrone.Core.Books.Services
             }
         }
 
-        private static void ValidateMonitorExisting(BookMediaType mediaType, string propertyName, int? monitorExisting)
+        private static void ValidateMonitorMode(BookMediaType mediaType, string propertyName, MonitorTypes? monitorMode)
         {
-            if (!monitorExisting.HasValue || monitorExisting.Value is 0 or 1 or 2)
+            if (!monitorMode.HasValue || Enum.IsDefined(typeof(MonitorTypes), monitorMode.Value))
             {
                 return;
             }
 
-            throw BuildMonitoringConfigValidationException(mediaType, propertyName, "MonitorExisting must be 0 (None), 1 (All), or 2 (Selected)");
+            throw BuildMonitoringConfigValidationException(mediaType, propertyName, "Monitor mode is invalid");
         }
 
         private static int? NormalizeProfileId(int? profileId)
@@ -1691,10 +1735,26 @@ namespace NzbDrone.Core.Books.Services
 
         private void ApplyMonitoringConfig(Author author, MonitoringConfig config)
         {
-            // Only set author.Monitored if this is a new author (not already in DB)
-            if (author.Id == 0)
+            if (config == null)
             {
-                author.Monitored = config.MonitorNewItems;
+                return;
+            }
+
+            // Preserve the one-time book-row policy until the initial disk scan has
+            // attached files. Specific-book requests are applied by provider ID and
+            // must not be widened by this post-scan pass.
+            var audiobookInitialMode = config.CreateAudiobook && config.AudiobookMonitorExistingMode != MonitorTypes.SpecificBook
+                ? config.AudiobookMonitorExistingMode
+                : null;
+            var ebookInitialMode = config.CreateEbook && config.EbookMonitorExistingMode != MonitorTypes.SpecificBook
+                ? config.EbookMonitorExistingMode
+                : null;
+            if (audiobookInitialMode.HasValue || ebookInitialMode.HasValue || config.SearchForMissingBooks == true)
+            {
+                author.AddOptions ??= new AddAuthorOptions();
+                author.AddOptions.AudiobookMonitor = audiobookInitialMode;
+                author.AddOptions.EbookMonitor = ebookInitialMode;
+                author.AddOptions.SearchForMissingBooks = config.SearchForMissingBooks == true;
             }
 
             // Apply audiobook settings only when this add request configured audiobook support.
@@ -1703,25 +1763,21 @@ namespace NzbDrone.Core.Books.Services
                 author.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
             }
 
-            // Apply audiobook monitoring settings
-            if (config.CreateAudiobook && config.AudiobookMonitorExisting.HasValue)
+            // Apply the independent audiobook author gate and ongoing new-row policy.
+            if (config.CreateAudiobook && config.AudiobookMonitored.HasValue)
             {
-                author.AudiobookMonitorExisting = config.AudiobookMonitorExisting.Value;
+                author.AudiobookMonitored = config.AudiobookMonitored;
             }
             else if (config.CreateAudiobook && config.IsManualAddition)
             {
-                // For manual additions, default to 0 (None) if not explicitly set
-                author.AudiobookMonitorExisting = 0;
+                // A manual add with no explicit gate is an explicit pause for the
+                // configured side; it must not inherit the other side's state.
+                author.AudiobookMonitored = false;
             }
-            
-            if (config.CreateAudiobook && config.AudiobookMonitorFuture.HasValue)
+
+            if (config.CreateAudiobook && config.AudiobookMonitorNewItems.HasValue)
             {
-                author.AudiobookMonitorFuture = config.AudiobookMonitorFuture.Value;
-            }
-            else if (config.CreateAudiobook && config.IsManualAddition)
-            {
-                // For manual additions, default to false (don't monitor) if not explicitly set
-                author.AudiobookMonitorFuture = false;
+                author.AudiobookMonitorNewItems = config.AudiobookMonitorNewItems;
             }
 
             // Apply audiobook metadata profile independently of quality profile
@@ -1736,25 +1792,19 @@ namespace NzbDrone.Core.Books.Services
                 author.EbookQualityProfileId = config.EbookQualityProfileId;
             }
 
-            // Apply ebook monitoring settings
-            if (config.CreateEbook && config.EbookMonitorExisting.HasValue)
+            // Apply the independent ebook author gate and ongoing new-row policy.
+            if (config.CreateEbook && config.EbookMonitored.HasValue)
             {
-                author.EbookMonitorExisting = config.EbookMonitorExisting.Value;
+                author.EbookMonitored = config.EbookMonitored;
             }
             else if (config.CreateEbook && config.IsManualAddition)
             {
-                // For manual additions, default to 0 (None) if not explicitly set
-                author.EbookMonitorExisting = 0;
+                author.EbookMonitored = false;
             }
-            
-            if (config.CreateEbook && config.EbookMonitorFuture.HasValue)
+
+            if (config.CreateEbook && config.EbookMonitorNewItems.HasValue)
             {
-                author.EbookMonitorFuture = config.EbookMonitorFuture.Value;
-            }
-            else if (config.CreateEbook && config.IsManualAddition)
-            {
-                // For manual additions, default to false (don't monitor) if not explicitly set
-                author.EbookMonitorFuture = false;
+                author.EbookMonitorNewItems = config.EbookMonitorNewItems;
             }
 
             // Apply ebook metadata profile independently of quality profile
@@ -1766,6 +1816,11 @@ namespace NzbDrone.Core.Books.Services
             // Do NOT cross-populate metadata profiles between types
             // The generic MetadataProfileId should only be set from a generic source
             // Each media type has its own metadata profile field
+
+            // Monitored is a compatibility projection only. The media-side gates
+            // above are the source of truth and may legitimately leave this false
+            // when both sides are unconfigured.
+            author.Monitored = author.IsMonitoredFromMediaSettings();
 
             if (config.CreateAudiobook && !string.IsNullOrWhiteSpace(config.AudiobookRootFolderPath))
             {
@@ -2068,81 +2123,26 @@ namespace NzbDrone.Core.Books.Services
                     }
                 }
 
-                // Set monitoring based on media type AND what type of root folder discovered the author
+                // Seed the book row from the one-time current-catalog action. This is
+                // deliberately independent of the author gate: turning a side off
+                // pauses eligibility without rewriting its row selections.
+                var monitorMode = GetInitialMonitorMode(config, book.MediaType);
+                // Explicit provider-ID targets are an exact current-catalog intent and
+                // take precedence over a root's generic None/All seed mode.
+                var hasSpecificBookMode = specificBookProviderIds.Any() || monitorMode == MonitorTypes.SpecificBook;
+                var monitorThisBook = hasSpecificBookMode
+                    ? shouldMonitorThisBook
+                    : ShouldMonitorCurrentBook(book, books, monitorMode);
+
                 if (book.MediaType == BookMediaType.Audiobook)
                 {
-                    // Only monitor audiobooks if we have audiobook config (discovered via audiobook root folder)
-                    if (config != null && config.AudiobookQualityProfileId.HasValue)
-                    {
-                        // Apply tri-state monitoring logic (0=None, 1=All, 2=Selected)
-                        if (author.AudiobookMonitorExisting == 1)
-                        {
-                            // All: Monitor all audiobooks
-                            book.AudiobookMonitored = true;
-                            _logger.Debug("[TRI-STATE] Setting audiobook '{0}' to monitored (All mode)", book.Title);
-                        }
-                        else if (author.AudiobookMonitorExisting == 2)
-                        {
-                            // Selected: Only monitor specific books
-                            book.AudiobookMonitored = shouldMonitorThisBook;
-                            _logger.Debug("[TRI-STATE] Setting audiobook '{0}' monitoring to {1} (Selected mode, matches={2})",
-                                book.Title, book.AudiobookMonitored, shouldMonitorThisBook);
-                        }
-                        else
-                        {
-                            // None (0 or null): Don't monitor any audiobooks
-                            book.AudiobookMonitored = false;
-                            _logger.Debug("[TRI-STATE] Setting audiobook '{0}' to not monitored (None mode)", book.Title);
-                        }
-                    }
-                    else
-                    {
-                        // Not discovered via audiobook folder - don't monitor
-                        book.AudiobookMonitored = false;
-                    }
+                    book.AudiobookMonitored = monitorThisBook;
                     book.EbookMonitored = false;
                 }
                 else if (book.MediaType == BookMediaType.Ebook)
                 {
-                    // Only monitor ebooks if we have ebook config (discovered via ebook root folder)
-                    if (config != null && config.EbookQualityProfileId.HasValue)
-                    {
-                        // Apply tri-state monitoring logic (0=None, 1=All, 2=Selected)
-                        if (author.EbookMonitorExisting == 1)
-                        {
-                            // All: Monitor all ebooks
-                            book.EbookMonitored = true;
-                            _logger.Debug("[TRI-STATE] Setting ebook '{0}' to monitored (All mode)", book.Title);
-                        }
-                        else if (author.EbookMonitorExisting == 2)
-                        {
-                            // Selected: Only monitor specific books
-                            book.EbookMonitored = shouldMonitorThisBook;
-                            _logger.Debug("[TRI-STATE] Setting ebook '{0}' monitoring to {1} (Selected mode, matches={2})",
-                                book.Title, book.EbookMonitored, shouldMonitorThisBook);
-                        }
-                        else
-                        {
-                            // None (0 or null): Don't monitor any ebooks
-                            book.EbookMonitored = false;
-                            _logger.Debug("[TRI-STATE] Setting ebook '{0}' to not monitored (None mode)", book.Title);
-                        }
-                    }
-                    else
-                    {
-                        // Not discovered via ebook folder - don't monitor
-                        book.EbookMonitored = false;
-                    }
+                    book.EbookMonitored = monitorThisBook;
                     book.AudiobookMonitored = false;
-                }
-
-                // Ensure monitored books only exist under monitored authors
-                if ((book.AudiobookMonitored || book.EbookMonitored) && !author.Monitored)
-                {
-                    _logger.Debug("Book '{0}' would be monitored but author '{1}' is not monitored. Setting book to unmonitored.",
-                        book.Title, author.Name);
-                    book.AudiobookMonitored = false;
-                    book.EbookMonitored = false;
                 }
 
 
@@ -2243,6 +2243,60 @@ namespace NzbDrone.Core.Books.Services
             return Task.CompletedTask;
         }
 
+        private static MonitorTypes? GetInitialMonitorMode(MonitoringConfig config, BookMediaType mediaType)
+        {
+            if (config == null)
+            {
+                return null;
+            }
+
+            var perMediaMode = mediaType == BookMediaType.Audiobook
+                ? config.AudiobookMonitorExistingMode
+                : config.EbookMonitorExistingMode;
+
+            return perMediaMode ?? config.MonitorMode;
+        }
+
+        private static bool ShouldMonitorCurrentBook(Book book, List<Book> books, MonitorTypes? monitorMode)
+        {
+            if (book == null || !monitorMode.HasValue)
+            {
+                return false;
+            }
+
+            var sameMediaBooks = books
+                .Where(candidate => candidate != null && candidate.MediaType == book.MediaType)
+                .ToList();
+
+            var hasFiles = book.HasFiles;
+            switch (monitorMode.Value)
+            {
+                case MonitorTypes.All:
+                    return true;
+                case MonitorTypes.Future:
+                    return !hasFiles && (!book.ReleaseDate.HasValue || book.ReleaseDate.Value > DateTime.UtcNow);
+                case MonitorTypes.Missing:
+                    return !hasFiles;
+                case MonitorTypes.Existing:
+                    return hasFiles;
+                case MonitorTypes.Latest:
+                    return sameMediaBooks
+                        .OrderByDescending(candidate => candidate.ReleaseDate)
+                        .ThenByDescending(candidate => candidate.Id)
+                        .FirstOrDefault() == book;
+                case MonitorTypes.First:
+                    return sameMediaBooks
+                        .OrderBy(candidate => candidate.ReleaseDate)
+                        .ThenBy(candidate => candidate.Id)
+                        .FirstOrDefault() == book;
+                case MonitorTypes.None:
+                case MonitorTypes.SpecificBook:
+                case MonitorTypes.Unknown:
+                default:
+                    return false;
+            }
+        }
+
         private Task ProcessSeriesForAuthor(Author author, List<Series> series, MonitoringConfig config)
         {
             if (author == null || series == null || !series.Any())
@@ -2316,6 +2370,11 @@ namespace NzbDrone.Core.Books.Services
                 return Array.Empty<string>();
             }
 
+            if (GetInitialMonitorMode(config, mediaType) != MonitorTypes.SpecificBook)
+            {
+                return Array.Empty<string>();
+            }
+
             if (mediaType == BookMediaType.Audiobook && config.AudiobookBooksToMonitor?.Any() == true)
             {
                 return config.AudiobookBooksToMonitor;
@@ -2337,6 +2396,63 @@ namespace NzbDrone.Core.Books.Services
             }
 
             return Array.Empty<string>();
+        }
+
+        private static Dictionary<BookMediaType, HashSet<string>> GetRequestedBookProviderIdsByMediaType(MonitoringConfig config)
+        {
+            var requested = new Dictionary<BookMediaType, HashSet<string>>();
+            if (config == null)
+            {
+                return requested;
+            }
+
+            AddRequestedBookProviderIds(
+                requested,
+                BookMediaType.Audiobook,
+                config.AudiobookBooksToMonitor,
+                config.AudiobookBooksToSearch);
+            AddRequestedBookProviderIds(
+                requested,
+                BookMediaType.Ebook,
+                config.EbookBooksToMonitor,
+                config.EbookBooksToSearch);
+
+            if (config.SpecificBookProviderIds?.Any() == true)
+            {
+                if (config.SpecificBookMediaType.HasValue)
+                {
+                    AddRequestedBookProviderIds(requested, config.SpecificBookMediaType.Value, config.SpecificBookProviderIds);
+                }
+                else
+                {
+                    AddRequestedBookProviderIds(requested, BookMediaType.Audiobook, config.SpecificBookProviderIds);
+                    AddRequestedBookProviderIds(requested, BookMediaType.Ebook, config.SpecificBookProviderIds);
+                }
+            }
+
+            return requested;
+        }
+
+        private static void AddRequestedBookProviderIds(
+            IDictionary<BookMediaType, HashSet<string>> requested,
+            BookMediaType mediaType,
+            params IEnumerable<string>[] providerIdLists)
+        {
+            var providerIds = providerIdLists
+                .Where(ids => ids != null)
+                .SelectMany(ids => ids)
+                .Where(id => !string.IsNullOrWhiteSpace(id));
+
+            foreach (var providerId in providerIds)
+            {
+                if (!requested.TryGetValue(mediaType, out var mediaTypeIds))
+                {
+                    mediaTypeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    requested[mediaType] = mediaTypeIds;
+                }
+
+                mediaTypeIds.Add(providerId);
+            }
         }
 
         private bool BookMatchesProviderId(Book book, string providerId)

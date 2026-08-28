@@ -7,8 +7,8 @@ import { createSelector } from 'reselect';
 import { toggleAuthorMonitored } from 'Store/Actions/authorActions';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
+import { getAuthorMonitoredValue } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
-import { getAuthorMonitorExistingValue } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 import AuthorDetailsHeader from './AuthorDetailsHeader';
 
 function createMapStateToProps() {
@@ -36,28 +36,25 @@ function createMapStateToProps() {
       const effectiveMediaType = rootFolderStatus.mediaType;
       const hasRootFolder = rootFolderStatus.hasRootFolder;
 
-      const qualityProfileId = effectiveMediaType === 'audiobook'
-        ? author.audiobookQualityProfileId
-        : author.ebookQualityProfileId;
+      const qualityProfileId = effectiveMediaType === 'audiobook' ?
+        author.audiobookQualityProfileId :
+        author.ebookQualityProfileId;
 
-      // CONTEXT-AWARE MONITORING: show monitoring status for current media type.
-      // Tri-state values: 0=None, 1=All, 2=Selected.
-      // When the author has no root folder for the selected media type, disable toggling and display "None".
-      const isMonitored = getAuthorMonitorExistingValue(author, effectiveMediaType);
-      
+      // Show and edit the simple author-level gate for the current media type.
+      const isMonitored = getAuthorMonitoredValue(author, effectiveMediaType);
+
       // Use media-type specific size if available, otherwise fallback to total statistics
-      const mediaTypeSize = effectiveMediaType === 'audiobook' 
-        ? author.audiobookSizeOnDisk 
-        : author.ebookSizeOnDisk;
-      
+      const mediaTypeSize = effectiveMediaType === 'audiobook' ? author.audiobookSizeOnDisk : author.ebookSizeOnDisk;
+      const aggregateSizeOnDisk = author.statistics ? author.statistics.sizeOnDisk : 0;
+
       const statistics = {
         ...author.statistics,
-        sizeOnDisk: mediaTypeSize !== undefined ? mediaTypeSize : (author.statistics ? author.statistics.sizeOnDisk : 0)
+        sizeOnDisk: mediaTypeSize ?? aggregateSizeOnDisk
       };
 
       return {
         ...author,
-        monitored: isMonitored, // Override with context-aware monitoring
+        monitored: isMonitored,
         isMonitorToggleDisabled: !hasRootFolder,
         statistics,
         isSaving: authors.isSaving,
@@ -80,18 +77,16 @@ class AuthorDetailsHeaderConnector extends Component {
   // Listeners
 
   onMonitorTogglePress = (monitorValue) => {
-    // CONTEXT-AWARE MONITORING: Toggle the correct media-type-specific field
-    // monitorValue is now tri-state: 0=None, 1=All, 2=Selected
     const { selectedMediaType, isMonitorToggleDisabled } = this.props;
 
     if (isMonitorToggleDisabled) {
       return;
     }
-    
+
     this.props.toggleAuthorMonitored({
       authorId: this.props.authorId,
       monitored: monitorValue,
-      mediaType: selectedMediaType  // Pass media type for context-aware toggling
+      mediaType: selectedMediaType // Pass media type for context-aware toggling
     });
   };
 

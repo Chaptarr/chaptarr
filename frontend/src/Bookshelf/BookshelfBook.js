@@ -45,7 +45,6 @@ class BookshelfBook extends Component {
           <MonitorToggleButton
             monitored={monitored}
             isSaving={isSaving}
-            isBinary={true}
             onPress={this.onBookMonitoredPress}
           />
 

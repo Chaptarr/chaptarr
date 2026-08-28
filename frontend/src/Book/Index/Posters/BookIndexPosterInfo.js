@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React from 'react';
+import getBookAuthorPath from 'Utilities/Book/getBookAuthorPath';
 import getRelativeDate from 'Utilities/Date/getRelativeDate';
 import formatBytes from 'Utilities/Number/formatBytes';
 import styles from './BookIndexPosterInfo.css';
@@ -10,6 +11,7 @@ function BookIndexPosterInfo(props) {
     showQualityProfile,
     added,
     releaseDate,
+    mediaType,
     author,
     bookFileCount,
     sizeOnDisk,
@@ -82,7 +84,7 @@ function BookIndexPosterInfo(props) {
   if (sortKey === 'path') {
     return (
       <div className={styles.info}>
-        {author.path}
+        {getBookAuthorPath({ author, mediaType })}
       </div>
     );
   }
@@ -102,6 +104,7 @@ BookIndexPosterInfo.propTypes = {
   qualityProfile: PropTypes.object.isRequired,
   showQualityProfile: PropTypes.bool.isRequired,
   author: PropTypes.object.isRequired,
+  mediaType: PropTypes.string.isRequired,
   added: PropTypes.string,
   releaseDate: PropTypes.string,
   bookFileCount: PropTypes.number.isRequired,
