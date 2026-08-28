@@ -244,9 +244,12 @@ class BookDetailsHeader extends Component {
             </Measure>
 
             <div className={styles.details}>
-              <div>
-                {seriesTitle}
-              </div>
+              {
+                !!seriesTitle &&
+                  <div>
+                    {seriesTitle}
+                  </div>
+              }
 
               <div>
                 <AuthorNameLink
@@ -409,7 +412,7 @@ BookDetailsHeader.propTypes = {
   width: PropTypes.number.isRequired,
   titleSlug: PropTypes.string.isRequired,
   title: PropTypes.string.isRequired,
-  seriesTitle: PropTypes.string.isRequired,
+  seriesTitle: PropTypes.string,
   pageCount: PropTypes.number,
   overview: PropTypes.string,
   statistics: PropTypes.object.isRequired,

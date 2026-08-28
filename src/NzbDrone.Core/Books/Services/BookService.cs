@@ -30,6 +30,8 @@ namespace NzbDrone.Core.Books
         List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds);
         List<Book> GetBooksByAuthorId(int authorId);
         List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds);
+
+        int ResyncDenormalizedSeriesFields(int authorId) => 0;
         List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
         Book AddBook(Book newBook, bool doRefresh = true);
         Book FindBySlug(string titleSlug);
@@ -995,6 +997,52 @@ namespace NzbDrone.Core.Books
         public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds)
         {
             return _bookRepository.GetBooksForRefresh(authorId, foreignIds);
+        }
+
+        public int ResyncDenormalizedSeriesFields(int authorId)
+        {
+            var books = GetBooksByAuthorId(authorId);
+            var repaired = new List<Book>();
+
+            foreach (var book in books.Where(b => b != null && b.Id > 0))
+            {
+                var link = BookSeriesLabel.SelectDisplayLink(book.SeriesLinks);
+                if (link == null)
+                {
+                    // No links can mean "not in a series" or "series not linked yet". Leave the stored
+                    // pair alone either way: the API reads the links, and blanking it here would throw
+                    // away the only series context file naming has for unlinked books.
+                    continue;
+                }
+
+                var seriesName = link.Series?.Value?.Title?.Trim();
+                var seriesPosition = link.Position?.Trim();
+
+                if (seriesPosition.IsNullOrWhiteSpace())
+                {
+                    seriesPosition = null;
+                }
+
+                if (book.SeriesName == seriesName && book.SeriesPosition == seriesPosition)
+                {
+                    continue;
+                }
+
+                _logger.Debug("[SERIES] Repairing denormalized series for book {0} '{1}': '{2} #{3}' -> '{4} #{5}'",
+                    book.Id, book.Title, book.SeriesName, book.SeriesPosition, seriesName, seriesPosition);
+
+                book.SeriesName = seriesName;
+                book.SeriesPosition = seriesPosition;
+                repaired.Add(book);
+            }
+
+            if (repaired.Any())
+            {
+                _bookRepository.SetFields(repaired, b => b.SeriesName, b => b.SeriesPosition);
+                _logger.Debug("[SERIES] Repaired denormalized series fields on {0} book(s) for authorId {1}", repaired.Count, authorId);
+            }
+
+            return repaired.Count;
         }
 
         public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds)

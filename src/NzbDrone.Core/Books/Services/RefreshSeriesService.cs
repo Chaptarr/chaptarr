@@ -157,7 +157,9 @@ namespace NzbDrone.Core.Books
                         SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
                         Book = matchingBook,
                         BookId = matchingBook.Id,
-                        IsPrimary = true,
+
+                        // Null means upstream didn't report the slot (pre-2026-06-02 rows); assume primary.
+                        IsPrimary = seriesBook.IsPrimary ?? true,
                         SeriesInstanceType = seriesInstanceType
                     });
                 }
@@ -355,7 +357,9 @@ namespace NzbDrone.Core.Books
                             SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
                             Book = matchingBook,
                             BookId = matchingBook.Id,
-                            IsPrimary = true,
+
+                            // Null means upstream didn't report the slot (pre-2026-06-02 rows); assume primary.
+                            IsPrimary = seriesBook.IsPrimary ?? true,
                             SeriesInstanceType = seriesInstanceType
                         };
 
@@ -595,6 +599,15 @@ namespace NzbDrone.Core.Books
             foreach (var item in all)
             {
                 updated |= RefreshEntityInfo(item, providerBackedRemoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+            }
+
+            try
+            {
+                _bookService.ResyncDenormalizedSeriesFields(authorId);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "[SERIES] Failed to repair denormalized series fields for authorId {0}", authorId);
             }
 
             return updated;

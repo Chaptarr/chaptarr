@@ -16,6 +16,8 @@ namespace Chaptarr.Api.V1.Series
         public string Description { get; set; }
         public int WorkCount { get; set; }
         public int PrimaryWorkCount { get; set; }
+        public string SeriesType { get; set; }
+        public int? ParentSeriesId { get; set; }
         public string MediaType { get; set; }
         public string Narrator { get; set; }
         public List<SeriesBookLinkResource> Links { get; set; }
@@ -88,6 +90,8 @@ namespace Chaptarr.Api.V1.Series
                 Description = model.Description,
                 WorkCount = model.WorkCount,
                 PrimaryWorkCount = model.PrimaryWorkCount,
+                SeriesType = model.SeriesType,
+                ParentSeriesId = model.ParentSeriesId,
                 MediaType = model.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook",
                 Narrator = model.Narrator,
                 Links = model.LinkItems?.ToResource() ?? new List<SeriesBookLinkResource>(),
