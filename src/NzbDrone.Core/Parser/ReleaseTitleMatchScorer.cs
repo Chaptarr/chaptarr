@@ -74,7 +74,10 @@ namespace NzbDrone.Core.Parser
 
         private static readonly Regex TokenRegex = new Regex(@"\p{Nd}+(?:\.\p{Nd}+)+|[\p{L}\p{Nd}]+", RegexOptions.Compiled);
         private static readonly Regex PossessiveRegex = new Regex(@"['\u2018\u2019]s\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex DecimalPointBetweenDigitsRegex = new Regex(@"(?<=\p{Nd})\.(?=\p{Nd})", RegexOptions.Compiled);
+        // A dot between digits marks a decimal ("13.5") - except when what follows is a
+        // four-digit year, which is dotted scene punctuation ("Vol.01.2016", "451.2018"),
+        // not a fraction; fusing them makes the number token unmatchable.
+        private static readonly Regex DecimalPointBetweenDigitsRegex = new Regex(@"(?<=\p{Nd})\.(?=\p{Nd})(?!(?:19|20)\d{2}(?!\p{Nd}))", RegexOptions.Compiled);
         private static readonly Regex OptionalQualifierSegmentRegex = new Regex(@"\s*[\(\[](?<label>[^\)\]]+)[\)\]]\s*", RegexOptions.Compiled);
         private static readonly Regex SubtitleLeadingArticleRegex = new Regex(@"(?<prefix>[:;\-\u2013\u2014]\s+)(?<article>a|an|the)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SubtitleArticleInsertionPointRegex = new Regex(@"(?<prefix>[:;\-\u2013\u2014]\s+)(?<head>[\p{L}\p{Nd}])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -829,7 +832,22 @@ namespace NzbDrone.Core.Parser
 
         internal static bool TokensMatch(string left, string right)
         {
-            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase) || TokenSynonyms.AreSynonyms(left, right);
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase) ||
+                   TokenSynonyms.AreSynonyms(left, right) ||
+                   NumericTokensEquivalent(left, right);
+        }
+
+        private static readonly Regex ShortNumericTokenRegex = new Regex(@"^\d{1,4}(?:\.\d{1,4})?$", RegexOptions.Compiled);
+
+        // Releases zero-pad freely ("Vol.01" for volume 1); the values are what must agree.
+        // Capped at 4 integer digits so identifier fragments never collapse into each other.
+        private static bool NumericTokensEquivalent(string left, string right)
+        {
+            return left != null && right != null &&
+                   ShortNumericTokenRegex.IsMatch(left) && ShortNumericTokenRegex.IsMatch(right) &&
+                   decimal.TryParse(left, NumberStyles.Number, CultureInfo.InvariantCulture, out var leftValue) &&
+                   decimal.TryParse(right, NumberStyles.Number, CultureInfo.InvariantCulture, out var rightValue) &&
+                   leftValue == rightValue;
         }
 
         private static TitleMatchResult ChooseBetterResult(TitleMatchResult current, TitleMatchResult candidate)
