@@ -133,7 +133,7 @@ namespace NzbDrone.Core.Qualities
             {
                 return Unknown;
             }
-            else if (id > AllLookup.Length)
+            else if (id >= AllLookup.Length)
             {
                 throw new ArgumentException("ID does not match a known quality", nameof(id));
             }
