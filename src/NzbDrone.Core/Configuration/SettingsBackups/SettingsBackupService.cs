@@ -1279,15 +1279,25 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 }
 
                 var downloadClientId = ResolveRemotePathMappingDownloadClientId(backup, downloadClientIdMap);
+                if (!downloadClientId.HasValue)
+                {
+                    var clientLabel = backup.DownloadClientName.IsNotNullOrWhiteSpace()
+                        ? $"'{backup.DownloadClientName}'"
+                        : $"with source id {backup.DownloadClientId}";
+                    result.Warnings.Add($"Skipped remote path mapping '{backup.RemotePath}' because download client {clientLabel} could not be resolved on this Chaptarr instance.");
+                    continue;
+                }
+
+                var resolvedDownloadClientId = downloadClientId.Value;
 
                 if (mode == SettingsBackupRestoreMode.Merge)
                 {
                     var existing = existingLookup
-                        .FirstOrDefault(m => MappingMatchesBackup(m, backup, downloadClientId));
+                        .FirstOrDefault(m => MappingMatchesBackup(m, backup, resolvedDownloadClientId));
 
                     if (existing != null)
                     {
-                        existing.DownloadClientId = downloadClientId;
+                        existing.DownloadClientId = resolvedDownloadClientId;
                         existing.LocalPath = backup.LocalPath;
                         _remotePathMappingService.Update(existing);
                         continue;
@@ -1296,7 +1306,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
                 _remotePathMappingService.Add(new RemotePathMapping
                 {
-                    DownloadClientId = downloadClientId,
+                    DownloadClientId = resolvedDownloadClientId,
                     Host = backup.Host,
                     RemotePath = backup.RemotePath,
                     LocalPath = backup.LocalPath
@@ -1306,7 +1316,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             result.Applied.Add("Remote Path Mappings");
         }
 
-        private int ResolveRemotePathMappingDownloadClientId(RemotePathMappingBackup backup, Dictionary<int, int> downloadClientIdMap)
+        private int? ResolveRemotePathMappingDownloadClientId(RemotePathMappingBackup backup, Dictionary<int, int> downloadClientIdMap)
         {
             if (backup.DownloadClientId <= 0)
             {
@@ -1329,7 +1339,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 }
             }
 
-            return backup.DownloadClientId;
+            return null;
         }
 
         private static bool MappingMatchesBackup(RemotePathMapping mapping, RemotePathMappingBackup backup, int downloadClientId)

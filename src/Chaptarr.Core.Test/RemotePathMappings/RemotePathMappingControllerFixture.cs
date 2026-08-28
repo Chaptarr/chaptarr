@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.RemotePathMappings;
 using FluentValidation.Results;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
@@ -197,6 +199,24 @@ namespace Chaptarr.Core.Test.RemotePathMappings
             {
                 return new NzbDroneValidationResult();
             }
+        }
+
+        [Test]
+        public void mapping_resource_should_require_download_client_scope_in_the_json_payload()
+        {
+            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<RemotePathMappingResource>(
+                "{\"host\":\"download-host\"}",
+                STJson.GetSerializerSettings()));
+        }
+
+        [Test]
+        public void mapping_resource_should_accept_an_explicit_host_wide_scope()
+        {
+            var resource = JsonSerializer.Deserialize<RemotePathMappingResource>(
+                "{\"downloadClientId\":0,\"host\":\"download-host\"}",
+                STJson.GetSerializerSettings());
+
+            Assert.That(resource.DownloadClientId, Is.Zero);
         }
 
         [Test]

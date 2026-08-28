@@ -3,7 +3,11 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { saveRemotePathMapping, setRemotePathMappingValue } from 'Store/Actions/settingsActions';
+import {
+  saveRemotePathMapping,
+  setRemotePathMappingValue,
+  toggleAdvancedSettings
+} from 'Store/Actions/settingsActions';
 import selectSettings from 'Store/Selectors/selectSettings';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import EditRemotePathMappingModalContent from './EditRemotePathMappingModalContent';
@@ -125,9 +129,11 @@ function createRemotePathMappingSelector() {
 
 function createMapStateToProps() {
   return createSelector(
+    (state) => state.settings.advancedSettings,
     createRemotePathMappingSelector(),
-    (remotePathMapping) => {
+    (advancedSettings, remotePathMapping) => {
       return {
+        advancedSettings,
         ...remotePathMapping
       };
     }
@@ -136,7 +142,8 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   dispatchSetRemotePathMappingValue: setRemotePathMappingValue,
-  dispatchSaveRemotePathMapping: saveRemotePathMapping
+  dispatchSaveRemotePathMapping: saveRemotePathMapping,
+  dispatchToggleAdvancedSettings: toggleAdvancedSettings
 };
 
 class EditRemotePathMappingModalContentConnector extends Component {
@@ -148,8 +155,7 @@ class EditRemotePathMappingModalContentConnector extends Component {
       testError: null,
       testResult: null,
       downloadClientPathSuggestions: [],
-      chaptarrPathSuggestions: [],
-      showAdvancedScope: props.item.downloadClientId.value > 0
+      chaptarrPathSuggestions: []
     };
   }
 
@@ -178,10 +184,6 @@ class EditRemotePathMappingModalContentConnector extends Component {
     const downloadClientId = this.props.item.downloadClientId.value;
     const prevHost = prevProps.item.host.value;
     const host = this.props.item.host.value;
-
-    if (downloadClientId > 0 && !this.state.showAdvancedScope) {
-      this.setState({ showAdvancedScope: true });
-    }
 
     if (prevDownloadClientId !== downloadClientId || prevHost !== host) {
       this.fetchSuggestions(downloadClientId, host);
@@ -229,15 +231,7 @@ class EditRemotePathMappingModalContentConnector extends Component {
   };
 
   onAdvancedScopePress = () => {
-    if (this.props.item.downloadClientId.value > 0) {
-      return;
-    }
-
-    this.setState((state) => {
-      return {
-        showAdvancedScope: !state.showAdvancedScope
-      };
-    });
+    this.props.dispatchToggleAdvancedSettings();
   };
 
   onTestPress = () => {
@@ -346,10 +340,12 @@ EditRemotePathMappingModalContentConnector.propTypes = {
   id: PropTypes.number,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
+  advancedSettings: PropTypes.bool.isRequired,
   item: PropTypes.object.isRequired,
   downloadClientOptions: PropTypes.arrayOf(PropTypes.object).isRequired,
   dispatchSetRemotePathMappingValue: PropTypes.func.isRequired,
   dispatchSaveRemotePathMapping: PropTypes.func.isRequired,
+  dispatchToggleAdvancedSettings: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };
 

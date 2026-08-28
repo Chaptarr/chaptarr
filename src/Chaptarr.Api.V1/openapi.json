@@ -19068,6 +19068,9 @@
         "additionalProperties": false
       },
       "RemotePathMappingResource": {
+        "required": [
+          "downloadClientId"
+        ],
         "type": "object",
         "properties": {
           "id": {

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.RemotePathMappings;
 
@@ -7,6 +8,7 @@ namespace Chaptarr.Api.V1.RemotePathMappings
 {
     public class RemotePathMappingResource : RestResource
     {
+        [JsonRequired]
         public int DownloadClientId { get; set; }
         public string Host { get; set; }
         public string RemotePath { get; set; }
