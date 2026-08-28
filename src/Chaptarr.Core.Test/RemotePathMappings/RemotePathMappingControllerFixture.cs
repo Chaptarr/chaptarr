@@ -270,6 +270,11 @@ namespace Chaptarr.Core.Test.RemotePathMappings
                 Assert.That(result.DownloadClientPathChecked, Is.False);
                 Assert.That(result.DownloadClientTestError, Is.Null);
                 Assert.That(result.MappedPath, Is.EqualTo("/downloads/"));
+                Assert.That(result.IsMapped, Is.True);
+                Assert.That(result.LocalPathExists, Is.True);
+                Assert.That(result.LocalPathWritable, Is.True);
+                Assert.That(result.MappedPathExists, Is.True);
+                Assert.That(result.MappedPathWritable, Is.True);
             });
         }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using FluentValidation;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -187,7 +188,7 @@ namespace Chaptarr.Core.Test.RemotePathMappings
         }
 
         [Test]
-        public void should_reject_second_scoped_mapping_for_same_download_client()
+        public void should_allow_second_scoped_mapping_for_same_download_client_when_remote_path_differs()
         {
             var subject = CreateSubject(new RemotePathMapping
             {
@@ -198,15 +199,81 @@ namespace Chaptarr.Core.Test.RemotePathMappings
                 LocalPath = "/local/client-seven"
             });
 
-            var ex = Assert.Throws<InvalidOperationException>(() => subject.Add(new RemotePathMapping
+            Assert.DoesNotThrow(() => subject.Add(new RemotePathMapping
             {
                 DownloadClientId = 7,
                 Host = "other-host",
                 RemotePath = "/downloads/complete",
                 LocalPath = "/local/duplicate"
             }));
+        }
 
-            Assert.That(ex.Message, Is.EqualTo("Download client already has a scoped remote path mapping."));
+        [Test]
+        public void should_reject_duplicate_remote_path_for_same_download_client()
+        {
+            var subject = CreateSubject(new RemotePathMapping
+            {
+                Id = 1,
+                DownloadClientId = 7,
+                Host = "download-host",
+                RemotePath = "/downloads/",
+                LocalPath = "/local/client-seven"
+            });
+
+            var ex = Assert.Throws<ValidationException>(() => subject.Add(new RemotePathMapping
+            {
+                DownloadClientId = 7,
+                Host = "other-host",
+                RemotePath = "/downloads",
+                LocalPath = "/local/duplicate"
+            }));
+
+            Assert.That(ex.Errors.Single().PropertyName, Is.EqualTo("RemotePath"));
+            Assert.That(ex.Errors.Single().ErrorMessage, Is.EqualTo("RemotePath already configured for this download client."));
+        }
+
+        [Test]
+        public void should_reject_windows_duplicate_with_different_path_casing()
+        {
+            var subject = CreateSubject(new RemotePathMapping
+            {
+                Id = 1,
+                DownloadClientId = 7,
+                Host = "download-host",
+                RemotePath = @"C:\Downloads\Books",
+                LocalPath = @"D:\Books"
+            });
+
+            var ex = Assert.Throws<ValidationException>(() => subject.Add(new RemotePathMapping
+            {
+                DownloadClientId = 7,
+                Host = "download-host",
+                RemotePath = @"c:\downloads\books",
+                LocalPath = @"D:\Other"
+            }));
+
+            Assert.That(ex.Errors.Single().PropertyName, Is.EqualTo("RemotePath"));
+        }
+
+        [Test, Platform(Exclude = "Win", Reason = "Unix paths are case-sensitive")]
+        public void should_allow_unix_paths_that_differ_only_by_case()
+        {
+            var subject = CreateSubject(new RemotePathMapping
+            {
+                Id = 1,
+                DownloadClientId = 7,
+                Host = "download-host",
+                RemotePath = "/downloads/Books",
+                LocalPath = "/local/books"
+            });
+
+            Assert.DoesNotThrow(() => subject.Add(new RemotePathMapping
+            {
+                DownloadClientId = 7,
+                Host = "download-host",
+                RemotePath = "/downloads/books",
+                LocalPath = "/local/other"
+            }));
         }
 
         [Test]
@@ -277,7 +344,7 @@ namespace Chaptarr.Core.Test.RemotePathMappings
                 Array.Empty<RemotePathMapping>(),
                 new[] { CreateDownloadClient(7, string.Empty) });
 
-            var ex = Assert.Throws<ArgumentException>(() => subject.Add(new RemotePathMapping
+            var ex = Assert.Throws<ValidationException>(() => subject.Add(new RemotePathMapping
             {
                 DownloadClientId = 7,
                 Host = "posted-host",
@@ -285,7 +352,8 @@ namespace Chaptarr.Core.Test.RemotePathMappings
                 LocalPath = "/local/client-seven"
             }));
 
-            Assert.That(ex.Message, Is.EqualTo("Selected download client does not have a configured host."));
+            Assert.That(ex.Errors.Single().PropertyName, Is.EqualTo("DownloadClientId"));
+            Assert.That(ex.Errors.Single().ErrorMessage, Is.EqualTo("Selected download client does not have a configured host."));
         }
 
         [Test]

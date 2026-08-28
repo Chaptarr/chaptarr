@@ -51,6 +51,10 @@ function PathSuggestions(props) {
 }
 
 function getTestResultMessage(testResult) {
+  if (!testResult.isMapped) {
+    return `Test result: ${testResult.remotePath} and ${testResult.mappedPath} resolve to the same path, so this mapping does not change anything.`;
+  }
+
   if (testResult.downloadClientPathChecked && !testResult.downloadClientPathMatched) {
     return `Test result: Chaptarr can map ${testResult.remotePath} to ${testResult.mappedPath}, but the selected download client did not report a matching path. Check the "Download client sees" value.`;
   }
@@ -71,6 +75,10 @@ function getTestResultMessage(testResult) {
     return `Test result: ${testResult.remotePath} maps to ${testResult.mappedPath}. Chaptarr can see it, but cannot write there.`;
   }
 
+  if (testResult.downloadClientId === 0) {
+    return `Test result: ${testResult.remotePath} maps to ${testResult.mappedPath}. Chaptarr can see and write there. This host-wide mapping is not tied to one download client, so no client comparison was performed.`;
+  }
+
   if (testResult.downloadClientItemPathChecked) {
     return `Test result: Chaptarr can see a current download-client item at ${testResult.downloadClientItemMappedPath}.`;
   }
@@ -87,6 +95,20 @@ function getTestResultMessage(testResult) {
 }
 
 function getTestResultKind(testResult) {
+  if (testResult.downloadClientId === 0) {
+    if (
+      testResult.isMapped &&
+      testResult.localPathExists &&
+      testResult.localPathWritable &&
+      testResult.mappedPathExists &&
+      testResult.mappedPathWritable
+    ) {
+      return kinds.SUCCESS;
+    }
+
+    return kinds.WARNING;
+  }
+
   if (
     testResult.downloadClientPathMatched &&
     testResult.downloadClientItemPathChecked &&

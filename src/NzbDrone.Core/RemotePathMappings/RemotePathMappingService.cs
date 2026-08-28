@@ -1,7 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Disk;
@@ -184,12 +185,12 @@ namespace NzbDrone.Core.RemotePathMappings
         {
             if (_downloadClientRepository?.Find(downloadClientId) == null)
             {
-                throw new ArgumentException("DownloadClientId does not reference a configured download client.");
+                throw ValidationError("DownloadClientId", "DownloadClientId does not reference a configured download client.");
             }
 
             if (!TryGetDownloadClientHost(downloadClientId, out var host))
             {
-                throw new ArgumentException("Selected download client does not have a configured host.");
+                throw ValidationError("DownloadClientId", "Selected download client does not have a configured host.");
             }
 
             return host;
@@ -199,12 +200,12 @@ namespace NzbDrone.Core.RemotePathMappings
         {
             if (mapping.Host.IsNullOrWhiteSpace())
             {
-                throw new ArgumentException("Invalid Host");
+                throw ValidationError("Host", "Invalid Host");
             }
 
             if (mapping.DownloadClientId < 0)
             {
-                throw new ArgumentException("Invalid DownloadClientId");
+                throw ValidationError("DownloadClientId", "Invalid DownloadClientId");
             }
 
             var remotePath = new OsPath(mapping.RemotePath);
@@ -212,17 +213,17 @@ namespace NzbDrone.Core.RemotePathMappings
 
             if (remotePath.IsEmpty)
             {
-                throw new ArgumentException("Invalid RemotePath. RemotePath cannot be empty.");
+                throw ValidationError("RemotePath", "Invalid RemotePath. RemotePath cannot be empty.");
             }
 
             if (localPath.IsEmpty || !localPath.IsRooted)
             {
-                throw new ArgumentException("Invalid LocalPath. LocalPath cannot be empty and must not be the root.");
+                throw ValidationError("LocalPath", "Invalid LocalPath. LocalPath cannot be empty and must not be the root.");
             }
 
             if (requireLocalPathExists && !_diskProvider.FolderExists(localPath.FullPath))
             {
-                throw new DirectoryNotFoundException("Can't add mount point directory that doesn't exist.");
+                throw ValidationError("LocalPath", "Can't add mount point directory that doesn't exist.");
             }
 
             if (!checkDuplicates)
@@ -232,18 +233,25 @@ namespace NzbDrone.Core.RemotePathMappings
 
             if (mapping.DownloadClientId > 0)
             {
-                if (existing.Exists(r => r.DownloadClientId == mapping.DownloadClientId))
+                if (existing.Exists(r => r.DownloadClientId == mapping.DownloadClientId && new OsPath(r.RemotePath).AsDirectory() == remotePath))
                 {
-                    throw new InvalidOperationException("Download client already has a scoped remote path mapping.");
+                    throw ValidationError("RemotePath", "RemotePath already configured for this download client.");
                 }
 
                 return;
             }
 
-            if (existing.Exists(r => r.DownloadClientId == 0 && r.Host == mapping.Host && r.RemotePath == mapping.RemotePath))
+            if (existing.Exists(r => r.DownloadClientId == 0 &&
+                                     string.Equals(r.Host, mapping.Host, StringComparison.InvariantCultureIgnoreCase) &&
+                                     new OsPath(r.RemotePath).AsDirectory() == remotePath))
             {
-                throw new InvalidOperationException("RemotePath already configured.");
+                throw ValidationError("RemotePath", "RemotePath already configured.");
             }
+        }
+
+        private static ValidationException ValidationError(string propertyName, string message)
+        {
+            return new ValidationException(new[] { new ValidationFailure(propertyName, message) });
         }
 
         public OsPath RemapRemoteToLocal(string host, OsPath remotePath)

@@ -34,13 +34,7 @@ function getDownloadClientHost(downloadClient) {
 const selectRemotePathMappingOptions = createSelector(
   (state) => state.settings.downloadClients.items,
   (state) => state.settings.rootFolders.items,
-  (state) => state.settings.remotePathMappings.items,
-  (state, { id }) => id,
-  (downloadClients, rootFolders, remotePathMappings, id) => {
-    const scopedDownloadClientIds = remotePathMappings
-      .filter((mapping) => mapping.id !== id && mapping.downloadClientId > 0)
-      .map((mapping) => mapping.downloadClientId);
-
+  (downloadClients, rootFolders) => {
     const dlhosts = downloadClients.reduce((acc, downloadClient) => {
       const name = downloadClient.name;
       const host = getDownloadClientHost(downloadClient);
@@ -74,13 +68,12 @@ const selectRemotePathMappingOptions = createSelector(
 
     const downloadClientOptions = downloadClients.map((downloadClient) => {
       const host = getDownloadClientHost(downloadClient);
-      const alreadyScoped = scopedDownloadClientIds.includes(downloadClient.id);
 
       return {
         key: downloadClient.id,
         value: downloadClient.name,
-        hint: !host ? 'No host configured' : alreadyScoped ? 'Already has a scoped mapping' : host,
-        isDisabled: !host || alreadyScoped,
+        hint: !host ? 'No host configured' : host,
+        isDisabled: !host,
         host
       };
     });
