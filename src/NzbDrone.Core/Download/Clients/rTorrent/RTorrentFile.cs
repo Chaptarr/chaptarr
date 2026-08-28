@@ -16,9 +16,11 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
 
             Path = data.ElementAtOrDefault(0)?.GetStringValue();
             FrozenPath = data.ElementAtOrDefault(1)?.GetStringValue();
+            Priority = data.ElementAtOrDefault(2)?.GetLongValue() ?? 0;
         }
 
         public string Path { get; set; }
         public string FrozenPath { get; set; }
+        public long Priority { get; set; }
     }
 }

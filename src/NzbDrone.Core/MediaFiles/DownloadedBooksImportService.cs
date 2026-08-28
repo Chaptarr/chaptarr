@@ -31,6 +31,8 @@ namespace NzbDrone.Core.MediaFiles
     /// </summary>
     public class DownloadedBooksImportService : IDownloadedBooksImportService
     {
+        internal const string MissingAuthoritativeMediaFilesRejectionCategory = "MissingAuthoritativeMediaFiles";
+
         private static readonly HashSet<string> EmbeddedIdentityEvidenceKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "TITLE", "ALBUM", "ARTIST", "ALBUMARTIST", "AUTHOR", "BOOK", "NARRATOR", "READER", "ISBN", "ASIN", "AUDIBLE_ASIN"
@@ -123,12 +125,22 @@ namespace NzbDrone.Core.MediaFiles
 
             LogInaccessiblePathError(path);
             _eventAggregator.PublishEvent(new TrackImportFailedEvent(null, null, true, downloadClientItem));
-            return new List<ImportResult> { InaccessiblePathResult(path) };
+            return new List<ImportResult> { InaccessiblePathResult(path, downloadClientItem) };
         }
 
-            private List<ImportResult> ProcessFolder(IDirectoryInfo directoryInfo, ImportMode importMode, Author author, DownloadClientItem downloadClientItem, RemoteBook remoteBook, ParsedBookInfo parsedBookInfo = null, bool requireDefaultRootFolderForMissingAuthors = false)
+        private List<ImportResult> ProcessFolder(IDirectoryInfo directoryInfo, ImportMode importMode, Author author, DownloadClientItem downloadClientItem, RemoteBook remoteBook, ParsedBookInfo parsedBookInfo = null, bool requireDefaultRootFolderForMissingAuthors = false)
+        {
+            _logger.Debug("[DOWNLOAD-IMPORT] Processing folder: {0}", directoryInfo.FullName);
+
+            // Unlike a TV season pack, the supported files in a book payload are not
+            // independent imports: they may be parts of one audiobook or alternate
+            // ebook formats. Wait for the complete authoritative payload before
+            // matching any of it so a partial copy cannot complete the download.
+            var missingAuthoritativeMediaPaths = GetMissingAuthoritativeMediaPaths(downloadClientItem);
+            if (missingAuthoritativeMediaPaths.Count > 0)
             {
-                _logger.Debug("[DOWNLOAD-IMPORT] Processing folder: {0}", directoryInfo.FullName);
+                return new List<ImportResult> { MissingAuthoritativeMediaFilesResult(directoryInfo.FullName, missingAuthoritativeMediaPaths) };
+            }
 
             // Build precise media file list (flat downloads)
             List<IFileInfo> visibleFiles;
@@ -153,7 +165,16 @@ namespace NzbDrone.Core.MediaFiles
             if (!mediaFiles.Any())
             {
                 _logger.Debug("[DOWNLOAD-IMPORT] No media files found in: {0}", directoryInfo.FullName);
-                return new List<ImportResult> { NoSupportedMediaFilesResult(directoryInfo.FullName, visibleFiles) };
+                return new List<ImportResult> { NoSupportedMediaFilesResult(directoryInfo.FullName, visibleFiles, downloadClientItem) };
+            }
+
+            if (downloadClientItem == null)
+            {
+                var lockedMediaFile = mediaFiles.FirstOrDefault(file => _diskProvider.IsFileLocked(file.FullName));
+                if (lockedMediaFile != null)
+                {
+                    return new List<ImportResult> { FileIsLockedResult(lockedMediaFile.FullName) };
+                }
             }
 
             var discovered = new List<DiscoveredFileWithMetadata>(mediaFiles.Count);
@@ -1242,25 +1263,73 @@ namespace NzbDrone.Core.MediaFiles
         {
             _logger.Debug("[{0}] is currently locked by another process, skipping", filePath);
             var localBook = new LocalBook { Path = filePath };
-            var rejection = new Rejection("Locked file, try again later");
+            var rejection = new Rejection("Locked file, try again later", RejectionType.Temporary);
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), "Locked file");
         }
 
-        private ImportResult InaccessiblePathResult(string path)
+        private ImportResult MissingAuthoritativeMediaFilesResult(string path, IReadOnlyCollection<string> missingMediaPaths)
         {
-            var reason = $"Download path is not accessible to Chaptarr: {path}. Check the download client path, remote path mapping, and container volume mappings.";
+            var listedPaths = missingMediaPaths.Take(3).ToList();
+            var remainingCount = missingMediaPaths.Count - listedPaths.Count;
+            var remainingMessage = remainingCount > 0 ? $", and {remainingCount} more" : string.Empty;
+            var reason = $"Chaptarr cannot read {missingMediaPaths.Count} supported media file(s) reported by the download client yet. Missing: {string.Join(", ", listedPaths)}{remainingMessage}. Chaptarr will retry the import.";
             var localBook = new LocalBook { Path = path };
-            var rejection = new Rejection(reason);
+            var rejection = new Rejection(reason, RejectionType.Temporary)
+            {
+                Category = MissingAuthoritativeMediaFilesRejectionCategory
+            };
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
-        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles = null)
+        private ImportResult InaccessiblePathResult(string path, DownloadClientItem downloadClientItem)
+        {
+            var reason = $"Download path is not accessible to Chaptarr: {path}. Check the download client path, remote path mapping, and container volume mappings.";
+            var localBook = new LocalBook { Path = path };
+            var rejection = CreateMissingMediaRejection(reason, downloadClientItem);
+            return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
+        }
+
+        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles, DownloadClientItem downloadClientItem)
         {
             var observedFilesMessage = BuildObservedUnsupportedFilesMessage(path, visibleFiles);
             var reason = $"No supported audio or ebook files were found in {path}.{observedFilesMessage} Check that the download contains supported audio or ebook files and that Chaptarr can read the completed download folder.";
             var localBook = new LocalBook { Path = path };
-            var rejection = new Rejection(reason);
+            var rejection = CreateMissingMediaRejection(reason, downloadClientItem);
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
+        }
+
+        private Rejection CreateMissingMediaRejection(string reason, DownloadClientItem downloadClientItem)
+        {
+            var rejection = new Rejection(reason, GetMissingMediaRejectionType(downloadClientItem));
+            if (rejection.Type == RejectionType.Temporary)
+            {
+                rejection.Category = MissingAuthoritativeMediaFilesRejectionCategory;
+            }
+
+            return rejection;
+        }
+
+        private RejectionType GetMissingMediaRejectionType(DownloadClientItem downloadClientItem)
+        {
+            return GetMissingAuthoritativeMediaPaths(downloadClientItem).Count > 0 ?
+                RejectionType.Temporary :
+                RejectionType.Permanent;
+        }
+
+        private List<string> GetMissingAuthoritativeMediaPaths(DownloadClientItem downloadClientItem)
+        {
+            if (downloadClientItem?.FileListConfidence != DownloadClientFileListConfidence.Authoritative ||
+                downloadClientItem.FilePaths == null)
+            {
+                return new List<string>();
+            }
+
+            return downloadClientItem.FilePaths
+                .Where(filePath =>
+                    !string.IsNullOrWhiteSpace(filePath) &&
+                    MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(filePath)) &&
+                    !_diskProvider.FileExists(filePath))
+                .ToList();
         }
 
         private static string BuildObservedUnsupportedFilesMessage(string basePath, IReadOnlyCollection<IFileInfo> visibleFiles)

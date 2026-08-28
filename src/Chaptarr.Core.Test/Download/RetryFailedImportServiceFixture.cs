@@ -98,7 +98,6 @@ namespace Chaptarr.Core.Test.Download
             public List<TrackedDownloadState> StatesAtImportStart { get; } = new();
             public List<TrackedDownloadStatus> StatusesAtImportStart { get; } = new();
             public List<TrackedDownloadStatusMessage[]> StatusMessagesAtImportStart { get; } = new();
-            public List<int> EmptyImportAttemptsAtImportStart { get; } = new();
             public List<string> OutputPathsAtImportStart { get; } = new();
             public List<List<string>> FilePathsAtImportStart { get; } = new();
 
@@ -110,7 +109,6 @@ namespace Chaptarr.Core.Test.Download
                 StatesAtImportStart.Add(trackedDownload.State);
                 StatusesAtImportStart.Add(trackedDownload.Status);
                 StatusMessagesAtImportStart.Add(trackedDownload.StatusMessages);
-                EmptyImportAttemptsAtImportStart.Add(trackedDownload.EmptyImportAttempts);
                 OutputPathsAtImportStart.Add(trackedDownload.DownloadItem.OutputPath.FullPath);
                 FilePathsAtImportStart.Add(trackedDownload.DownloadItem.FilePaths?.ToList());
                 trackedDownload.State = _stateAfterImport;
@@ -224,31 +222,14 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
-        public void should_retry_single_blocked_completed_download_and_reset_empty_attempts()
-        {
-            var trackedDownload = CreateTrackedDownload("download-1", TrackedDownloadState.ImportBlocked, DownloadItemStatus.Completed);
-            var subject = CreateSubject(trackedDownload, TrackedDownloadState.Imported, out var completedDownloadService, out var conversionTrackingService, out var commandResultReporter, out var eventAggregator);
-
-            subject.Execute(new RetryFailedImportCommand { DownloadId = "download-1" });
-
-            Assert.That(completedDownloadService.ImportedDownloadIds, Is.EqualTo(new[] { "download-1" }));
-            Assert.That(conversionTrackingService.ClearedDownloadIds, Is.EqualTo(new[] { "download-1" }));
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
-            Assert.That(commandResultReporter.Results, Is.Empty);
-            Assert.That(eventAggregator.Events.OfType<TrackedDownloadRefreshedEvent>().Count(), Is.EqualTo(2));
-        }
-
-        [Test]
         public void should_retry_single_blocked_completed_download()
         {
             var trackedDownload = CreateTrackedDownload("download-1", TrackedDownloadState.ImportBlocked, DownloadItemStatus.Completed);
-            trackedDownload.EmptyImportAttempts = 3;
             var subject = CreateSubject(trackedDownload, TrackedDownloadState.Imported, out var completedDownloadService, out var conversionTrackingService, out var commandResultReporter, out var eventAggregator);
 
             subject.Execute(new RetryFailedImportCommand { DownloadId = "download-1" });
 
             Assert.That(completedDownloadService.StatesAtImportStart, Is.EqualTo(new[] { TrackedDownloadState.ImportPending }));
-            Assert.That(completedDownloadService.EmptyImportAttemptsAtImportStart, Is.EqualTo(new[] { 0 }));
             Assert.That(completedDownloadService.ImportedDownloadIds, Is.EqualTo(new[] { "download-1" }));
             Assert.That(conversionTrackingService.ClearedDownloadIds, Is.EqualTo(new[] { "download-1" }));
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));

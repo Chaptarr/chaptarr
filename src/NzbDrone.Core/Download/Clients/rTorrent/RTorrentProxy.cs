@@ -75,7 +75,8 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
                 hash,
                 "",
                 "f.path=",
-                "f.frozen_path=");
+                "f.frozen_path=",
+                "f.priority=");
 
             return document.XPathSelectElement("./methodResponse/params/param/value/array/data")
                        ?.Elements()

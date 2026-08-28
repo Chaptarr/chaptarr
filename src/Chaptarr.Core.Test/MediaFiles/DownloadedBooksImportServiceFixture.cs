@@ -167,6 +167,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             private readonly System.IO.Abstractions.FileSystem _fileSystem = new();
 
+            public HashSet<string> LockedPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+
             public bool FolderExists(string path) => Directory.Exists(path);
             public bool FileExists(string path) => File.Exists(path);
             public bool FileExistsCanonical(string path) => File.Exists(path);
@@ -174,7 +176,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.FromFileName(path);
             public long GetFileSize(string path) => new FileInfo(path).Length;
             public DateTime FileGetLastWrite(string path) => new FileInfo(path).LastWriteTimeUtc;
-            public bool IsFileLocked(string path) => false;
+            public bool IsFileLocked(string path) => LockedPaths.Contains(path);
 
             public long? GetAvailableSpace(string path) => throw new NotImplementedException();
             public void InheritFolderPermissions(string filename) => throw new NotImplementedException();
@@ -376,8 +378,158 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var results = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null);
 
                 Assert.That(results, Has.Count.EqualTo(1));
+                Assert.That(results[0].ImportDecision.Rejections.Single().Type, Is.EqualTo(RejectionType.Permanent));
                 Assert.That(results[0].Errors.Single(), Does.Contain("The Five People You Meet in Heaven (2004).mkv"));
                 Assert.That(results[0].Errors.Single(), Does.Contain("Unsupported extension(s): .mkv"));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_only_retry_missing_supported_media_from_an_authoritative_file_list()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var existingArchive = Path.Combine(tempDir, "Book.rar");
+            var existingNfo = Path.Combine(tempDir, "Book.nfo");
+            var existingMedia = Path.Combine(tempDir, "Book.epub");
+            var missingMedia = Path.Combine(tempDir, "Book.m4b");
+            var missingMediaTwo = Path.Combine(tempDir, "Book Part 2.m4b");
+            var missingMediaThree = Path.Combine(tempDir, "Book Part 3.m4b");
+            var missingMediaFour = Path.Combine(tempDir, "Book Part 4.m4b");
+            var missingNfo = Path.Combine(tempDir, "Missing.nfo");
+            File.WriteAllBytes(existingArchive, new byte[] { 1, 2, 3, 4 });
+            File.WriteAllBytes(existingNfo, new byte[] { 1, 2, 3, 4 });
+            File.WriteAllBytes(existingMedia, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var matchingService = new StubFileMatchingService();
+                var importApprovedBooks = new RecordingImportApprovedBooks();
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    new StubMetadataTagService(),
+                    importApprovedBooks,
+                    DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                    DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                RejectionType Classify(DownloadClientItem downloadClientItem)
+                {
+                    return service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: downloadClientItem)
+                        .Single()
+                        .ImportDecision
+                        .Rejections
+                        .Single()
+                        .Type;
+                }
+
+                var authoritativeMediaList = new DownloadClientItem
+                {
+                    FilePaths = new List<string> { existingNfo, missingMedia },
+                    FileListConfidence = DownloadClientFileListConfidence.Authoritative
+                };
+                var degradedMediaList = new DownloadClientItem
+                {
+                    FilePaths = new List<string> { existingNfo, missingMedia },
+                    FileListConfidence = DownloadClientFileListConfidence.Degraded
+                };
+                var authoritativeNonMediaList = new DownloadClientItem
+                {
+                    FilePaths = new List<string> { existingArchive, missingNfo },
+                    FileListConfidence = DownloadClientFileListConfidence.Authoritative
+                };
+                var partiallyVisibleAuthoritativeMediaList = new DownloadClientItem
+                {
+                    FilePaths = new List<string> { existingMedia, missingMedia },
+                    FileListConfidence = DownloadClientFileListConfidence.Authoritative
+                };
+
+                Assert.That(Classify(authoritativeMediaList), Is.EqualTo(RejectionType.Temporary));
+                Assert.That(Classify(degradedMediaList), Is.EqualTo(RejectionType.Permanent));
+                Assert.That(Classify(authoritativeNonMediaList), Is.EqualTo(RejectionType.Permanent));
+                Assert.That(Classify(partiallyVisibleAuthoritativeMediaList), Is.EqualTo(RejectionType.Temporary));
+
+                var detailedResult = service.ProcessPath(
+                    tempDir,
+                    ImportMode.Auto,
+                    author: null,
+                    downloadClientItem: new DownloadClientItem
+                    {
+                        FilePaths = new List<string> { missingMedia, missingMediaTwo, missingMediaThree, missingMediaFour },
+                        FileListConfidence = DownloadClientFileListConfidence.Authoritative
+                    }).Single();
+                var detailedReason = detailedResult.Errors.Single();
+
+                Assert.That(detailedResult.ImportDecision.Rejections.Single().Category,
+                    Is.EqualTo(DownloadedBooksImportService.MissingAuthoritativeMediaFilesRejectionCategory));
+                Assert.That(detailedReason, Does.Contain(missingMedia));
+                Assert.That(detailedReason, Does.Contain(missingMediaTwo));
+                Assert.That(detailedReason, Does.Contain(missingMediaThree));
+                Assert.That(detailedReason, Does.Contain("and 1 more"));
+                Assert.That(detailedReason, Does.Not.Contain(missingMediaFour));
+                Assert.That(matchingService.Calls, Is.Empty);
+                Assert.That(importApprovedBooks.Decisions, Is.Empty);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_reject_locked_media_before_matching_a_manually_imported_folder()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Book.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var diskProvider = new StubDiskProvider();
+                diskProvider.LockedPaths.Add(filePath);
+                var matchingService = new StubFileMatchingService();
+                var importApprovedBooks = new RecordingImportApprovedBooks();
+                var service = new DownloadedBooksImportService(
+                    diskProvider,
+                    new StubDiskScanService(),
+                    matchingService,
+                    new StubMetadataTagService(),
+                    importApprovedBooks,
+                    DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                    DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var result = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null).Single();
+
+                Assert.That(result.ImportDecision.Rejections.Single().Type, Is.EqualTo(RejectionType.Temporary));
+                Assert.That(result.Errors.Single(), Does.Contain("Locked file"));
+                Assert.That(matchingService.Calls, Is.Empty);
+                Assert.That(importApprovedBooks.Decisions, Is.Empty);
             }
             finally
             {

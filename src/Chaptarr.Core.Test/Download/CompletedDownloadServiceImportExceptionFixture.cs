@@ -191,7 +191,6 @@ namespace Chaptarr.Core.Test.Download
 
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
             Assert.That(trackedDownload.StatusMessages, Is.Empty);
-            Assert.That(trackedDownload.EmptyImportAttempts, Is.Zero);
             Assert.That(eventAggregator.Events, Has.Some.InstanceOf<TrackedDownloadUpdatedEvent>());
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }

@@ -285,6 +285,7 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
             try
             {
                 filePaths = files
+                    .Where(f => f.Priority > 0)
                     .Select(f => ResolveFilePath(f, item.OutputPath))
                     .Where(p => p.IsNotNullOrWhiteSpace())
                     .Distinct(StringComparer.InvariantCultureIgnoreCase)

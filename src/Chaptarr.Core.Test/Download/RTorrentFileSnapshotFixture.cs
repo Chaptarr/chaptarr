@@ -190,6 +190,7 @@ namespace Chaptarr.Core.Test.Download
                 <data>
                   <value><string>Author - Book/part1.m4b</string></value>
                   <value><string>/downloads/Author - Book/part1.m4b</string></value>
+                  <value><i8>1</i8></value>
                 </data>
               </array>
             </value>
@@ -198,6 +199,7 @@ namespace Chaptarr.Core.Test.Download
                 <data>
                   <value><string>Author - Book/part2.m4b</string></value>
                   <value><string>/downloads/Author - Book/part2.m4b</string></value>
+                  <value><i8>0</i8></value>
                 </data>
               </array>
             </value>
@@ -213,25 +215,29 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(files, Has.Count.EqualTo(2));
             Assert.That(files[0].Path, Is.EqualTo("Author - Book/part1.m4b"));
             Assert.That(files[0].FrozenPath, Is.EqualTo("/downloads/Author - Book/part1.m4b"));
+            Assert.That(files[0].Priority, Is.EqualTo(1));
             Assert.That(files[1].Path, Is.EqualTo("Author - Book/part2.m4b"));
             Assert.That(files[1].FrozenPath, Is.EqualTo("/downloads/Author - Book/part2.m4b"));
+            Assert.That(files[1].Priority, Is.Zero);
 
             var requestBody = Encoding.UTF8.GetString(httpClient.Requests.Single().ContentData);
             Assert.That(requestBody, Does.Contain("<methodName>f.multicall</methodName>"));
             Assert.That(requestBody, Does.Contain("<string>ABCDEF1234</string>"));
             Assert.That(requestBody, Does.Contain("<string>f.path=</string>"));
             Assert.That(requestBody, Does.Contain("<string>f.frozen_path=</string>"));
+            Assert.That(requestBody, Does.Contain("<string>f.priority=</string>"));
         }
 
         [Test]
-        public void should_capture_authoritative_file_list_for_import_item()
+        public void should_capture_authoritative_selected_file_list()
         {
             var proxy = new TestProxy
             {
                 Files = new List<RTorrentFile>
                 {
-                    new() { Path = "part1.m4b", FrozenPath = "/remote/downloads/Author - Book/part1.m4b" },
-                    new() { Path = "part2.m4b", FrozenPath = "/remote/downloads/Author - Book/part2.m4b" }
+                    new() { Path = "part1.m4b", FrozenPath = "/remote/downloads/Author - Book/part1.m4b", Priority = 1 },
+                    new() { Path = "part2.m4b", FrozenPath = "/remote/downloads/Author - Book/part2.m4b", Priority = 2 },
+                    new() { Path = "sample.mp3", FrozenPath = "/remote/downloads/Author - Book/sample.mp3", Priority = 0 }
                 }
             };
 
@@ -266,8 +272,8 @@ namespace Chaptarr.Core.Test.Download
             {
                 Files = new List<RTorrentFile>
                 {
-                    new() { Path = "Disc 1/part1.m4b" },
-                    new() { Path = "Disc 2/part2.m4b" }
+                    new() { Path = "Disc 1/part1.m4b", Priority = 1 },
+                    new() { Path = "Disc 2/part2.m4b", Priority = 1 }
                 }
             };
 
@@ -295,7 +301,7 @@ namespace Chaptarr.Core.Test.Download
             {
                 Files = new List<RTorrentFile>
                 {
-                    new() { Path = "Author - Book/part1.epub" }
+                    new() { Path = "Author - Book/part1.epub", Priority = 1 }
                 }
             };
 
@@ -322,7 +328,7 @@ namespace Chaptarr.Core.Test.Download
             {
                 Files = new List<RTorrentFile>
                 {
-                    new() { Path = "Author - Book.m4b" }
+                    new() { Path = "Author - Book.m4b", Priority = 1 }
                 }
             };
 

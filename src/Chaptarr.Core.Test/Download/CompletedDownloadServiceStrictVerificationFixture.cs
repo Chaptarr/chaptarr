@@ -7,6 +7,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
@@ -273,7 +274,7 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
-        public void should_publish_incomplete_event_when_best_effort_import_finds_no_eligible_files()
+        public void should_block_best_effort_import_when_no_eligible_files_are_returned()
         {
             var eventAggregator = new RecordingEventAggregator();
             var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
@@ -321,19 +322,221 @@ namespace Chaptarr.Core.Test.Download
                 NoopDownloadClientFileSnapshotService.Instance);
 
             Assert.DoesNotThrow(() => subject.Import(trackedDownload));
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
-            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
-
-            Assert.DoesNotThrow(() => subject.Import(trackedDownload));
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
-            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
-
-            Assert.DoesNotThrow(() => subject.Import(trackedDownload));
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
             Assert.That(trackedDownload.StatusMessages, Is.Not.Empty);
             Assert.That(trackedDownload.StatusMessages[0].Messages, Does.Contain("NO_ELIGIBLE_FILES"));
             Assert.That(eventAggregator.Events, Has.Some.InstanceOf<BookImportIncompleteEvent>());
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<DownloadCompletedEvent>());
+        }
+
+        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        public void should_retry_temporary_import_rejection_and_import_when_files_become_available()
+        {
+            var eventAggregator = new RecordingEventAggregator();
+            var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+            ((HistoryServiceProxy)(object)historyService).HistoryItems = new List<EntityHistory>
+            {
+                new EntityHistory
+                {
+                    EventType = EntityHistoryEventType.Grabbed,
+                    DownloadId = "download-late-file",
+                    Date = DateTime.UtcNow
+                }
+            };
+
+            var localBook = new LocalBook { Path = "/tmp/chaptarr-late-file" };
+            var rejection = new Rejection("Download path is not accessible yet", RejectionType.Temporary)
+            {
+                Category = DownloadedBooksImportService.MissingAuthoritativeMediaFilesRejectionCategory
+            };
+            var importService = new RecordingDownloadedBooksImportService
+            {
+                Results = new List<ImportResult>
+                {
+                    new(new ImportDecision<LocalBook>(localBook, rejection), rejection.Reason)
+                }
+            };
+            var trackedDownload = new TrackedDownload
+            {
+                DownloadClient = 1,
+                DownloadItem = new DownloadClientItem
+                {
+                    DownloadId = "download-late-file",
+                    Title = "Late.File",
+                    Status = DownloadItemStatus.Completed,
+                    DownloadClientInfo = new DownloadClientItemClientInfo
+                    {
+                        Id = 1,
+                        Name = "qBittorrent",
+                        Protocol = DownloadProtocol.Torrent
+                    }
+                },
+                RemoteBook = new RemoteBook
+                {
+                    Books = new List<Book>()
+                },
+                State = TrackedDownloadState.ImportPending
+            };
+            var subject = new CompletedDownloadService(
+                eventAggregator,
+                historyService,
+                new StubProvideImportItemService("/tmp/chaptarr-late-file"),
+                importService,
+                new PassthroughDownloadImportModeResolver(),
+                new StubTrackedDownloadAlreadyImported(),
+                NoopFailedDownloadService.Instance,
+                LogManager.GetCurrentClassLogger(),
+                NoopDownloadClientFileSnapshotService.Instance);
+
+            subject.Import(trackedDownload);
+
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
+            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.EqualTo(1));
+            Assert.That(trackedDownload.StatusMessages.SelectMany(message => message.Messages), Has.Some.Contains(rejection.Reason));
+            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
+
+            importService.Results = new List<ImportResult>
+            {
+                CreateImportedResult(101, 7, "Late File")
+            };
+
+            subject.Import(trackedDownload);
+
+            Assert.That(importService.CallCount, Is.EqualTo(2));
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
+            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.Zero);
+            Assert.That(trackedDownload.StatusMessages, Is.Empty);
+            Assert.That(eventAggregator.Events, Has.One.InstanceOf<DownloadCompletedEvent>());
+            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
+        }
+
+        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        public void should_restore_the_pre_d60_three_attempt_grace_for_missing_declared_files()
+        {
+            var eventAggregator = new RecordingEventAggregator();
+            var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+            ((HistoryServiceProxy)(object)historyService).HistoryItems = new List<EntityHistory>
+            {
+                new()
+                {
+                    EventType = EntityHistoryEventType.Grabbed,
+                    DownloadId = "download-never-arrived",
+                    Date = DateTime.UtcNow
+                }
+            };
+
+            var localBook = new LocalBook { Path = "/tmp/chaptarr-never-arrived" };
+            var rejection = new Rejection("A declared media file is still unavailable", RejectionType.Temporary)
+            {
+                Category = DownloadedBooksImportService.MissingAuthoritativeMediaFilesRejectionCategory
+            };
+            var importService = new RecordingDownloadedBooksImportService
+            {
+                Results = new List<ImportResult>
+                {
+                    new(new ImportDecision<LocalBook>(localBook, rejection), rejection.Reason)
+                }
+            };
+            var trackedDownload = new TrackedDownload
+            {
+                DownloadClient = 1,
+                DownloadItem = new DownloadClientItem
+                {
+                    DownloadId = "download-never-arrived",
+                    Title = "Never.Arrived",
+                    Status = DownloadItemStatus.Completed,
+                    DownloadClientInfo = new DownloadClientItemClientInfo
+                    {
+                        Id = 1,
+                        Name = "qBittorrent",
+                        Protocol = DownloadProtocol.Torrent
+                    }
+                },
+                RemoteBook = new RemoteBook { Books = new List<Book>() },
+                State = TrackedDownloadState.ImportPending
+            };
+            var subject = new CompletedDownloadService(
+                eventAggregator,
+                historyService,
+                new StubProvideImportItemService("/tmp/chaptarr-never-arrived"),
+                importService,
+                new PassthroughDownloadImportModeResolver(),
+                new StubTrackedDownloadAlreadyImported(),
+                NoopFailedDownloadService.Instance,
+                LogManager.GetCurrentClassLogger(),
+                NoopDownloadClientFileSnapshotService.Instance);
+
+            subject.Import(trackedDownload);
+            subject.Import(trackedDownload);
+            subject.Import(trackedDownload);
+
+            Assert.That(importService.CallCount, Is.EqualTo(3));
+            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.EqualTo(3));
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
+            Assert.That(eventAggregator.Events, Has.One.InstanceOf<BookImportIncompleteEvent>());
+        }
+
+        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        public void should_not_apply_the_missing_file_cap_to_other_temporary_rejections()
+        {
+            var eventAggregator = new RecordingEventAggregator();
+            var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+            ((HistoryServiceProxy)(object)historyService).HistoryItems = new List<EntityHistory>
+            {
+                new()
+                {
+                    EventType = EntityHistoryEventType.Grabbed,
+                    DownloadId = "download-other-temporary",
+                    Date = DateTime.UtcNow
+                }
+            };
+
+            var localBook = new LocalBook { Path = "/tmp/chaptarr-other-temporary" };
+            var rejection = new Rejection("Locked file, try again later", RejectionType.Temporary);
+            var importService = new RecordingDownloadedBooksImportService
+            {
+                Results = new List<ImportResult>
+                {
+                    new(new ImportDecision<LocalBook>(localBook, rejection), rejection.Reason)
+                }
+            };
+            var trackedDownload = new TrackedDownload
+            {
+                DownloadClient = 1,
+                DownloadItem = new DownloadClientItem
+                {
+                    DownloadId = "download-other-temporary",
+                    Title = "Other.Temporary",
+                    Status = DownloadItemStatus.Completed,
+                    DownloadClientInfo = new DownloadClientItemClientInfo
+                    {
+                        Id = 1,
+                        Name = "qBittorrent",
+                        Protocol = DownloadProtocol.Torrent
+                    }
+                },
+                RemoteBook = new RemoteBook { Books = new List<Book>() },
+                State = TrackedDownloadState.ImportPending
+            };
+            var subject = new CompletedDownloadService(
+                eventAggregator,
+                historyService,
+                new StubProvideImportItemService("/tmp/chaptarr-other-temporary"),
+                importService,
+                new PassthroughDownloadImportModeResolver(),
+                new StubTrackedDownloadAlreadyImported(),
+                NoopFailedDownloadService.Instance,
+                LogManager.GetCurrentClassLogger(),
+                NoopDownloadClientFileSnapshotService.Instance);
+
+            subject.Import(trackedDownload);
+            subject.Import(trackedDownload);
+            subject.Import(trackedDownload);
+
+            Assert.That(importService.CallCount, Is.EqualTo(3));
+            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.Zero);
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
+            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]

@@ -8,6 +8,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
@@ -28,8 +29,9 @@ namespace NzbDrone.Core.Download
 
 	    public class CompletedDownloadService : ICompletedDownloadService
 	    {
-	        // Allow a few monitor cycles for completed downloads whose files are still moving/extracting before requiring manual retry.
-	        private const int EmptyImportBlockThreshold = 3;
+	        // Restore the pre-d60 three-cycle grace for files arriving through a remote
+	        // mount, but never keep a completed download retrying for missing files forever.
+	        private const int MissingAuthoritativeMediaFileBlockThreshold = 3;
 	        private readonly IEventAggregator _eventAggregator;
 	        private readonly IHistoryService _historyService;
 	        private readonly IProvideImportItemService _provideImportItemService;
@@ -127,7 +129,7 @@ namespace NzbDrone.Core.Download
 
                 if (importResults.Any(result => result.Result == ImportResultType.Pending))
                 {
-                    trackedDownload.EmptyImportAttempts = 0;
+                    trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
                     trackedDownload.State = TrackedDownloadState.ImportPending;
                     trackedDownload.ClearStatus();
                     PublishTrackedDownloadUpdated(trackedDownload);
@@ -143,37 +145,54 @@ namespace NzbDrone.Core.Download
 
                 if (importResults.Empty())
                 {
-                    trackedDownload.EmptyImportAttempts++;
-
                     var statusMessages = new[]
                     {
                         new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, "NO_ELIGIBLE_FILES"),
                         new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, string.Format("No files found are eligible for import in {0}", outputPath))
                     };
 
-                    trackedDownload.Warn(statusMessages);
-
-                    if (trackedDownload.EmptyImportAttempts < EmptyImportBlockThreshold)
-                    {
-                        _logger.Debug("No eligible files found for {0}; keeping import pending for retry attempt {1}/{2}.",
-                            trackedDownload.DownloadItem.Title,
-                            trackedDownload.EmptyImportAttempts,
-                            EmptyImportBlockThreshold);
-
-                        trackedDownload.State = TrackedDownloadState.ImportPending;
-                        PublishTrackedDownloadUpdated(trackedDownload);
-                        return;
-                    }
-
-                    _logger.Warn("No eligible files found for {0} after {1} import attempts; blocking automatic retries until user action.",
-                        trackedDownload.DownloadItem.Title,
-                        trackedDownload.EmptyImportAttempts);
-
-                    BlockImportWithCurrentStatus(trackedDownload);
+                    BlockImport(trackedDownload, statusMessages);
                     return;
                 }
 
-                trackedDownload.EmptyImportAttempts = 0;
+                if (AreAllImportRejectionsMissingAuthoritativeMediaFiles(importResults))
+                {
+                    trackedDownload.MissingAuthoritativeMediaFileAttempts++;
+                    var statusMessages = importResults
+                        .Where(result => result.ImportDecision.Item != null)
+                        .Select(result => new TrackedDownloadStatusMessage(Path.GetFileName(result.ImportDecision.Item.Path), result.Errors))
+                        .ToArray();
+
+                    trackedDownload.Warn(statusMessages);
+
+                    if (trackedDownload.MissingAuthoritativeMediaFileAttempts >= MissingAuthoritativeMediaFileBlockThreshold)
+                    {
+                        _logger.Warn("Declared download files did not become readable for {0} after {1} attempts; blocking automatic retries until user action.",
+                            trackedDownload.DownloadItem.Title,
+                            trackedDownload.MissingAuthoritativeMediaFileAttempts);
+                        BlockImportWithCurrentStatus(trackedDownload);
+                        return;
+                    }
+
+                    trackedDownload.State = TrackedDownloadState.ImportPending;
+                    PublishTrackedDownloadUpdated(trackedDownload);
+                    return;
+                }
+
+                trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
+
+                if (AreAllImportRejectionsTemporary(importResults))
+                {
+                    var statusMessages = importResults
+                        .Where(result => result.ImportDecision.Item != null)
+                        .Select(result => new TrackedDownloadStatusMessage(Path.GetFileName(result.ImportDecision.Item.Path), result.Errors))
+                        .ToArray();
+
+                    trackedDownload.Warn(statusMessages);
+                    trackedDownload.State = TrackedDownloadState.ImportPending;
+                    PublishTrackedDownloadUpdated(trackedDownload);
+                    return;
+                }
 
                 if (VerifyImport(trackedDownload, importResults))
                 {
@@ -262,6 +281,24 @@ namespace NzbDrone.Core.Download
 
             return consideredFiles.All(result =>
                 result.ImportDecision.Rejections?.Any(rejection => rejection.IsQualityFilter) == true);
+        }
+
+        private static bool AreAllImportRejectionsTemporary(List<ImportResult> importResults)
+        {
+            return importResults.All(result =>
+                result.Result != ImportResultType.Imported &&
+                result.ImportDecision?.Rejections?.Any() == true &&
+                result.ImportDecision.Rejections.All(rejection => rejection.Type == RejectionType.Temporary));
+        }
+
+        private static bool AreAllImportRejectionsMissingAuthoritativeMediaFiles(List<ImportResult> importResults)
+        {
+            return AreAllImportRejectionsTemporary(importResults) &&
+                   importResults.All(result => result.ImportDecision.Rejections.All(rejection =>
+                       string.Equals(
+                           rejection.Category,
+                           DownloadedBooksImportService.MissingAuthoritativeMediaFilesRejectionCategory,
+                           StringComparison.Ordinal)));
         }
 
         private static IEnumerable<string> GetDisallowedFormatSummary(List<ImportResult> importResults)
