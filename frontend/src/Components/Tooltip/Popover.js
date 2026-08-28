@@ -14,6 +14,7 @@ function Popover(props) {
   return (
     <Tooltip
       {...otherProps}
+      accessibleLabel={title}
       bodyClassName={styles.tooltipBody}
       tooltip={
         <div>
@@ -37,7 +38,12 @@ Popover.propTypes = {
   title: PropTypes.string.isRequired,
   body: PropTypes.oneOfType([PropTypes.string, PropTypes.node]).isRequired,
   position: PropTypes.oneOf(tooltipPositions.all),
-  canFlip: PropTypes.bool
+  canFlip: PropTypes.bool,
+  isAnchorFocusable: PropTypes.bool
+};
+
+Popover.defaultProps = {
+  canFlip: true
 };
 
 export default Popover;

@@ -5,6 +5,9 @@
 
 .tooltip {
   position: relative;
+  overflow: auto;
+  max-width: inherit;
+  max-height: inherit;
 
   &.default {
     background-color: var(--popoverBodyBackgroundColor);
