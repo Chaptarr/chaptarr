@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Commands;
@@ -176,6 +177,54 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(config.EbookMonitored, Is.Null);
                 Assert.That(config.EbookMonitorExistingMode, Is.Null);
                 Assert.That(config.EbookMonitorNewItems, Is.Null);
+            });
+        }
+
+        [Test]
+        public void mixed_root_discovery_should_import_the_complete_side_without_the_incomplete_side()
+        {
+            var root = new RootFolder
+            {
+                Path = "/library".AsOsAgnostic(),
+                FolderType = FolderType.Mixed
+            };
+            root.SetAudiobookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 10,
+                MetadataProfileId = 20,
+                Monitored = true
+            });
+            root.SetEbookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 11,
+                Monitored = true
+            });
+
+            var libraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
+            var rootService = DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>();
+            ((RootFolderServiceProxy)(object)rootService).RootFolder = root;
+            var subject = new ImportDiscoveredAuthorCommandHandler(
+                libraryService,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                rootService,
+                LogManager.GetCurrentClassLogger(),
+                DispatchProxy.Create<IEventAggregator, EventAggregatorProxy>());
+
+            subject.Execute(new ImportDiscoveredAuthorCommand
+            {
+                ProviderId = "hc:789",
+                RootFolderPath = root.Path,
+                DiscoveredAuthorFolderPath = "/library/Discovered Author".AsOsAgnostic()
+            });
+
+            var config = ((AuthorLibraryServiceProxy)(object)libraryService).Config;
+            Assert.Multiple(() =>
+            {
+                Assert.That(config.CreateAudiobook, Is.True);
+                Assert.That(config.AudiobookRootFolderPath, Is.EqualTo(root.Path));
+                Assert.That(config.CreateEbook, Is.False);
+                Assert.That(config.EbookRootFolderPath, Is.Null);
+                Assert.That(config.EbookQualityProfileId, Is.Null);
             });
         }
     }

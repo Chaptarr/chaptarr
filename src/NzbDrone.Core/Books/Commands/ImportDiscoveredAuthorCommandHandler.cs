@@ -73,12 +73,17 @@ namespace NzbDrone.Core.Books.Commands
                     };
 
                     var changedSettings = false;
-                    if (augmentRoot.FolderType is FolderType.Audiobook or FolderType.Mixed)
+                    var configureAudiobook = (augmentRoot.FolderType is FolderType.Audiobook or FolderType.Mixed) &&
+                                             RootFolderSettingsResolver.HasRequiredProfiles(a);
+                    var configureEbook = (augmentRoot.FolderType is FolderType.Ebook or FolderType.Mixed) &&
+                                         RootFolderSettingsResolver.HasRequiredProfiles(e);
+
+                    if (configureAudiobook)
                     {
                         changedSettings |= ApplyMediaSettings(existing, BookMediaType.Audiobook, a, augmentRoot.Path);
                     }
 
-                    if (augmentRoot.FolderType is FolderType.Ebook or FolderType.Mixed)
+                    if (configureEbook)
                     {
                         changedSettings |= ApplyMediaSettings(existing, BookMediaType.Ebook, e, augmentRoot.Path);
                     }
@@ -89,12 +94,12 @@ namespace NzbDrone.Core.Books.Commands
                     if (!string.IsNullOrWhiteSpace(message.DiscoveredAuthorFolderPath))
                     {
                         var changedPath = false;
-                        if ((augmentRoot.FolderType == FolderType.Audiobook || augmentRoot.FolderType == FolderType.Mixed) && string.IsNullOrWhiteSpace(updated.AudiobookPath))
+                        if (configureAudiobook && string.IsNullOrWhiteSpace(updated.AudiobookPath))
                         {
                             updated.AudiobookPath = message.DiscoveredAuthorFolderPath;
                             changedPath = true;
                         }
-                        if ((augmentRoot.FolderType == FolderType.Ebook || augmentRoot.FolderType == FolderType.Mixed) && string.IsNullOrWhiteSpace(updated.EbookPath))
+                        if (configureEbook && string.IsNullOrWhiteSpace(updated.EbookPath))
                         {
                             updated.EbookPath = message.DiscoveredAuthorFolderPath;
                             changedPath = true;
@@ -137,32 +142,37 @@ namespace NzbDrone.Core.Books.Commands
                     return;
                 }
 
-                // Build MonitoringConfig per root type. Always create both instances.
+                var audiobookSettings = root.GetAudiobookSettings();
+                var ebookSettings = root.GetEbookSettings();
+                var createAudiobook = (root.FolderType is FolderType.Audiobook or FolderType.Mixed) &&
+                                      RootFolderSettingsResolver.HasRequiredProfiles(audiobookSettings);
+                var createEbook = (root.FolderType is FolderType.Ebook or FolderType.Mixed) &&
+                                  RootFolderSettingsResolver.HasRequiredProfiles(ebookSettings);
+
+                if (!createAudiobook && !createEbook)
+                {
+                    _logger.Error(
+                        "[DISCOVERED-AUTHOR] Root folder '{0}' has no media side with complete quality and metadata profile defaults",
+                        root.Path);
+                    return;
+                }
+
                 var config = new MonitoringConfig
                 {
-                    CreateAudiobook = true,
-                    CreateEbook = true,
+                    CreateAudiobook = createAudiobook,
+                    CreateEbook = createEbook,
                     RequestedBy = message.RequestedBy,
                     DiscoveredAuthorFolderPath = message.DiscoveredAuthorFolderPath
                 };
 
-                // Apply per-media settings from the root
-                switch (root.FolderType)
+                if (createAudiobook)
                 {
-                    case FolderType.Audiobook:
-                        ApplyAudiobookSettings(config, root);
-                        // Leave ebook settings unset (null) — instance will exist but be unmonitored
-                        break;
-                    case FolderType.Ebook:
-                        ApplyEbookSettings(config, root);
-                        // Leave audiobook settings unset (null)
-                        break;
-                    case FolderType.Mixed:
-                    default:
-                        // Mixed: apply BOTH audiobook and ebook settings simultaneously
-                        ApplyAudiobookSettings(config, root);
-                        ApplyEbookSettings(config, root);
-                        break;
+                    ApplyAudiobookSettings(config, root, audiobookSettings);
+                }
+
+                if (createEbook)
+                {
+                    ApplyEbookSettings(config, root, ebookSettings);
                 }
 
                 // Import via library service (handles inheritance, transactions, events)
@@ -188,41 +198,33 @@ namespace NzbDrone.Core.Books.Commands
             }
         }
 
-        private void ApplyAudiobookSettings(MonitoringConfig config, RootFolder root)
+        private void ApplyAudiobookSettings(MonitoringConfig config, RootFolder root, MediaTypeSettings settings)
         {
-            var s = root.GetAudiobookSettings();
             config.AudiobookRootFolderPath = root.Path;
-            if (s != null)
+            config.AudiobookQualityProfileId = settings.QualityProfileId;
+            config.AudiobookMetadataProfileId = settings.MetadataProfileId;
+            config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
+            config.AudiobookMonitored = settings.Monitored;
+            config.AudiobookMonitorNewItems = settings.MonitorNewItems;
+            if (settings.Tags != null && settings.Tags.Any())
             {
-                config.AudiobookQualityProfileId = s.QualityProfileId;
-                config.AudiobookMetadataProfileId = s.MetadataProfileId;
-                config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(s.MonitorExistingMode);
-                config.AudiobookMonitored = s.Monitored;
-                config.AudiobookMonitorNewItems = s.MonitorNewItems;
-                if (s.Tags != null && s.Tags.Any())
-                {
-                    config.Tags = config.Tags ?? new System.Collections.Generic.HashSet<int>();
-                    foreach (var t in s.Tags) config.Tags.Add(t);
-                }
+                config.Tags ??= new System.Collections.Generic.HashSet<int>();
+                foreach (var tag in settings.Tags) config.Tags.Add(tag);
             }
         }
 
-        private void ApplyEbookSettings(MonitoringConfig config, RootFolder root)
+        private void ApplyEbookSettings(MonitoringConfig config, RootFolder root, MediaTypeSettings settings)
         {
-            var s = root.GetEbookSettings();
             config.EbookRootFolderPath = root.Path;
-            if (s != null)
+            config.EbookQualityProfileId = settings.QualityProfileId;
+            config.EbookMetadataProfileId = settings.MetadataProfileId;
+            config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
+            config.EbookMonitored = settings.Monitored;
+            config.EbookMonitorNewItems = settings.MonitorNewItems;
+            if (settings.Tags != null && settings.Tags.Any())
             {
-                config.EbookQualityProfileId = s.QualityProfileId;
-                config.EbookMetadataProfileId = s.MetadataProfileId;
-                config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(s.MonitorExistingMode);
-                config.EbookMonitored = s.Monitored;
-                config.EbookMonitorNewItems = s.MonitorNewItems;
-                if (s.Tags != null && s.Tags.Any())
-                {
-                    config.Tags = config.Tags ?? new System.Collections.Generic.HashSet<int>();
-                    foreach (var t in s.Tags) config.Tags.Add(t);
-                }
+                config.Tags ??= new System.Collections.Generic.HashSet<int>();
+                foreach (var tag in settings.Tags) config.Tags.Add(tag);
             }
         }
 

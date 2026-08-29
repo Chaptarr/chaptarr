@@ -55,6 +55,10 @@ namespace Chaptarr.Api.V1.RootFolders
             _configService = configService;
             _localizationService = localizationService;
 
+            SharedValidator.RuleFor(c => c.FolderType)
+                .Must(value => Enum.IsDefined(typeof(FolderType), value))
+                .WithMessage("Invalid folder type. Valid values are 0 (Mixed), 1 (Audiobook), 2 (Ebook)");
+
             SharedValidator.RuleFor(c => c.Path)
                 .Cascade(CascadeMode.Stop)
                 .IsValidPath()
@@ -68,6 +72,13 @@ namespace Chaptarr.Api.V1.RootFolders
 
             PostValidator.RuleFor(c => c.Path)
                 .SetValidator(rootFolderValidator);
+
+            PostValidator.RuleFor(c => c)
+                .Must(HasAtLeastOneConfiguredMediaSide)
+                .WithMessage("Mixed root folders must configure at least one media type with quality and metadata profiles");
+
+            AddMediaSettingsValidation(BookMediaType.Audiobook, qualityProfileExistsValidator, metadataProfileExistsValidator);
+            AddMediaSettingsValidation(BookMediaType.Ebook, qualityProfileExistsValidator, metadataProfileExistsValidator);
 
             SharedValidator.RuleFor(c => c)
                 .Must(x => CalibreLibraryOnlyUsedOnce(x))
@@ -85,6 +96,68 @@ namespace Chaptarr.Api.V1.RootFolders
 
             SharedValidator.RuleFor(c => c.OutputFormat).Must(x => x.Split(',').All(y => Enum.TryParse<CalibreFormat>(y, true, out _))).When(x => x.OutputFormat.IsNotNullOrWhiteSpace()).WithMessage("Invalid output formats");
             SharedValidator.RuleFor(c => c.OutputProfile).IsEnumName(typeof(CalibreProfile));
+        }
+
+        private void AddMediaSettingsValidation(
+            BookMediaType mediaType,
+            QualityProfileExistsValidator qualityProfileExistsValidator,
+            MetadataProfileExistsValidator metadataProfileExistsValidator)
+        {
+            var mediaLabel = mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
+
+            PostValidator.RuleFor(resource => RootFolderResourceMapper.GetQualityProfileId(resource, mediaType))
+                .Cascade(CascadeMode.Stop)
+                .NotNull()
+                .WithMessage($"A {mediaLabel} quality profile is required")
+                .GreaterThan(0)
+                .WithMessage($"A valid {mediaLabel} quality profile is required")
+                .SetValidator(qualityProfileExistsValidator)
+                .When(resource => RequiresMediaSettings(resource, mediaType))
+                .WithName($"{mediaLabel}QualityProfileId");
+
+            PostValidator.RuleFor(resource => RootFolderResourceMapper.GetMetadataProfileId(resource, mediaType))
+                .Cascade(CascadeMode.Stop)
+                .NotNull()
+                .WithMessage($"An {mediaLabel} metadata profile is required")
+                .GreaterThan(0)
+                .WithMessage($"A valid {mediaLabel} metadata profile is required")
+                .SetValidator(metadataProfileExistsValidator)
+                .When(resource => RequiresMediaSettings(resource, mediaType))
+                .WithName($"{mediaLabel}MetadataProfileId");
+        }
+
+        private static bool HasAtLeastOneConfiguredMediaSide(RootFolderResource resource)
+        {
+            return resource?.FolderType != (int)FolderType.Mixed ||
+                   RootFolderResourceMapper.HasAnyMediaTypeSettings(resource, BookMediaType.Audiobook) ||
+                   RootFolderResourceMapper.HasAnyMediaTypeSettings(resource, BookMediaType.Ebook);
+        }
+
+        private static bool RequiresMediaSettings(RootFolderResource resource, BookMediaType mediaType)
+        {
+            if (resource == null)
+            {
+                return false;
+            }
+
+            if (!Enum.IsDefined(typeof(FolderType), resource.FolderType))
+            {
+                return false;
+            }
+
+            var folderType = (FolderType)resource.FolderType;
+            if (folderType == FolderType.Audiobook)
+            {
+                return mediaType == BookMediaType.Audiobook;
+            }
+
+            if (folderType == FolderType.Ebook)
+            {
+                return mediaType == BookMediaType.Ebook;
+            }
+
+            return folderType == FolderType.Mixed &&
+                   RootFolderResourceMapper.HasAnyMediaTypeSettings(resource, mediaType);
         }
 
         private bool CalibreLibraryOnlyUsedOnce(RootFolderResource settings)

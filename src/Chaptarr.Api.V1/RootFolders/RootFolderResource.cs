@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using Chaptarr.Http.REST;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -44,6 +45,7 @@ namespace Chaptarr.Api.V1.RootFolders
         public string OutputFormat { get; set; }
         public string OutputProfile { get; set; }
         public bool UseSsl { get; set; }
+        [JsonRequired]
         public int FolderType { get; set; }
         public bool PlaceEbooksWithAudiobooks { get; set; }
         public bool? DefaultSyncMonitoredAcrossFormats { get; set; }
@@ -468,6 +470,56 @@ namespace Chaptarr.Api.V1.RootFolders
                     settings.WriteAudioBookShelfMetadataJson ||
                     settings.WriteAudioBookShelfCover ||
                    settings.Tags?.Count > 0);
+        }
+
+        internal static bool HasAnyMediaTypeSettings(RootFolderResource resource, BookMediaType mediaType)
+        {
+            if (resource == null)
+            {
+                return false;
+            }
+
+            return mediaType == BookMediaType.Audiobook
+                ? HasConfiguredMediaTypeSettings(resource.Audiobook) ||
+                  HasConfiguredIndividualSettings(
+                      resource.AudiobookMonitored,
+                      resource.AudiobookMonitorExistingMode,
+                      resource.AudiobookMonitorExistingBooks,
+                      resource.AudiobookMonitorExisting,
+                      resource.AudiobookMonitorFuture,
+                      resource.AudiobookMonitorNewItems,
+                      resource.AudiobookQualityProfileId,
+                      resource.AudiobookMetadataProfileId,
+                      resource.AudiobookTags,
+                      resource.AudiobookWriteAudioBookShelfMetadataJson,
+                      resource.AudiobookWriteAudioBookShelfCover)
+                : HasConfiguredMediaTypeSettings(resource.Ebook) ||
+                  HasConfiguredIndividualSettings(
+                      resource.EbookMonitored,
+                      resource.EbookMonitorExistingMode,
+                      resource.EbookMonitorExistingBooks,
+                      resource.EbookMonitorExisting,
+                      resource.EbookMonitorFuture,
+                      resource.EbookMonitorNewItems,
+                      resource.EbookQualityProfileId,
+                      resource.EbookMetadataProfileId,
+                      resource.EbookTags,
+                      resource.EbookWriteAudioBookShelfMetadataJson,
+                      resource.EbookWriteAudioBookShelfCover);
+        }
+
+        internal static int? GetQualityProfileId(RootFolderResource resource, BookMediaType mediaType)
+        {
+            return mediaType == BookMediaType.Audiobook
+                ? resource?.AudiobookQualityProfileId ?? resource?.Audiobook?.QualityProfileId
+                : resource?.EbookQualityProfileId ?? resource?.Ebook?.QualityProfileId;
+        }
+
+        internal static int? GetMetadataProfileId(RootFolderResource resource, BookMediaType mediaType)
+        {
+            return mediaType == BookMediaType.Audiobook
+                ? resource?.AudiobookMetadataProfileId ?? resource?.Audiobook?.MetadataProfileId
+                : resource?.EbookMetadataProfileId ?? resource?.Ebook?.MetadataProfileId;
         }
 
         private static void ValidateMediaMonitoring(MediaTypeSettingsResource settings, string mediaLabel)

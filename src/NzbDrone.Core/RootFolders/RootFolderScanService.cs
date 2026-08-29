@@ -69,11 +69,29 @@ namespace NzbDrone.Core.RootFolders
                 var hasAudiobookFiles = files.Any(IsAudiobookFile);
                 var hasEbookFiles = files.Any(IsEbookFile);
                 var relevantFiles = files.Where(f => IsRelevantFile(f, rootFolder)).ToList();
+                var audiobookSettings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Audiobook);
+                var ebookSettings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Ebook);
 
-                var rootCanLinkAudiobook = rootFolder.FolderType == FolderType.Audiobook ||
-                                           (rootFolder.FolderType == FolderType.Mixed && hasAudiobookFiles);
-                var rootCanLinkEbook = rootFolder.FolderType == FolderType.Ebook ||
-                                       (rootFolder.FolderType == FolderType.Mixed && hasEbookFiles);
+                var rootCanLinkAudiobook = audiobookSettings.IsConfigured &&
+                                           (rootFolder.FolderType == FolderType.Audiobook ||
+                                            (rootFolder.FolderType == FolderType.Mixed && hasAudiobookFiles));
+                var rootCanLinkEbook = ebookSettings.IsConfigured &&
+                                       (rootFolder.FolderType == FolderType.Ebook ||
+                                        (rootFolder.FolderType == FolderType.Mixed && hasEbookFiles));
+
+                if (!audiobookSettings.IsConfigured &&
+                    (rootFolder.FolderType == FolderType.Audiobook ||
+                     (rootFolder.FolderType == FolderType.Mixed && hasAudiobookFiles)))
+                {
+                    _logger.Warn($"Root folder '{rootFolder.Path}' has incomplete audiobook profile defaults; skipping the audiobook side for author '{author.Name}'");
+                }
+
+                if (!ebookSettings.IsConfigured &&
+                    (rootFolder.FolderType == FolderType.Ebook ||
+                     (rootFolder.FolderType == FolderType.Mixed && hasEbookFiles)))
+                {
+                    _logger.Warn($"Root folder '{rootFolder.Path}' has incomplete ebook profile defaults; skipping the ebook side for author '{author.Name}'");
+                }
 
                 var shouldLinkAudiobook = rootCanLinkAudiobook &&
                                           CanLinkMediaPath(author.AudiobookRootFolderPath, author.AudiobookPath, rootFolder);
@@ -127,20 +145,12 @@ namespace NzbDrone.Core.RootFolders
                     // Apply each missing root-folder default independently. This
                     // matters when an author was imported through the other format
                     // or has only a partially configured media side.
-                    var settings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Audiobook);
-                    if (settings.IsConfigured)
-                    {
-                        author.AudiobookQualityProfileId ??= settings.QualityProfileId;
-                        author.AudiobookMetadataProfileId ??= settings.MetadataProfileId;
-                        author.AudiobookMonitored ??= settings.Monitored;
-                        author.AudiobookMonitorNewItems ??= settings.MonitorNewItems;
+                    author.AudiobookQualityProfileId ??= audiobookSettings.QualityProfileId;
+                    author.AudiobookMetadataProfileId ??= audiobookSettings.MetadataProfileId;
+                    author.AudiobookMonitored ??= audiobookSettings.Monitored;
+                    author.AudiobookMonitorNewItems ??= audiobookSettings.MonitorNewItems;
 
-                        _logger.Debug($"Applied missing audiobook defaults from root folder to author '{author.Name}' - QualityProfile: {settings.QualityProfileId}, MetadataProfile: {settings.MetadataProfileId}, Monitored: {settings.Monitored}, MonitorNewItems: {settings.MonitorNewItems}, InitialBookMonitoring: {settings.MonitorExistingMode}");
-                    }
-                    else
-                    {
-                        _logger.Warn($"No audiobook settings configured for root folder {rootFolder.Path} - skipping author '{author.Name}'");
-                    }
+                    _logger.Debug($"Applied missing audiobook defaults from root folder to author '{author.Name}' - QualityProfile: {audiobookSettings.QualityProfileId}, MetadataProfile: {audiobookSettings.MetadataProfileId}, Monitored: {audiobookSettings.Monitored}, MonitorNewItems: {audiobookSettings.MonitorNewItems}, InitialBookMonitoring: {audiobookSettings.MonitorExistingMode}");
                 }
 
                 if (shouldLinkEbook)
@@ -161,20 +171,12 @@ namespace NzbDrone.Core.RootFolders
                     // Apply each missing root-folder default independently. This
                     // matters when an author was imported through the other format
                     // or has only a partially configured media side.
-                    var settings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Ebook);
-                    if (settings.IsConfigured)
-                    {
-                        author.EbookQualityProfileId ??= settings.QualityProfileId;
-                        author.EbookMetadataProfileId ??= settings.MetadataProfileId;
-                        author.EbookMonitored ??= settings.Monitored;
-                        author.EbookMonitorNewItems ??= settings.MonitorNewItems;
+                    author.EbookQualityProfileId ??= ebookSettings.QualityProfileId;
+                    author.EbookMetadataProfileId ??= ebookSettings.MetadataProfileId;
+                    author.EbookMonitored ??= ebookSettings.Monitored;
+                    author.EbookMonitorNewItems ??= ebookSettings.MonitorNewItems;
 
-                        _logger.Debug($"Applied missing ebook defaults from root folder to author '{author.Name}' - QualityProfile: {settings.QualityProfileId}, MetadataProfile: {settings.MetadataProfileId}, Monitored: {settings.Monitored}, MonitorNewItems: {settings.MonitorNewItems}, InitialBookMonitoring: {settings.MonitorExistingMode}");
-                    }
-                    else
-                    {
-                        _logger.Warn($"No ebook settings configured for root folder {rootFolder.Path} - skipping author '{author.Name}'");
-                    }
+                    _logger.Debug($"Applied missing ebook defaults from root folder to author '{author.Name}' - QualityProfile: {ebookSettings.QualityProfileId}, MetadataProfile: {ebookSettings.MetadataProfileId}, Monitored: {ebookSettings.Monitored}, MonitorNewItems: {ebookSettings.MonitorNewItems}, InitialBookMonitoring: {ebookSettings.MonitorExistingMode}");
                 }
 
                 update.NewPath = author.Path;
@@ -184,14 +186,12 @@ namespace NzbDrone.Core.RootFolders
                 // new-item policy; neither of those settings rewrites book flags.
                 if (shouldLinkEbook)
                 {
-                    var settings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Ebook);
-                    SeedInitialBooks(author, BookMediaType.Ebook, settings?.MonitorExistingMode);
+                    SeedInitialBooks(author, BookMediaType.Ebook, ebookSettings.MonitorExistingMode);
                 }
 
                 if (shouldLinkAudiobook)
                 {
-                    var settings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, BookMediaType.Audiobook);
-                    SeedInitialBooks(author, BookMediaType.Audiobook, settings?.MonitorExistingMode);
+                    SeedInitialBooks(author, BookMediaType.Audiobook, audiobookSettings.MonitorExistingMode);
                 }
 
                 update.HasExistingFiles = relevantFiles.Any();

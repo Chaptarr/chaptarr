@@ -19296,6 +19296,9 @@
         "additionalProperties": false
       },
       "RootFolderResource": {
+        "required": [
+          "folderType"
+        ],
         "type": "object",
         "properties": {
           "id": {

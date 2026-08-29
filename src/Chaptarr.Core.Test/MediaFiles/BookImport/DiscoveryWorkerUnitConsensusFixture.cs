@@ -8,6 +8,7 @@ using System.IO.Abstractions;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Authors;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Books;
@@ -221,6 +222,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             var path = "/library/Frank Herbert/Dune Messiah/Dune Messiah.epub";
             var root = new RootFolder { Path = "/library", FolderType = FolderType.Ebook };
+            root.SetEbookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 11,
+                MetadataProfileId = 21
+            });
             var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
             {
                 ["TITLE"] = new List<string> { "Dune Messiah" },
@@ -742,6 +748,50 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(audiobook.CreateEbook, Is.False);
                 Assert.That(ebook.CreateAudiobook, Is.False);
                 Assert.That(ebook.CreateEbook, Is.True);
+            });
+        }
+
+        [Test]
+        public void mixed_root_monitoring_config_should_keep_the_complete_side_and_skip_the_incomplete_side()
+        {
+            var method = typeof(DiscoveryWorker).GetMethod("CreateMonitoringConfig", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null);
+
+            var root = new RootFolder
+            {
+                Path = "/library".AsOsAgnostic(),
+                FolderType = FolderType.Mixed
+            };
+            root.SetAudiobookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 10,
+                MetadataProfileId = 20,
+                Monitored = true
+            });
+            root.SetEbookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 11,
+                Monitored = true
+            });
+
+            var config = (MonitoringConfig)method.Invoke(null, new object[]
+            {
+                "Test Author",
+                root,
+                true,
+                true,
+                "/library/Test Author".AsOsAgnostic(),
+                "test"
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(config.CreateAudiobook, Is.True);
+                Assert.That(config.AudiobookRootFolderPath, Is.EqualTo(root.Path));
+                Assert.That(config.AudiobookQualityProfileId, Is.EqualTo(10));
+                Assert.That(config.CreateEbook, Is.False);
+                Assert.That(config.EbookRootFolderPath, Is.Null);
+                Assert.That(config.EbookQualityProfileId, Is.Null);
             });
         }
 #pragma warning restore SYSLIB0050

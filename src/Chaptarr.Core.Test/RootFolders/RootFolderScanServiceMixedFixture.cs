@@ -6,6 +6,7 @@ using System.Reflection;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.RootFolders;
 
@@ -103,7 +104,7 @@ namespace Chaptarr.Core.Test.RootFolders
                         MonitorExistingMode = settings?.MonitorExistingMode,
                         MonitorNewItems = settings?.MonitorNewItems,
                         Tags = settings?.Tags ?? new List<int>(),
-                        IsConfigured = settings != null,
+                        IsConfigured = RootFolderSettingsResolver.HasRequiredProfiles(settings),
                         Source = settings != null ? "MediaSpecific" : "Unconfigured"
                     };
                 }
@@ -164,6 +165,39 @@ namespace Chaptarr.Core.Test.RootFolders
                 Assert.That(author.EbookQualityProfileId, Is.EqualTo(11));
                 Assert.That(author.EbookMonitored, Is.True);
                 Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+            });
+        }
+
+        [Test]
+        public void mixed_root_scan_should_link_the_complete_side_and_skip_the_incomplete_side()
+        {
+            var root = BuildMixedRoot();
+            root.SetEbookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 11,
+                Monitored = true
+            });
+            var author = new Author { Id = 1, Name = "Example Author" };
+            var files = new List<string>
+            {
+                "/library/Example Author/Audio.mp3".AsOsAgnostic(),
+                "/library/Example Author/Text.epub".AsOsAgnostic()
+            };
+            var service = BuildSubject(files);
+
+            var update = service.LinkAuthorToFolder(
+                author,
+                root,
+                "/library/Example Author".AsOsAgnostic());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(update, Is.Not.Null);
+                Assert.That(author.AudiobookRootFolderPath, Is.EqualTo(root.Path));
+                Assert.That(author.AudiobookQualityProfileId, Is.EqualTo(10));
+                Assert.That(author.EbookRootFolderPath, Is.Null);
+                Assert.That(author.EbookPath, Is.Null);
+                Assert.That(author.EbookQualityProfileId, Is.Null);
             });
         }
 

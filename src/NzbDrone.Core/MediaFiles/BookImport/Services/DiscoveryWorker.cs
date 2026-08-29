@@ -735,6 +735,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         discoveredFolder,
                         "discovery-local-backfill");
 
+                    if (!config.CreateAudiobook && !config.CreateEbook)
+                    {
+                        _logger.Warn(
+                            "[DISCOVERY] Root folder '{0}' has no complete defaults for the discovered media type; leaving files unmapped",
+                            rootFolder?.Path);
+                        return false;
+                    }
+
                     var hydrated = await _authorLibraryService.AddAuthorAsync(providerId, config).ConfigureAwait(false);
                     if (hydrated == null || hydrated.Id <= 0)
                     {
@@ -1350,6 +1358,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     discoveredEbookFiles,
                     discoveredAuthorFolderToPreserve,
                     "discovery-worker");
+                if (!cfg.CreateAudiobook && !cfg.CreateEbook)
+                {
+                    _logger.Warn(
+                        "[DISCOVERY] Root folder '{0}' has no complete defaults for the discovered media type; leaving files unmapped",
+                        rootFolder?.Path);
+                    return false;
+                }
+
                 // If author already exists locally by provider ID, augment settings and publish ready event
                 try
                 {
@@ -1753,12 +1769,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return config;
             }
 
-            if (config.CreateAudiobook)
+            var requestedAudiobook = config.CreateAudiobook;
+            var requestedEbook = config.CreateEbook;
+            config.CreateAudiobook = false;
+            config.CreateEbook = false;
+
+            if (requestedAudiobook)
             {
-                config.AudiobookRootFolderPath = rootFolder.Path;
                 var settings = rootFolder.GetAudiobookSettings();
-                if (settings != null)
+                if (RootFolderSettingsResolver.HasRequiredProfiles(settings))
                 {
+                    config.CreateAudiobook = true;
+                    config.AudiobookRootFolderPath = rootFolder.Path;
                     config.AudiobookQualityProfileId = settings.QualityProfileId;
                     config.AudiobookMetadataProfileId = settings.MetadataProfileId;
                     config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
@@ -1768,12 +1790,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 }
             }
 
-            if (config.CreateEbook)
+            if (requestedEbook)
             {
-                config.EbookRootFolderPath = rootFolder.Path;
                 var settings = rootFolder.GetEbookSettings();
-                if (settings != null)
+                if (RootFolderSettingsResolver.HasRequiredProfiles(settings))
                 {
+                    config.CreateEbook = true;
+                    config.EbookRootFolderPath = rootFolder.Path;
                     config.EbookQualityProfileId = settings.QualityProfileId;
                     config.EbookMetadataProfileId = settings.MetadataProfileId;
                     config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);

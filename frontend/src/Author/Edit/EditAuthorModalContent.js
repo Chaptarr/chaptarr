@@ -20,16 +20,12 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import Popover from 'Components/Tooltip/Popover';
 import { icons, inputTypes, kinds, tooltipPositions } from 'Helpers/Props';
 import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
-import monitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
+import monitorNewItemsOptions, {
+  normalizeMonitorNewItemsOption
+} from 'Utilities/Author/monitorNewItemsOptions';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import styles from './EditAuthorModalContent.css';
-
-function getMonitorNewItemsValue(setting) {
-  const value = setting?.value?.toString().toLowerCase();
-
-  return monitorNewItemsOptions.some((option) => option.key === value) ? value : 'none';
-}
 
 class EditAuthorModalContent extends Component {
 
@@ -233,7 +229,7 @@ class EditAuthorModalContent extends Component {
                     name="audiobookMonitorNewItems"
                     values={monitorNewItemsOptions}
                     {...audiobookMonitorNewItems}
-                    value={getMonitorNewItemsValue(audiobookMonitorNewItems)}
+                    value={normalizeMonitorNewItemsOption(audiobookMonitorNewItems?.value)}
                     onChange={onInputChange}
                   />
                 </FormGroup>
@@ -372,7 +368,7 @@ class EditAuthorModalContent extends Component {
                     name="ebookMonitorNewItems"
                     values={monitorNewItemsOptions}
                     {...ebookMonitorNewItems}
-                    value={getMonitorNewItemsValue(ebookMonitorNewItems)}
+                    value={normalizeMonitorNewItemsOption(ebookMonitorNewItems?.value)}
                     onChange={onInputChange}
                   />
                 </FormGroup>

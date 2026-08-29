@@ -1,12 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 using Chaptarr.Api.V1.RootFolders;
+using Chaptarr.Core.Test;
 using Chaptarr.Http.REST;
+using FluentValidation.Results;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
@@ -117,33 +123,142 @@ namespace Chaptarr.Core.Test.Api
             }
         }
 
-        private static RootFolderController BuildController(
+        private sealed class TestableRootFolderController : RootFolderController
+        {
+            public TestableRootFolderController(
+                StubRootFolderService rootFolderService,
+                StubAuthorService authorService,
+                StubLocalizationService localizationService)
+                : base(
+                    rootFolderService,
+                    DispatchProxy.Create<IRootFolderScanService, ThrowingProxy<IRootFolderScanService>>(),
+                    authorService,
+                    DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                    ConfigServiceTestProxy.Create(),
+                    localizationService,
+                    DispatchProxy.Create<IBroadcastSignalRMessage, ThrowingProxy<IBroadcastSignalRMessage>>(),
+                    new RecycleBinValidator(DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>()),
+                    new RootFolderValidator(rootFolderService),
+                    new PathExistsValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
+                    new MappedNetworkDriveValidator(
+                        DispatchProxy.Create<IRuntimeInfo, ThrowingProxy<IRuntimeInfo>>(),
+                        DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
+                    new StartupFolderValidator(DispatchProxy.Create<IAppFolderInfo, ThrowingProxy<IAppFolderInfo>>()),
+                    new SystemFolderValidator(),
+                    new FolderWritableValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
+                    new FolderReadableValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
+                    new QualityProfileExistsValidator(new TestQualityProfileService()),
+                    new MetadataProfileExistsValidator(new TestMetadataProfileService()))
+            {
+            }
+
+            public ValidationResult ValidatePost(RootFolderResource resource)
+            {
+                return PostValidator.Validate(resource);
+            }
+
+            public ValidationResult ValidateShared(RootFolderResource resource)
+            {
+                return SharedValidator.Validate(resource);
+            }
+        }
+
+        private static TestableRootFolderController BuildController(
             StubRootFolderService rootFolderService,
             StubAuthorService authorService,
             StubLocalizationService localizationService = null)
         {
             localizationService ??= new StubLocalizationService();
 
-            return new RootFolderController(
-                rootFolderService,
-                DispatchProxy.Create<IRootFolderScanService, ThrowingProxy<IRootFolderScanService>>(),
-                authorService,
-                DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                ConfigServiceTestProxy.Create(),
-                localizationService,
-                DispatchProxy.Create<IBroadcastSignalRMessage, ThrowingProxy<IBroadcastSignalRMessage>>(),
-                new RecycleBinValidator(DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>()),
-                new RootFolderValidator(rootFolderService),
-                new PathExistsValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
-                new MappedNetworkDriveValidator(
-                    DispatchProxy.Create<IRuntimeInfo, ThrowingProxy<IRuntimeInfo>>(),
-                    DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
-                new StartupFolderValidator(DispatchProxy.Create<IAppFolderInfo, ThrowingProxy<IAppFolderInfo>>()),
-                new SystemFolderValidator(),
-                new FolderWritableValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
-                new FolderReadableValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
-                new QualityProfileExistsValidator(DispatchProxy.Create<IQualityProfileService, ThrowingProxy<IQualityProfileService>>()),
-                new MetadataProfileExistsValidator(DispatchProxy.Create<IMetadataProfileService, ThrowingProxy<IMetadataProfileService>>()));
+            return new TestableRootFolderController(rootFolderService, authorService, localizationService);
+        }
+
+        [Test]
+        public void post_should_require_an_explicit_folder_type_in_json()
+        {
+            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<RootFolderResource>(
+                "{\"name\":\"Books\",\"path\":\"/books\"}",
+                STJson.GetSerializerSettings()));
+        }
+
+        [Test]
+        public void should_reject_an_out_of_range_folder_type()
+        {
+            var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
+            var result = controller.ValidateShared(new RootFolderResource
+            {
+                Name = "Books",
+                Path = null,
+                FolderType = 99
+            });
+
+            Assert.That(result.Errors.Any(failure => failure.ErrorMessage.Contains("Invalid folder type")), Is.True);
+        }
+
+        [TestCase(FolderType.Audiobook)]
+        [TestCase(FolderType.Ebook)]
+        public void post_should_reject_a_single_type_root_without_profile_defaults(FolderType folderType)
+        {
+            var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
+            var result = controller.ValidatePost(new RootFolderResource
+            {
+                Name = "Books",
+                Path = "/books".AsOsAgnostic(),
+                FolderType = (int)folderType
+            });
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Errors.Any(failure =>
+                failure.ErrorMessage.Contains("quality profile") || failure.ErrorMessage.Contains("metadata profile")), Is.True);
+        }
+
+        [Test]
+        public void post_should_reject_a_mixed_root_without_any_media_defaults()
+        {
+            var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
+            var result = controller.ValidatePost(new RootFolderResource
+            {
+                Name = "Books",
+                Path = "/books".AsOsAgnostic(),
+                FolderType = (int)FolderType.Mixed
+            });
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Errors.Any(failure => failure.ErrorMessage.Contains("at least one media type")), Is.True);
+        }
+
+        [Test]
+        public void post_should_allow_a_mixed_root_with_one_complete_media_side_and_no_monitoring_defaults()
+        {
+            var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
+            var result = controller.ValidatePost(new RootFolderResource
+            {
+                Name = "Books",
+                Path = "/books".AsOsAgnostic(),
+                FolderType = (int)FolderType.Mixed,
+                AudiobookQualityProfileId = 10,
+                AudiobookMetadataProfileId = 20
+            });
+
+            Assert.That(result.IsValid, Is.True, () => string.Join(Environment.NewLine, result.Errors));
+        }
+
+        [Test]
+        public void post_should_reject_an_incomplete_second_side_on_a_mixed_root()
+        {
+            var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
+            var result = controller.ValidatePost(new RootFolderResource
+            {
+                Name = "Books",
+                Path = "/books".AsOsAgnostic(),
+                FolderType = (int)FolderType.Mixed,
+                AudiobookQualityProfileId = 10,
+                AudiobookMetadataProfileId = 20,
+                EbookMonitored = false
+            });
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Errors.Any(failure => failure.PropertyName.StartsWith("ebook", StringComparison.OrdinalIgnoreCase)), Is.True);
         }
 
         [Test]
