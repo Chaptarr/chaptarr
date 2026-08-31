@@ -513,12 +513,6 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                     continue;
                 }
 
-                if (HardcoverAuthorIdentity.IsLikelyMultiPerson(author.Name))
-                {
-                    _logger.Debug("Dropping Hardcover author search hit {0} ({1}) because it looks like a combined multi-person identity", author.Name, author.Id);
-                    continue;
-                }
-
                 candidates.Add((author, authorId));
             }
 

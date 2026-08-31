@@ -656,19 +656,40 @@ namespace Chaptarr.Core.Test.MetadataSource
             Assert.That(HardcoverContributionRoles.IsPrimaryAuthor(contribution), Is.EqualTo(expected));
         }
 
-        [TestCase("G. Edward Griffin, G. Edward Griffin, Carleen Taylor, Peter Klimon", true)]
-        [TestCase("G. Edward Griffin, Carleen Taylor", true)]
-        [TestCase("Neil Gaiman & Terry Pratchett", true)]
-        [TestCase("Stephen King and Peter Straub", true)]
-        [TestCase("Larry and Jerry Pournelle Niven", true)]
-        [TestCase("John Smith with Jane Doe", true)]
-        [TestCase("King, Stephen", false)]
-        [TestCase("Tolkien, J.R.R.", false)]
-        [TestCase("George R. R. Martin", false)]
-        [TestCase("Queen Elizabeth II", false)]
-        public void should_match_server_multi_person_identity_guard(string name, bool expected)
+        [Test]
+        public void should_keep_provider_author_objects_regardless_of_name_shape()
         {
-            Assert.That(HardcoverAuthorIdentity.IsLikelyMultiPerson(name), Is.EqualTo(expected));
+            var authorSearch = AuthorSearchPayload.Replace("Matt Dinniman", "Lee and Andrew Child");
+            var authorBooks = AuthorBooksPayload.Replace("Matt Dinniman", "Lee and Andrew Child");
+            var httpClient = new RecordingHttpClient(request =>
+            {
+                using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(request.ContentData));
+                var root = payload.RootElement;
+                var query = root.GetProperty("query").GetString();
+
+                if (root.GetProperty("variables").TryGetProperty("query_type", out var queryTypeElement))
+                {
+                    return queryTypeElement.GetString() switch
+                    {
+                        "Author" => JsonResponse(request, authorSearch),
+                        _ => JsonResponse(request, EmptySearchPayload)
+                    };
+                }
+
+                if (query.Contains("BooksByAuthors", StringComparison.Ordinal))
+                {
+                    return JsonResponse(request, authorBooks);
+                }
+
+                return JsonResponse(request, EmptyEnrichmentPayload);
+            });
+            var client = CreateClient(httpClient);
+
+            var results = client.Search("Lee and Andrew Child");
+
+            var author = results.OfType<HardcoverAuthorResult>().Single();
+            Assert.That(author.Id, Is.EqualTo("241306"));
+            Assert.That(author.Name, Is.EqualTo("Lee and Andrew Child"));
         }
 
         [Test]
