@@ -180,6 +180,7 @@ class EditQualityProfileModalContent extends Component {
       upgradeAllowed,
       preferCustomFormatsOverQuality,
       convertToQualityId,
+      mergeMultiPartFiles,
       cutoff,
       minFormatScore,
       cutoffFormatScore,
@@ -190,6 +191,7 @@ class EditQualityProfileModalContent extends Component {
     const upgradeAllowedField = fieldWithDefault(upgradeAllowed, false);
     const preferCustomFormatsOverQualityField = fieldWithDefault(preferCustomFormatsOverQuality, false);
     const convertToQualityIdField = fieldWithDefault(convertToQualityId, 0);
+    const mergeMultiPartFilesField = fieldWithDefault(mergeMultiPartFiles, false);
     const cutoffField = fieldWithDefault(cutoff, 0);
     const minFormatScoreField = fieldWithDefault(minFormatScore, 0);
     const cutoffFormatScoreField = fieldWithDefault(cutoffFormatScore, 0);
@@ -335,6 +337,23 @@ class EditQualityProfileModalContent extends Component {
                                 translate('ConvertToQualityHelpText') :
                                 undefined}
                               onChange={onConvertToQualityChange}
+                            />
+                          </FormGroup>
+                      }
+
+                      {
+                        isAudiobookProfile && Number(convertToQualityIdField.value) > 0 &&
+                          <FormGroup size={sizes.EXTRA_SMALL}>
+                            <FormLabel size={sizes.SMALL}>
+                              {translate('MergeMultiPartFiles')}
+                            </FormLabel>
+
+                            <FormInputGroup
+                              type={inputTypes.CHECK}
+                              name="mergeMultiPartFiles"
+                              {...mergeMultiPartFilesField}
+                              helpText={translate('MergeMultiPartFilesHelpText')}
+                              onChange={onInputChange}
                             />
                           </FormGroup>
                       }
