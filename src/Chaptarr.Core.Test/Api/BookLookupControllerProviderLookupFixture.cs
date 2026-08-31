@@ -52,6 +52,44 @@ namespace Chaptarr.Core.Test.Api
             public byte[] GetImage(string hash) => throw new NotImplementedException();
         }
 
+        private sealed class SearchProxyStub : ISearchForNewBook
+        {
+            public BookMediaType? RequestedMediaType { get; private set; }
+
+            public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true, BookMediaType? mediaType = null)
+            {
+                RequestedMediaType = mediaType;
+
+                return new List<Book>
+                {
+                    new Book
+                    {
+                        Title = title,
+                        MediaType = mediaType ?? BookMediaType.Audiobook,
+                        GoodreadsWorkId = "gr:123",
+                        Author = new Author
+                        {
+                            Name = "Test Author",
+                            GoodreadsAuthorId = "gr:456"
+                        },
+                        Editions = new List<Edition>
+                        {
+                            new Edition
+                            {
+                                ForeignEditionId = "gr:789",
+                                Title = title,
+                                Monitored = true
+                            }
+                        }
+                    }
+                };
+            }
+
+            public List<Book> SearchByIsbn(string isbn) => throw new NotImplementedException();
+            public List<Book> SearchByAsin(string asin) => throw new NotImplementedException();
+            public List<Book> SearchByGoodreadsBookId(int goodreadsId, bool getAllEditions) => throw new NotImplementedException();
+        }
+
         private class BookServiceProxy : DispatchProxy
         {
             public readonly List<(string Provider, string ProviderId, BookMediaType MediaType)> FindAllCalls = new();
@@ -143,6 +181,29 @@ namespace Chaptarr.Core.Test.Api
             var result = controller.Search("work:123");
 
             Assert.That(result.Result, Is.TypeOf<BadRequestObjectResult>());
+        }
+
+        [Test]
+        public void should_pass_requested_media_type_to_remote_lookup()
+        {
+            var searchProxy = new SearchProxyStub();
+            var controller = new BookLookupController(
+                searchProxy: searchProxy,
+                coverMapper: new CoverMapperStub(),
+                bookService: null,
+                editionService: null,
+                mediaFileService: null,
+                mediaCoverProxy: new MediaCoverProxyStub(),
+                providerAliasService: null);
+
+            var result = controller.Search("dune", "ebook");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(searchProxy.RequestedMediaType, Is.EqualTo(BookMediaType.Ebook));
+                Assert.That(result.Value, Has.Count.EqualTo(1));
+                Assert.That(result.Value.Single().MediaType, Is.EqualTo("ebook"));
+            });
         }
 
         [Test]
