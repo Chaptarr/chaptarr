@@ -1826,6 +1826,243 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        // Issue #111: an author-bibliography re-discovery re-added the same real book under a different
+        // metadata provider, so the duplicate row's work ID (gr:...) never intersects the grabbed row's
+        // work ID (hc:...). Both rows still carry the same physical edition (same Audible ASIN), which is
+        // globally unique, so the download must be retargeted onto the row that actually owns the grab.
+        [Test]
+        public void should_retarget_cross_provider_duplicate_row_match_to_grabbed_book_when_edition_identity_matches()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Fate Hollow Academy Term 1.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var diskProvider = new StubDiskProvider();
+                var diskScanService = new StubDiskScanService();
+                var tagsService = new StubMetadataTagService();
+
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            new FileMatch
+                            {
+                                File = new DiscoveredFileWithMetadata { Path = filePath, Size = 4, Modified = DateTime.UtcNow, AllTags = tagsService.Tags },
+                                AuthorId = 7,
+                                AuthorName = "Test Author",
+                                BookId = 29100,
+                                BookTitle = "Fate Hollow Academy",
+                                EditionId = 30
+                            }
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var author = new Author { Id = 7, Name = "Test Author" };
+
+                // Never-monitored duplicate row, re-discovered from Goodreads.
+                var matchedBook = new Book { Id = 29100, AuthorId = 7, Author = author, Title = "Fate Hollow Academy", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, GoodreadsWorkId = "gr:200474660" };
+
+                // The row that was actually grabbed, sourced from Hardcover. No work-ID overlap with the duplicate.
+                var targetBook = new Book { Id = 29083, AuthorId = 7, Author = author, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" };
+
+                var matchedEdition = new Edition { Id = 30, BookId = 29100, Title = "Fate Hollow Academy", AudibleASIN = "B0DXYZ1234", ReadingFormatId = 2, Monitored = false, Book = matchedBook };
+                var targetEdition = new Edition { Id = 40, BookId = 29083, Title = "Fate Hollow Academy: Term 1", AudibleASIN = "B0DXYZ1234", ReadingFormatId = 2, Monitored = false, Book = targetBook };
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+                targetBook.Editions = new List<Edition> { targetEdition };
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.BooksById[29100] = matchedBook;
+                bookProxy.BooksById[29083] = targetBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = author;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.EditionsById[30] = matchedEdition;
+                editionProxy.EditionsById[40] = targetEdition;
+                editionProxy.EditionsByBookId[29100] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[29083] = new List<Edition> { targetEdition };
+
+                var importOrchestrator = DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>();
+                var configService = ConfigServiceTestProxy.Create();
+                var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+                var eventAggregator = DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>();
+                var runtimeInfo = DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>();
+
+                var service = new DownloadedBooksImportService(
+                    diskProvider,
+                    diskScanService,
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    importOrchestrator,
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    configService,
+                    historyService,
+                    eventAggregator,
+                    runtimeInfo,
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = author,
+                    Books = new List<Book> { new Book { Id = 29083, AuthorId = 7, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" } }
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    DownloadId = "DOWNLOAD-CROSS-PROVIDER-DUPLICATE",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, author, downloadClientItem, remoteBook);
+
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
+                Assert.That(importApproved.Decisions[0].Approved, Is.True);
+                Assert.That(importApproved.Decisions[0].Item.Book.Id, Is.EqualTo(29083));
+                Assert.That(importApproved.Decisions[0].Item.Edition.Id, Is.EqualTo(40));
+                Assert.That(importApproved.Decisions[0].Item.Edition.Book, Is.SameAs(targetBook));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        // Safety boundary for issue #111: same author and media type, but the two rows share no work-level
+        // ID and no edition-level ID. Nothing proves they are the same book, so the file must NOT be moved
+        // onto the grabbed row -- the download is rejected and the matched row is left untouched.
+        [Test]
+        public void should_not_retarget_cross_provider_row_match_when_no_shared_work_or_edition_identity()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Some Other Book.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var diskProvider = new StubDiskProvider();
+                var diskScanService = new StubDiskScanService();
+                var tagsService = new StubMetadataTagService();
+
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            new FileMatch
+                            {
+                                File = new DiscoveredFileWithMetadata { Path = filePath, Size = 4, Modified = DateTime.UtcNow, AllTags = tagsService.Tags },
+                                AuthorId = 7,
+                                AuthorName = "Test Author",
+                                BookId = 29100,
+                                BookTitle = "A Different Book",
+                                EditionId = 30
+                            }
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var author = new Author { Id = 7, Name = "Test Author" };
+                var matchedBook = new Book { Id = 29100, AuthorId = 7, Author = author, Title = "A Different Book", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, GoodreadsWorkId = "gr:200474660" };
+                var targetBook = new Book { Id = 29083, AuthorId = 7, Author = author, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" };
+
+                var matchedEdition = new Edition { Id = 30, BookId = 29100, Title = "A Different Book", AudibleASIN = "B0DAAAAAAA", ReadingFormatId = 2, Monitored = false, Book = matchedBook };
+                var targetEdition = new Edition { Id = 40, BookId = 29083, Title = "Fate Hollow Academy: Term 1", AudibleASIN = "B0DZZZZZZZ", ReadingFormatId = 2, Monitored = false, Book = targetBook };
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+                targetBook.Editions = new List<Edition> { targetEdition };
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.BooksById[29100] = matchedBook;
+                bookProxy.BooksById[29083] = targetBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = author;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.EditionsById[30] = matchedEdition;
+                editionProxy.EditionsById[40] = targetEdition;
+                editionProxy.EditionsByBookId[29100] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[29083] = new List<Edition> { targetEdition };
+
+                var importOrchestrator = DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>();
+                var configService = ConfigServiceTestProxy.Create();
+                var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+                var eventAggregator = DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>();
+                var runtimeInfo = DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>();
+
+                var service = new DownloadedBooksImportService(
+                    diskProvider,
+                    diskScanService,
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    importOrchestrator,
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    configService,
+                    historyService,
+                    eventAggregator,
+                    runtimeInfo,
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = author,
+                    Books = new List<Book> { new Book { Id = 29083, AuthorId = 7, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" } }
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    DownloadId = "DOWNLOAD-CROSS-PROVIDER-UNRELATED",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, author, downloadClientItem, remoteBook);
+
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
+                Assert.That(importApproved.Decisions[0].Approved, Is.False);
+
+                // The file must stay attached to the row the matcher chose; retargeting it would misfile it.
+                Assert.That(importApproved.Decisions[0].Item.Book.Id, Is.EqualTo(29100));
+                Assert.That(importApproved.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+                Assert.That(importApproved.Decisions[0].Rejections.Select(r => r.Reason), Has.None.Contains("no equivalent edition"));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
         [Test]
         public void should_reject_completed_download_when_latest_grabbed_edition_is_strict_and_match_hits_different_sibling()
         {
