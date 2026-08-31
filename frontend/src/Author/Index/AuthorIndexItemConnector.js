@@ -10,6 +10,7 @@ import createAuthorMetadataProfileSelector from 'Store/Selectors/createAuthorMet
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createExecutingCommandsSelector from 'Store/Selectors/createExecutingCommandsSelector';
 import { getAuthorMediaTypeMonitoringStatus, isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
+import { getAuthorStatisticsForMediaType } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 
 function selectShowSearchAction() {
   return createSelector(
@@ -76,12 +77,7 @@ function createMapStateToProps() {
         _.maxBy(author.books, (book) => book.releaseDate) :
         null;
 
-      let statistics = author.statistics;
-      if (selectedMediaType === 'audiobook' && author.audiobookStatistics) {
-        statistics = author.audiobookStatistics;
-      } else if (selectedMediaType === 'ebook' && author.ebookStatistics) {
-        statistics = author.ebookStatistics;
-      }
+      const statistics = getAuthorStatisticsForMediaType(author, selectedMediaType);
 
       const profileById = (id) => (qualityProfiles || []).find((profile) => profile.id === id);
       const mediaTypeDetails = [

@@ -4,6 +4,7 @@ import { filterBuilderTypes, filterBuilderValueTypes, filterTypePredicates, sort
 import { createThunk, handleThunks } from 'Store/thunks';
 import sortByName from 'Utilities/Array/sortByName';
 import { isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
+import { getAuthorBookProgress, getAuthorStatisticsForMediaType } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import { filterPredicates, filters, sortPredicates } from './authorActions';
@@ -164,15 +165,10 @@ export const defaultState = {
   sortPredicates: {
     ...sortPredicates,
 
-    bookProgress: function(item) {
-      const { statistics = {} } = item;
-
-      const {
-        bookCount = 0,
-        bookFileCount
-      } = statistics;
-
-      const progress = bookCount ? bookFileCount / bookCount * 100 : 100;
+    bookProgress: function(item, _direction, selectedMediaType) {
+      const statistics = getAuthorStatisticsForMediaType(item, selectedMediaType);
+      const bookCount = statistics.bookCount || 0;
+      const progress = getAuthorBookProgress(statistics);
 
       return progress + bookCount / 1000000;
     },
@@ -191,8 +187,8 @@ export const defaultState = {
       return '1/1/1000';
     },
 
-    bookCount: function(item) {
-      const { statistics = {} } = item;
+    bookCount: function(item, _direction, selectedMediaType) {
+      const statistics = getAuthorStatisticsForMediaType(item, selectedMediaType);
 
       return statistics.bookCount || 0;
     },
@@ -218,17 +214,9 @@ export const defaultState = {
       return predicate(monitored, filterValue);
     },
 
-    bookProgress: function(item, filterValue, type) {
-      const { statistics = {} } = item;
-
-      const {
-        bookCount = 0,
-        bookFileCount
-      } = statistics;
-
-      const progress = bookCount ?
-        bookFileCount / bookCount * 100 :
-        100;
+    bookProgress: function(item, filterValue, type, state) {
+      const statistics = getAuthorStatisticsForMediaType(item, state.selectedMediaType);
+      const progress = getAuthorBookProgress(statistics);
 
       const predicate = filterTypePredicates[type];
 

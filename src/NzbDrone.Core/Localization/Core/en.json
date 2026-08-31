@@ -200,7 +200,7 @@
   "AuthorDeadStatusMessage": "A death date is recorded for this author",
   "AuthorMonitoringGateDetailedHelpText": "This controls whether Chaptarr may automatically search for, grab, and upgrade monitored book rows for this author and media type. It does not monitor or unmonitor any book rows. Turning it off pauses automation for this side while preserving every individual book selection.",
   "AuthorNameHelpText": "The name of the author/book to exclude (can be anything meaningful)",
-  "AuthorProgressBarText": "Monitored: {bookCount} / All: {totalBookCount} (Files: {bookFileCount})",
+  "AuthorProgressBarText": "Owned: {availableBookCount} / Released or owned: {bookCount} (All monitored: {totalBookCount}, Files: {bookFileCount})",
   "AuthorSearchInputConnectHardcoverHint": "Connect Hardcover in Quickstart to enable this search",
   "AuthorSearchInputSearchProviderForQuery": "Search {providerLabel} for {query}",
   "AuthorTitle": "Author, Title",

@@ -16,6 +16,7 @@ import VirtualTableRowCell from 'Components/Table/Cells/VirtualTableRowCell';
 import VirtualTableSelectCell from 'Components/Table/Cells/VirtualTableSelectCell';
 import TagListConnector from 'Components/TagListConnector';
 import { icons } from 'Helpers/Props';
+import { getAuthorBookProgress } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import getProgressBarKind from 'Utilities/Author/getProgressBarKind';
 import formatBytes from 'Utilities/Number/formatBytes';
 import translate from 'Utilities/String/translate';
@@ -84,7 +85,6 @@ class AuthorIndexRow extends Component {
       status,
       authorName,
       authorNameLastFirst,
-      titleSlug,
       qualityProfile,
       metadataProfile,
       nextBook,
@@ -289,7 +289,7 @@ class AuthorIndexRow extends Component {
             }
 
             if (name === 'bookProgress') {
-              const progress = totalBookCount ? (bookCount / totalBookCount) * 100 : 100;
+              const progress = getAuthorBookProgress(statistics);
 
               return (
                 <VirtualTableRowCell
@@ -300,7 +300,7 @@ class AuthorIndexRow extends Component {
                     progress={progress}
                     kind={getProgressBarKind(status, monitored, progress)}
                     showText={true}
-                    text={`${bookCount} / ${totalBookCount}`}
+                    text={`${availableBookCount} / ${bookCount}`}
                     title={translate('AuthorProgressBarText', { bookCount, availableBookCount, bookFileCount, totalBookCount })}
                     width={125}
                   />

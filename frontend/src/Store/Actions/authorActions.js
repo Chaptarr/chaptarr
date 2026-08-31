@@ -4,6 +4,7 @@ import { batchActions } from 'redux-batched-actions';
 import { filterTypePredicates, filterTypes, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import { getAuthorStatisticsForMediaType } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import dateFilterPredicate from 'Utilities/Date/dateFilterPredicate';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
@@ -120,13 +121,7 @@ function getAuthorMediaValue(item, selectedMediaType, audiobookKey, ebookKey) {
 
 export const filterPredicates = {
   missing: function(item, filterValue, type, state) {
-    const { statistics = {} } = item;
-    let mediaStatistics = statistics;
-    if (state?.selectedMediaType === 'audiobook' && item.audiobookStatistics) {
-      mediaStatistics = item.audiobookStatistics;
-    } else if (state?.selectedMediaType === 'ebook' && item.ebookStatistics) {
-      mediaStatistics = item.ebookStatistics;
-    }
+    const mediaStatistics = getAuthorStatisticsForMediaType(item, state?.selectedMediaType);
 
     return (mediaStatistics.bookCount || 0) > (mediaStatistics.availableBookCount || 0);
   },
@@ -149,18 +144,18 @@ export const filterPredicates = {
     return predicate(item.ratings.value * 10, filterValue);
   },
 
-  bookCount: function(item, filterValue, type) {
+  bookCount: function(item, filterValue, type, state) {
     const predicate = filterTypePredicates[type];
-    const bookCount = item.statistics ? item.statistics.bookCount : 0;
+    const statistics = getAuthorStatisticsForMediaType(item, state?.selectedMediaType);
+    const bookCount = statistics.bookCount || 0;
 
     return predicate(bookCount, filterValue);
   },
 
-  sizeOnDisk: function(item, filterValue, type) {
+  sizeOnDisk: function(item, filterValue, type, state) {
     const predicate = filterTypePredicates[type];
-    const sizeOnDisk = item.statistics && item.statistics.sizeOnDisk ?
-      item.statistics.sizeOnDisk :
-      0;
+    const statistics = getAuthorStatisticsForMediaType(item, state?.selectedMediaType);
+    const sizeOnDisk = statistics.sizeOnDisk || 0;
 
     return predicate(sizeOnDisk, filterValue);
   },
@@ -196,8 +191,8 @@ export const sortPredicates = {
     return item.status === 'continuing' ? 1 : 0;
   },
 
-  sizeOnDisk: function(item) {
-    const { statistics = {} } = item;
+  sizeOnDisk: function(item, _direction, selectedMediaType) {
+    const statistics = getAuthorStatisticsForMediaType(item, selectedMediaType);
 
     return statistics.sizeOnDisk || 0;
   },

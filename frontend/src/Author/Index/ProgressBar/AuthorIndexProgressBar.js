@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import ProgressBar from 'Components/ProgressBar';
 import { sizes } from 'Helpers/Props';
+import { getAuthorBookProgress } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import getProgressBarKind from 'Utilities/Author/getProgressBarKind';
 import translate from 'Utilities/String/translate';
 import styles from './AuthorIndexProgressBar.css';
@@ -18,9 +19,7 @@ function AuthorIndexProgressBar(props) {
     detailedProgressBar
   } = props;
 
-  // Calculate progress as: % of monitored books that have files
-  // bookCount = monitored books, availableBookCount = monitored books with files
-  const progress = bookCount > 0 ? (availableBookCount / bookCount) * 100 : 100;
+  const progress = getAuthorBookProgress({ bookCount, availableBookCount });
   const text = `${availableBookCount} / ${bookCount}`;
 
   return (

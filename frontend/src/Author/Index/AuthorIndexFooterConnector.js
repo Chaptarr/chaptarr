@@ -4,6 +4,7 @@ import createClientSideCollectionSelector from 'Store/Selectors/createClientSide
 import createDeepEqualSelector from 'Store/Selectors/createDeepEqualSelector';
 import { getAuthorMediaTypeMonitoringStatus, isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import { getAuthorStatisticsForMediaType } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import AuthorIndexFooter from './AuthorIndexFooter';
 
 function createUnoptimizedSelector() {
@@ -30,20 +31,13 @@ function createUnoptimizedSelector() {
             }
           })
           .map((author) => {
-            let statistics = author.statistics;
-            if (selectedMediaType === 'audiobook' && author.audiobookStatistics) {
-              statistics = author.audiobookStatistics;
-            } else if (selectedMediaType === 'ebook' && author.ebookStatistics) {
-              statistics = author.ebookStatistics;
-            }
-
             return {
               id: author.id,
               monitored: isAuthorMonitoredForSelection(author, selectedMediaType),
               audiobookMonitoring: getAuthorMediaTypeMonitoringStatus(author, 'audiobook'),
               ebookMonitoring: getAuthorMediaTypeMonitoringStatus(author, 'ebook'),
               status: author.status,
-              statistics
+              statistics: getAuthorStatisticsForMediaType(author, selectedMediaType)
             };
           }),
         mediaType: selectedMediaType
