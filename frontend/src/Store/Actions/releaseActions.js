@@ -294,6 +294,28 @@ function parseReleaseSearchResponse(data) {
   };
 }
 
+function normalizeReleaseItems(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const malformedItemCount = items.filter((item) =>
+    !Array.isArray(item.customFormats) || !Array.isArray(item.rejections)
+  ).length;
+
+  if (!malformedItemCount) {
+    return items;
+  }
+
+  console.warn(`[InteractiveSearch] Normalized ${malformedItemCount} release result(s) with missing collection fields`);
+
+  return items.map((item) => ({
+    ...item,
+    customFormats: Array.isArray(item.customFormats) ? item.customFormats : [],
+    rejections: Array.isArray(item.rejections) ? item.rejections : []
+  }));
+}
+
 //
 // Action Handlers
 
@@ -414,8 +436,8 @@ export const reducers = createHandleActions({
 
   [SET_RELEASE_SEARCH_RESPONSE]: (state, { payload }) => {
     return Object.assign({}, state, {
-      items: payload.items || [],
-      hiddenItems: payload.hiddenItems || [],
+      items: normalizeReleaseItems(payload.items),
+      hiddenItems: normalizeReleaseItems(payload.hiddenItems),
       filterSummary: payload.filterSummary || null,
       siblingBookId: payload.siblingBookId ?? null,
       siblingMediaType: payload.siblingMediaType ?? null,

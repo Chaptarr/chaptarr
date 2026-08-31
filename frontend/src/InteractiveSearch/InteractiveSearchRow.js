@@ -442,7 +442,7 @@ InteractiveSearchRow.propTypes = {
   seeders: PropTypes.number,
   leechers: PropTypes.number,
   quality: PropTypes.object.isRequired,
-  customFormats: PropTypes.arrayOf(PropTypes.object),
+  customFormats: PropTypes.arrayOf(PropTypes.object).isRequired,
   customFormatScore: PropTypes.number.isRequired,
   indexerFlags: PropTypes.number.isRequired,
   isGraphicAudio: PropTypes.bool,
