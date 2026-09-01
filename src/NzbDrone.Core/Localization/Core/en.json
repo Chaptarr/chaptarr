@@ -279,6 +279,7 @@
   "SiblingTitleBetterMatchPlaceholder": "Another book title fits better",
   "SiblingTitlePlaceholder": "Another book title",
   "UnexplainedExtraTextPlaceholder": "Unknown extra words",
+  "BookCountMessage": "{count} book",
   "BookMonitoring": "Book Monitoring",
   "BookshelfBookMonitoringHelpText": "Applies the selected action now to book rows for the selected media type. It does not change the author monitoring gate or how books discovered by later metadata refreshes are monitored.",
   "BookRequestMonitoringOptionsHelpText": "Choose whether this request monitors only the provider-identified book or every current book for this media type. The requested book is retained for metadata-server rescue either way.",

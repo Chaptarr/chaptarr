@@ -107,6 +107,7 @@ namespace Chaptarr.Api.V1.Search
                     resource.ForeignId = resource.Author.ForeignAuthorId;
                     resource.ProviderId = resource.Author.ForeignAuthorId;
                     resource.ExistingLocalId = existingAuthor?.Id;
+                    resource.MetadataBookCount = author.MetadataBookCount;
 
                     // For search results, use MediaCoverProxy to proxy remote images
                     if (resource.Author.Id == 0 && resource.Author.Images != null)

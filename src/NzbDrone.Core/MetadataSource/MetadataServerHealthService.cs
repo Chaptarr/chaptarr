@@ -149,6 +149,30 @@ namespace NzbDrone.Core.MetadataSource
             }
         }
 
+        public bool CanAttemptWithoutProbe(string sourceName, out TimeSpan retryAfter)
+        {
+            lock (_syncRoot)
+            {
+                var status = GetOrCreateStatus(sourceName);
+                var now = DateTime.UtcNow;
+                retryAfter = TimeSpan.Zero;
+
+                if (status.IsHealthy && !status.IsRateLimited)
+                {
+                    return true;
+                }
+
+                if (status.RateLimitedUntil.HasValue && status.RateLimitedUntil.Value > now)
+                {
+                    retryAfter = status.RateLimitedUntil.Value - now;
+                }
+
+                // Optional callers must never claim the single half-open probe.
+                // A load-bearing metadata request owns recovery and reports its result.
+                return false;
+            }
+        }
+
         public void Reset(string sourceName)
         {
             lock (_syncRoot)

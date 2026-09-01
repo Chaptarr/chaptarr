@@ -111,6 +111,7 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(s => s.Series)
                   .Ignore(s => s.RemoteProviderIds)
                   .Ignore(s => s.RemoteMetadataETag)
+                  .Ignore(s => s.MetadataBookCount)
                   .HasOne(a => a.AudiobookQualityProfile, a => a.AudiobookQualityProfileId ?? 0)
                   .HasOne(a => a.EbookQualityProfile, a => a.EbookQualityProfileId ?? 0)
                   .HasOne(a => a.MetadataProfile, a => a.MetadataProfileId ?? 0)

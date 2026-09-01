@@ -49,6 +49,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         private const int V5AuthorMaxPages = 200;
         private const int V5AuthorMaxBooks = 20000;
         private static readonly TimeSpan V5AuthorRequestTimeout = TimeSpan.FromSeconds(60);
+        private static readonly TimeSpan V5AuthorSearchSummaryRequestTimeout = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan HardcoverSearchCacheDuration = TimeSpan.FromMinutes(5);
 
         private readonly IHttpClient _httpClient;
@@ -2360,6 +2361,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     _logger.Debug($"[BookInfoProxy] Hardcover mapped results: {mapped.Count}");
 
                     var filtered = FilterHardcoverSearchResultsPreservingOrder(mapped, title);
+                    ApplyAuthorSearchSummaries(filtered.OfType<Author>(), "hardcover");
+
                     _logger.Debug($"[BookInfoProxy] Hardcover filtered results: {filtered.Count}");
                     return filtered;
                 }
@@ -2401,14 +2404,12 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 foreach (var author in authors)
                 {
                     EnsureGoodreadsAuthorLink(author);
+                }
 
-                    var authorId = GetAuthorMetadataKey(author);
-                    var enriched = TryGetAuthorInfoFromV5ForSearch(authorId);
-                    if (enriched != null)
-                    {
-                        author.UseMetadataFrom(enriched);
-                    }
+                ApplyAuthorSearchSummaries(authors, "goodreads");
 
+                foreach (var author in authors)
+                {
                     EnsureGoodreadsAuthorLink(author);
                     result.Add(author);
                 }
@@ -4965,40 +4966,70 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 .DistinctBy(a => GetAuthorMetadataKey(a))
                 .ToList();
 
-            foreach (var author in authors)
-            {
-                var authorId = GetAuthorMetadataKey(author);
-                var enriched = TryGetAuthorInfoFromV5ForSearch(authorId);
-                if (enriched != null)
-                {
-                    author.UseMetadataFrom(enriched);
-                }
-
-                results.Add(author);
-            }
+            ApplyAuthorSearchSummaries(authors, "audible");
+            results.AddRange(authors.Cast<object>());
 
             // Then the books
             results.AddRange(books.Cast<object>());
             return results;
             }
 
-            private Author TryGetAuthorInfoFromV5ForSearch(string prefixedAuthorId)
+            private void ApplyAuthorSearchSummaries(IEnumerable<Author> authors, string searchProvider)
+            {
+            var candidates = authors?.ToList() ?? new List<Author>();
+            var stopwatch = Stopwatch.StartNew();
+
+            foreach (var author in candidates)
+            {
+                if (stopwatch.Elapsed >= V5AuthorSearchSummaryRequestTimeout)
+                {
+                    _logger.Debug("V5 author summary enrichment reached its time budget for {0}", searchProvider);
+                    break;
+                }
+
+                if (!_metadataServerHealthGate.CanAttemptWithoutProbe(out _))
+                {
+                    _logger.Debug("Skipping optional V5 author summary enrichment while the metadata server circuit is open");
+                    break;
+                }
+
+                var authorId = GetAuthorMetadataKey(author);
+                ApplyAuthorSearchSummary(author, TryGetAuthorSummaryFromV5ForSearch(authorId), searchProvider);
+            }
+            }
+
+            private V5.V5AuthorSearchSummary TryGetAuthorSummaryFromV5ForSearch(string prefixedAuthorId)
             {
             if (string.IsNullOrWhiteSpace(prefixedAuthorId) || !prefixedAuthorId.Contains(":"))
             {
                 return null;
             }
 
-            var cacheKey = $"v5-search-author:{prefixedAuthorId}";
+            var cacheKey = $"v5-search-author-summary:{prefixedAuthorId}";
 
             try
             {
                 return _authorCache.GetOrAdd(cacheKey,
                     () =>
                     {
-                        // V5 payload is authoritative for author bio/images/provider URLs.
-                        // Let failures escape the factory so LazyCache never stores a null/error.
-                        return GetAuthorInfoFromV5(prefixedAuthorId, useCache: false, importAllWorks: false)
+                        var metadataServerUrl = _configService.MetadataServerUrl;
+                        var url = $"{metadataServerUrl}/api/v5/author/summary/{Uri.EscapeDataString(prefixedAuthorId)}";
+                        var request = new HttpRequestBuilder(url)
+                            .SetHeader("User-Agent", "Chaptarr/2.0")
+                            .Accept(HttpAccept.Json)
+                            .Build();
+                        request.RequestTimeout = V5AuthorSearchSummaryRequestTimeout;
+
+                        // Search-card enrichment is optional. It observes the shared circuit
+                        // before starting, but must not open it and block author refreshes,
+                        // book lookups, or import-list sync when this cosmetic request fails.
+                        var response = _httpClient.Get(request);
+                        if (response.StatusCode != HttpStatusCode.OK || response.HasHttpError)
+                        {
+                            throw new AuthorNotFoundException(prefixedAuthorId);
+                        }
+
+                        return JsonConvert.DeserializeObject<V5.V5AuthorSearchSummary>(response.Content, SerializerSettings)
                             ?? throw new AuthorNotFoundException(prefixedAuthorId);
                     },
                     new LazyCacheEntryOptions
@@ -5014,6 +5045,93 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 _logger.Debug(ex, "V5 author cache lookup failed for {0}", prefixedAuthorId);
                 return null;
             }
+            }
+
+            private static void ApplyAuthorSearchSummary(Author author, V5.V5AuthorSearchSummary summary, string searchProvider)
+            {
+            if (author == null || summary == null)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(summary.Name))
+            {
+                author.Name = summary.Name.Trim();
+                author.CleanName = Parser.Parser.CleanAuthorName(author.Name);
+                author.SortName = author.Name.ToLowerInvariant();
+                author.NameLastFirst = author.Name.ToLastFirst();
+                author.SortNameLastFirst = author.NameLastFirst.ToLowerInvariant();
+            }
+
+            if (!string.IsNullOrWhiteSpace(summary.Description))
+            {
+                author.Overview = summary.Description;
+            }
+
+            author.Born = summary.BirthDate.ToValidAuthorDate() ?? author.Born;
+            author.Died = summary.DeathDate.ToValidAuthorDate() ?? author.Died;
+            author.Status = AuthorExtensions.GetLifeStatus(author.Died);
+            author.MetadataBookCount = summary.BookCount;
+
+            var existingPhotos = MediaCoverRendition.SelectCandidates(author.Images).ToList();
+            var summaryPhotos = (summary.Photos ?? new List<V5.V5AuthorSearchPhoto>())
+                .Where(photo => photo?.Url.IsValidHttpUrl() == true &&
+                                !MediaCoverRendition.IsKnownPlaceholderImageUrl(photo.Url))
+                .OrderBy(photo => IsPhotoFromSearchProvider(photo.Provider, searchProvider) ? 0 : 1)
+                .ThenByDescending(photo => photo.IsPrimary)
+                .Select(photo => new MediaCover.MediaCover
+                {
+                    Url = string.Equals(photo.Provider, "goodreads", StringComparison.OrdinalIgnoreCase)
+                        ? EnhanceGoodreadsImageUrl(photo.Url)
+                        : photo.Url,
+                    CoverType = MediaCoverTypes.Poster
+                });
+
+            author.Images = existingPhotos
+                .Concat(summaryPhotos)
+                .Where(photo => photo?.Url.IsValidHttpUrl() == true &&
+                                !MediaCoverRendition.IsKnownPlaceholderImageUrl(photo.Url))
+                .DistinctBy(photo => photo.Url.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var existingLinks = author.Links ?? new List<Links>();
+            var summaryLinks = (summary.ProviderUrls?.ValidateProviderUrls() ?? new ProviderUrlMap())
+                .Where(link => !string.Equals(link.Key, "_metadata", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(link => IsPhotoFromSearchProvider(link.Key, searchProvider) ? 0 : 1)
+                .ThenBy(link => link.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(link => new Links
+                {
+                    Name = link.Key.Trim().ToLowerInvariant(),
+                    Url = link.Value.Trim()
+                });
+
+            author.Links = existingLinks
+                .Concat(summaryLinks)
+                .Where(link => link?.Url.IsValidHttpUrl() == true)
+                .DistinctBy(link => link.Url.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var remoteProviderIds = author.RemoteProviderIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var providerId in EnumerateProviderAliases(summary.ProviderIdsAll))
+            {
+                remoteProviderIds.Add(providerId);
+            }
+
+            author.RemoteProviderIds = remoteProviderIds.Count > 0 ? remoteProviderIds : null;
+            }
+
+            private static bool IsPhotoFromSearchProvider(string photoProvider, string searchProvider)
+            {
+            photoProvider = photoProvider?.Trim().ToLowerInvariant();
+            searchProvider = searchProvider?.Trim().ToLowerInvariant();
+
+            return searchProvider switch
+            {
+                "hardcover" => photoProvider == "hardcover",
+                "goodreads" => photoProvider == "goodreads",
+                "audible" => photoProvider is "audnexus" or "audible" or "amazon",
+                _ => false
+            };
             }
 
         // Helper method to set provider-specific IDs on Author

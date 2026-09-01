@@ -10,6 +10,7 @@ namespace NzbDrone.Core.MetadataSource
         void ReportRateLimited(string sourceName, TimeSpan? retryAfter = null);
         void ReportInconclusive(string sourceName);
         void Reset(string sourceName);
+        bool CanAttemptWithoutProbe(string sourceName, out TimeSpan retryAfter);
         bool TryBeginRequest(string sourceName, out TimeSpan retryAfter);
     }
 

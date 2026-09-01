@@ -33,6 +33,23 @@ namespace Chaptarr.Core.Test.MetadataSource
         }
 
         [Test]
+        public void optional_request_check_should_not_claim_half_open_probe()
+        {
+            var service = new MetadataServerHealthService(LogManager.GetCurrentClassLogger());
+
+            Assert.That(service.CanAttemptWithoutProbe(Source, out _), Is.True);
+
+            service.ReportFailure(Source, new WebException("edge returned 525"));
+            var status = service.GetStatus(Source);
+            status.RateLimitedUntil = DateTime.UtcNow.AddSeconds(-1);
+
+            Assert.That(service.CanAttemptWithoutProbe(Source, out _), Is.False);
+            Assert.That(status.ProbeInProgress, Is.False);
+            Assert.That(service.TryBeginRequest(Source, out _), Is.True,
+                "the optional request must leave the recovery probe available for load-bearing metadata work");
+        }
+
+        [Test]
         public void should_escalate_failed_probe_then_reset_after_success()
         {
             var service = new MetadataServerHealthService(LogManager.GetCurrentClassLogger());

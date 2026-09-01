@@ -11,6 +11,7 @@ namespace NzbDrone.Core.MetadataSource
     public interface IMetadataServerHealthGate
     {
         bool TryBeginRequest(out TimeSpan retryAfter);
+        bool CanAttemptWithoutProbe(out TimeSpan retryAfter);
         void ReportResponse(HttpResponse response);
         void ReportException(Exception exception);
         void Reset();
@@ -37,6 +38,11 @@ namespace NzbDrone.Core.MetadataSource
         public bool TryBeginRequest(out TimeSpan retryAfter)
         {
             return _healthService.TryBeginRequest(SourceName, out retryAfter);
+        }
+
+        public bool CanAttemptWithoutProbe(out TimeSpan retryAfter)
+        {
+            return _healthService.CanAttemptWithoutProbe(SourceName, out retryAfter);
         }
 
         public void Reset()

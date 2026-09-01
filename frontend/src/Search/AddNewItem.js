@@ -310,6 +310,7 @@ class AddNewItem extends Component {
                           <AddNewAuthorSearchResultConnector
                             key={item.id}
                             {...author}
+                            metadataBookCount={item.metadataBookCount}
                             searchProvider={selectedProvider}
                           />
                         );

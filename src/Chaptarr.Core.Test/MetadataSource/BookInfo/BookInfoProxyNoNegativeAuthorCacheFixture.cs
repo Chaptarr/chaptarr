@@ -73,7 +73,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 logger,
                 new CacheManager(),
                 new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger));
-            var method = typeof(BookInfoProxy).GetMethod("TryGetAuthorInfoFromV5ForSearch", BindingFlags.Instance | BindingFlags.NonPublic);
+            var method = typeof(BookInfoProxy).GetMethod("TryGetAuthorSummaryFromV5ForSearch", BindingFlags.Instance | BindingFlags.NonPublic);
 
             Assert.That(method, Is.Not.Null);
             Assert.That(method.Invoke(proxy, new object[] { "gr:123" }), Is.Null);

@@ -78,6 +78,7 @@ class AddNewAuthorSearchResult extends Component {
       disambiguation,
       status,
       overview,
+      metadataBookCount,
       ratings,
       folder,
       images,
@@ -197,6 +198,14 @@ class AddNewAuthorSearchResult extends Component {
               }
 
               {
+                metadataBookCount == null ?
+                  null :
+                  <Label size={sizes.LARGE}>
+                    {translate(metadataBookCount === 1 ? 'BookCountMessage' : 'BooksCountMessage', { count: metadataBookCount })}
+                  </Label>
+              }
+
+              {
                 status === 'ended' ?
                   <Label
                     kind={kinds.DANGER}
@@ -248,6 +257,7 @@ AddNewAuthorSearchResult.propTypes = {
   disambiguation: PropTypes.string,
   status: PropTypes.string.isRequired,
   overview: PropTypes.string,
+  metadataBookCount: PropTypes.number,
   ratings: PropTypes.object.isRequired,
   folder: PropTypes.string.isRequired,
   images: PropTypes.arrayOf(PropTypes.object).isRequired,

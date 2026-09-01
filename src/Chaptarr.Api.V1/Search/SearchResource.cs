@@ -11,6 +11,7 @@ namespace Chaptarr.Api.V1.Search
         public string ForeignId { get; set; }
         public string ProviderId { get; set; }
         public int? ExistingLocalId { get; set; }
+        public int? MetadataBookCount { get; set; }
         public AuthorResource Author { get; set; }
         public BookResource Book { get; set; }
         public SeriesResource Series { get; set; }

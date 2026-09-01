@@ -105,6 +105,9 @@ namespace NzbDrone.Core.Books
         [MemberwiseEqualityIgnore]
         [JsonIgnore]
         public string RemoteMetadataETag { get; set; }
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public int? MetadataBookCount { get; set; }
 
         // Standard identifiers
         public string ISNI { get; set; }
