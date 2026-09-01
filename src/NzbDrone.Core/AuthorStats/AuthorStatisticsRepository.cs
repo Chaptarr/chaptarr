@@ -13,7 +13,6 @@ namespace NzbDrone.Core.AuthorStats
         List<BookStatistics> AuthorStatistics(int authorId);
         List<BookStatistics> AuthorStatistics(string mediaType);
         List<BookStatistics> AuthorStatistics(int authorId, string mediaType);
-        BookAggregate GetAggregateStatistics(List<int> authorIds, string mediaType);
     }
 
     public class AuthorStatisticsRepository : IAuthorStatisticsRepository
@@ -54,59 +53,9 @@ namespace NzbDrone.Core.AuthorStats
             return Query(builder);
         }
 
-        public BookAggregate GetAggregateStatistics(List<int> authorIds, string mediaType)
+        internal static string BuildBaseSql(DatabaseType databaseType)
         {
-            if (authorIds == null || authorIds.Count == 0)
-            {
-                return new BookAggregate { BookCount = 0, BookFileCount = 0, SizeOnDisk = 0 };
-            }
-
-            var distinctAuthorIds = authorIds.Distinct().ToArray();
-            var authorIdBatches = _database.DatabaseType == DatabaseType.SQLite &&
-                                  distinctAuthorIds.Length > SqliteVariableLimit.MaxParameters
-                ? distinctAuthorIds.Chunk(SqliteVariableLimit.MaxParameters)
-                : new[] { distinctAuthorIds };
-
-            var results = new List<BookStatistics>();
-            foreach (var authorIdBatch in authorIdBatches)
-            {
-                var builder = BuildFilteredAggregate(_database.DatabaseType, authorIdBatch);
-                ApplyMediaTypeFilter(builder, mediaType);
-                results.AddRange(Query(builder));
-            }
-
-            return new BookAggregate
-            {
-                BookCount = results.Sum(result => result.BookCount),
-                BookFileCount = results.Sum(result => result.BookFileCount),
-                SizeOnDisk = results.Sum(result => result.SizeOnDisk)
-            };
-        }
-
-        internal static string BuildBaseSql(DatabaseType databaseType, bool aggregate)
-        {
-            var builder = aggregate ? AggregateBuilder(databaseType) : Builder(databaseType);
-            return builder.AddTemplate(_selectTemplate).RawSql;
-        }
-
-        internal static string BuildFilteredAggregateSql(DatabaseType databaseType)
-        {
-            return BuildFilteredAggregate(databaseType, new[] { 1 })
-                .AddTemplate(_selectTemplate)
-                .RawSql;
-        }
-
-        private static string BuildAuthorIdsPredicate(DatabaseType databaseType)
-        {
-            return databaseType == DatabaseType.PostgreSQL
-                ? @"""Books"".""AuthorId"" = ANY(@AuthorIds)"
-                : @"""Books"".""AuthorId"" IN @AuthorIds";
-        }
-
-        private static SqlBuilder BuildFilteredAggregate(DatabaseType databaseType, int[] authorIds)
-        {
-            return AggregateBuilder(databaseType)
-                .Where(BuildAuthorIdsPredicate(databaseType), new { AuthorIds = authorIds });
+            return Builder(databaseType).AddTemplate(_selectTemplate).RawSql;
         }
 
         private static void ApplyMediaTypeFilter(SqlBuilder builder, string mediaType)
@@ -136,14 +85,6 @@ namespace NzbDrone.Core.AuthorStats
             return new SqlBuilder(databaseType)
                 .Select(BuildStatisticsSelect(databaseType, includeAuthorId: true))
                 .Join<Book, Author>((book, author) => book.AuthorId == author.Id)
-                .LeftJoin(_fileStatisticsJoin)
-                .AddParameters(new { currentDate = DateTime.UtcNow });
-        }
-
-        private static SqlBuilder AggregateBuilder(DatabaseType databaseType)
-        {
-            return new SqlBuilder(databaseType)
-                .Select(BuildStatisticsSelect(databaseType, includeAuthorId: false))
                 .LeftJoin(_fileStatisticsJoin)
                 .AddParameters(new { currentDate = DateTime.UtcNow });
         }

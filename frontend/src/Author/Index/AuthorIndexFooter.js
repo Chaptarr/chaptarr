@@ -5,116 +5,16 @@ import { ColorImpairedConsumer } from 'App/ColorImpairedContext';
 import DescriptionList from 'Components/DescriptionList/DescriptionList';
 import DescriptionListItem from 'Components/DescriptionList/DescriptionListItem';
 import { isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
-import createAjaxRequest from 'Utilities/createAjaxRequest';
 import formatBytes from 'Utilities/Number/formatBytes';
 import translate from 'Utilities/String/translate';
 import styles from './AuthorIndexFooter.css';
 
 class AuthorIndexFooter extends PureComponent {
-
-  //
-  // Lifecycle
-
-  constructor(props, context) {
-    super(props, context);
-
-    this.state = {
-      books: 0,
-      bookFiles: 0,
-      totalFileSize: 0
-    };
-  }
-
-  componentDidMount() {
-    this.fetchAggregateStatistics();
-  }
-
-  componentDidUpdate(prevProps) {
-    const { author, mediaType } = this.props;
-    const { author: prevAuthor, mediaType: prevMediaType } = prevProps;
-
-    // Update if authors changed or mediaType changed
-    if (author !== prevAuthor || mediaType !== prevMediaType) {
-      this.fetchAggregateStatistics();
-    }
-  }
-
-  //
-  // Listeners
-
-  fetchAggregateStatistics = () => {
-    const { author, mediaType } = this.props;
-
-    if (!author || author.length === 0) {
-      this.setState({
-        books: 0,
-        bookFiles: 0,
-        totalFileSize: 0
-      });
-      return;
-    }
-
-    const authorIds = author.map((a) => a.id);
-
-    const promise = createAjaxRequest({
-      url: '/author/statistics/aggregate',
-      method: 'POST',
-      dataType: 'json',
-      contentType: 'application/json',
-      data: JSON.stringify({
-        authorIds,
-        mediaType: mediaType || 'all'
-      })
-    }).request;
-
-    promise.done((data) => {
-      this.setState({
-        books: data.bookCount || 0,
-        bookFiles: data.fileCount || 0,
-        totalFileSize: data.totalFileSize || 0
-      });
-    });
-
-    promise.fail((error) => {
-      console.error('Failed to fetch aggregate statistics:', error);
-      // Fallback to client-side calculation on error
-      this.calculateClientSideStats();
-    });
-  };
-
-  calculateClientSideStats = () => {
-    const { author } = this.props;
-    let books = 0;
-    let bookFiles = 0;
-    let totalFileSize = 0;
-
-    author.forEach((s) => {
-      const { statistics = {} } = s;
-
-      const {
-        bookCount = 0,
-        bookFileCount = 0,
-        sizeOnDisk = 0
-      } = statistics;
-
-      books += bookCount;
-      bookFiles += bookFileCount;
-      totalFileSize += sizeOnDisk;
-    });
-
-    this.setState({
-      books,
-      bookFiles,
-      totalFileSize
-    });
-  };
-
   //
   // Render
 
   render() {
     const { author, mediaType } = this.props;
-    const { books, bookFiles, totalFileSize } = this.state;
     const count = author.length;
     let ended = 0;
     let continuing = 0;
@@ -123,6 +23,9 @@ class AuthorIndexFooter extends PureComponent {
     let audiobookMonitored = 0;
     let ebookConfigured = 0;
     let ebookMonitored = 0;
+    let books = 0;
+    let bookFiles = 0;
+    let totalFileSize = 0;
 
     author.forEach((s) => {
       if (s.status === 'ended') {
@@ -150,6 +53,16 @@ class AuthorIndexFooter extends PureComponent {
           ebookMonitored++;
         }
       }
+
+      const {
+        bookCount = 0,
+        bookFileCount = 0,
+        sizeOnDisk = 0
+      } = s.statistics || {};
+
+      books += bookCount;
+      bookFiles += bookFileCount;
+      totalFileSize += sizeOnDisk;
     });
 
     return (

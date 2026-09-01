@@ -108,7 +108,6 @@ namespace Chaptarr.Core.Test.Api.Wanted
             public AuthorStatistics AuthorStatistics(int authorId) => new();
             public List<AuthorStatistics> AuthorStatistics(string mediaType) => new();
             public AuthorStatistics AuthorStatistics(int authorId, string mediaType) => new();
-            public BookAggregate GetAggregateStatistics(List<int> authorIds, string mediaType) => new();
             public void InvalidateAuthorCache(int authorId) { }
         }
 

@@ -87,7 +87,6 @@ namespace Chaptarr.Core.Test.Api
             public AuthorStatistics AuthorStatistics(int authorId) => _getStats?.Invoke(authorId) ?? new AuthorStatistics();
             public List<AuthorStatistics> AuthorStatistics(string mediaType) => throw new NotImplementedException();
             public AuthorStatistics AuthorStatistics(int authorId, string mediaType) => throw new NotImplementedException();
-            public BookAggregate GetAggregateStatistics(List<int> authorIds, string mediaType) => throw new NotImplementedException();
             public void InvalidateAuthorCache(int authorId) => throw new NotImplementedException();
         }
 

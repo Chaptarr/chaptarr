@@ -317,7 +317,7 @@ namespace Chaptarr.Api.V1.Author
                 resource.AudiobookStatistics = audioStats.ToResource();
                 resource.EbookStatistics = ebookStats.ToResource();
             }
-            catch { /* Non-fatal: fall back to aggregate stats only */ }
+            catch { /* Non-fatal: fall back to the combined statistics only */ }
 
             return resource;
         }
@@ -326,16 +326,24 @@ namespace Chaptarr.Api.V1.Author
         public List<AuthorResource> AllAuthors([FromQuery] string mediaType = null)
         {
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
-            var authorStats = normalizedMediaType == null
-                ? _authorStatisticsService.AuthorStatistics() 
-                : _authorStatisticsService.AuthorStatistics(normalizedMediaType);
-                
             var authors = _authorService.GetAllAuthors();
             var authorResources = authors.ToResource(HttpContext.GetReadarrFacadeContext());
 
             MapCoversToLocal(authorResources.ToArray());
             LinkNextPreviousBooks(authorResources.ToArray());
-            LinkAuthorStatistics(authorResources, authorStats.ToDictionary(x => x.AuthorId));
+
+            if (normalizedMediaType == null)
+            {
+                var audiobookStatistics = _authorStatisticsService.AuthorStatistics("audiobook").ToDictionary(x => x.AuthorId);
+                var ebookStatistics = _authorStatisticsService.AuthorStatistics("ebook").ToDictionary(x => x.AuthorId);
+                LinkMediaTypeAuthorStatistics(authorResources, audiobookStatistics, ebookStatistics);
+            }
+            else
+            {
+                var authorStatistics = _authorStatisticsService.AuthorStatistics(normalizedMediaType).ToDictionary(x => x.AuthorId);
+                LinkAuthorStatistics(authorResources, authorStatistics);
+            }
+
             LinkRootFolderPath(authors, authorResources.ToArray());
 
             return authorResources;
@@ -1228,29 +1236,6 @@ namespace Chaptarr.Api.V1.Author
             return Accepted();
         }
 
-        [HttpPost("statistics/aggregate")]
-        public ActionResult<BookAggregateResource> GetAggregateStatistics([FromBody] AggregateStatisticsRequest request)
-        {
-            if (request?.AuthorIds == null || request.AuthorIds.Count == 0)
-            {
-                return Ok(new BookAggregateResource 
-                { 
-                    BookCount = 0, 
-                    FileCount = 0, 
-                    TotalFileSize = 0 
-                });
-            }
-
-            var stats = _authorStatisticsService.GetAggregateStatistics(request.AuthorIds, request.MediaType ?? "all");
-            
-            return Ok(new BookAggregateResource 
-            { 
-                BookCount = stats.BookCount,
-                FileCount = stats.BookFileCount,
-                TotalFileSize = stats.SizeOnDisk
-            });
-        }
-
         private void MapCoversToLocal(params AuthorResource[] authors)
         {
             foreach (var authorResource in authors)
@@ -1306,6 +1291,37 @@ namespace Chaptarr.Api.V1.Author
         private void LinkAuthorStatistics(AuthorResource resource, AuthorStatistics authorStatistics)
         {
             resource.Statistics = authorStatistics.ToResource();
+        }
+
+        internal static void LinkMediaTypeAuthorStatistics(List<AuthorResource> resources,
+                                                           Dictionary<int, AuthorStatistics> audiobookStatistics,
+                                                           Dictionary<int, AuthorStatistics> ebookStatistics)
+        {
+            foreach (var author in resources)
+            {
+                author.AudiobookStatistics = GetStatisticsResource(audiobookStatistics, author.Id);
+                author.EbookStatistics = GetStatisticsResource(ebookStatistics, author.Id);
+                author.Statistics = AddStatistics(author.AudiobookStatistics, author.EbookStatistics);
+            }
+        }
+
+        private static AuthorStatisticsResource GetStatisticsResource(Dictionary<int, AuthorStatistics> statistics, int authorId)
+        {
+            return statistics.TryGetValue(authorId, out var authorStatistics)
+                ? authorStatistics.ToResource()
+                : new AuthorStatisticsResource();
+        }
+
+        private static AuthorStatisticsResource AddStatistics(AuthorStatisticsResource left, AuthorStatisticsResource right)
+        {
+            return new AuthorStatisticsResource
+            {
+                BookFileCount = left.BookFileCount + right.BookFileCount,
+                BookCount = left.BookCount + right.BookCount,
+                AvailableBookCount = left.AvailableBookCount + right.AvailableBookCount,
+                TotalBookCount = left.TotalBookCount + right.TotalBookCount,
+                SizeOnDisk = left.SizeOnDisk + right.SizeOnDisk
+            };
         }
 
         private void LinkRootFolderPath(IEnumerable<NzbDrone.Core.Books.Author> authorModels, params AuthorResource[] authors)

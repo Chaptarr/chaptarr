@@ -529,54 +529,6 @@
         }
       }
     },
-    "/api/v1/author/statistics/aggregate": {
-      "post": {
-        "tags": [
-          "Author"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AggregateStatisticsRequest"
-              }
-            },
-            "text/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AggregateStatisticsRequest"
-              }
-            },
-            "application/*+json": {
-              "schema": {
-                "$ref": "#/components/schemas/AggregateStatisticsRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "$ref": "#/components/schemas/BookAggregateResource"
-                }
-              },
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BookAggregateResource"
-                }
-              },
-              "text/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BookAggregateResource"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/author/{id}/monitor/{mediaType}": {
       "put": {
         "tags": [
@@ -12527,24 +12479,6 @@
         },
         "additionalProperties": false
       },
-      "AggregateStatisticsRequest": {
-        "type": "object",
-        "properties": {
-          "authorIds": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int32"
-            },
-            "nullable": true
-          },
-          "mediaType": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "additionalProperties": false
-      },
       "AllowFingerprinting": {
         "enum": [
           "never",
@@ -13312,28 +13246,6 @@
           "manual"
         ],
         "type": "string"
-      },
-      "BookAggregateResource": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "bookCount": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "fileCount": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "totalFileSize": {
-            "type": "integer",
-            "format": "int64"
-          }
-        },
-        "additionalProperties": false
       },
       "BookBucketResource": {
         "type": "object",
@@ -19555,6 +19467,11 @@
             "nullable": true
           },
           "existingLocalId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "metadataBookCount": {
             "type": "integer",
             "format": "int32",
             "nullable": true

@@ -15,7 +15,6 @@ namespace NzbDrone.Core.AuthorStats
         AuthorStatistics AuthorStatistics(int authorId);
         List<AuthorStatistics> AuthorStatistics(string mediaType);
         AuthorStatistics AuthorStatistics(int authorId, string mediaType);
-        BookAggregate GetAggregateStatistics(List<int> authorIds, string mediaType);
         void InvalidateAuthorCache(int authorId);
     }
 
@@ -91,11 +90,6 @@ namespace NzbDrone.Core.AuthorStats
             }
 
             return MapAuthorStatistics(statistics);
-        }
-
-        public BookAggregate GetAggregateStatistics(List<int> authorIds, string mediaType)
-        {
-            return _authorStatisticsRepository.GetAggregateStatistics(authorIds, mediaType);
         }
 
         private static AuthorStatistics MapAuthorStatistics(List<BookStatistics> bookStatistics)

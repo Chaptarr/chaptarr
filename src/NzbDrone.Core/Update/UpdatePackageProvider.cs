@@ -251,7 +251,8 @@ namespace NzbDrone.Core.Update
                             "Hardcover search works again after a Hardcover API change, and failures now show the actual reason.",
                             "Grabbing a release that already exists in qBittorrent or Deluge is now clearly rejected instead of silently taking over the existing torrent.",
                             "Removed the Shelf's non-working Monitor Author and Monitor New Books controls. Those settings remain in the Author Editor.",
-                            "Matching no longer breaks when file tags contain unusual embedded characters."
+                            "Matching no longer breaks when file tags contain unusual embedded characters.",
+                            "The Authors page now loads accurate audiobook and eBook statistics without a second aggregate request. The obsolete POST /api/v1/author/statistics/aggregate endpoint has been removed."
                         }
                     }
                 }

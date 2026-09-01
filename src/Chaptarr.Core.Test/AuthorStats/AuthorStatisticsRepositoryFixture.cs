@@ -122,22 +122,6 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
         }
 
         [Test]
-        public void aggregate_should_count_file_bearing_books_once()
-        {
-            WithRepository((repository, _) =>
-            {
-                var aggregate = repository.GetAggregateStatistics(new() { 1 }, "all");
-
-                Assert.Multiple(() =>
-                {
-                    Assert.That(aggregate.BookCount, Is.EqualTo(2));
-                    Assert.That(aggregate.BookFileCount, Is.EqualTo(3));
-                    Assert.That(aggregate.SizeOnDisk, Is.EqualTo(60));
-                });
-            });
-        }
-
-        [Test]
         public void progress_should_preserve_book_row_selections_while_the_author_side_is_paused()
         {
             WithRepository((repository, connectionString) =>
@@ -160,23 +144,6 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
         }
 
         [Test]
-        public void aggregate_should_tolerate_more_author_ids_than_sqlite_can_bind_at_once()
-        {
-            WithRepository((repository, _) =>
-            {
-                var authorIds = Enumerable.Range(1000, 32768).Prepend(1).ToList();
-                var aggregate = repository.GetAggregateStatistics(authorIds, "all");
-
-                Assert.Multiple(() =>
-                {
-                    Assert.That(aggregate.BookCount, Is.EqualTo(2));
-                    Assert.That(aggregate.BookFileCount, Is.EqualTo(3));
-                    Assert.That(aggregate.SizeOnDisk, Is.EqualTo(60));
-                });
-            });
-        }
-
-        [Test]
         public void should_use_the_composite_index_for_each_monitored_edition_release_date_lookup()
         {
             WithRepository((repository, connectionString) =>
@@ -184,7 +151,7 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
                 using var connection = new SqliteConnection(connectionString);
                 connection.Open();
 
-                var sql = AuthorStatisticsRepository.BuildBaseSql(DatabaseType.SQLite, aggregate: false);
+                var sql = AuthorStatisticsRepository.BuildBaseSql(DatabaseType.SQLite);
                 var plan = connection.Query<SqliteQueryPlanRow>(
                     "EXPLAIN QUERY PLAN " + sql,
                     new { currentDate = DateTime.UtcNow }).ToList();

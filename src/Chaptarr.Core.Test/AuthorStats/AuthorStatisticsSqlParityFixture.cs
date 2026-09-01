@@ -20,9 +20,7 @@ namespace Chaptarr.Core.Test.AuthorStats
         [TestCase(DatabaseType.PostgreSQL, " = true")]
         public void should_build_the_same_books_and_file_aggregate_shape_for_both_databases(DatabaseType databaseType, string booleanComparison)
         {
-            var authorSql = AuthorStatisticsRepository.BuildBaseSql(databaseType, aggregate: false);
-            var aggregateSql = AuthorStatisticsRepository.BuildBaseSql(databaseType, aggregate: true);
-            var filteredAggregateSql = AuthorStatisticsRepository.BuildFilteredAggregateSql(databaseType);
+            var authorSql = AuthorStatisticsRepository.BuildBaseSql(databaseType);
 
             Assert.Multiple(() =>
             {
@@ -35,19 +33,6 @@ namespace Chaptarr.Core.Test.AuthorStats
                 StringAssert.Contains(@"""Editions"".""BookId"" = ""Books"".""Id""", authorSql);
                 StringAssert.Contains(@"ORDER BY ""Editions"".""Id""", authorSql);
 
-                StringAssert.Contains("FROM \"Books\"", aggregateSql);
-                StringAssert.Contains("FROM \"BookFiles\"", aggregateSql);
-                StringAssert.Contains(booleanComparison, aggregateSql);
-
-                if (databaseType == DatabaseType.PostgreSQL)
-                {
-                    StringAssert.Contains(@"""Books"".""AuthorId"" = ANY(@AuthorIds)", filteredAggregateSql);
-                    StringAssert.DoesNotContain(@"""Books"".""AuthorId"" IN @AuthorIds", filteredAggregateSql);
-                }
-                else
-                {
-                    StringAssert.Contains(@"""Books"".""AuthorId"" IN @AuthorIds", filteredAggregateSql);
-                }
             });
         }
     }
