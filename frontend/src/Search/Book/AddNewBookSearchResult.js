@@ -167,6 +167,7 @@ class AddNewBookSearchResult extends Component {
       disambiguation,
       overview,
       ratings,
+      author,
       images,
       links,
       narrator,
@@ -209,6 +210,7 @@ class AddNewBookSearchResult extends Component {
       .map((name) => links?.find((l) => (l?.name || '').toLowerCase() === name))
       .find(Boolean) || links?.[0];
 
+    const authorName = author?.authorName;
     const height = calculateHeight(230, isSmallScreen);
 
     return (
@@ -279,6 +281,13 @@ class AddNewBookSearchResult extends Component {
                 }
               </div>
             </div>
+
+            {
+              !!authorName &&
+                <div className={styles.authorName} title={authorName}>
+                  {translate('ByAuthor', { authorName })}
+                </div>
+            }
 
             {
               narrator &&

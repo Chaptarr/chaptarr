@@ -66,6 +66,15 @@
   font-size: 36px;
 }
 
+.authorName {
+  @add-mixin truncate;
+
+  margin-top: 2px;
+  color: var(--disabledColor);
+  font-weight: 300;
+  font-size: 20px;
+}
+
 .series {
   font-weight: 300;
   font-size: 24px;
