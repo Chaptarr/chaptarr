@@ -433,6 +433,104 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void should_carry_series_book_primary_flag_into_links()
+        {
+            var primaryBook = new Book
+            {
+                Id = 5001,
+                AuthorId = 29,
+                Title = "A Game of Thrones",
+                MediaType = BookMediaType.Ebook,
+                GoodreadsWorkId = "gr:1216467"
+            };
+
+            var secondaryBook = new Book
+            {
+                Id = 5002,
+                AuthorId = 29,
+                Title = "The Hedge Knight",
+                MediaType = BookMediaType.Ebook,
+                GoodreadsWorkId = "gr:1466917"
+            };
+
+            var unflaggedBook = new Book
+            {
+                Id = 5003,
+                AuthorId = 29,
+                Title = "The World of Ice & Fire",
+                MediaType = BookMediaType.Ebook,
+                GoodreadsWorkId = "gr:22083575"
+            };
+
+            var existingSeries = new Series
+            {
+                Id = 1002,
+                Title = "A Song of Ice and Fire",
+                GoodreadsSeriesId = "gr:43790",
+                MediaType = BookMediaType.Ebook
+            };
+
+            var remoteSeries = CreateRemoteSeriesWithSeriesBooks(
+                title: "A Song of Ice and Fire",
+                goodreadsSeriesId: "gr:43790",
+                mediaType: BookMediaType.Ebook,
+                books: new[]
+                {
+                    new SeriesBook
+                    {
+                        Title = primaryBook.Title,
+                        BookId = primaryBook.GoodreadsWorkId,
+                        Position = "1",
+                        IsPrimary = true
+                    },
+                    new SeriesBook
+                    {
+                        Title = secondaryBook.Title,
+                        BookId = secondaryBook.GoodreadsWorkId,
+                        Position = "0.5",
+                        IsPrimary = false
+                    },
+                    new SeriesBook
+                    {
+                        Title = unflaggedBook.Title,
+                        BookId = unflaggedBook.GoodreadsWorkId,
+                        Position = "0.4",
+                        IsPrimary = null
+                    }
+                });
+
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Books = new List<Book> { primaryBook, secondaryBook, unflaggedBook };
+
+            var seriesService = new StubSeriesService();
+            seriesService.SeriesByAuthor.Add(existingSeries);
+
+            var linkService = new StubSeriesBookLinkService();
+            linkService.SetLinks(existingSeries.Id);
+
+            var sut = new TestableRefreshSeriesService(
+                bookService,
+                seriesService,
+                linkService,
+                new RefreshSeriesBookLinkService(linkService, LogManager.GetCurrentClassLogger()),
+                LogManager.GetCurrentClassLogger());
+
+            sut.RefreshSeriesInfo(29, new List<Series> { remoteSeries }, new Author { Id = 29 }, false, false, null);
+
+            var links = linkService.GetLinksBySeries(existingSeries.Id);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(links.Single(x => x.BookId == primaryBook.Id).IsPrimary, Is.True,
+                    "a book the metadata API flags as primary should be linked as primary");
+                Assert.That(links.Single(x => x.BookId == secondaryBook.Id).IsPrimary, Is.False,
+                    "a book the metadata API flags as secondary should be linked as secondary");
+                Assert.That(links.Single(x => x.BookId == unflaggedBook.Id).IsPrimary, Is.True,
+                    "an unflagged book should default to primary so not-yet-refreshed series keep their membership");
+            });
+        }
+
+        [Test]
         public void should_delete_amazon_only_series_and_insert_goodreads_series_links()
         {
             var ebookBook = new Book
