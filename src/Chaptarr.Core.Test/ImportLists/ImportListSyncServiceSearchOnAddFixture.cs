@@ -149,6 +149,16 @@ namespace Chaptarr.Core.Test.ImportLists
                     return Definition;
                 }
 
+                if (targetMethod?.Name == nameof(IImportListFactory.GetInstance))
+                {
+                    return null;
+                }
+
+                if (targetMethod?.Name == nameof(IImportListFactory.AutomaticAddEnabled))
+                {
+                    return new List<IImportList>();
+                }
+
                 throw new NotImplementedException($"Test proxy does not implement IImportListFactory.{targetMethod?.Name}");
             }
         }
