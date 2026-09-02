@@ -589,8 +589,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 }
 
                 var settings = _rootFolderSettingsResolver.ResolveSettings(rootFolder, mediaType);
-                config.Tags = settings?.Tags != null ? new HashSet<int>(settings.Tags) : null;
-
                 if (mediaType == BookMediaType.Audiobook)
                 {
                     config.AudiobookRootFolderPath = rootFolder.Path;
@@ -599,6 +597,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings?.MonitorExistingMode);
                     config.AudiobookMonitored = settings?.Monitored;
                     config.AudiobookMonitorNewItems = settings?.MonitorNewItems;
+                    config.AudiobookTags = settings?.Tags == null ? null : new HashSet<int>(settings.Tags);
                 }
                 else
                 {
@@ -608,6 +607,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings?.MonitorExistingMode);
                     config.EbookMonitored = settings?.Monitored;
                     config.EbookMonitorNewItems = settings?.MonitorNewItems;
+                    config.EbookTags = settings?.Tags == null ? null : new HashSet<int>(settings.Tags);
                 }
 
                 // Preserve the on-disk author folder when the file lives under a root folder.

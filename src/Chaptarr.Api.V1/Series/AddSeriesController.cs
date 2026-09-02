@@ -296,7 +296,7 @@ namespace Chaptarr.Api.V1.Series
 
             if (selectedMediaType == BookMediaType.Audiobook)
             {
-                if (tags != null && tags.Count > 0)
+                if (tags != null)
                 {
                     config.AudiobookTags = tags;
                 }
@@ -311,7 +311,7 @@ namespace Chaptarr.Api.V1.Series
             }
             else
             {
-                if (tags != null && tags.Count > 0)
+                if (tags != null)
                 {
                     config.EbookTags = tags;
                 }

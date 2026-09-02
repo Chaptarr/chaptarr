@@ -184,7 +184,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
                 config.AudiobookMonitored = settings.Monitored;
                 config.AudiobookMonitorNewItems = settings.MonitorNewItems;
-                AddTags(config, rootFolder, settings.Tags, request.IncludeRootDefaultTags);
+                if (request.IncludeRootDefaultTags)
+                {
+                    config.MergeTagsForMediaType(BookMediaType.Audiobook, rootFolder.DefaultTags);
+                }
+
+                config.MergeTagsForMediaType(BookMediaType.Audiobook, settings.Tags);
 
                 return true;
             }
@@ -209,7 +214,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(ebookSettings.MonitorExistingMode);
             config.EbookMonitored = ebookSettings.Monitored;
             config.EbookMonitorNewItems = ebookSettings.MonitorNewItems;
-            AddTags(config, rootFolder, ebookSettings.Tags, request.IncludeRootDefaultTags);
+            if (request.IncludeRootDefaultTags)
+            {
+                config.MergeTagsForMediaType(BookMediaType.Ebook, rootFolder.DefaultTags);
+            }
+
+            config.MergeTagsForMediaType(BookMediaType.Ebook, ebookSettings.Tags);
 
             return true;
         }
@@ -321,31 +331,5 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                    MediaFileExtensions.TextExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
         }
 
-        private static void AddTags(MonitoringConfig config, RootFolder rootFolder, IEnumerable<int> settingTags, bool includeRootDefaultTags)
-        {
-            void AddTag(int tag)
-            {
-                config.Tags ??= new HashSet<int>();
-                config.Tags.Add(tag);
-            }
-
-            if (includeRootDefaultTags && rootFolder.DefaultTags != null)
-            {
-                foreach (var tag in rootFolder.DefaultTags)
-                {
-                    AddTag(tag);
-                }
-            }
-
-            if (settingTags == null)
-            {
-                return;
-            }
-
-            foreach (var tag in settingTags)
-            {
-                AddTag(tag);
-            }
-        }
     }
 }

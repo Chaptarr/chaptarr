@@ -105,6 +105,28 @@ namespace NzbDrone.Core.Books.Services
         public MonitorTypes? MonitorMode { get; set; }
         public HashSet<string> SpecificBookProviderIds { get; set; }  // e.g., ["hc:495645", "hc:495646"]
         public BookMediaType? SpecificBookMediaType { get; set; }
+
+        public void MergeTagsForMediaType(BookMediaType mediaType, IEnumerable<int> tags)
+        {
+            if (tags == null)
+            {
+                return;
+            }
+
+            var values = mediaType == BookMediaType.Audiobook
+                ? AudiobookTags ?? new HashSet<int>()
+                : EbookTags ?? new HashSet<int>();
+            values.UnionWith(tags);
+
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                AudiobookTags = values;
+            }
+            else
+            {
+                EbookTags = values;
+            }
+        }
     }
 
     public class AuthorLibraryService : IAuthorLibraryService
@@ -201,6 +223,14 @@ namespace NzbDrone.Core.Books.Services
         {
             _logger.Debug("AddAuthorAsync called with provider ID: {0}", providerId);
             var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            // Materialize the selected root's fill-only defaults before the remote
+            // fetch. A not-ready response can enqueue this same config, so the
+            // immediate and pending paths must carry identical settings.
+            if (config != null)
+            {
+                NormalizeMonitoringConfigFromExplicitRootFolders(config);
+            }
 
             Author author;
 
@@ -299,7 +329,6 @@ namespace NzbDrone.Core.Books.Services
 
             if (config != null)
             {
-                NormalizeMonitoringConfigFromExplicitRootFolders(config);
                 ApplyMonitoringConfig(author, config);
             }
 
@@ -333,25 +362,17 @@ namespace NzbDrone.Core.Books.Services
                     DisambiguateGeneratedAuthorPaths(author);
                 }
 
-                // Apply tags if provided
+                // Preserve NULL as "this media side was not part of the add" and an
+                // empty set as the caller's explicit "no tags" choice. The legacy
+                // shared field is only a fallback for sides this request creates.
                 if (config != null)
                 {
-                    if (config.AudiobookTags != null)
-                    {
-                        author.AudiobookTags = config.AudiobookTags;
-                    }
-
-                    if (config.EbookTags != null)
-                    {
-                        author.EbookTags = config.EbookTags;
-                    }
-
-                    if (config.AudiobookTags == null && config.EbookTags == null && config.Tags != null && config.Tags.Any())
-                    {
-                        // Legacy behavior: a single Tags field applies to both media types.
-                        author.AudiobookTags = config.Tags;
-                        author.EbookTags = config.Tags;
-                    }
+                    author.AudiobookTags = config.CreateAudiobook
+                        ? CloneTags(config.AudiobookTags ?? config.Tags)
+                        : null;
+                    author.EbookTags = config.CreateEbook
+                        ? CloneTags(config.EbookTags ?? config.Tags)
+                        : null;
 
                     author.Tags = (author.AudiobookTags ?? new HashSet<int>()).Concat(author.EbookTags ?? new HashSet<int>()).ToHashSet();
                 }
@@ -1164,6 +1185,27 @@ namespace NzbDrone.Core.Books.Services
                     // Single path param: prefer audiobook path if present else ebook
                     config.AudiobookRootFolderPath ?? config.EbookRootFolderPath);
 
+                var tagsChanged = false;
+                if (config.CreateAudiobook && updated.AudiobookTags == null && config.AudiobookTags != null)
+                {
+                    updated.AudiobookTags = new HashSet<int>(config.AudiobookTags);
+                    tagsChanged = true;
+                }
+
+                if (config.CreateEbook && updated.EbookTags == null && config.EbookTags != null)
+                {
+                    updated.EbookTags = new HashSet<int>(config.EbookTags);
+                    tagsChanged = true;
+                }
+
+                if (tagsChanged)
+                {
+                    updated.Tags = (updated.AudiobookTags ?? new HashSet<int>())
+                        .Concat(updated.EbookTags ?? new HashSet<int>())
+                        .ToHashSet();
+                    updated = _authorService.UpdateAuthor(updated);
+                }
+
                 // Fill discovered per-type author folder paths when empty.
                 if (!string.IsNullOrWhiteSpace(config.DiscoveredAuthorFolderPath))
                 {
@@ -1336,6 +1378,7 @@ namespace NzbDrone.Core.Books.Services
                 config.AudiobookMonitored ??= settings.Monitored;
                 config.AudiobookMonitorNewItems ??= settings.MonitorNewItems;
                 config.AudiobookMonitorExistingMode ??= RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
+                config.AudiobookTags ??= settings.Tags == null ? null : new HashSet<int>(settings.Tags);
 
                 if (!config.AudiobookQualityProfileId.HasValue)
                 {
@@ -1357,6 +1400,7 @@ namespace NzbDrone.Core.Books.Services
                 config.EbookMonitored ??= settings.Monitored;
                 config.EbookMonitorNewItems ??= settings.MonitorNewItems;
                 config.EbookMonitorExistingMode ??= RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
+                config.EbookTags ??= settings.Tags == null ? null : new HashSet<int>(settings.Tags);
 
                 if (!config.EbookQualityProfileId.HasValue)
                 {
@@ -1399,6 +1443,11 @@ namespace NzbDrone.Core.Books.Services
         private static int? NormalizeProfileId(int? profileId)
         {
             return profileId.HasValue && profileId.Value > 0 ? profileId : null;
+        }
+
+        private static HashSet<int> CloneTags(HashSet<int> tags)
+        {
+            return tags == null ? null : new HashSet<int>(tags);
         }
 
         private static bool IsCompatibleRootFolder(RootFolder rootFolder, BookMediaType mediaType)

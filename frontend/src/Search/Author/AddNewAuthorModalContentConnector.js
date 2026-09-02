@@ -20,11 +20,13 @@ const rootDerivedAuthorDefaults = {
   audiobookMonitorNewItems: null,
   audiobookQualityProfileId: 0,
   audiobookMetadataProfileId: 0,
+  audiobookTags: null,
   ebookMonitored: null,
   ebookMonitor: null,
   ebookMonitorNewItems: null,
   ebookQualityProfileId: 0,
-  ebookMetadataProfileId: 0
+  ebookMetadataProfileId: 0,
+  ebookTags: null
 };
 
 function getRootDerivedDefaultsForMediaType(mediaType) {
@@ -171,13 +173,30 @@ function createMapStateToProps() {
         }
 
         // Inherit tag defaults from the selected root folder when unset.
-        if (!settings.audiobookTags && audiobookTagsFromRootFolder != null) {
+        if (settings.audiobookTags?.value == null && audiobookTagsFromRootFolder != null) {
           settings.audiobookTags = { ...(settings.audiobookTags || {}), value: audiobookTagsFromRootFolder };
         }
 
-        if (!settings.ebookTags && ebookTagsFromRootFolder != null) {
+        if (settings.ebookTags?.value == null && ebookTagsFromRootFolder != null) {
           settings.ebookTags = { ...(settings.ebookTags || {}), value: ebookTagsFromRootFolder };
         }
+      }
+
+      // Keep the tag input and submit payload on one null-resolution rule.
+      // A configured root wins above; otherwise retain the legacy saved tag
+      // preference. Empty arrays remain an explicit "no tags" selection.
+      if (settings.audiobookTags?.value == null) {
+        settings.audiobookTags = {
+          ...(settings.audiobookTags || {}),
+          value: settings.tags?.value ?? []
+        };
+      }
+
+      if (settings.ebookTags?.value == null) {
+        settings.ebookTags = {
+          ...(settings.ebookTags || {}),
+          value: settings.tags?.value ?? []
+        };
       }
 
       // Set quality profile defaults to first available instead of "None"
@@ -376,7 +395,9 @@ class AddNewAuthorModalContentConnector extends Component {
       audiobookMetadataProfileId,
       ebookMetadataProfileId,
       metadataProfileId,
-      tags
+      tags,
+      audiobookTags,
+      ebookTags
     } = this.props;
 
     const { selectedMediaType } = this.state;
@@ -407,10 +428,14 @@ class AddNewAuthorModalContentConnector extends Component {
 
     let selectedMonitor = audiobookMonitorValue;
     let selectedMonitorNewItems = audiobookMonitorNewItemsValue;
+    let selectedTags = audiobookTags?.value;
 
     if (selectedMediaType === 'ebook') {
       selectedMonitor = ebookMonitorValue;
       selectedMonitorNewItems = ebookMonitorNewItemsValue;
+      selectedTags = ebookTags?.value;
+    } else if (selectedMediaType === 'both') {
+      selectedTags = tags.value;
     }
 
     this.props.addAuthor({
@@ -435,7 +460,11 @@ class AddNewAuthorModalContentConnector extends Component {
       audiobookMetadataProfileId: addAudiobooks ? audiobookMetadataProfileId?.value : null,
       ebookMetadataProfileId: addEbooks ? ebookMetadataProfileId?.value : null,
       metadataProfileId: metadataProfileId.value,
-      tags: tags.value,
+      // The native import endpoint accepts one media side per request. Keep the
+      // inactive side absent so its root-folder defaults are not persisted.
+      tags: selectedTags,
+      audiobookTags: addAudiobooks ? audiobookTags?.value : null,
+      ebookTags: addEbooks ? ebookTags?.value : null,
       searchForMissingBooks
     });
   };
@@ -478,6 +507,8 @@ AddNewAuthorModalContentConnector.propTypes = {
   ebookMetadataProfileId: PropTypes.object,
   metadataProfileId: PropTypes.object,
   tags: PropTypes.object.isRequired,
+  audiobookTags: PropTypes.object,
+  ebookTags: PropTypes.object,
   rootFoldersPopulated: PropTypes.bool.isRequired,
   isAdded: PropTypes.bool.isRequired,
   onModalClose: PropTypes.func.isRequired,

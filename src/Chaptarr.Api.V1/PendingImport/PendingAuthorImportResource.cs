@@ -28,6 +28,7 @@ namespace Chaptarr.Api.V1.PendingImport
         public string AudiobookRootFolderPath { get; set; }
         public List<string> AudiobookBooksToMonitor { get; set; }
         public List<string> AudiobookBooksToSearch { get; set; }
+        public HashSet<int> AudiobookTags { get; set; }
         
         // Ebook configuration: the author gate is yes/no; new-item policy is separate.
         public bool? EbookMonitored { get; set; }
@@ -38,6 +39,7 @@ namespace Chaptarr.Api.V1.PendingImport
         public string EbookRootFolderPath { get; set; }
         public List<string> EbookBooksToMonitor { get; set; }
         public List<string> EbookBooksToSearch { get; set; }
+        public HashSet<int> EbookTags { get; set; }
         
         // Common
         public HashSet<int> Tags { get; set; }
@@ -211,6 +213,16 @@ namespace Chaptarr.Api.V1.PendingImport
                 resource.Tags = new HashSet<int>();
             }
 
+            if (TryDeserializeJson(model.AudiobookTags, out HashSet<int> audiobookTags, nameof(model.AudiobookTags), model.Id))
+            {
+                resource.AudiobookTags = audiobookTags ?? new HashSet<int>();
+            }
+
+            if (TryDeserializeJson(model.EbookTags, out HashSet<int> ebookTags, nameof(model.EbookTags), model.Id))
+            {
+                resource.EbookTags = ebookTags ?? new HashSet<int>();
+            }
+
             return resource;
         }
 
@@ -279,9 +291,19 @@ namespace Chaptarr.Api.V1.PendingImport
                 model.EbookBooksToSearch = JsonConvert.SerializeObject(resource.EbookBooksToSearch);
             }
 
-            if (resource.Tags?.Count > 0)
+            if (resource.Tags != null)
             {
                 model.Tags = JsonConvert.SerializeObject(resource.Tags);
+            }
+
+            if (resource.AudiobookTags != null)
+            {
+                model.AudiobookTags = JsonConvert.SerializeObject(resource.AudiobookTags);
+            }
+
+            if (resource.EbookTags != null)
+            {
+                model.EbookTags = JsonConvert.SerializeObject(resource.EbookTags);
             }
 
             return model;

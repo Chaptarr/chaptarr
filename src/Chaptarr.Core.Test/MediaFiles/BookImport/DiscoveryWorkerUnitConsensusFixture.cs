@@ -766,7 +766,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             {
                 QualityProfileId = 10,
                 MetadataProfileId = 20,
-                Monitored = true
+                Monitored = true,
+                Tags = new List<int> { 10 }
             });
             root.SetEbookSettings(new MediaTypeSettings
             {
@@ -789,9 +790,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(config.CreateAudiobook, Is.True);
                 Assert.That(config.AudiobookRootFolderPath, Is.EqualTo(root.Path));
                 Assert.That(config.AudiobookQualityProfileId, Is.EqualTo(10));
+                Assert.That(config.AudiobookTags, Is.EquivalentTo(new[] { 10 }));
                 Assert.That(config.CreateEbook, Is.False);
                 Assert.That(config.EbookRootFolderPath, Is.Null);
                 Assert.That(config.EbookQualityProfileId, Is.Null);
+                Assert.That(config.EbookTags, Is.Null);
+                Assert.That(config.Tags, Is.Null);
             });
         }
 #pragma warning restore SYSLIB0050

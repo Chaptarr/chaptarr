@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Collections.Generic;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Books;
 
@@ -53,6 +54,11 @@ namespace Chaptarr.Api.V1.Author
         // One-time action for the current ebook catalog; not persisted as an author policy.
         [JsonPropertyName("ebookMonitorExistingMode")]
         public MonitorTypes? EbookMonitorExistingMode { get; set; }
+
+        // Tags for the media side named by MediaType. Null means the caller did
+        // not supply tags; an empty set explicitly selects no tags.
+        [JsonPropertyName("tags")]
+        public HashSet<int> Tags { get; set; }
 
         [JsonPropertyName("manualFlag")]
         public bool ManualFlag { get; set; }

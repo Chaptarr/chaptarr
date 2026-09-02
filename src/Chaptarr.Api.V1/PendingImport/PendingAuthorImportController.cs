@@ -215,6 +215,7 @@ namespace Chaptarr.Api.V1.PendingImport
                 config.AudiobookMetadataProfileId = request.Audiobook.MetadataProfileId;
                 config.AudiobookRootFolderPath = request.Audiobook.RootFolderPath;
                 config.AudiobookBooksToMonitor = request.Audiobook.BooksToMonitor;
+                config.AudiobookTags = request.Audiobook.Tags ?? request.Tags;
             }
 
             // Set ebook configuration
@@ -227,6 +228,7 @@ namespace Chaptarr.Api.V1.PendingImport
                 config.EbookMetadataProfileId = request.Ebook.MetadataProfileId;
                 config.EbookRootFolderPath = request.Ebook.RootFolderPath;
                 config.EbookBooksToMonitor = request.Ebook.BooksToMonitor;
+                config.EbookTags = request.Ebook.Tags ?? request.Tags;
             }
 
             config.SearchForMissingBooks = request.SearchForMissingBooks;
@@ -337,5 +339,6 @@ namespace Chaptarr.Api.V1.PendingImport
         public int? MetadataProfileId { get; set; }
         public string RootFolderPath { get; set; }
         public List<string> BooksToMonitor { get; set; }
+        public HashSet<int> Tags { get; set; }
     }
 }

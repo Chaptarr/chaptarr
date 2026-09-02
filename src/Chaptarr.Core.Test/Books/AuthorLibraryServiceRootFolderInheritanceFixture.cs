@@ -9,6 +9,7 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 using NzbDrone.Core.Messaging.Commands;
@@ -41,6 +42,33 @@ namespace Chaptarr.Core.Test.Books
 
             public Author GetAuthorInfo(string chaptarrId, bool useCache = true) => _author;
             public RefreshResult RefreshAuthorInfo(string authorId, string etag = null, bool forceRefresh = false, string expectedPublishedETag = null, bool bypassEtag = false) => throw new NotImplementedException();
+        }
+
+        private sealed class NotReadyAuthorInfo : IProvideAuthorInfo
+        {
+            public Author GetAuthorInfo(string chaptarrId, bool useCache = true) => throw new AuthorNotFoundException(chaptarrId);
+            public RefreshResult RefreshAuthorInfo(string authorId, string etag = null, bool forceRefresh = false, string expectedPublishedETag = null, bool bypassEtag = false) => throw new NotImplementedException();
+        }
+
+        private sealed class RecordingPendingImportService : IPendingAuthorImportService
+        {
+            public MonitoringConfig Config { get; private set; }
+
+            public Task<int> EnqueueAsync(string providerId, MonitoringConfig config, string sourceApplication)
+            {
+                Config = config;
+                return Task.FromResult(77);
+            }
+
+            public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
+            public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
+            public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
+            public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error) => throw new NotImplementedException();
+            public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
+            public void Cancel(int id) => throw new NotImplementedException();
+            public void RetryNow(int id) => throw new NotImplementedException();
+            public void CleanupOldCompleted() => throw new NotImplementedException();
+            public void Delete(int id) => throw new NotImplementedException();
         }
 
         private sealed class StubAuthorService : IAuthorService
@@ -277,7 +305,8 @@ namespace Chaptarr.Core.Test.Books
             int metadataProfileId = 1,
             MonitorTypes initialBookMonitoring = MonitorTypes.None,
             bool monitored = true,
-            NewItemMonitorTypes monitorNewItems = NewItemMonitorTypes.New)
+            NewItemMonitorTypes monitorNewItems = NewItemMonitorTypes.New,
+            IEnumerable<int> tags = null)
         {
             var root = new RootFolder
             {
@@ -291,7 +320,8 @@ namespace Chaptarr.Core.Test.Books
                 MetadataProfileId = metadataProfileId,
                 Monitored = monitored,
                 MonitorExistingMode = initialBookMonitoring,
-                MonitorNewItems = monitorNewItems
+                MonitorNewItems = monitorNewItems,
+                Tags = tags?.ToList()
             });
 
             return root;
@@ -303,7 +333,8 @@ namespace Chaptarr.Core.Test.Books
             int metadataProfileId = 3,
             MonitorTypes initialBookMonitoring = MonitorTypes.All,
             bool monitored = true,
-            NewItemMonitorTypes monitorNewItems = NewItemMonitorTypes.All)
+            NewItemMonitorTypes monitorNewItems = NewItemMonitorTypes.All,
+            IEnumerable<int> tags = null)
         {
             var root = new RootFolder
             {
@@ -317,7 +348,8 @@ namespace Chaptarr.Core.Test.Books
                 MetadataProfileId = metadataProfileId,
                 Monitored = monitored,
                 MonitorExistingMode = initialBookMonitoring,
-                MonitorNewItems = monitorNewItems
+                MonitorNewItems = monitorNewItems,
+                Tags = tags?.ToList()
             });
 
             return root;
@@ -333,7 +365,7 @@ namespace Chaptarr.Core.Test.Books
             };
         }
 
-        private static AuthorLibraryService BuildService(StubAuthorService authorService, StubAuthorInfo authorInfo, IRootFolderService rootFolderService, IBookService bookService = null, IEventAggregator eventAggregator = null, IAuthorSyncMetadataService syncMetadataService = null)
+        private static AuthorLibraryService BuildService(StubAuthorService authorService, IProvideAuthorInfo authorInfo, IRootFolderService rootFolderService, IBookService bookService = null, IEventAggregator eventAggregator = null, IAuthorSyncMetadataService syncMetadataService = null, IPendingAuthorImportService pendingImportService = null)
         {
             return new AuthorLibraryService(
                 authorService: authorService,
@@ -348,7 +380,7 @@ namespace Chaptarr.Core.Test.Books
                 rootFolderService: rootFolderService,
                 commandQueueManager: DispatchProxy.Create<IManageCommandQueue, ThrowingProxy<IManageCommandQueue>>(),
                 eventAggregator: eventAggregator ?? new StubEventAggregator(),
-                pendingImportService: null,
+                pendingImportService: pendingImportService,
                 mainDatabase: null,
                 importListExclusionService: null,
                 editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
@@ -389,7 +421,8 @@ namespace Chaptarr.Core.Test.Books
                 metadataProfileId: 34,
                 initialBookMonitoring: MonitorTypes.Missing,
                 monitored: false,
-                monitorNewItems: NewItemMonitorTypes.New);
+                monitorNewItems: NewItemMonitorTypes.New,
+                tags: new[] { 7, 8 });
             var authorService = new StubAuthorService();
             var service = BuildService(authorService, new StubAuthorInfo(BuildRemoteAuthor()), new StubRootFolderService(root));
 
@@ -408,10 +441,37 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(author.AudiobookMetadataProfileId, Is.EqualTo(34));
             Assert.That(author.AudiobookMonitored, Is.False);
             Assert.That(author.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+            Assert.That(author.AudiobookTags, Is.EquivalentTo(new[] { 7, 8 }));
+            Assert.That(author.EbookTags, Is.Null);
+            Assert.That(author.Tags, Is.EquivalentTo(new[] { 7, 8 }));
             Assert.That(author.AddOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.Missing));
             Assert.That(author.AddOptions.EbookMonitor, Is.Null);
             Assert.That(author.EbookQualityProfileId, Is.Null);
             Assert.That(authorService.AddedAuthor, Is.SameAs(author));
+        }
+
+        [Test]
+        public async Task not_ready_author_should_queue_the_same_root_tags_as_an_immediate_add()
+        {
+            var root = BuildAudiobookRoot("/audiobooks", tags: new[] { 7, 8 });
+            var pendingImportService = new RecordingPendingImportService();
+            var service = BuildService(
+                new StubAuthorService(),
+                new NotReadyAuthorInfo(),
+                new StubRootFolderService(root),
+                pendingImportService: pendingImportService);
+
+            var result = await service.AddAuthorAsync("hc:not-ready", new MonitoringConfig
+            {
+                AuthorName = "Not Ready Author",
+                CreateAudiobook = true,
+                AudiobookRootFolderPath = root.Path,
+                QueueIfUnavailable = true
+            });
+
+            Assert.That(result.Id, Is.EqualTo(-77));
+            Assert.That(pendingImportService.Config.AudiobookTags, Is.EquivalentTo(new[] { 7, 8 }));
+            Assert.That(pendingImportService.Config.EbookTags, Is.Null);
         }
 
         [Test]
@@ -473,11 +533,15 @@ namespace Chaptarr.Core.Test.Books
                 metadataProfileId: 8,
                 initialBookMonitoring: MonitorTypes.All,
                 monitored: true,
-                monitorNewItems: NewItemMonitorTypes.All);
+                monitorNewItems: NewItemMonitorTypes.All,
+                tags: new[] { 7 });
             var existingAuthor = new Author
             {
                 Id = 42,
-                Name = "Existing Author"
+                Name = "Existing Author",
+                AudiobookTags = new HashSet<int>(),
+                EbookTags = new HashSet<int> { 20 },
+                Tags = new HashSet<int> { 20 }
             };
 
             var authorService = new StubAuthorService();
@@ -515,7 +579,39 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(result.Born, Is.EqualTo(remoteAuthor.Born));
             Assert.That(result.Died, Is.EqualTo(remoteAuthor.Died));
             Assert.That(result.Status, Is.EqualTo(AuthorStatusType.Ended));
+            Assert.That(result.AudiobookTags, Is.Empty, "an explicit empty set must not inherit root tags");
+            Assert.That(result.EbookTags, Is.EquivalentTo(new[] { 20 }));
             Assert.That(authorService.AddedAuthor, Is.Null);
+        }
+
+        [Test]
+        public async Task existing_author_should_inherit_root_tags_when_the_media_side_is_still_unset()
+        {
+            var root = BuildAudiobookRoot("/audiobooks", tags: new[] { 7, 8 });
+            var existingAuthor = new Author
+            {
+                Id = 43,
+                Name = "First Touch Author",
+                AudiobookTags = null,
+                EbookTags = new HashSet<int> { 20 },
+                Tags = new HashSet<int> { 20 }
+            };
+            var authorService = new StubAuthorService();
+            authorService.AddExisting("hc", "first-touch", existingAuthor, books: Array.Empty<Book>());
+            var service = BuildService(
+                authorService,
+                new StubAuthorInfo(BuildRemoteAuthor(existingAuthor.Name)),
+                new StubRootFolderService(root));
+
+            var result = await service.AddAuthorAsync("hc:first-touch", new MonitoringConfig
+            {
+                CreateAudiobook = true,
+                AudiobookRootFolderPath = root.Path
+            });
+
+            Assert.That(result.AudiobookTags, Is.EquivalentTo(new[] { 7, 8 }));
+            Assert.That(result.EbookTags, Is.EquivalentTo(new[] { 20 }));
+            Assert.That(result.Tags, Is.EquivalentTo(new[] { 7, 8, 20 }));
         }
     }
 }

@@ -53,7 +53,9 @@ export const defaultState = {
     audiobookMetadataProfileId: 0,
     ebookMetadataProfileId: 0,
     metadataProfileId: 0,
-    tags: []
+    tags: [],
+    audiobookTags: null,
+    ebookTags: null
   },
 
   bookDefaults: {
@@ -443,6 +445,7 @@ export const actionHandlers = handleThunks({
         audiobookMonitorExistingMode: audiobookMonitor,
         audiobookMonitored: payload.audiobookMonitored !== false,
         audiobookMonitorNewItems: audiobookMonitorNew,
+        tags: payload.audiobookTags,
         manualFlag: true,
         // Defer missing search until the second import so both media types are hydrated first.
         searchForMissingBooks: false
@@ -458,6 +461,7 @@ export const actionHandlers = handleThunks({
         ebookMonitorExistingMode: ebookMonitor,
         ebookMonitored: payload.ebookMonitored !== false,
         ebookMonitorNewItems: ebookMonitorNew,
+        tags: payload.ebookTags,
         manualFlag: true,
         searchForMissingBooks: payload.searchForMissingBooks
       };
@@ -760,11 +764,13 @@ export const actionHandlers = handleThunks({
       ...(mediaType === 'audiobook' ? {
         audiobookMonitorExistingMode: monitor,
         audiobookMonitored: monitored !== false,
-        audiobookMonitorNewItems: selectedMonitorNewItems
+        audiobookMonitorNewItems: selectedMonitorNewItems,
+        tags: payload.audiobookTags ?? payload.tags
       } : {
         ebookMonitorExistingMode: monitor,
         ebookMonitored: monitored !== false,
-        ebookMonitorNewItems: selectedMonitorNewItems
+        ebookMonitorNewItems: selectedMonitorNewItems,
+        tags: payload.ebookTags ?? payload.tags
       }),
       manualFlag: true,
       searchForMissingBooks: payload.searchForMissingBooks

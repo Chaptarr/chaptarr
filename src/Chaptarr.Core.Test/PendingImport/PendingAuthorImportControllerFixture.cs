@@ -205,6 +205,71 @@ namespace Chaptarr.Core.Test.PendingImport
             Assert.That(model.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.All));
         }
 
+        [Test]
+        public void per_media_tags_should_round_trip_with_null_and_empty_remaining_distinct()
+        {
+            var resource = new PendingAuthorImport
+            {
+                Id = 44,
+                Tags = "[99]",
+                AudiobookTags = "[1,2]",
+                EbookTags = "[]"
+            }.ToResource();
+
+            Assert.That(resource.Tags, Is.EquivalentTo(new[] { 99 }));
+            Assert.That(resource.AudiobookTags, Is.EquivalentTo(new[] { 1, 2 }));
+            Assert.That(resource.EbookTags, Is.Empty);
+
+            var model = resource.ToModel();
+            Assert.That(model.AudiobookTags, Is.EqualTo("[1,2]"));
+            Assert.That(model.EbookTags, Is.EqualTo("[]"));
+        }
+
+        [Test]
+        public void explicit_empty_legacy_tags_should_remain_distinct_from_not_supplied()
+        {
+            var model = new PendingAuthorImportResource
+            {
+                Id = 45,
+                Tags = new HashSet<int>()
+            }.ToModel();
+
+            Assert.That(model.Tags, Is.EqualTo("[]"));
+        }
+
+        [Test]
+        public async Task queue_should_apply_shared_tags_only_as_a_fallback_for_each_media_side()
+        {
+            var pendingService = new StubPendingAuthorImportService();
+            var controller = new PendingAuthorImportController(
+                new StubSignalRBroadcaster(),
+                pendingService,
+                authorService: null,
+                new StubQualityProfileService(),
+                new StubMetadataProfileService(),
+                new StubRootFolderService());
+
+            var result = await controller.QueueAuthor(new QueueAuthorRequest
+            {
+                ProviderId = "gr:123",
+                Tags = new HashSet<int> { 99 },
+                Audiobook = new MediaTypeConfig
+                {
+                    Monitor = true,
+                    Tags = new HashSet<int>()
+                },
+                Ebook = new MediaTypeConfig
+                {
+                    Monitor = true,
+                    Tags = new HashSet<int> { 2 }
+                }
+            });
+
+            Assert.That(result.Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(pendingService.EnqueuedConfig.AudiobookTags, Is.Empty);
+            Assert.That(pendingService.EnqueuedConfig.EbookTags, Is.EquivalentTo(new[] { 2 }));
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public async Task exact_book_target_should_enable_and_queue_its_media_side(bool monitor)

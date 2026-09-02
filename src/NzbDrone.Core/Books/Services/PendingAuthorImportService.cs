@@ -64,6 +64,10 @@ namespace NzbDrone.Core.Books.Services
                 throw new ArgumentException($"Invalid provider ID format: {providerId}");
             }
 
+            config ??= new MonitoringConfig();
+            var incomingAudiobookTags = ResolveMediaTags(config.CreateAudiobook, config.AudiobookTags, config.Tags);
+            var incomingEbookTags = ResolveMediaTags(config.CreateEbook, config.EbookTags, config.Tags);
+
             // A book request may need the metadata-server rescue lifecycle even when its author
             // already exists locally. Author-only requests can still stop here.
             if (!HasRequestedBooks(config))
@@ -151,6 +155,17 @@ namespace NzbDrone.Core.Books.Services
                         updated = true;
                     }
 
+                    if (config.CreateAudiobook && TryMergeTags(
+                            existing.AudiobookTags,
+                            incomingAudiobookTags,
+                            nameof(existing.AudiobookTags),
+                            providerId,
+                            out var audiobookTags))
+                    {
+                        existing.AudiobookTags = audiobookTags;
+                        updated = true;
+                    }
+
                     // Enable ebook if requested and not already
                     if (config.CreateEbook && !existing.HasEbook())
                     {
@@ -225,6 +240,23 @@ namespace NzbDrone.Core.Books.Services
                         updated = true;
                     }
 
+                    if (config.CreateEbook && TryMergeTags(
+                            existing.EbookTags,
+                            incomingEbookTags,
+                            nameof(existing.EbookTags),
+                            providerId,
+                            out var ebookTags))
+                    {
+                        existing.EbookTags = ebookTags;
+                        updated = true;
+                    }
+
+                    if (TryMergeTags(existing.Tags, config.Tags, nameof(existing.Tags), providerId, out var tags))
+                    {
+                        existing.Tags = tags;
+                        updated = true;
+                    }
+
                     if (config.SearchForMissingBooks == true && !existing.SearchForMissingBooks)
                     {
                         existing.SearchForMissingBooks = true;
@@ -289,6 +321,7 @@ namespace NzbDrone.Core.Books.Services
                     pending.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
                     pending.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
                     pending.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
+                    pending.AudiobookTags = SerializeTags(incomingAudiobookTags);
 
                     if (config.AudiobookBooksToMonitor?.Any() == true)
                     {
@@ -311,6 +344,7 @@ namespace NzbDrone.Core.Books.Services
                     pending.EbookQualityProfileId = config.EbookQualityProfileId;
                     pending.EbookMetadataProfileId = config.EbookMetadataProfileId;
                     pending.EbookRootFolderPath = config.EbookRootFolderPath;
+                    pending.EbookTags = SerializeTags(incomingEbookTags);
 
                     if (config.EbookBooksToMonitor?.Any() == true)
                     {
@@ -324,9 +358,9 @@ namespace NzbDrone.Core.Books.Services
                 }
 
                 // Set common fields
-                if (config.Tags?.Any() == true)
+                if (config.Tags != null)
                 {
-                    pending.Tags = JsonConvert.SerializeObject(config.Tags);
+                    pending.Tags = SerializeTags(config.Tags);
                 }
 
                 pending.UpdateOverallStatus();
@@ -469,6 +503,61 @@ namespace NzbDrone.Core.Books.Services
                 _logger.Warn(ex, "Failed to merge {0} for existing pending import {1}", fieldName, providerId);
                 return false;
             }
+        }
+
+        private bool TryMergeTags(
+            string existingJson,
+            IEnumerable<int> incoming,
+            string fieldName,
+            string providerId,
+            out string mergedJson)
+        {
+            mergedJson = existingJson;
+            if (incoming == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var existingTags = string.IsNullOrWhiteSpace(existingJson)
+                    ? new HashSet<int>()
+                    : JsonConvert.DeserializeObject<HashSet<int>>(existingJson) ?? new HashSet<int>();
+                var mergedTags = new HashSet<int>(existingTags);
+                mergedTags.UnionWith(incoming);
+                var serialized = SerializeTags(mergedTags);
+
+                if (string.Equals(existingJson, serialized, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                mergedJson = serialized;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Failed to merge {0} for existing pending import {1}", fieldName, providerId);
+                return false;
+            }
+        }
+
+        private static HashSet<int> ResolveMediaTags(bool createMediaType, HashSet<int> mediaTags, HashSet<int> legacyTags)
+        {
+            if (!createMediaType)
+            {
+                return null;
+            }
+
+            var tags = mediaTags ?? legacyTags;
+            return tags == null ? null : new HashSet<int>(tags);
+        }
+
+        private static string SerializeTags(IEnumerable<int> tags)
+        {
+            return tags == null
+                ? null
+                : JsonConvert.SerializeObject(tags.Distinct().OrderBy(tag => tag));
         }
 
         public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error)

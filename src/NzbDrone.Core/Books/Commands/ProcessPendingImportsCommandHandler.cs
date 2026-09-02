@@ -374,6 +374,16 @@ namespace NzbDrone.Core.Books.Commands
                 config.Tags = JsonConvert.DeserializeObject<HashSet<int>>(item.Tags);
             }
 
+            if (!string.IsNullOrEmpty(item.AudiobookTags))
+            {
+                config.AudiobookTags = JsonConvert.DeserializeObject<HashSet<int>>(item.AudiobookTags);
+            }
+
+            if (!string.IsNullOrEmpty(item.EbookTags))
+            {
+                config.EbookTags = JsonConvert.DeserializeObject<HashSet<int>>(item.EbookTags);
+            }
+
             return config;
         }
 

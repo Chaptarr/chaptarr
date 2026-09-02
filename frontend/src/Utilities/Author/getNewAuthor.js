@@ -18,6 +18,8 @@ function getNewAuthor(author, payload, mediaType) {
     audiobookMetadataProfileId,
     ebookMetadataProfileId,
     tags,
+    audiobookTags,
+    ebookTags,
     searchForMissingBooks = false
   } = payload;
 
@@ -42,8 +44,6 @@ function getNewAuthor(author, payload, mediaType) {
     author.metadataProfileId = metadataProfileId;
   }
 
-  author.tags = tags;
-
   // Filter settings based on mediaType. Existing/current book selection is an
   // add-time operation; only the author gate and ongoing policy are persisted.
   if (mediaType === 'audiobook') {
@@ -51,11 +51,13 @@ function getNewAuthor(author, payload, mediaType) {
     author.audiobookRootFolderPath = audiobookRootFolderPath;
     author.audiobookMonitored = audiobookMonitored !== false;
     author.audiobookMonitorNewItems = normalizeMonitorNewItemsOption(audiobookMonitorNewItems || monitorNewItems);
+    author.audiobookTags = audiobookTags ?? tags;
   } else if (mediaType === 'ebook') {
     author.ebookQualityProfileId = ebookQualityProfileId;
     author.ebookRootFolderPath = ebookRootFolderPath;
     author.ebookMonitored = ebookMonitored !== false;
     author.ebookMonitorNewItems = normalizeMonitorNewItemsOption(ebookMonitorNewItems || monitorNewItems);
+    author.ebookTags = ebookTags ?? tags;
   } else {
     author.audiobookQualityProfileId = audiobookQualityProfileId;
     author.ebookQualityProfileId = ebookQualityProfileId;
@@ -65,7 +67,14 @@ function getNewAuthor(author, payload, mediaType) {
     author.ebookMonitored = ebookMonitored !== false;
     author.audiobookMonitorNewItems = normalizeMonitorNewItemsOption(audiobookMonitorNewItems || monitorNewItems);
     author.ebookMonitorNewItems = normalizeMonitorNewItemsOption(ebookMonitorNewItems || monitorNewItems);
+    author.audiobookTags = audiobookTags ?? tags;
+    author.ebookTags = ebookTags ?? tags;
   }
+
+  author.tags = Array.from(new Set([
+    ...(author.audiobookTags ?? []),
+    ...(author.ebookTags ?? [])
+  ]));
 
   // Keep the legacy aggregate accurate for older consumers while all new
   // monitoring decisions use the explicit per-media gates above.

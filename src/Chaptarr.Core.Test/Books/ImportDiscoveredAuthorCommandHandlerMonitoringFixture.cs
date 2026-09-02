@@ -90,7 +90,8 @@ namespace Chaptarr.Core.Test.Books
                 MetadataProfileId = 20,
                 Monitored = false,
                 MonitorExistingMode = MonitorTypes.Missing,
-                MonitorNewItems = NewItemMonitorTypes.All
+                MonitorNewItems = NewItemMonitorTypes.All,
+                Tags = new List<int> { 10 }
             });
             root.SetEbookSettings(new MediaTypeSettings
             {
@@ -98,7 +99,8 @@ namespace Chaptarr.Core.Test.Books
                 MetadataProfileId = 21,
                 Monitored = true,
                 MonitorExistingMode = MonitorTypes.Existing,
-                MonitorNewItems = NewItemMonitorTypes.New
+                MonitorNewItems = NewItemMonitorTypes.New,
+                Tags = new List<int> { 20 }
             });
 
             var libraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
@@ -126,10 +128,13 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(capture.Config.AudiobookMonitored, Is.False);
                 Assert.That(capture.Config.AudiobookMonitorExistingMode, Is.EqualTo(MonitorTypes.Missing));
                 Assert.That(capture.Config.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
+                Assert.That(capture.Config.AudiobookTags, Is.EquivalentTo(new[] { 10 }));
                 Assert.That(capture.Config.CreateEbook, Is.True);
                 Assert.That(capture.Config.EbookMonitored, Is.True);
                 Assert.That(capture.Config.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.Existing));
                 Assert.That(capture.Config.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+                Assert.That(capture.Config.EbookTags, Is.EquivalentTo(new[] { 20 }));
+                Assert.That(capture.Config.Tags, Is.Null);
                 Assert.That(capture.Config.DiscoveredAuthorFolderPath, Is.EqualTo("/library/Discovered Author"));
             });
         }

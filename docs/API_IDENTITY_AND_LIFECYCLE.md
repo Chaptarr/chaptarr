@@ -99,6 +99,14 @@ Search results include provider identity fields and, when applicable, an `existi
 
 Do not infer that a missing local row means a provider item is unknown globally. It may be queued, pending, pruned by local profiles, or available only under another provider alias.
 
+## Media-Scoped Author Import Settings
+
+Chaptarr-native author-import requests carry monitoring and tags independently for the audiobook and eBook sides. A supplied tag array replaces the tags for that requested side: `null` or an omitted field means "not supplied," while `[]` explicitly means "no tags." The compatibility `tags` field remains a shared fallback for older clients, but new clients should send the media-scoped fields.
+
+Root-folder defaults are creation defaults, not continuing policy. Chaptarr fills an unset media side when that side is first created or hydrated and never overwrites an existing value, including an explicit empty tag set. An audiobook-only request does not initialize or mutate eBook settings, and the reverse is also true.
+
+If an author is waiting in the pending-import queue, Chaptarr persists the two tag sets separately. Concurrent requests union tags within the same media side so a later request cannot erase an earlier caller's pending intent; tags can be removed normally after the author exists. Once the author is materialized, the legacy combined `Author.tags` projection is the union of its audiobook and eBook tag sets.
+
 ## Metadata Server V5 Lifecycle
 
 The metadata server uses V5 endpoints such as:

@@ -689,6 +689,11 @@ namespace Chaptarr.Api.V1.Author
                             existingAuthor.AudiobookMonitorNewItems = monitorNewItems;
                         }
 
+                        if (importResource.Tags != null)
+                        {
+                            existingAuthor.AudiobookTags = new HashSet<int>(importResource.Tags);
+                        }
+
                         if (importResource.ManualFlag)
                         {
                             existingAuthor.AudiobookSettingsManuallyOverridden = true;
@@ -709,11 +714,20 @@ namespace Chaptarr.Api.V1.Author
                             existingAuthor.EbookMonitorNewItems = monitorNewItems;
                         }
 
+                        if (importResource.Tags != null)
+                        {
+                            existingAuthor.EbookTags = new HashSet<int>(importResource.Tags);
+                        }
+
                         if (importResource.ManualFlag)
                         {
                             existingAuthor.EbookSettingsManuallyOverridden = true;
                         }
                     }
+
+                    existingAuthor.Tags = (existingAuthor.AudiobookTags ?? new HashSet<int>())
+                        .Concat(existingAuthor.EbookTags ?? new HashSet<int>())
+                        .ToHashSet();
 
                     existingAuthor = _authorService.UpdateAuthor(existingAuthor);
 
@@ -744,6 +758,7 @@ namespace Chaptarr.Api.V1.Author
                             hydrateConfig.AudiobookMonitored = monitored;
                             hydrateConfig.AudiobookMonitorNewItems = monitorNewItems;
                             hydrateConfig.AudiobookMonitorExistingMode = monitorExistingMode;
+                            hydrateConfig.AudiobookTags = importResource.Tags == null ? null : new HashSet<int>(importResource.Tags);
                         }
                         else
                         {
@@ -753,6 +768,7 @@ namespace Chaptarr.Api.V1.Author
                             hydrateConfig.EbookMonitored = monitored;
                             hydrateConfig.EbookMonitorNewItems = monitorNewItems;
                             hydrateConfig.EbookMonitorExistingMode = monitorExistingMode;
+                            hydrateConfig.EbookTags = importResource.Tags == null ? null : new HashSet<int>(importResource.Tags);
                         }
 
 	                        try
@@ -835,6 +851,7 @@ namespace Chaptarr.Api.V1.Author
                     config.AudiobookMonitored = monitored;
                     config.AudiobookMonitorNewItems = monitorNewItems;
                     config.AudiobookMonitorExistingMode = monitorExistingMode;
+                    config.AudiobookTags = importResource.Tags == null ? null : new HashSet<int>(importResource.Tags);
                 }
                 else
                 {
@@ -844,6 +861,7 @@ namespace Chaptarr.Api.V1.Author
                     config.EbookMonitored = monitored;
                     config.EbookMonitorNewItems = monitorNewItems;
                     config.EbookMonitorExistingMode = monitorExistingMode;
+                    config.EbookTags = importResource.Tags == null ? null : new HashSet<int>(importResource.Tags);
                 }
 
 	                _logger.Debug("[V1-AUTHOR-IMPORT] Calling AuthorLibraryService to import author");

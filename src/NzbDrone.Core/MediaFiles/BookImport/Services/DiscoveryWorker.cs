@@ -1786,7 +1786,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
                     config.AudiobookMonitored = settings.Monitored;
                     config.AudiobookMonitorNewItems = settings.MonitorNewItems;
-                    AddTags(config, settings.Tags);
+                    config.MergeTagsForMediaType(BookMediaType.Audiobook, settings.Tags);
                 }
             }
 
@@ -1802,7 +1802,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
                     config.EbookMonitored = settings.Monitored;
                     config.EbookMonitorNewItems = settings.MonitorNewItems;
-                    AddTags(config, settings.Tags);
+                    config.MergeTagsForMediaType(BookMediaType.Ebook, settings.Tags);
                 }
             }
 
@@ -1848,6 +1848,15 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     author.AudiobookRootFolderPath = rootFolderPath;
                     changed = true;
                 }
+
+                if (author.AudiobookTags == null && config.AudiobookTags != null)
+                {
+                    author.AudiobookTags = new HashSet<int>(config.AudiobookTags);
+                    author.Tags = (author.AudiobookTags ?? new HashSet<int>())
+                        .Concat(author.EbookTags ?? new HashSet<int>())
+                        .ToHashSet();
+                    changed = true;
+                }
             }
             else
             {
@@ -1880,24 +1889,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     author.EbookRootFolderPath = rootFolderPath;
                     changed = true;
                 }
+
+                if (author.EbookTags == null && config.EbookTags != null)
+                {
+                    author.EbookTags = new HashSet<int>(config.EbookTags);
+                    author.Tags = (author.AudiobookTags ?? new HashSet<int>())
+                        .Concat(author.EbookTags ?? new HashSet<int>())
+                        .ToHashSet();
+                    changed = true;
+                }
             }
 
             return changed;
-        }
-
-        private static void AddTags(MonitoringConfig config, IEnumerable<int> tags)
-        {
-            var values = tags?.ToList();
-            if (config == null || values == null || values.Count == 0)
-            {
-                return;
-            }
-
-            config.Tags ??= new HashSet<int>();
-            foreach (var tag in values)
-            {
-                config.Tags.Add(tag);
-            }
         }
 
         private static Dictionary<string, List<string>> CloneTags(Dictionary<string, List<string>> tags)

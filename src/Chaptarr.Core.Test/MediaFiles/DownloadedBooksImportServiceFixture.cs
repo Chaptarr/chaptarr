@@ -1318,7 +1318,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(authorLibraryService.AddCalls[0].config.AudiobookRootFolderPath, Is.EqualTo("/library/audiobooks"));
                 Assert.That(authorLibraryService.AddCalls[0].config.AudiobookQualityProfileId, Is.EqualTo(1));
                 Assert.That(authorLibraryService.AddCalls[0].config.AudiobookMetadataProfileId, Is.EqualTo(2));
-                Assert.That(authorLibraryService.AddCalls[0].config.Tags, Does.Contain(5));
+                Assert.That(authorLibraryService.AddCalls[0].config.AudiobookTags, Does.Contain(5));
+                Assert.That(authorLibraryService.AddCalls[0].config.EbookTags, Is.Null);
                 Assert.That(matchingService.Calls.Select(c => c.RestrictToAuthorId).ToList(), Is.EqualTo(new List<int?> { null, 7 }));
                 Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
                 Assert.That(importApproved.Decisions[0].Approved, Is.True);

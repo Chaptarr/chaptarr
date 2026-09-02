@@ -36,6 +36,8 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("Restrictions", "Tags", mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("Narrators", "Tags", mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("PendingAuthorImport", "Tags", mapper));
+            usedTags.UnionWith(GetUsedTagsFromArrayColumn("PendingAuthorImport", "AudiobookTags", mapper));
+            usedTags.UnionWith(GetUsedTagsFromArrayColumn("PendingAuthorImport", "EbookTags", mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("RootFolders", "DefaultTags", mapper));
             usedTags.UnionWith(GetUsedTagsFromRootFolderSettings(mapper));
 

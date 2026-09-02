@@ -350,6 +350,42 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void deferred_import_should_restore_media_specific_tags_without_bleeding_between_sides()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(161);
+            pending.AudiobookStatus = PendingImportStatus.Pending;
+            pending.EbookStatus = PendingImportStatus.Pending;
+            pending.Tags = "[99]";
+            pending.AudiobookTags = "[1,2]";
+            pending.EbookTags = "[]";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var commandQueue = new RecordingCommandQueue();
+            var eventAggregator = new RecordingEventAggregator();
+            var authorLibrary = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibrary).AddedAuthor = new Author { Id = 42, Name = "Deferred Author" };
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)authorService).CurrentAuthor = ((AuthorLibraryProxy)authorLibrary).AddedAuthor;
+            var handler = new ProcessPendingImportsCommandHandler(
+                pendingImportService,
+                authorLibrary,
+                authorService,
+                DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(),
+                commandQueue,
+                eventAggregator,
+                LogManager.GetCurrentClassLogger());
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            var config = ((AuthorLibraryProxy)authorLibrary).LastConfig;
+            Assert.That(config.Tags, Is.EquivalentTo(new[] { 99 }));
+            Assert.That(config.AudiobookTags, Is.EquivalentTo(new[] { 1, 2 }));
+            Assert.That(config.EbookTags, Is.Empty);
+        }
+
+        [Test]
         public void deferred_exact_targets_should_remain_scoped_to_their_media_side()
         {
             var pendingImportService = new StubPendingAuthorImportService();

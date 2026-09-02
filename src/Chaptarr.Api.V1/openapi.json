@@ -12734,6 +12734,15 @@
           "ebookMonitorExistingMode": {
             "$ref": "#/components/schemas/MonitorTypes"
           },
+          "tags": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
           "manualFlag": {
             "type": "boolean"
           },
@@ -16863,6 +16872,15 @@
           "monitor": {
             "type": "boolean"
           },
+          "monitorExisting": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "monitorFuture": {
+            "type": "boolean",
+            "nullable": true
+          },
           "monitorNewItems": {
             "$ref": "#/components/schemas/NewItemMonitorTypes"
           },
@@ -16887,6 +16905,15 @@
             "type": "array",
             "items": {
               "type": "string"
+            },
+            "nullable": true
+          },
+          "tags": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
             },
             "nullable": true
           }
@@ -17721,6 +17748,15 @@
             },
             "nullable": true
           },
+          "audiobookTags": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
           "ebookMonitored": {
             "type": "boolean",
             "nullable": true
@@ -17756,6 +17792,15 @@
             "type": "array",
             "items": {
               "type": "string"
+            },
+            "nullable": true
+          },
+          "ebookTags": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
             },
             "nullable": true
           },

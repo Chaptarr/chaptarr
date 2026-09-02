@@ -1518,11 +1518,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                             config.AudiobookMonitored = a.Monitored;
                                             config.AudiobookMonitorNewItems = a.MonitorNewItems;
                                             config.AudiobookMonitorExistingMode = ResolveRootMonitorExistingMode(a);
-                                            if (a.Tags != null && a.Tags.Count > 0)
-                                            {
-                                                config.Tags = config.Tags ?? new HashSet<int>();
-                                                foreach (var t in a.Tags) config.Tags.Add(t);
-                                            }
+                                            config.MergeTagsForMediaType(BookMediaType.Audiobook, a.Tags);
                                         }
                                         break;
                                     case FolderType.Ebook:
@@ -1537,11 +1533,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                             config.EbookMonitored = e.Monitored;
                                             config.EbookMonitorNewItems = e.MonitorNewItems;
                                             config.EbookMonitorExistingMode = ResolveRootMonitorExistingMode(e);
-                                            if (e.Tags != null && e.Tags.Count > 0)
-                                            {
-                                                config.Tags = config.Tags ?? new HashSet<int>();
-                                                foreach (var t in e.Tags) config.Tags.Add(t);
-                                            }
+                                            config.MergeTagsForMediaType(BookMediaType.Ebook, e.Tags);
                                         }
                                         break;
                                     case FolderType.Mixed:
@@ -1560,11 +1552,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                                 config.AudiobookMonitored = ma.Monitored;
                                                 config.AudiobookMonitorNewItems = ma.MonitorNewItems;
                                                 config.AudiobookMonitorExistingMode = ResolveRootMonitorExistingMode(ma);
-                                                if (ma.Tags != null && ma.Tags.Count > 0)
-                                                {
-                                                    config.Tags = config.Tags ?? new HashSet<int>();
-                                                    foreach (var t in ma.Tags) config.Tags.Add(t);
-                                                }
+                                                config.MergeTagsForMediaType(BookMediaType.Audiobook, ma.Tags);
                                             }
                                         }
                                         if (config.CreateEbook)
@@ -1578,11 +1566,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                                 config.EbookMonitored = me.Monitored;
                                                 config.EbookMonitorNewItems = me.MonitorNewItems;
                                                 config.EbookMonitorExistingMode = ResolveRootMonitorExistingMode(me);
-                                                if (me.Tags != null && me.Tags.Count > 0)
-                                                {
-                                                    config.Tags = config.Tags ?? new HashSet<int>();
-                                                    foreach (var t in me.Tags) config.Tags.Add(t);
-                                                }
+                                                config.MergeTagsForMediaType(BookMediaType.Ebook, me.Tags);
                                             }
                                         }
                                         break;
@@ -1622,8 +1606,24 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                                 updated.EbookPath = config.DiscoveredAuthorFolderPath;
                                                 changed = true;
                                             }
+
+                                            if (config.CreateAudiobook && updated.AudiobookTags == null && config.AudiobookTags != null)
+                                            {
+                                                updated.AudiobookTags = new HashSet<int>(config.AudiobookTags);
+                                                changed = true;
+                                            }
+
+                                            if (config.CreateEbook && updated.EbookTags == null && config.EbookTags != null)
+                                            {
+                                                updated.EbookTags = new HashSet<int>(config.EbookTags);
+                                                changed = true;
+                                            }
+
                                             if (changed)
                                             {
+                                                updated.Tags = (updated.AudiobookTags ?? new HashSet<int>())
+                                                    .Concat(updated.EbookTags ?? new HashSet<int>())
+                                                    .ToHashSet();
                                                 updated = _authorService.UpdateAuthor(updated);
                                             }
 
@@ -2449,11 +2449,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                             config.AudiobookMonitored = a.Monitored;
                                             config.AudiobookMonitorNewItems = a.MonitorNewItems;
                                             config.AudiobookMonitorExistingMode = ResolveRootMonitorExistingMode(a);
-                                            if (a.Tags != null && a.Tags.Count > 0)
-                                            {
-                                                config.Tags = config.Tags ?? new HashSet<int>();
-                                                foreach (var t in a.Tags) config.Tags.Add(t);
-                                            }
+                                            config.MergeTagsForMediaType(BookMediaType.Audiobook, a.Tags);
                                         }
                                         break;
                                     case FolderType.Ebook:
@@ -2468,11 +2464,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                             config.EbookMonitored = e.Monitored;
                                             config.EbookMonitorNewItems = e.MonitorNewItems;
                                             config.EbookMonitorExistingMode = ResolveRootMonitorExistingMode(e);
-                                            if (e.Tags != null && e.Tags.Count > 0)
-                                            {
-                                                config.Tags = config.Tags ?? new HashSet<int>();
-                                                foreach (var t in e.Tags) config.Tags.Add(t);
-                                            }
+                                            config.MergeTagsForMediaType(BookMediaType.Ebook, e.Tags);
                                         }
                                         break;
                                     case FolderType.Mixed:
@@ -2491,11 +2483,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                                 config.AudiobookMonitored = ma.Monitored;
                                                 config.AudiobookMonitorNewItems = ma.MonitorNewItems;
                                                 config.AudiobookMonitorExistingMode = ResolveRootMonitorExistingMode(ma);
-                                                if (ma.Tags != null && ma.Tags.Count > 0)
-                                                {
-                                                    config.Tags = config.Tags ?? new HashSet<int>();
-                                                    foreach (var t in ma.Tags) config.Tags.Add(t);
-                                                }
+                                                config.MergeTagsForMediaType(BookMediaType.Audiobook, ma.Tags);
                                             }
                                         }
                                         if (config.CreateEbook)
@@ -2509,11 +2497,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                                 config.EbookMonitored = me.Monitored;
                                                 config.EbookMonitorNewItems = me.MonitorNewItems;
                                                 config.EbookMonitorExistingMode = ResolveRootMonitorExistingMode(me);
-                                                if (me.Tags != null && me.Tags.Count > 0)
-                                                {
-                                                    config.Tags = config.Tags ?? new HashSet<int>();
-                                                    foreach (var t in me.Tags) config.Tags.Add(t);
-                                                }
+                                                config.MergeTagsForMediaType(BookMediaType.Ebook, me.Tags);
                                             }
                                         }
                                         break;
@@ -3318,12 +3302,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             if (rootFolder != null)
             {
-                if (rootFolder.DefaultTags?.Any() == true)
+                if (rootFolder.DefaultTags != null)
                 {
-                    cfg.Tags ??= new HashSet<int>();
-                    foreach (var t in rootFolder.DefaultTags)
+                    if (cfg.CreateAudiobook)
                     {
-                        cfg.Tags.Add(t);
+                        cfg.MergeTagsForMediaType(BookMediaType.Audiobook, rootFolder.DefaultTags);
+                    }
+
+                    if (cfg.CreateEbook)
+                    {
+                        cfg.MergeTagsForMediaType(BookMediaType.Ebook, rootFolder.DefaultTags);
                     }
                 }
 
@@ -3338,14 +3326,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         cfg.AudiobookMonitored = a.Monitored;
                         cfg.AudiobookMonitorNewItems = a.MonitorNewItems;
                         cfg.AudiobookMonitorExistingMode = ResolveRootMonitorExistingMode(a);
-                        if (a.Tags?.Any() == true)
-                        {
-                            cfg.Tags ??= new HashSet<int>();
-                            foreach (var t in a.Tags)
-                            {
-                                cfg.Tags.Add(t);
-                            }
-                        }
+                        cfg.MergeTagsForMediaType(BookMediaType.Audiobook, a.Tags);
                     }
                 }
 
@@ -3360,14 +3341,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         cfg.EbookMonitored = e.Monitored;
                         cfg.EbookMonitorNewItems = e.MonitorNewItems;
                         cfg.EbookMonitorExistingMode = ResolveRootMonitorExistingMode(e);
-                        if (e.Tags?.Any() == true)
-                        {
-                            cfg.Tags ??= new HashSet<int>();
-                            foreach (var t in e.Tags)
-                            {
-                                cfg.Tags.Add(t);
-                            }
-                        }
+                        cfg.MergeTagsForMediaType(BookMediaType.Ebook, e.Tags);
                     }
                 }
             }

@@ -88,5 +88,54 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(error, Does.Contain("complete quality and metadata profile defaults"));
             });
         }
+
+        [Test]
+        public void mixed_root_should_keep_default_and_media_tags_scoped_to_each_side()
+        {
+            var root = new RootFolder
+            {
+                Path = "/library".AsOsAgnostic(),
+                FolderType = FolderType.Mixed,
+                DefaultTags = new HashSet<int> { 1 }
+            };
+            root.SetAudiobookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 10,
+                MetadataProfileId = 20,
+                Tags = new List<int> { 10 }
+            });
+            root.SetEbookSettings(new MediaTypeSettings
+            {
+                QualityProfileId = 11,
+                MetadataProfileId = 21,
+                Tags = new List<int> { 20 }
+            });
+
+            var result = SuggestedAuthorImportCoordinator.TryBuildMonitoringConfig(
+                new SuggestedAuthorImportConfigRequest
+                {
+                    AuthorName = "Test Author",
+                    FilePaths = new[]
+                    {
+                        "/library/Test Author/Audio.mp3".AsOsAgnostic(),
+                        "/library/Test Author/Text.epub".AsOsAgnostic()
+                    },
+                    FixedRootFolder = root,
+                    IncludeRootDefaultTags = true
+                },
+                null,
+                null,
+                null,
+                out var config,
+                out var error);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result, Is.True, error);
+                Assert.That(config.AudiobookTags, Is.EquivalentTo(new[] { 1, 10 }));
+                Assert.That(config.EbookTags, Is.EquivalentTo(new[] { 1, 20 }));
+                Assert.That(config.Tags, Is.Null);
+            });
+        }
     }
 }

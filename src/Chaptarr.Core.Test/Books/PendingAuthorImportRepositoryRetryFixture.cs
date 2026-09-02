@@ -57,12 +57,28 @@ namespace Chaptarr.Core.Test.Books
                     EbookStatus = PendingImportStatus.NotRequested,
                     OverallStatus = PendingImportStatus.Pending,
                     AudiobookBooksToMonitor = "[\"gr:first\",\"gr:second\"]",
+                    AudiobookTags = "[1]",
+                    EbookTags = "[]",
+                    Tags = "[1]",
                     NextAttemptAt = DateTime.UtcNow
                 };
 
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 3), Is.False);
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 4), Is.True);
                 Assert.That(item.Version, Is.EqualTo(5));
+
+                using (var verifyUpdate = new SqliteConnection(connectionString))
+                {
+                    verifyUpdate.Open();
+                    var tags = verifyUpdate.QuerySingle<TagProjection>(@"
+                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags""
+                        FROM ""PendingAuthorImport""
+                        WHERE ""Id"" = 1;");
+                    Assert.That(tags.AudiobookTags, Is.EqualTo("[1]"));
+                    Assert.That(tags.EbookTags, Is.EqualTo("[]"));
+                    Assert.That(tags.Tags, Is.EqualTo("[1]"));
+                }
+
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 5), Is.True);
 
@@ -103,6 +119,7 @@ namespace Chaptarr.Core.Test.Books
                             ""AudiobookRootFolderPath"" TEXT,
                             ""AudiobookBooksToMonitor"" TEXT,
                             ""AudiobookBooksToSearch"" TEXT,
+                            ""AudiobookTags"" TEXT,
                             ""EbookMonitored"" INTEGER,
                             ""EbookMonitorNewItems"" INTEGER,
                             ""EbookMonitorExistingMode"" INTEGER,
@@ -111,6 +128,8 @@ namespace Chaptarr.Core.Test.Books
                             ""EbookRootFolderPath"" TEXT,
                             ""EbookBooksToMonitor"" TEXT,
                             ""EbookBooksToSearch"" TEXT,
+                            ""EbookTags"" TEXT,
+                            ""Tags"" TEXT,
                             ""SearchForMissingBooks"" INTEGER,
                             ""AttemptCount"" INTEGER,
                             ""MaxAttempts"" INTEGER,
@@ -211,6 +230,13 @@ namespace Chaptarr.Core.Test.Books
                     File.Delete(databasePath);
                 }
             }
+        }
+
+        private sealed class TagProjection
+        {
+            public string AudiobookTags { get; set; }
+            public string EbookTags { get; set; }
+            public string Tags { get; set; }
         }
     }
 }

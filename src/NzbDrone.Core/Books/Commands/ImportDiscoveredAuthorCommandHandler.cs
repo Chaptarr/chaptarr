@@ -206,11 +206,9 @@ namespace NzbDrone.Core.Books.Commands
             config.AudiobookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
             config.AudiobookMonitored = settings.Monitored;
             config.AudiobookMonitorNewItems = settings.MonitorNewItems;
-            if (settings.Tags != null && settings.Tags.Any())
-            {
-                config.Tags ??= new System.Collections.Generic.HashSet<int>();
-                foreach (var tag in settings.Tags) config.Tags.Add(tag);
-            }
+            config.AudiobookTags = settings.Tags == null
+                ? null
+                : new System.Collections.Generic.HashSet<int>(settings.Tags);
         }
 
         private void ApplyEbookSettings(MonitoringConfig config, RootFolder root, MediaTypeSettings settings)
@@ -221,11 +219,9 @@ namespace NzbDrone.Core.Books.Commands
             config.EbookMonitorExistingMode = RootFolderSettingsResolver.ResolveInitialMonitorMode(settings.MonitorExistingMode);
             config.EbookMonitored = settings.Monitored;
             config.EbookMonitorNewItems = settings.MonitorNewItems;
-            if (settings.Tags != null && settings.Tags.Any())
-            {
-                config.Tags ??= new System.Collections.Generic.HashSet<int>();
-                foreach (var tag in settings.Tags) config.Tags.Add(tag);
-            }
+            config.EbookTags = settings.Tags == null
+                ? null
+                : new System.Collections.Generic.HashSet<int>(settings.Tags);
         }
 
         private static bool ApplyMediaSettings(Author author, BookMediaType mediaType, MediaTypeSettings settings, string rootFolderPath)
@@ -267,6 +263,15 @@ namespace NzbDrone.Core.Books.Commands
                     author.AudiobookRootFolderPath = rootFolderPath;
                     changed = true;
                 }
+
+                if (author.AudiobookTags == null && settings.Tags != null)
+                {
+                    author.AudiobookTags = new System.Collections.Generic.HashSet<int>(settings.Tags);
+                    author.Tags = (author.AudiobookTags ?? new System.Collections.Generic.HashSet<int>())
+                        .Concat(author.EbookTags ?? new System.Collections.Generic.HashSet<int>())
+                        .ToHashSet();
+                    changed = true;
+                }
             }
             else
             {
@@ -297,6 +302,15 @@ namespace NzbDrone.Core.Books.Commands
                 if (string.IsNullOrWhiteSpace(author.EbookRootFolderPath) && !string.IsNullOrWhiteSpace(rootFolderPath))
                 {
                     author.EbookRootFolderPath = rootFolderPath;
+                    changed = true;
+                }
+
+                if (author.EbookTags == null && settings.Tags != null)
+                {
+                    author.EbookTags = new System.Collections.Generic.HashSet<int>(settings.Tags);
+                    author.Tags = (author.AudiobookTags ?? new System.Collections.Generic.HashSet<int>())
+                        .Concat(author.EbookTags ?? new System.Collections.Generic.HashSet<int>())
+                        .ToHashSet();
                     changed = true;
                 }
             }
