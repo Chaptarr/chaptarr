@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
@@ -153,12 +154,11 @@ namespace NzbDrone.Core.Profiles.Metadata
                 return input.Books ?? new List<Book>();
             }
 
-            var seriesLinks = (input.Series ?? new List<Series>())
-                .Where(x => x.LinkItems != null)
-                .SelectMany(x => x.LinkItems)
-                .Where(x => x.Book?.Value != null)
-                .GroupBy(x => x.Book.Value)
-                .ToDictionary(x => x.Key, y => y.ToList());
+            // V5 series objects intentionally have no local book links yet. Profile filtering uses
+            // the provider relationships already attached to each remote book instead.
+            var seriesLinks = (input.Books ?? new List<Book>())
+                .Where(x => x?.SeriesLinks?.Any() == true)
+                .ToDictionary(x => x, x => x.SeriesLinks, BookReferenceComparer.Instance);
 
             // Use the local database ID that was passed in
             Author dbAuthor = null;
@@ -215,7 +215,7 @@ namespace NzbDrone.Core.Profiles.Metadata
 
             _logger.Trace($"Filtering:\n{remoteBooks.Select(x => x.ToString()).Join("\n")}");
 
-                var hash = new HashSet<Book>(remoteBooks);
+                var hash = new HashSet<Book>(remoteBooks, BookReferenceComparer.Instance);
                 var titles = new HashSet<string>(remoteBooks.Select(x => x.Title));
 
                 var remoteBookKeysByEditionToken = BuildRemoteBookKeysByEditionToken(hash);
@@ -518,7 +518,7 @@ namespace NzbDrone.Core.Profiles.Metadata
                 _logger.Debug($"Processing {totalItems} {typeof(T).Name} items in batches of {batchSize} for {message}");
 
                 var itemsList = remoteItems.ToList();
-                var allFiltered = new HashSet<T>();
+                var allFiltered = new HashSet<T>(remoteItems.Comparer);
 
                 for (var i = 0; i < itemsList.Count; i += batchSize)
                 {
@@ -546,7 +546,7 @@ namespace NzbDrone.Core.Profiles.Metadata
             else
             {
                 // Original logic for smaller collections
-                var filtered = new HashSet<T>(remoteItems.Where(x => !bookAllowed(x, profile) && !localItems.Contains(getId(x))));
+                var filtered = new HashSet<T>(remoteItems.Where(x => !bookAllowed(x, profile) && !localItems.Contains(getId(x))), remoteItems.Comparer);
                 if (filtered.Any())
                 {
                     _logger.Trace($"Skipping {filtered.Count} {typeof(T).Name} because {message}:\n{filtered.ConcatToString(x => x.ToString(), "\n")}");
@@ -595,7 +595,7 @@ namespace NzbDrone.Core.Profiles.Metadata
         {
             if (seriesLinks != null &&
                 seriesLinks.Any(x => x.Position.IsNotNullOrWhiteSpace()) &&
-                !seriesLinks.Any(s => double.TryParse(s.Position, out _)))
+                !seriesLinks.Any(s => IsNonBundleSeriesPosition(s.Position)))
             {
                 // No non-empty series entries parse to a number, so all like 1-3 etc.
                 return true;
@@ -626,6 +626,24 @@ namespace NzbDrone.Core.Profiles.Metadata
             }
 
             return false;
+        }
+
+        private static bool IsNonBundleSeriesPosition(string position)
+        {
+            if (double.TryParse(position, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                return true;
+            }
+
+            var slots = (position ?? string.Empty)
+                .Split(',')
+                .Select(x => x.Trim())
+                .ToList();
+
+            // Decimal comma-lists are multiple exact slots, not integer bundle positions.
+            return slots.Count > 1 &&
+                   slots.Any(x => x.Contains('.')) &&
+                   slots.All(x => double.TryParse(x, NumberStyles.Float, CultureInfo.InvariantCulture, out _));
         }
 
         private bool MatchesTerms(string value, string terms)
