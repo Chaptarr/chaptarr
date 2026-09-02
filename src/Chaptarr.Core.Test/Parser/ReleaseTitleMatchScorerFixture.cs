@@ -29,6 +29,17 @@ namespace Chaptarr.Core.Test.Parser
         }
 
         [Test]
+        public void should_not_throw_on_release_titles_containing_supplementary_plane_characters()
+        {
+            // A release title carrying an emoji or other astral-plane character (a surrogate pair
+            // in .NET's UTF-16 strings) used to crash TokenizeWithSpans with
+            // "String contains invalid Unicode code points" - see Chaptarr/chaptarr#116.
+            var tokens = ReleaseTitleMatchScorer.Tokenize("Fourth Wing 🔥 Rebecca Yarros");
+
+            Assert.That(tokens, Is.EqualTo(new[] { "fourth", "wing", "rebecca", "yarros" }));
+        }
+
+        [Test]
         public void should_match_exact_monitored_title_with_author_series_and_noise()
         {
             var author = new Author { Name = "Brandon Sanderson" };
