@@ -321,6 +321,7 @@ class InteractiveImportModalContent extends Component {
     });
 
     const selectedIds = this.getSelectedIds();
+    const invalidSelectedIds = _.intersection(invalidRowsSelected, selectedIds);
     const selectedItem = selectedIds.length ? _.find(items, { id: selectedIds[0] }) : null;
     const importIdsByBook = _.chain(items).filter((x) => x.book).groupBy((x) => x.book.id).mapValues((x) => x.map((y) => y.id)).value();
     const editions = _.chain(items).filter((x) => x.book).keyBy((x) => x.book.id).mapValues((x) => ({ matchedEditionId: x.editionId, book: x.book })).values().value();
@@ -545,7 +546,7 @@ class InteractiveImportModalContent extends Component {
 
             <Button
               kind={kinds.SUCCESS}
-              isDisabled={isSaving || !selectedIds.length || !!invalidRowsSelected.length || inconsistentBookReleases}
+              isDisabled={isSaving || !selectedIds.length || !!invalidSelectedIds.length || inconsistentBookReleases}
               onPress={this.onImportSelectedPress}
             >
               {translate('Import')}
