@@ -242,17 +242,35 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
-                            "The Shelf page now has an audiobook/eBook toggle and changes book monitoring separately for each format."
+                            "Author monitoring is now a simple on/off setting per format. Turning a format off pauses automatic searches, grabs, and upgrades for that author without changing individual book selections. Thanks compgeek!",
+                            "When adding an author, current book monitoring (All, Missing, Books with Files, or None) is separate from monitoring books pulled in from the metadata server later (All New Books, Future Releases, or None). Root folders provide the defaults for new authors.",
+                            "Authors show as Active or Deceased when a death date is available, with matching filters on the Authors page.",
+                            "Tags can be set separately for an author's audiobook and eBook sides everywhere an author is added, including pending requests and folder discovery.",
+                            "Author search results show the metadata server's canonical name, bio, photos, book count and provider links.",
+                            "Book search results now show the author. Thanks chunni!",
+                            "Download clients can have multiple scoped remote path mappings, with clear field errors when mappings conflict.",
+                            "Completed downloads whose files are still arriving are retried automatically a few times before asking for manual import.",
+                            "Author details has a compact All button to show or hide unmonitored books you do not have.",
+                            "Hover tips and popovers stay within the window, scroll when long, close with Escape or a click elsewhere, and support keyboard access."
                         },
                         Fixed = new List<string>
                         {
-                            "Adding a book whose author isn't ready on the metadata server no longer fails with a confusing error like \"no edition survived pruning\". The request is saved (like with adding an author) and will remember if you wanted to search it or not when it arrives.",
-                            "Saving the Shelf with no monitoring change selected no longer monitors all existing books for the selected authors.",
-                            "Hardcover search works again after a Hardcover API change, and failures now show the actual reason.",
-                            "Grabbing a release that already exists in qBittorrent or Deluge is now clearly rejected instead of silently taking over the existing torrent.",
-                            "Removed the Shelf's non-working Monitor Author and Monitor New Books controls. Those settings remain in the Author Editor.",
-                            "Matching no longer breaks when file tags contain unusual embedded characters.",
-                            "The Authors page now loads accurate audiobook and eBook statistics without a second aggregate request. The obsolete POST /api/v1/author/statistics/aggregate endpoint has been removed."
+                            "Adding and deleting an author is much faster, especially for authors with very large catalogs.",
+                            "Author progress no longer counts unreleased books as missing, and progress sorting no longer over-counts multi-file audiobooks. Thanks @digitalgp.",
+                            "An audiobook made of many files now shows as complete on the Shelf and calendar instead of looking unfinished. Thanks @Blackduke77 and @sebclark.",
+                            "The Authors page, Shelf, and author details now agree about whether an author is monitored. Thanks @digitalgp and @jbob06.",
+                            "Authors page statistics follow the selected format, and the totals at the bottom agree with the list.",
+                            "Fixed author tag handling.",
+                            "In Interactive Import, rows you never selected no longer keep the Import button disabled. Thanks @ZZerker.",
+                            "Skip Secondary Series Books now filters as intended. Thanks @JordanFromIT.",
+                            "Root folders added through the API must declare audiobook, eBook, or mixed content and provide the required profiles. Existing incomplete sides are skipped and now surface a health warning instead of aborting the whole import. Thanks @jbob06.",
+                            "Import lists now apply book monitoring to existing authors without silently enabling the author.",
+                            "Removed some old hacky ways of trying to clean up Hardcover search results.",
+                            "A manually requested one-book search now runs once even when that book or author side is paused; automatic and bulk searches remain gated.",
+                            "Remote path mapping health checks now report permission and Docker path problems, and Test works for host-wide mappings.",
+                            "Restoring a settings backup (not a full backup) better handles remote path mappings for download clients.",
+                            "rTorrent files marked 'don't download' are no longer waited on during import.",
+                            "API compatibility note: remote path mappings require downloadClientId; root folders require folderType; author editor and pending-import fields use the per-format model; and the obsolete POST /api/v1/author/statistics/aggregate endpoint was removed."
                         }
                     }
                 }
