@@ -1,0 +1,80 @@
+.table {
+  composes: table from '~Components/Table/Table.css';
+
+  table-layout: fixed;
+}
+
+.select,
+.monitored {
+  width: 42px;
+}
+
+.narrator {
+  width: 150px;
+}
+
+.position,
+.rating,
+.status {
+  width: 100px;
+}
+
+.releaseDate {
+  width: 120px;
+}
+
+.pageCount {
+  width: 80px;
+}
+
+.duration {
+  width: 90px;
+}
+
+.indexerFlags {
+  width: 50px;
+}
+
+.actions {
+  width: 70px;
+}
+
+@media only screen and (max-width: 768px) {
+  .narrator {
+    display: none;
+  }
+
+  .position,
+  .rating,
+  .status {
+    width: 80px;
+  }
+
+  .releaseDate {
+    width: 100px;
+  }
+
+  .pageCount {
+    width: 60px;
+  }
+
+  .duration {
+    width: 70px;
+  }
+}
+
+@media only screen and (max-width: 480px) {
+  .position,
+  .rating {
+    display: none;
+  }
+
+  .status {
+    width: 60px;
+  }
+
+  .pageCount,
+  .duration {
+    width: 55px;
+  }
+}

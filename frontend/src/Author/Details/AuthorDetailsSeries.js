@@ -11,6 +11,7 @@ import { icons, sortDirections } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import getToggledRange from 'Utilities/Table/getToggledRange';
 import BookRowConnector from './BookRowConnector';
+import tableStyles from './AuthorDetailsBookTable.css';
 import styles from './AuthorDetailsSeries.css';
 
 class AuthorDetailsSeries extends Component {
@@ -126,6 +127,10 @@ class AuthorDetailsSeries extends Component {
       onTableOptionChange,
       selectedMediaType
     } = this.props;
+    const tableColumns = columns.map((column) => ({
+      ...column,
+      className: column.className || tableStyles[column.name]
+    }));
 
     return (
       <div
@@ -180,7 +185,8 @@ class AuthorDetailsSeries extends Component {
             isExpanded &&
               <div className={styles.books}>
                 <Table
-                  columns={columns}
+                  className={tableStyles.table}
+                  columns={tableColumns}
                   sortKey={sortKey}
                   sortDirection={sortDirection}
                   onSortPress={onSortPress}

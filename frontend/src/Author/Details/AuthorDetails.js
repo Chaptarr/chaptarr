@@ -69,29 +69,8 @@ class AuthorDetails extends Component {
       allUnselected: false,
       lastToggled: null,
       selectedState: {},
-      selectedTabIndex: 0,
-      resizeKey: 0
+      selectedTabIndex: 0
     };
-  }
-
-  componentDidMount() {
-    // Debounced resize handler to prevent excessive re-renders
-    let resizeTimeout;
-    this.handleWindowResize = () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(() => {
-        // Trigger a state update instead of forceUpdate to be more React-friendly
-        this.setState({ resizeKey: Date.now() });
-      }, 150);
-    };
-    
-    window.addEventListener('resize', this.handleWindowResize);
-  }
-
-  componentWillUnmount() {
-    if (this.handleWindowResize) {
-      window.removeEventListener('resize', this.handleWindowResize);
-    }
   }
 
   //
@@ -429,7 +408,10 @@ class AuthorDetails extends Component {
           </PageToolbarSection>
         </PageToolbar>
 
-        <PageContentBody innerClassName={styles.innerContentBody}>
+        <PageContentBody
+          className={styles.contentBody}
+          innerClassName={styles.innerContentBody}
+        >
           <SwipeHeaderConnector
             className={styles.header}
             nextLink={`/author/${nextAuthor.id}`}
@@ -481,7 +463,6 @@ class AuthorDetails extends Component {
                   authorHasEbookConfig={authorHasEbookConfig}
                   syncMonitoredAcrossFormats={syncMonitoredAcrossFormats}
                   rootFoldersPopulated={rootFoldersPopulated}
-                  resizeKey={this.state.resizeKey}
                 />
             }
             {
@@ -513,14 +494,14 @@ class AuthorDetails extends Component {
                     className={styles.tabList}
                   >
                     <Tab
-                      className={styles.tab}
+                      className={`${styles.tab} ${styles.countTab}`}
                       selectedClassName={styles.selectedTab}
                     >
                       {translate('BooksTotal', [totalBookCount])}
                     </Tab>
 
                     <Tab
-                      className={styles.tab}
+                      className={`${styles.tab} ${styles.countTab}`}
                       selectedClassName={styles.selectedTab}
                     >
                       {translate('SeriesTotal', [visibleSeriesCount])}
@@ -541,7 +522,7 @@ class AuthorDetails extends Component {
                     </Tab>
 
                     <Tab
-                      className={styles.tab}
+                      className={`${styles.tab} ${styles.countTab}`}
                       selectedClassName={styles.selectedTab}
                     >
                       {translate('FilesTotal', [bookFileCount])}

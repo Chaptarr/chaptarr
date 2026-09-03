@@ -5,9 +5,9 @@ import Icon from 'Components/Icon';
 import Button from 'Components/Link/Button';
 import { icons, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
+import BookVisibilityToggle from './BookVisibilityToggle';
 import FilterSearchInput from './FilterSearchInput';
 import MediaTypeToggle from './MediaTypeToggle';
-import MonitorToggleSwitch from './MonitorToggleSwitch';
 import styles from './AuthorDetailsControls.css';
 
 function AuthorDetailsControls(props) {
@@ -23,8 +23,7 @@ function AuthorDetailsControls(props) {
     authorHasAudiobookConfig,
     authorHasEbookConfig,
     syncMonitoredAcrossFormats,
-    rootFoldersPopulated,
-    resizeKey
+    rootFoldersPopulated
   } = props;
 
   // Determine what kind of root folder issue we have for the current media type
@@ -85,7 +84,7 @@ function AuthorDetailsControls(props) {
           <FilterSearchInput authorId={authorId} />
         </div>
         <div className={styles.rightControls}>
-          <MonitorToggleSwitch resizeKey={resizeKey} />
+          <BookVisibilityToggle />
         </div>
       </div>
 
@@ -124,8 +123,7 @@ AuthorDetailsControls.propTypes = {
   authorHasAudiobookConfig: PropTypes.bool,
   authorHasEbookConfig: PropTypes.bool,
   syncMonitoredAcrossFormats: PropTypes.bool,
-  rootFoldersPopulated: PropTypes.bool,
-  resizeKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number])
+  rootFoldersPopulated: PropTypes.bool
 };
 
 export default AuthorDetailsControls;

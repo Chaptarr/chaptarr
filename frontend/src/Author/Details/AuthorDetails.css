@@ -1,3 +1,9 @@
+.contentBody {
+  composes: contentBody from '~Components/Page/PageContentBody.css';
+
+  scrollbar-gutter: stable;
+}
+
 .innerContentBody {
   padding: 0;
 }
@@ -33,7 +39,12 @@
   border: 1px solid transparent;
   border-top: none;
   list-style: none;
+  text-align: center;
   cursor: pointer;
+}
+
+.countTab {
+  width: 110px;
 }
 
 .selectedTab {
@@ -76,6 +87,10 @@
 }
 
 @media only screen and (max-width: $breakpointSmall) {
+  .contentBody {
+    scrollbar-gutter: auto;
+  }
+
   .contentContainer {
     padding: 20px 0;
   }

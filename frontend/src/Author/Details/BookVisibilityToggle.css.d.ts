@@ -2,10 +2,10 @@
 // Please do not change this file!
 interface CssExports {
   'active': string;
-  'toggleContainer': string;
-  'toggleOption': string;
-  'toggleSlider': string;
-  'toggleSwitch': string;
+  'container': string;
+  'option': string;
+  'slider': string;
+  'sliderAll': string;
 }
 export const cssExports: CssExports;
 export default cssExports;

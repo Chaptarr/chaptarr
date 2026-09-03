@@ -6,9 +6,10 @@ import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { kinds, sortDirections } from 'Helpers/Props';
 import hasDifferentItemsOrOrder from 'Utilities/Object/hasDifferentItemsOrOrder';
-import getToggledRange from 'Utilities/Table/getToggledRange';
 import translate from 'Utilities/String/translate';
+import getToggledRange from 'Utilities/Table/getToggledRange';
 import BookRowConnector from './BookRowConnector';
+import tableStyles from './AuthorDetailsBookTable.css';
 import styles from './AuthorDetailsSeason.css';
 
 class AuthorDetailsSeason extends Component {
@@ -96,6 +97,11 @@ class AuthorDetailsSeason extends Component {
       titleColumns = columns.filter((x) => x.name !== 'select');
     }
 
+    titleColumns = titleColumns.map((column) => ({
+      ...column,
+      className: column.className || tableStyles[column.name]
+    }));
+
     if (!hasRootFolder) {
       return (
         <div className={styles.bookType}>
@@ -112,6 +118,7 @@ class AuthorDetailsSeason extends Component {
       >
         <div className={styles.books}>
           <Table
+            className={tableStyles.table}
             columns={titleColumns}
             sortKey={sortKey}
             sortDirection={sortDirection}

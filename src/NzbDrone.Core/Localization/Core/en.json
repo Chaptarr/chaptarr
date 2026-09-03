@@ -291,6 +291,7 @@
   "BookQualityRepackBadge": "R",
   "BookStudio": "Book Studio",
   "BookTitle": "Book Title",
+  "BookVisibilityToggleHelpText": "Wanted shows monitored books and books with files. All shows every book for this author.",
   "Books": "Books",
   "BooksCount": "{count} Books",
   "BooksCountMessage": "{count} books",

@@ -4,7 +4,9 @@ interface CssExports {
   'authorNavigationButton': string;
   'authorNavigationButtons': string;
   'authorUpButton': string;
+  'contentBody': string;
   'contentContainer': string;
+  'countTab': string;
   'errorMessage': string;
   'filterIcon': string;
   'header': string;
