@@ -34,7 +34,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             BookshelfIds = new string[] { };
             MonitorAudiobooks = true;
             MonitorEbooks = true;
-            RefreshIntervalMinutes = 15;
+            RefreshIntervalMinutes = 720;
         }
 
         public string BaseUrl { get; set; }

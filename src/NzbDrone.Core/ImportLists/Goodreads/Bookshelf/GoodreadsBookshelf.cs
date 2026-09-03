@@ -61,7 +61,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             _rootFolderSettingsResolver = rootFolderSettingsResolver;
         }
 
-        private const int DefaultRefreshIntervalMinutes = 15;
+        private const int DefaultRefreshIntervalMinutes = 720;
 
         public override string Name => "Goodreads Bookshelves";
         public override ImportListType ListType => ImportListType.Goodreads;
