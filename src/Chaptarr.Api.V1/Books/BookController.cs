@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.TPL;
 using NzbDrone.Core.AuthorStats;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Commands;
@@ -65,6 +66,9 @@ namespace Chaptarr.Api.V1.Books
 	        private readonly Logger _logger;
 	        private readonly object _importStateLock = new object();
 	        private readonly HashSet<int> _activeImportCommands = new HashSet<int>();
+            private readonly object _bookEditBroadcastLock = new object();
+            private readonly HashSet<int> _pendingBookEditIds = new HashSet<int>();
+            private readonly Debouncer _bookEditBroadcastDebouncer;
 
 	        public BookController(IAuthorService authorService,
 	                          IBookService bookService,
@@ -101,6 +105,7 @@ namespace Chaptarr.Api.V1.Books
             _eventAggregator = eventAggregator;
             _logger = logger;
             _providerAliasService = providerAliasService;
+            _bookEditBroadcastDebouncer = new Debouncer(FlushPendingBookEdits, TimeSpan.FromMilliseconds(500), executeRestartsTimer: true);
 
             PostValidator.RuleFor(s => s.Author).Must(author =>
             {
@@ -232,6 +237,53 @@ namespace Chaptarr.Api.V1.Books
 	                return _activeImportCommands.Count > 0;
 	            }
 	        }
+
+        private void QueueBookEditBroadcast(int bookId)
+        {
+            if (bookId <= 0)
+            {
+                return;
+            }
+
+            var firstInBurst = false;
+            lock (_bookEditBroadcastLock)
+            {
+                firstInBurst = _pendingBookEditIds.Count == 0;
+                _pendingBookEditIds.Add(bookId);
+            }
+
+            // Preserve an immediate row update for ordinary single-book edits. If more
+            // edits arrive in the same burst, the debounced flush replaces hundreds of
+            // fully-loaded row broadcasts with one collection sync.
+            if (firstInBurst)
+            {
+                BroadcastResourceChange(ModelAction.Updated, bookId);
+            }
+
+            _bookEditBroadcastDebouncer.Execute();
+        }
+
+        internal void FlushPendingBookEdits()
+        {
+            try
+            {
+                int pendingCount;
+                lock (_bookEditBroadcastLock)
+                {
+                    pendingCount = _pendingBookEditIds.Count;
+                    _pendingBookEditIds.Clear();
+                }
+
+                if (pendingCount > 1)
+                {
+                    BroadcastResourceChange(ModelAction.Sync);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "[UI-BROADCAST] Failed to flush pending Book updates");
+            }
+        }
 
 	        [HttpPost("import")]
 	        [ProducesResponseType(typeof(ProviderAmbiguityResource), ProviderAmbiguityHelper.StatusCode)]
@@ -1998,10 +2050,7 @@ namespace Chaptarr.Api.V1.Books
         [NonAction]
         public void Handle(BookEditedEvent message)
         {
-            // Always broadcast a fully loaded book resource (editions, files, covers).
-            // In Chaptarr, Books no longer use lazy loading for Editions, so the Book instance on the event
-            // may not contain Editions and can cause the displayed title/cover to "change" on monitor toggles.
-            BroadcastResourceChange(ModelAction.Updated, message.Book.Id);
+            QueueBookEditBroadcast(message.Book.Id);
         }
 
         [NonAction]

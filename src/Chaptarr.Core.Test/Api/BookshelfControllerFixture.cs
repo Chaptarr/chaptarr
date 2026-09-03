@@ -278,6 +278,9 @@ namespace Chaptarr.Core.Test.Api
                         var book = (Book)args[0];
                         UpdatedBooks.Add(book);
                         return book;
+                    case nameof(IBookService.UpdateManyWithLifecycle):
+                        UpdatedBooks.AddRange((List<Book>)args[0]);
+                        return null;
                     default:
                         throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}");
                 }

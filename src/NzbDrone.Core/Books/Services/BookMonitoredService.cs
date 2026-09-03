@@ -117,11 +117,9 @@ namespace NzbDrone.Core.Books
                     }
                 }
 
-                // Use individual update to ensure updates are sent to frontend
-                foreach (var book in books)
-                {
-                    _bookService.UpdateBook(book);
-                }
+                // Persist the monitoring decision as one batch while retaining each
+                // BookEditedEvent and the existing monitoring synchronization rules.
+                _bookService.UpdateManyWithLifecycle(books);
             }
 
             _authorService.UpdateAuthor(author);

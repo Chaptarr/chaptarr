@@ -11,6 +11,7 @@ using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 
@@ -34,6 +35,8 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> AsinMatches { get; set; } = new();
             public List<Edition> IsbnMatches { get; set; } = new();
             public List<Edition> HardcoverMatches { get; set; } = new();
+            public List<Edition> Deleted { get; } = new();
+            public int FindByBookCallCount { get; private set; }
 
             public List<Edition> FindAllByAsin(string asin) => AsinMatches;
             public List<Edition> FindAllByAsin(string asin, BookMediaType? mediaType) => AsinMatches;
@@ -58,7 +61,7 @@ namespace Chaptarr.Core.Test.Books
             public void InsertMany(IList<Edition> model, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(IList<Edition> model) => throw new NotImplementedException();
             public void SetFields(IList<Edition> models, params System.Linq.Expressions.Expression<Func<Edition, object>>[] properties) => throw new NotImplementedException();
-            public void DeleteMany(List<Edition> model) => throw new NotImplementedException();
+            public void DeleteMany(List<Edition> model) => Deleted.AddRange(model);
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
             public void Purge(bool vacuum = false) => throw new NotImplementedException();
             public bool HasItems() => throw new NotImplementedException();
@@ -74,7 +77,11 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> FindAllByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition FindByGoogleBooksEditionId(string googleBooksEditionId) => throw new NotImplementedException();
             public List<Edition> FindAllByGoogleBooksEditionId(string googleBooksEditionId) => throw new NotImplementedException();
-            public List<Edition> FindByBook(IEnumerable<int> ids) => throw new NotImplementedException();
+            public List<Edition> FindByBook(IEnumerable<int> ids)
+            {
+                FindByBookCallCount++;
+                return new List<Edition>();
+            }
             public List<Edition> FindByAuthor(int id) => throw new NotImplementedException();
             public List<Edition> FindByAuthorId(int id, bool onlyMonitored) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
@@ -140,6 +147,28 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(edition?.Id, Is.EqualTo(1));
             Assert.That(logs.Logs.Any(log => log.StartsWith("Warn|", StringComparison.Ordinal) && log.Contains("legacy singular lookup", StringComparison.Ordinal)), Is.True);
+        }
+
+        [Test]
+        public void book_delete_should_reuse_the_hydrated_edition_snapshot()
+        {
+            var edition = new Edition { Id = 123, BookId = 42, Title = "Great Expectations" };
+            var book = new Book
+            {
+                Id = 42,
+                Title = "Great Expectations",
+                Editions = new List<Edition> { edition }
+            };
+            var repo = new StubEditionRepository();
+            var service = new EditionService(repo, new StubEventAggregator(), LogManager.GetCurrentClassLogger());
+
+            service.Handle(new BookDeletedEvent(book, deleteFiles: false, addImportListExclusion: false));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(repo.FindByBookCallCount, Is.Zero);
+                Assert.That(repo.Deleted, Is.EqualTo(new[] { edition }));
+            });
         }
 
         [Test]

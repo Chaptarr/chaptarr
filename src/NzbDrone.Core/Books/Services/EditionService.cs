@@ -481,7 +481,10 @@ namespace NzbDrone.Core.Books
 
         public void Handle(BookDeletedEvent message)
         {
-            var editions = GetEditionsByBook(message.Book.Id);
+            // BookService snapshots editions before deletion so notifications and
+            // asynchronous cleanup retain the full book shape. Reuse that snapshot
+            // instead of querying the same editions again for every deleted book.
+            var editions = message.Book.Editions ?? GetEditionsByBook(message.Book.Id);
             DeleteMany(editions);
         }
 

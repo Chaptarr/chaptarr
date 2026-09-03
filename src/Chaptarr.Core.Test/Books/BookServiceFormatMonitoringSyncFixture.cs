@@ -132,8 +132,28 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubEditionService : IEditionService
         {
-            public List<Edition> GetEditionsByBook(int bookId) => new();
-            public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds) => new();
+            private readonly List<Edition> _editions;
+
+            public StubEditionService(IEnumerable<Edition> editions = null)
+            {
+                _editions = (editions ?? Enumerable.Empty<Edition>()).ToList();
+            }
+
+            public int SingleBookLookupCount { get; private set; }
+            public int BulkBookLookupCount { get; private set; }
+
+            public List<Edition> GetEditionsByBook(int bookId)
+            {
+                SingleBookLookupCount++;
+                return _editions.Where(edition => edition.BookId == bookId).ToList();
+            }
+
+            public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds)
+            {
+                BulkBookLookupCount++;
+                var ids = bookIds.ToHashSet();
+                return _editions.Where(edition => ids.Contains(edition.BookId)).ToList();
+            }
             public Edition GetEdition(int id) => throw new NotImplementedException();
             public List<Edition> GetEditions(IEnumerable<int> ids) => throw new NotImplementedException();
             public Edition GetEditionByForeignEditionId(string foreignEditionId) => throw new NotImplementedException();
@@ -165,7 +185,13 @@ namespace Chaptarr.Core.Test.Books
                 _authors = authors.ToDictionary(author => author.Id);
             }
 
-            public Author GetAuthor(int authorId) => _authors.TryGetValue(authorId, out var author) ? author : null;
+            public int GetAuthorCallCount { get; private set; }
+
+            public Author GetAuthor(int authorId)
+            {
+                GetAuthorCallCount++;
+                return _authors.TryGetValue(authorId, out var author) ? author : null;
+            }
 
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
@@ -293,11 +319,11 @@ namespace Chaptarr.Core.Test.Books
             return book;
         }
 
-        private static BookService BuildService(StubBookRepository repository, StubAuthorService authorService, StubEventAggregator eventAggregator = null, IRootFolderService rootFolderService = null)
+        private static BookService BuildService(StubBookRepository repository, StubAuthorService authorService, StubEventAggregator eventAggregator = null, IRootFolderService rootFolderService = null, StubEditionService editionService = null)
         {
             return new BookService(
                 repository,
-                new StubEditionService(),
+                editionService ?? new StubEditionService(),
                 eventAggregator ?? new StubEventAggregator(),
                 authorService,
                 mediaFileService: null,
@@ -628,6 +654,38 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repository.Get(first.Id), Is.Null);
             Assert.That(repository.Get(second.Id), Is.Null);
             Assert.That(events.Published.OfType<BookDeletedEvent>().Count(), Is.EqualTo(2));
+        }
+
+        [Test]
+        public void delete_many_should_bulk_hydrate_author_and_editions_before_publishing_events()
+        {
+            var author = BuildAuthor(1);
+            var first = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
+            var second = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-2", monitored: true);
+            first.Author = null;
+            first.AuthorId = author.Id;
+            second.Author = null;
+            second.AuthorId = author.Id;
+
+            var firstEdition = new Edition { Id = 100, BookId = first.Id, Title = "First edition" };
+            var secondEdition = new Edition { Id = 101, BookId = second.Id, Title = "Second edition" };
+            var editions = new StubEditionService(new[] { firstEdition, secondEdition });
+            var authors = new StubAuthorService(new[] { author });
+            var repository = new StubBookRepository(new[] { first, second });
+            var events = new StubEventAggregator();
+            var service = BuildService(repository, authors, events, editionService: editions);
+
+            service.DeleteMany(new List<Book> { first, second });
+
+            var deleted = events.Published.OfType<BookDeletedEvent>().ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(authors.GetAuthorCallCount, Is.EqualTo(1));
+                Assert.That(editions.BulkBookLookupCount, Is.EqualTo(1));
+                Assert.That(editions.SingleBookLookupCount, Is.Zero);
+                Assert.That(deleted.Single(item => item.Book.Id == first.Id).Book.Editions, Is.EqualTo(new[] { firstEdition }));
+                Assert.That(deleted.Single(item => item.Book.Id == second.Id).Book.Editions, Is.EqualTo(new[] { secondEdition }));
+            });
         }
     }
 }

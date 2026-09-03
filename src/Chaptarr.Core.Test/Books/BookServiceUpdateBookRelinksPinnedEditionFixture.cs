@@ -6,6 +6,7 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
@@ -31,6 +32,9 @@ namespace Chaptarr.Core.Test.Books
         {
             private readonly Dictionary<int, Book> _booksById;
 
+            public int UpdateCallCount { get; private set; }
+            public int UpdateManyCallCount { get; private set; }
+
             public StubBookRepository(IEnumerable<Book> books)
             {
                 _booksById = books.ToDictionary(b => b.Id);
@@ -46,8 +50,14 @@ namespace Chaptarr.Core.Test.Books
                 return ids.Select(id => _booksById[id]).ToList();
             }
 
+            public IEnumerable<Book> FindExisting(IEnumerable<int> ids)
+            {
+                return ids.Where(id => _booksById.ContainsKey(id)).Select(id => _booksById[id]).ToList();
+            }
+
             public Book Update(Book model)
             {
+                UpdateCallCount++;
                 _booksById[model.Id] = model;
                 return model;
             }
@@ -62,7 +72,14 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
-            public void UpdateMany(IList<Book> model) => throw new NotImplementedException();
+            public void UpdateMany(IList<Book> model)
+            {
+                UpdateManyCallCount++;
+                foreach (var book in model)
+                {
+                    _booksById[book.Id] = book;
+                }
+            }
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => throw new NotImplementedException();
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
@@ -74,7 +91,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetBooks(int authorId) => throw new NotImplementedException();
             public List<Book> GetLastBooks(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetNextBooks(IEnumerable<int> authorIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooksByAuthorId(int authorId) => _booksById.Values.Where(book => book.AuthorId == authorId).ToList();
             public List<Book> GetBooksForRefresh(int authorId, IEnumerable<string> providerIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
@@ -122,6 +139,8 @@ namespace Chaptarr.Core.Test.Books
         {
             private readonly List<Edition> _editions;
 
+            public List<Edition> UpdatedEditions { get; } = new();
+
             public StubEditionService(IEnumerable<Edition> editions)
             {
                 _editions = editions.ToList();
@@ -147,7 +166,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
-            public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions) => UpdatedEditions.AddRange(editions);
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
@@ -208,13 +227,19 @@ namespace Chaptarr.Core.Test.Books
             private readonly List<BookFile> _files;
 
             public List<BookFile> UpdatedFiles { get; } = new();
+            public int SingleBookLookupCount { get; private set; }
+            public int BulkBookLookupCount { get; private set; }
 
             public StubMediaFileService(IEnumerable<BookFile> files)
             {
                 _files = files.ToList();
             }
 
-            public List<BookFile> GetFilesByBook(int bookId) => _files.Where(f => f.Edition?.BookId == bookId).ToList();
+            public List<BookFile> GetFilesByBook(int bookId)
+            {
+                SingleBookLookupCount++;
+                return _files.Where(f => f.Edition?.BookId == bookId).ToList();
+            }
 
             public List<BookFile> GetFilesByEdition(int editionId) => _files.Where(f => f.EditionId == editionId).ToList();
 
@@ -234,7 +259,11 @@ namespace Chaptarr.Core.Test.Books
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public List<System.IO.Abstractions.IFileInfo> FilterUnchangedFiles(List<System.IO.Abstractions.IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
             public List<BookFile> GetFilesByAuthor(int authorId) => throw new NotImplementedException();
-            public List<BookFile> GetFilesByBooks(List<int> bookIds) => _files.Where(f => f.Edition != null && bookIds.Contains(f.Edition.BookId)).ToList();
+            public List<BookFile> GetFilesByBooks(List<int> bookIds)
+            {
+                BulkBookLookupCount++;
+                return _files.Where(f => f.Edition != null && bookIds.Contains(f.Edition.BookId)).ToList();
+            }
             public List<BookFile> GetUnmappedFiles() => throw new NotImplementedException();
             public BookFile Get(int id) => throw new NotImplementedException();
             public List<BookFile> Get(IEnumerable<int> ids) => throw new NotImplementedException();
@@ -321,8 +350,13 @@ namespace Chaptarr.Core.Test.Books
 
             var updated = service.UpdateBook(requestBook);
 
-            Assert.That(updated.AudiobookMonitored, Is.EqualTo(mediaType == BookMediaType.Audiobook));
-            Assert.That(updated.EbookMonitored, Is.EqualTo(mediaType == BookMediaType.Ebook));
+            Assert.Multiple(() =>
+            {
+                Assert.That(updated.AudiobookMonitored, Is.EqualTo(mediaType == BookMediaType.Audiobook));
+                Assert.That(updated.EbookMonitored, Is.EqualTo(mediaType == BookMediaType.Ebook));
+                Assert.That(repository.UpdateCallCount, Is.Zero);
+                Assert.That(repository.UpdateManyCallCount, Is.EqualTo(1));
+            });
         }
 
         [Test]
@@ -391,6 +425,261 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(mediaFiles.UpdatedFiles, Has.Count.EqualTo(1));
             Assert.That(mediaFiles.UpdatedFiles[0].Id, Is.EqualTo(file.Id));
             Assert.That(mediaFiles.UpdatedFiles[0].EditionId, Is.EqualTo(newEdition.Id));
+        }
+
+        [Test]
+        public void update_many_with_lifecycle_should_bulk_persist_and_keep_per_book_events()
+        {
+            var author = new Author
+            {
+                Id = 10,
+                Name = "Charles Dickens",
+                SyncMonitoredAcrossFormats = false,
+                AudiobookMonitored = true
+            };
+            var storedBooks = new[]
+            {
+                new Book { Id = 1, AuthorId = author.Id, Title = "Bleak House", MediaType = BookMediaType.Audiobook },
+                new Book { Id = 2, AuthorId = author.Id, Title = "David Copperfield", MediaType = BookMediaType.Audiobook }
+            };
+            var changedBooks = storedBooks.Select(book => new Book
+            {
+                Id = book.Id,
+                AuthorId = book.AuthorId,
+                Author = author,
+                Title = book.Title,
+                MediaType = book.MediaType,
+                AudiobookMonitored = true,
+                Editions = new List<Edition>()
+            }).ToList();
+            var repository = new StubBookRepository(storedBooks);
+            var events = new StubEventAggregator();
+            var mediaFiles = new StubMediaFileService(Array.Empty<BookFile>());
+            var service = new BookService(
+                repository,
+                new StubEditionService(Array.Empty<Edition>()),
+                events,
+                new StubAuthorService(new[] { author }),
+                mediaFiles,
+                rootFolderService: null,
+                seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
+                multiCopySeriesService: null,
+                logger: LogManager.GetCurrentClassLogger());
+
+            service.UpdateManyWithLifecycle(changedBooks);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(repository.UpdateCallCount, Is.Zero);
+                Assert.That(repository.UpdateManyCallCount, Is.EqualTo(1));
+                Assert.That(mediaFiles.BulkBookLookupCount, Is.EqualTo(1));
+                Assert.That(mediaFiles.SingleBookLookupCount, Is.Zero);
+                Assert.That(events.PublishedEvents.OfType<BookEditedEvent>().Count(), Is.EqualTo(2));
+                Assert.That(repository.Get(1).AudiobookMonitored, Is.True);
+                Assert.That(repository.Get(2).AudiobookMonitored, Is.True);
+            });
+        }
+
+        [Test]
+        public void update_many_with_lifecycle_should_preserve_narrator_cleanup_and_pinned_file_relinking()
+        {
+            var author = new Author
+            {
+                Id = 10,
+                Name = "Charles Dickens",
+                SyncMonitoredAcrossFormats = false,
+                AudiobookMonitored = true,
+                EbookMonitored = true
+            };
+            var storedAudio = new Book
+            {
+                Id = 1,
+                AuthorId = author.Id,
+                Title = "Great Expectations",
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = true
+            };
+            var storedEbook = new Book
+            {
+                Id = 2,
+                AuthorId = author.Id,
+                Title = "Oliver Twist",
+                MediaType = BookMediaType.Ebook,
+                Narrator = "Not applicable"
+            };
+            var oldEdition = new Edition { Id = 100, BookId = storedAudio.Id, Title = "Old", Monitored = false };
+            var pinnedEdition = new Edition { Id = 101, BookId = storedAudio.Id, Title = "Pinned", Monitored = true };
+            var file = new BookFile
+            {
+                Id = 50,
+                EditionId = oldEdition.Id,
+                Edition = oldEdition,
+                Path = "/audiobooks/great-expectations.m4b",
+                MediaType = "audiobook"
+            };
+            var changedAudio = new Book
+            {
+                Id = storedAudio.Id,
+                AuthorId = author.Id,
+                Author = author,
+                Title = storedAudio.Title,
+                MediaType = storedAudio.MediaType,
+                AudiobookMonitored = true,
+                AnyEditionOk = false,
+                Editions = new List<Edition> { oldEdition, pinnedEdition }
+            };
+            var changedEbook = new Book
+            {
+                Id = storedEbook.Id,
+                AuthorId = author.Id,
+                Author = author,
+                Title = storedEbook.Title,
+                MediaType = storedEbook.MediaType,
+                EbookMonitored = true,
+                Narrator = storedEbook.Narrator,
+                Editions = new List<Edition>()
+            };
+            var repository = new StubBookRepository(new[] { storedAudio, storedEbook });
+            var mediaFiles = new StubMediaFileService(new[] { file });
+            var service = new BookService(
+                repository,
+                new StubEditionService(new[] { oldEdition, pinnedEdition }),
+                new StubEventAggregator(),
+                new StubAuthorService(new[] { author }),
+                mediaFiles,
+                rootFolderService: null,
+                seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
+                multiCopySeriesService: null,
+                logger: LogManager.GetCurrentClassLogger());
+
+            service.UpdateManyWithLifecycle(new List<Book> { changedAudio, changedEbook });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(repository.Get(changedEbook.Id).Narrator, Is.Null);
+                Assert.That(mediaFiles.UpdatedFiles, Has.Count.EqualTo(1));
+                Assert.That(mediaFiles.UpdatedFiles[0].EditionId, Is.EqualTo(pinnedEdition.Id));
+                Assert.That(mediaFiles.BulkBookLookupCount, Is.EqualTo(1));
+                Assert.That(mediaFiles.SingleBookLookupCount, Is.Zero);
+            });
+        }
+
+        [Test]
+        public void update_book_should_mark_the_persisted_monitored_edition_when_narrator_changes()
+        {
+            var author = new Author
+            {
+                Id = 10,
+                Name = "Charles Dickens",
+                AudiobookMonitored = true
+            };
+            var storedBook = new Book
+            {
+                Id = 1,
+                AuthorId = author.Id,
+                Title = "Bleak House",
+                MediaType = BookMediaType.Audiobook
+            };
+            var persistedEdition = new Edition
+            {
+                Id = 100,
+                BookId = storedBook.Id,
+                Title = "Persisted Edition",
+                Monitored = true
+            };
+            var requestBook = new Book
+            {
+                Id = storedBook.Id,
+                AuthorId = author.Id,
+                Author = author,
+                Title = storedBook.Title,
+                MediaType = storedBook.MediaType,
+                Narrator = "Simon Vance",
+                Editions = new List<Edition>()
+            };
+            var repository = new StubBookRepository(new[] { storedBook });
+            var editions = new StubEditionService(new[] { persistedEdition });
+            var service = new BookService(
+                repository,
+                editions,
+                new StubEventAggregator(),
+                new StubAuthorService(new[] { author }),
+                new StubMediaFileService(Array.Empty<BookFile>()),
+                rootFolderService: null,
+                seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
+                multiCopySeriesService: null,
+                logger: LogManager.GetCurrentClassLogger());
+
+            service.UpdateBook(requestBook);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(persistedEdition.ManualAdd, Is.True);
+                Assert.That(editions.UpdatedEditions, Has.Count.EqualTo(1));
+                Assert.That(editions.UpdatedEditions[0].Id, Is.EqualTo(persistedEdition.Id));
+            });
+        }
+
+        [Test]
+        public void update_book_should_throw_model_not_found_when_the_book_no_longer_exists()
+        {
+            var service = new BookService(
+                new StubBookRepository(Array.Empty<Book>()),
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubEventAggregator(),
+                new StubAuthorService(Array.Empty<Author>()),
+                new StubMediaFileService(Array.Empty<BookFile>()),
+                rootFolderService: null,
+                seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
+                multiCopySeriesService: null,
+                logger: LogManager.GetCurrentClassLogger());
+
+            Assert.Throws<ModelNotFoundException>(() => service.UpdateBook(new Book { Id = 404 }));
+        }
+
+        [Test]
+        public void update_many_with_lifecycle_should_skip_books_that_no_longer_exist()
+        {
+            var author = new Author { Id = 10, Name = "Charles Dickens" };
+            var storedBook = new Book
+            {
+                Id = 1,
+                AuthorId = author.Id,
+                Title = "Bleak House",
+                MediaType = BookMediaType.Audiobook
+            };
+            var repository = new StubBookRepository(new[] { storedBook });
+            var service = new BookService(
+                repository,
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubEventAggregator(),
+                new StubAuthorService(new[] { author }),
+                new StubMediaFileService(Array.Empty<BookFile>()),
+                rootFolderService: null,
+                seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
+                multiCopySeriesService: null,
+                logger: LogManager.GetCurrentClassLogger());
+
+            service.UpdateManyWithLifecycle(new List<Book>
+            {
+                new Book
+                {
+                    Id = storedBook.Id,
+                    AuthorId = author.Id,
+                    Author = author,
+                    Title = storedBook.Title,
+                    MediaType = storedBook.MediaType,
+                    AudiobookMonitored = true,
+                    Editions = new List<Edition>()
+                },
+                new Book { Id = 404, AuthorId = author.Id, MediaType = BookMediaType.Audiobook }
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(repository.UpdateManyCallCount, Is.EqualTo(1));
+                Assert.That(repository.Get(storedBook.Id).AudiobookMonitored, Is.True);
+            });
         }
     }
 }

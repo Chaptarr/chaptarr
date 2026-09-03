@@ -1599,15 +1599,10 @@ namespace Chaptarr.Api.V1.Author
         [NonAction]
         public void Handle(BookEditedEvent message)
         {
-            // ALWAYS fetch fresh author data to ensure we have complete data including images
-            // Don't trust message.Book.Author as it may be partial/lazy-loaded
-            if (message.Book.AuthorId > 0)
-            {
-                var author = _authorService.GetAuthor(message.Book.AuthorId);
-                BroadcastResourceChange(ModelAction.Updated, GetAuthorResource(author));
-            }
-            // If we can't determine the author ID, skip the broadcast
-            // (this should rarely happen with properly structured data)
+            // Monitoring an author can edit hundreds of child books in one operation.
+            // Reuse the existing author-update coalescer instead of loading and broadcasting
+            // the same fully populated author once for every edited book.
+            QueueAuthorUpdate(message.Book.AuthorId);
         }
 
         [NonAction]
