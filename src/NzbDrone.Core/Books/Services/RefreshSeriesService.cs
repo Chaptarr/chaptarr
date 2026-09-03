@@ -157,7 +157,10 @@ namespace NzbDrone.Core.Books
                         SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
                         Book = matchingBook,
                         BookId = matchingBook.Id,
-                        IsPrimary = true,
+
+                        // Null means the metadata API didn't surface a primary flag for this slot;
+                        // default to true so not-yet-refreshed series keep their existing membership.
+                        IsPrimary = seriesBook.IsPrimary ?? true,
                         SeriesInstanceType = seriesInstanceType
                     });
                 }
@@ -355,7 +358,10 @@ namespace NzbDrone.Core.Books
                             SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
                             Book = matchingBook,
                             BookId = matchingBook.Id,
-                            IsPrimary = true,
+
+                            // Null means the metadata API didn't surface a primary flag for this slot;
+                            // default to true so not-yet-refreshed series keep their existing membership.
+                            IsPrimary = seriesBook.IsPrimary ?? true,
                             SeriesInstanceType = seriesInstanceType
                         };
 

@@ -255,6 +255,199 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             };
         }
 
+        private static Book CreateSeriesBook(string title, string workId, BookMediaType mediaType, params SeriesBookLink[] seriesLinks)
+        {
+            return new Book
+            {
+                Title = title,
+                GoodreadsWorkId = workId,
+                MediaType = mediaType,
+                SeriesLinks = seriesLinks?.ToList(),
+                Editions = new List<Edition>
+                {
+                    new Edition { ForeignEditionId = $"{workId}-{mediaType}", Title = title }
+                }
+            };
+        }
+
+        private static MetadataProfileService CreateService(MetadataProfile profile, Author dbAuthor = null, List<Book> localBooks = null, List<Edition> localEditions = null, List<BookFile> localFiles = null)
+        {
+            return new MetadataProfileService(
+                profileRepository: new StubMetadataProfileRepository(new[] { profile }),
+                authorService: dbAuthor == null ? null : new StubAuthorService(dbAuthor),
+                bookService: localBooks == null ? null : new StubBookService(localBooks),
+                editionService: localEditions == null ? null : new StubEditionService(localEditions),
+                mediaFileService: new StubMediaFileService(localFiles ?? new List<BookFile>()),
+                importListFactory: null,
+                rootFolderService: null,
+                termMatcherService: new StubTermMatcherService(),
+                eventAggregator: null,
+                logger: LogManager.GetCurrentClassLogger());
+        }
+
+        [Test]
+        public void should_filter_only_books_with_exclusively_secondary_series_links()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.SkipSeriesSecondary = true;
+
+            var primaryBook = CreateSeriesBook(
+                "A Game of Thrones",
+                "gr:1216467",
+                BookMediaType.Ebook,
+                new SeriesBookLink { IsPrimary = true, Position = "1" },
+                new SeriesBookLink { IsPrimary = false, Position = "2" });
+            var secondaryBook = CreateSeriesBook(
+                "The Hedge Knight",
+                "gr:1466917",
+                BookMediaType.Ebook,
+                new SeriesBookLink { IsPrimary = false, Position = "0.5" });
+            // BookInfoProxy normalizes a missing V5 isPrimary flag to true before this filter.
+            var unflaggedBook = CreateSeriesBook(
+                "The World of Ice & Fire",
+                "gr:22083575",
+                BookMediaType.Ebook,
+                new SeriesBookLink { IsPrimary = true, Position = "0.4" });
+            var noSeriesBook = CreateSeriesBook(
+                "Fevre Dream",
+                "gr:382450",
+                BookMediaType.Ebook,
+                null);
+
+            var remoteAuthor = new Author
+            {
+                Books = new List<Book> { primaryBook, secondaryBook, unflaggedBook, noSeriesBook }
+            };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result.Select(x => x.Title), Is.EquivalentTo(new[]
+            {
+                primaryBook.Title,
+                unflaggedBook.Title,
+                noSeriesBook.Title
+            }));
+        }
+
+        [Test]
+        public void should_filter_series_secondary_per_media_type()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.SkipSeriesSecondary = true;
+
+            var audiobook = CreateSeriesBook(
+                "A Game of Thrones",
+                "gr:1216467",
+                BookMediaType.Audiobook,
+                new SeriesBookLink { IsPrimary = true, Position = "1" });
+            var ebook = CreateSeriesBook(
+                "A Game of Thrones",
+                "gr:1216467",
+                BookMediaType.Ebook,
+                new SeriesBookLink { IsPrimary = false, Position = "1" });
+            var remoteAuthor = new Author { Books = new List<Book> { audiobook, ebook } };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result.Select(x => x.MediaType), Is.EqualTo(new[] { BookMediaType.Audiobook }));
+        }
+
+        [Test]
+        public void should_filter_value_equal_remote_pockets_independently()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.SkipSeriesSecondary = true;
+
+            var secondaryPocket = CreateSeriesBook(
+                "A Game of Thrones",
+                "gr:1216467",
+                BookMediaType.Ebook,
+                new SeriesBookLink { IsPrimary = false, Position = "1" });
+            secondaryPocket.Editions.Single().ForeignEditionId = "gr:edition-secondary";
+
+            var primaryPocket = CreateSeriesBook(
+                "A Game of Thrones",
+                "gr:1216467",
+                BookMediaType.Ebook,
+                new SeriesBookLink { IsPrimary = true, Position = "1" });
+            primaryPocket.Editions.Single().ForeignEditionId = "gr:edition-primary";
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(secondaryPocket.Equals(primaryPocket), Is.True, "edition and series-link differences are excluded from Book value equality");
+                Assert.That(secondaryPocket, Is.Not.SameAs(primaryPocket));
+            });
+
+            var result = CreateService(profile).FilterBooks(
+                new Author { Books = new List<Book> { secondaryPocket, primaryPocket } },
+                profile.Id);
+
+            Assert.That(result, Is.EqualTo(new[] { primaryPocket }));
+        }
+
+        [TestCase("5.5,6.5,7.5", 1)]
+        [TestCase("1,2,3", 0)]
+        [TestCase("1-3", 0)]
+        public void should_classify_series_slots_when_skipping_parts_and_sets(string position, int expectedCount)
+        {
+            var profile = CreateProfile(id: 1);
+            profile.SkipPartsAndSets = true;
+
+            var book = CreateSeriesBook(
+                "The Complete Tales of Dunk and Egg",
+                "gr:18635622",
+                BookMediaType.Ebook,
+                new SeriesBookLink { IsPrimary = true, Position = position });
+
+            var result = CreateService(profile).FilterBooks(new Author { Books = new List<Book> { book } }, profile.Id);
+
+            Assert.That(result, Has.Count.EqualTo(expectedCount));
+        }
+
+        [Test]
+        public void should_keep_secondary_series_book_with_an_existing_file()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.SkipSeriesSecondary = true;
+            var dbAuthor = new Author { Id = 1, Name = "George R. R. Martin" };
+            var localBook = CreateSeriesBook("The Hedge Knight", "gr:1466917", BookMediaType.Audiobook);
+            localBook.Id = 10;
+            localBook.AuthorId = dbAuthor.Id;
+            var localEdition = localBook.Editions.Single();
+            localEdition.Id = 20;
+            localEdition.BookId = localBook.Id;
+            localEdition.Book = localBook;
+            var localFile = new BookFile
+            {
+                Id = 30,
+                EditionId = localEdition.Id,
+                Edition = localEdition,
+                MediaType = "audiobook",
+                Path = "/audiobooks/George R. R. Martin/The Hedge Knight.m4b"
+            };
+            var remoteBook = CreateSeriesBook(
+                localBook.Title,
+                localBook.GoodreadsWorkId,
+                BookMediaType.Audiobook,
+                new SeriesBookLink { IsPrimary = false, Position = "0.5" });
+            var remoteAuthor = new Author
+            {
+                Id = dbAuthor.Id,
+                Name = dbAuthor.Name,
+                Books = new List<Book> { remoteBook }
+            };
+
+            var result = CreateService(
+                profile,
+                dbAuthor,
+                new List<Book> { localBook },
+                new List<Edition> { localEdition },
+                new List<BookFile> { localFile })
+                .FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result, Has.Count.EqualTo(1));
+        }
+
         [Test]
         public void should_keep_book_when_page_count_equals_minimum_pages()
         {
