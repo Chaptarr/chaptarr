@@ -243,6 +243,7 @@ namespace NzbDrone.Core.Update
                         Fixed = new List<string>
                         {
                             "The Updates page no longer says you are on the latest version when a newer release exists. Thanks chunni!",
+                            "System Status now warns when a newer release is available.",
                             "The book list on an author page keeps its column widths steady."
                         }
                     }
