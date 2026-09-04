@@ -164,6 +164,61 @@ namespace Chaptarr.Core.Test.CustomFormats
         }
 
         [Test]
+        public void preferred_narrator_spec_should_match_trailing_parenthetical_narrator()
+        {
+            var spec = new PreferredNarratorSpecification();
+
+            var result = spec.IsSatisfiedBy(new CustomFormatInput
+            {
+                MediaType = BookMediaType.Audiobook,
+                PreferredNarratorNames = new List<string> { "Roy Dotrice" },
+                AudioProductionFields = new List<string> { "George R.R. Martin - A Feast for Crows (Roy Dotrice)" }
+            });
+
+            Assert.That(result, Is.True);
+        }
+
+        [Test]
+        public void narrator_names_spec_should_match_trailing_parenthetical_narrator()
+        {
+            var spec = new NarratorNamesSpecification { Names = new[] { "Jim Dale" } };
+
+            var result = spec.IsSatisfiedBy(new CustomFormatInput
+            {
+                MediaType = BookMediaType.Audiobook,
+                AudioProductionFields = new List<string> { "Harry Potter and the Chamber of Secrets (Jim Dale)" }
+            });
+
+            Assert.That(result, Is.True);
+        }
+
+        [TestCase("A Feast for Crows (2011)")]
+        [TestCase("A Feast for Crows (M4B-64)")]
+        [TestCase("A Feast for Crows (Unabridged)")]
+        [TestCase("A Feast for Crows (Retail MP3)")]
+        [TestCase("A Feast for Crows (64 kbps)")]
+        [TestCase("A Feast for Crows (--FIXED--)")]
+        public void parenthetical_release_metadata_should_not_be_extracted_as_a_narrator(string title)
+        {
+            var evidence = ReleaseNarratorEvidenceExtractor.Extract(new CustomFormatInput
+            {
+                MediaType = BookMediaType.Audiobook,
+                AudioProductionFields = new List<string> { title }
+            });
+
+            Assert.That(evidence.Names, Is.Empty);
+        }
+
+        [Test]
+        public void explicit_narrator_label_should_not_capture_the_closing_parenthesis_or_year()
+        {
+            var narrator = PreferredNarratorMatcher.ExtractNarratorFromFields(
+                new[] { "The Martian (Narrator R. C. Bray 2014)" });
+
+            Assert.That(narrator, Is.EqualTo("R. C. Bray"));
+        }
+
+        [Test]
         public void unlabelled_narrator_should_match_only_when_it_matches_the_target()
         {
             var spec = new PreferredNarratorSpecification();
