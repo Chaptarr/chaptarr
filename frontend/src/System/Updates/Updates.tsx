@@ -102,7 +102,12 @@ function Updates() {
     };
   }, [currentVersion, items]);
 
-  const noUpdateToInstall = hasUpdates && !hasUpdateToInstall;
+  // Release notes can announce newer versions without an installable package.
+  // The API sorts newest first; an absent installed row cannot establish currency.
+  const installedVersionIndex = items.findIndex((update) => update.installed);
+  const isOnLatestVersion = installedVersionIndex === 0;
+  const showVersionStatus =
+    hasUpdates && !hasUpdateToInstall && installedVersionIndex !== -1;
 
   const handleInstallLatestPress = useCallback(() => {
     if (isMajorUpdate) {
@@ -174,14 +179,18 @@ function Updates() {
           </div>
         ) : null}
 
-        {noUpdateToInstall && (
+        {showVersionStatus && (
           <div className={styles.messageContainer}>
             <Icon
-              className={styles.upToDateIcon}
-              name={icons.CHECK_CIRCLE}
+              className={isOnLatestVersion ? styles.upToDateIcon : undefined}
+              name={isOnLatestVersion ? icons.CHECK_CIRCLE : icons.INFO}
               size={30}
             />
-            <div className={styles.message}>{translate('OnLatestVersion')}</div>
+            <div className={styles.message}>
+              {translate(
+                isOnLatestVersion ? 'OnLatestVersion' : 'UpdateAvailable'
+              )}
+            </div>
 
             {isFetching && (
               <LoadingIndicator className={styles.loading} size={20} />
