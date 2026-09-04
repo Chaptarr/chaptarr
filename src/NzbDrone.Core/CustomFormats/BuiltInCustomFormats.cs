@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace NzbDrone.Core.CustomFormats
 {
@@ -130,7 +131,7 @@ namespace NzbDrone.Core.CustomFormats
 
         private static bool HasKnownName(string value, params string[] knownNames)
         {
-            return knownNames.Contains(value, StringComparer.Ordinal);
+            return ((IEnumerable<string>)knownNames).Contains(value, StringComparer.Ordinal);
         }
 
         public static IEnumerable<CustomFormat> All()

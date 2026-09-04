@@ -8,6 +8,11 @@
 FROM --platform=$BUILDPLATFORM node:20.11.1-bookworm-slim AS node
 RUN npm install -g yarn@1.22.22 --force
 
+###### browser stage ######
+FROM node:20.11.1-bookworm-slim AS browser
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npx playwright install --with-deps chromium
+
 ###### mp4v2 stage ######
 FROM --platform=$TARGETPLATFORM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6a60359c29aff84bfacbd8597a4237038c7ccd7628a2d AS mp4v2
 
@@ -59,6 +64,10 @@ RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
 # This stage runs on the target platform
 FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:10.0
 
+# Copy Playwright Chromium from the browser stage
+COPY --from=browser /ms-playwright /ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # Install runtime dependencies (these are architecture-specific)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -69,7 +78,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         php-cli php-mbstring php-xml php-json php-curl php-zip \
         wget \
         gosu \
-        sqlite3 libsqlite3-0; \
+        sqlite3 libsqlite3-0 \
+        libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+        libpango-1.0-0 libcairo2 libdbus-1-3 fonts-liberation libxshmfence1; \
     rm -rf /var/lib/apt/lists/*
 
 # Copy pinned mp4v2 tools used by m4b-tool for chapter and tag writes. These

@@ -88,7 +88,8 @@ namespace NzbDrone.Core.Annotations
         OAuth,
         Device,
         Bookshelf,
-        TagSelect
+        TagSelect,
+        TextArea
     }
 
     public enum HiddenType

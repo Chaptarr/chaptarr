@@ -98,6 +98,47 @@ Environment variables:
 
 Note: Chaptarr does not create PostgreSQL databases automatically; create the databases and grant the configured user access.
 
+### Direct Download sources
+
+Direct Download is a neutral, ebook-only indexer and download client. It does not provide audiobook searches, recent-item feeds, arbitrary source discovery, or a separate download workflow. Configure it only with sources you are allowed to access and use.
+
+#### Configure the indexer
+
+1. Add the **Direct Download** indexer.
+2. Enter one absolute `http://` or `https://` URL per line in **URLs**.
+3. Optionally enter an **API Key**. Leave it blank when the selected source does not require one.
+4. Save the indexer and select the **Direct Download** client for it.
+
+Blank lines are ignored. Duplicate URLs are removed case-insensitively, and trailing slashes are normalized. The first occurrence remains in the configured order. Chaptarr never reorders the list or stores probe health as part of the settings. The provider Test action validates the URL list only. It does not contact the URLs, so a successful Test does not prove that a source is reachable or that it has a matching book.
+
+The API Key field is masked. A saved key is preserved when the indexer is edited or included in a settings backup, while API responses, logs, and validation errors must not reveal its value. Do not put credentials in a URL. If different URLs use different credentials, create separate indexers rather than placing them in one fallback list. A key must not be copied into a fallback URL or sent to a host that was not selected for the request.
+
+#### Ordering, probing, and fallback
+
+During an ebook search, Chaptarr checks the configured URLs from top to bottom. It prefers the book ISBN when one is available, then falls back to the monitored edition title. A URL is selected only after it returns a supported response with usable ebook results. Chaptarr moves to the next URL when the current one is unsafe, unavailable, times out, returns an unsupported response, or produces no usable result. It stops after the first successful URL and does not probe later entries for that search.
+
+Each request has a bounded timeout and response-size limit. Redirects are followed only after every destination passes the same URL safety checks, and redirect chains are bounded. Search results are limited to recognized ebook file types and carry the normalized title, format, size, ISBN when available, and a direct download URL. A search fails with an actionable error when every configured URL fails or returns no usable result.
+
+#### Ebook-only limitation
+
+Direct Download accepts ebook searches only. Audiobook searches and audiobook releases are rejected before a Direct download is started. Supported ebook formats are limited to the formats recognized by the importer. A source that returns a page, an empty response, an unsupported format, or a non-ebook file is not a valid Direct release.
+
+#### Staging, restart, and cleanup
+
+The Direct Download client requires a configured **Staging Folder**. Create the folder first and make sure the Chaptarr process user can read, write, create subfolders, rename files, and delete files there. Keep the staging folder on persistent storage, not a temporary container filesystem. Do not point it at a library root or a folder shared with another downloader.
+
+Each download gets its own state record and working directory. Data is written to a `.part` file and promoted to the final staged file only after a non-empty response completes. The client reports queued, downloading, completed, and failed states. Transient connection, timeout, and server failures are retried up to three attempts. An interrupted partial file is discarded before a retry, so it is not treated as a completed ebook.
+
+On restart, Chaptarr reloads Direct state from the staging folder. Queued and in-progress items are reconciled and started again, an existing completed file is reused, and a missing completed file becomes failed. Keep the state files and staged files together until the item has been imported or deliberately removed.
+
+Cleanup is explicit. Removing an item with delete-data enabled removes its state, partial file, completed staged file, and empty per-download directory. Removing it without delete-data removes the state but preserves downloaded data for manual inspection or recovery. After an import, use the normal completed-download cleanup action and choose whether staged data should be deleted. Do not delete staged files manually while an item is queued or being imported.
+
+#### Security and operational requirements
+
+Only absolute HTTP and HTTPS URLs are accepted. URLs with embedded credentials are rejected. Chaptarr blocks localhost, loopback, private, link-local, carrier-grade NAT, and cloud metadata targets, including targets reached through redirects. TLS certificate validation remains enabled. Keep source URLs and keys private, restrict access to the Chaptarr web interface, and never paste a key into an issue, log excerpt, backup shared with others, or shell history.
+
+The feature is not a general-purpose web downloader. It depends on a source returning a supported, bounded response and a usable direct file URL. Access controls, rate limits, expiring links, changed page formats, unavailable mirrors, and licensing restrictions can cause a previously working URL to fail. A provider Test cannot detect those runtime conditions. Monitor the queue and failed items, keep backups of the configuration and library, and remove stale staging data after confirming that no queued or import-pending item references it.
+
 ## Building from Source
 Building from source requires the .NET 10 SDK, Node.js, and Yarn. When running Chaptarr natively, install FFmpeg for your operating system and make sure both `ffmpeg` and `ffprobe` are available on the `PATH` used to start Chaptarr. Normal source builds do not bundle them automatically; the official Docker image already includes them.
 

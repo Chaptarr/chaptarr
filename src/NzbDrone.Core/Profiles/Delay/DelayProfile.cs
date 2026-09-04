@@ -24,7 +24,13 @@ namespace NzbDrone.Core.Profiles.Delay
 
         public int GetProtocolDelay(DownloadProtocol protocol)
         {
-            return protocol == DownloadProtocol.Torrent ? TorrentDelay : UsenetDelay;
+            return protocol switch
+            {
+                DownloadProtocol.Torrent => TorrentDelay,
+                DownloadProtocol.Usenet => UsenetDelay,
+                DownloadProtocol.Direct => 0,
+                _ => 0
+            };
         }
     }
 }

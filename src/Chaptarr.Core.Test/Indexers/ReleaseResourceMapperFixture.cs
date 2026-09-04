@@ -286,5 +286,6 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(resource.BookTitle, Is.EqualTo("Home On The Range"));
             Assert.That(resource.MatchedTitle, Is.Null);
         }
+
     }
 }

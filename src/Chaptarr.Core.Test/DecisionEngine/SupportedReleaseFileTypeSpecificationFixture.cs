@@ -150,6 +150,42 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
+        public void should_reject_direct_audio_container_for_ebook_request()
+        {
+            var remoteBook = new RemoteBook
+            {
+                Release = new ReleaseInfo
+                {
+                    Title = "Example Direct Release",
+                    Container = "m4b"
+                }
+            };
+
+            var decision = CreateSubject().IsSatisfiedBy(remoteBook, BuildCriteria(BookMediaType.Ebook));
+
+            Assert.That(decision.Accepted, Is.False);
+            Assert.That(decision.Reason, Is.EqualTo("File type m4b is not compatible with ebook request"));
+        }
+
+        [Test]
+        public void should_reject_direct_known_unsupported_container_before_download()
+        {
+            var remoteBook = new RemoteBook
+            {
+                Release = new ReleaseInfo
+                {
+                    Title = "Example Direct Release",
+                    Container = "txt"
+                }
+            };
+
+            var decision = CreateSubject().IsSatisfiedBy(remoteBook, null);
+
+            Assert.That(decision.Accepted, Is.False);
+            Assert.That(decision.Reason, Is.EqualTo("Unsupported file type: txt"));
+        }
+
+        [Test]
         public void should_accept_supported_file_type_for_matching_requested_media_type()
         {
             var audiobookDecision = CreateSubject().IsSatisfiedBy(BuildRemoteBook("m4b"), BuildCriteria(BookMediaType.Audiobook));
