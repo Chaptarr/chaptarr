@@ -38,6 +38,8 @@ namespace NzbDrone.Core.Notifications
 
         public abstract string Name { get; }
 
+        public virtual bool NotifyOnLibraryImports => false;
+
         public Type ConfigContract => typeof(TSettings);
 
         public virtual ProviderMessage Message => null;
@@ -90,6 +92,10 @@ namespace NzbDrone.Core.Notifications
         }
 
         public virtual void OnImportFailure(BookDownloadMessage message)
+        {
+        }
+
+        public virtual void OnLibraryFileAdded(NzbDrone.Core.MediaFiles.BookFile bookFile, NzbDrone.Core.Books.Book book)
         {
         }
 

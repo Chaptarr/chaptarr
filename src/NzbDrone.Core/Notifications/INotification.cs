@@ -8,6 +8,7 @@ namespace NzbDrone.Core.Notifications
     public interface INotification : IProvider
     {
         string Link { get; }
+        bool NotifyOnLibraryImports { get; }
 
         void OnGrab(GrabMessage grabMessage);
         void OnReleaseImport(BookDownloadMessage message);
@@ -22,6 +23,7 @@ namespace NzbDrone.Core.Notifications
         void OnDownloadFailure(DownloadFailedMessage message);
         void OnImportFailure(BookDownloadMessage message);
         void OnBookRetag(BookRetagMessage message);
+        void OnLibraryFileAdded(BookFile bookFile, Book book);
         void ProcessQueue();
         bool HasPendingQueue { get; }
         bool SupportsOnGrab { get; }
