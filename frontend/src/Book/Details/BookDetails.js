@@ -117,7 +117,10 @@ class BookDetails extends Component {
       nextBook,
       hasBookNavigation,
       isSearching,
+      isRePushing,
+      showRePush,
       onRefreshPress,
+      onRePushPress,
       onSearchPress,
       statistics = {}
     } = this.props;
@@ -171,6 +174,24 @@ class BookDetails extends Component {
             />
 
             <PageToolbarSeparator />
+
+            {
+              showRePush ?
+                <PageToolbarButton
+                  label={translate('ResendToCalibre')}
+                  title={translate('ResendToCalibreContentServerConnections')}
+                  iconName={icons.EXPORT}
+                  isSpinning={isRePushing}
+                  onPress={onRePushPress}
+                /> :
+                null
+            }
+
+            {
+              showRePush ?
+                <PageToolbarSeparator /> :
+                null
+            }
 
             <PageToolbarButton
               label={translate('Edit')}
@@ -400,6 +421,8 @@ BookDetails.propTypes = {
   isSaving: PropTypes.bool.isRequired,
   isRefreshing: PropTypes.bool,
   isSearching: PropTypes.bool,
+  isRePushing: PropTypes.bool,
+  showRePush: PropTypes.bool,
   isFetching: PropTypes.bool,
   isPopulated: PropTypes.bool,
   bookFilesError: PropTypes.object,
@@ -413,6 +436,7 @@ BookDetails.propTypes = {
   isSmallScreen: PropTypes.bool.isRequired,
   onMonitorTogglePress: PropTypes.func.isRequired,
   onRefreshPress: PropTypes.func,
+  onRePushPress: PropTypes.func,
   onSearchPress: PropTypes.func.isRequired
 };
 

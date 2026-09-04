@@ -12,6 +12,7 @@ export const DOWNLOADED_BOOKS_SCAN = 'DownloadedBooksScan';
 export const BOOK_SEARCH = 'BookSearch';
 export const INTERACTIVE_IMPORT = 'ManualImport';
 export const MISSING_BOOK_SEARCH = 'MissingBookSearch';
+export const REPUSH_BOOK = 'RePushBook';
 export const MOVE_AUTHOR = 'MoveAuthor';
 export const REFRESH_AUTHOR = 'RefreshAuthor';
 export const BULK_REFRESH_AUTHOR = 'BulkRefreshAuthor';

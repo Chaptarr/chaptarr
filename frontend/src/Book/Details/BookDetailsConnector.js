@@ -11,6 +11,7 @@ import { executeCommand } from 'Store/Actions/commandActions';
 import { clearEditions, fetchEditions } from 'Store/Actions/editionActions';
 import { clearQueueDetails, fetchQueueDetails } from 'Store/Actions/queueActions';
 import { cancelFetchReleases, clearReleases } from 'Store/Actions/releaseActions';
+import { fetchNotifications } from 'Store/Actions/settingsActions';
 import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
@@ -161,8 +162,36 @@ function createMapStateToProps() {
   );
 }
 
+function createMergedMapStateToProps() {
+  const selectProps = createMapStateToProps();
+
+  return (state, props) => {
+    const innerProps = selectProps(state, props);
+
+    if (!innerProps || !innerProps.author) {
+      return innerProps;
+    }
+
+    const notifications = state.settings.notifications.items;
+    const hasContentServerConnector = notifications.some((n) => n.implementation === 'CalibreContentServer');
+    const rePushCommand = findCommand(state.commands.items, { name: commandNames.REPUSH_BOOK });
+    const isRePushing = !!(
+      rePushCommand &&
+      isCommandExecuting(rePushCommand) &&
+      rePushCommand.body &&
+      rePushCommand.body.bookId === innerProps.id
+    );
+    return {
+      ...innerProps,
+      showRePush: hasContentServerConnector,
+      isRePushing
+    };
+  };
+}
+
 const mapDispatchToProps = {
   executeCommand,
+  fetchNotifications,
   fetchBookFiles,
   clearBookFiles,
   fetchEditions,
@@ -228,6 +257,7 @@ class BookDetailsConnector extends Component {
     this.props.fetchBookFiles({ bookId });
     this.props.fetchEditions({ bookId });
     this.props.fetchQueueDetails({ bookIds: [bookId] });
+    this.props.fetchNotifications();
   };
 
   unpopulate = () => {
@@ -247,6 +277,14 @@ class BookDetailsConnector extends Component {
       monitored
     });
   };
+
+  onRePushPress = () => {
+    this.props.executeCommand({
+      name: commandNames.REPUSH_BOOK,
+      bookId: this.props.id
+    });
+  };
+
 
   onRefreshPress = () => {
     this.props.executeCommand({
@@ -271,6 +309,7 @@ class BookDetailsConnector extends Component {
         {...this.props}
         onMonitorTogglePress={this.onMonitorTogglePress}
         onRefreshPress={this.onRefreshPress}
+        onRePushPress={this.onRePushPress}
         onSearchPress={this.onSearchPress}
       />
     );
@@ -295,7 +334,8 @@ BookDetailsConnector.propTypes = {
   clearReleases: PropTypes.func.isRequired,
   cancelFetchReleases: PropTypes.func.isRequired,
   toggleBooksMonitored: PropTypes.func.isRequired,
+  fetchNotifications: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired
 };
 
-export default connect(createMapStateToProps, mapDispatchToProps)(BookDetailsConnector);
+export default connect(createMergedMapStateToProps, mapDispatchToProps)(BookDetailsConnector);
