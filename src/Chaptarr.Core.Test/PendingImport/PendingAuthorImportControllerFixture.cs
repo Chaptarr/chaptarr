@@ -213,16 +213,20 @@ namespace Chaptarr.Core.Test.PendingImport
                 Id = 44,
                 Tags = "[99]",
                 AudiobookTags = "[1,2]",
-                EbookTags = "[]"
+                EbookTags = "[]",
+                LastSelectedMediaType = "ebook"
             }.ToResource();
 
             Assert.That(resource.Tags, Is.EquivalentTo(new[] { 99 }));
             Assert.That(resource.AudiobookTags, Is.EquivalentTo(new[] { 1, 2 }));
             Assert.That(resource.EbookTags, Is.Empty);
+            Assert.That(resource.LastSelectedMediaType, Is.EqualTo("ebook"));
 
+            resource.LastSelectedMediaType = " EBOOK ";
             var model = resource.ToModel();
             Assert.That(model.AudiobookTags, Is.EqualTo("[1,2]"));
             Assert.That(model.EbookTags, Is.EqualTo("[]"));
+            Assert.That(model.LastSelectedMediaType, Is.EqualTo("ebook"));
         }
 
         [Test]

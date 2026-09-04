@@ -8,6 +8,7 @@ using NLog.Config;
 using NLog.Targets;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.RootFolders;
 using NUnit.Framework;
 
 namespace Chaptarr.Core.Test.Books
@@ -15,6 +16,85 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class AuthorResourceMapperFixture
     {
+        [Test]
+        public void should_map_legacy_single_fields_to_the_ebook_side_for_an_ebook_root_idempotently()
+        {
+            var resource = new AuthorResource
+            {
+                AuthorName = "Ted Chiang",
+                ForeignAuthorId = "gr:130698",
+                QualityProfileId = 1,
+                MetadataProfileId = 2,
+                RootFolderPath = "/ebooks",
+                Monitored = true,
+                MonitorNewItems = "all",
+                Tags = new HashSet<int> { 4 }
+            };
+            var ebookRoot = new RootFolder
+            {
+                Path = "/ebooks",
+                FolderType = FolderType.Ebook
+            };
+
+            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null, ebookRoot);
+            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.EbookQualityProfileId, Is.EqualTo(1));
+                Assert.That(resource.EbookMetadataProfileId, Is.EqualTo(2));
+                Assert.That(resource.EbookRootFolderPath, Is.EqualTo("/ebooks"));
+                Assert.That(resource.EbookMonitored, Is.True);
+                Assert.That(resource.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
+                Assert.That(resource.EbookTags, Is.EquivalentTo(new[] { 4 }));
+                Assert.That(resource.AudiobookQualityProfileId, Is.Null);
+                Assert.That(resource.AudiobookMetadataProfileId, Is.Null);
+                Assert.That(resource.AudiobookRootFolderPath, Is.Null);
+                Assert.That(resource.AudiobookMonitored, Is.Null);
+                Assert.That(resource.AudiobookMonitorNewItems, Is.Null);
+                Assert.That(resource.AudiobookTags, Is.Null);
+            });
+        }
+
+        [Test]
+        public void should_map_legacy_single_fields_to_both_sides_for_a_mixed_root()
+        {
+            var resource = new AuthorResource
+            {
+                QualityProfileId = 1,
+                MetadataProfileId = 2,
+                RootFolderPath = "/books",
+                Monitored = true
+            };
+
+            AuthorResourceMapper.NormalizeLegacySingleFields(resource, null, new RootFolder
+            {
+                Path = "/books",
+                FolderType = FolderType.Mixed
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.AudiobookQualityProfileId, Is.EqualTo(1));
+                Assert.That(resource.EbookQualityProfileId, Is.EqualTo(1));
+                Assert.That(resource.AudiobookMetadataProfileId, Is.EqualTo(2));
+                Assert.That(resource.EbookMetadataProfileId, Is.EqualTo(2));
+                Assert.That(resource.AudiobookRootFolderPath, Is.EqualTo("/books"));
+                Assert.That(resource.EbookRootFolderPath, Is.EqualTo("/books"));
+            });
+        }
+
+        [Test]
+        public void should_normalize_last_selected_media_type_on_update()
+        {
+            var author = new AuthorResource
+            {
+                LastSelectedMediaType = " EBOOK "
+            }.ToModel();
+
+            Assert.That(author.LastSelectedMediaType, Is.EqualTo("ebook"));
+        }
+
         [Test]
         public void should_derive_ended_from_death_date_instead_of_status()
         {
@@ -356,8 +436,10 @@ namespace Chaptarr.Core.Test.Books
             {
                 ForeignAuthorId = "173491",
                 QualityProfileId = 7,
+                MetadataProfileId = 8,
                 RootFolderPath = "/ebooks",
                 Monitored = true,
+                MonitorNewItems = "all",
                 Tags = new HashSet<int> { 4, 5 }
             };
 
@@ -365,11 +447,13 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(model.GoodreadsAuthorId, Is.EqualTo("gr:173491"));
             Assert.That(model.EbookQualityProfileId, Is.EqualTo(7));
+            Assert.That(model.EbookMetadataProfileId, Is.EqualTo(8));
             Assert.That(model.EbookRootFolderPath, Is.EqualTo("/ebooks"));
             Assert.That(model.EbookTags, Is.EquivalentTo(new[] { 4, 5 }));
             Assert.That(model.EbookMonitored, Is.True);
-            Assert.That(model.EbookMonitorNewItems, Is.Null);
+            Assert.That(model.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
             Assert.That(model.AudiobookQualityProfileId, Is.Null);
+            Assert.That(model.AudiobookMetadataProfileId, Is.Null);
             Assert.That(model.AudiobookRootFolderPath, Is.Null);
             Assert.That(model.AudiobookTags, Is.Null);
             Assert.That(model.AudiobookMonitored, Is.Null);

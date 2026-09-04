@@ -14,6 +14,8 @@ using Chaptarr.Http.REST;
 using FluentValidation;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.TPL;
@@ -219,6 +221,40 @@ namespace Chaptarr.Api.V1.Author
 	            }
 	        }
 
+            public override void OnActionExecuting(ActionExecutingContext context)
+            {
+                var facadeContext = context.HttpContext.GetReadarrFacadeContext();
+                List<RootFolder> rootFolders = null;
+                var resources = context.ActionArguments.Values
+                    .SelectMany(value => value switch
+                    {
+                        AuthorResource resource => new[] { resource },
+                        IEnumerable<AuthorResource> multiple => multiple,
+                        _ => Enumerable.Empty<AuthorResource>()
+                    });
+
+                foreach (var resource in resources)
+                {
+                    RootFolder legacyRootFolder = null;
+                    if (facadeContext == null &&
+                        _rootFolderService != null &&
+                        resource.RootFolderPath.IsPathValid(PathValidationType.CurrentOs))
+                    {
+                        rootFolders ??= _rootFolderService.All() ?? new List<RootFolder>();
+                        legacyRootFolder = rootFolders.FirstOrDefault(rootFolder =>
+                            rootFolder?.Path.PathEquals(resource.RootFolderPath) == true);
+                    }
+
+                    // Legacy single-field requests must be projected before native validation:
+                    // validating first rejects the not-yet-derived Path and fabricates the wrong
+                    // media side for a single-format root. Malformed paths stay validator-owned,
+                    // so the lookup above is guarded rather than allowed to throw from here.
+                    AuthorResourceMapper.NormalizeLegacySingleFields(resource, facadeContext, legacyRootFolder);
+                }
+
+                base.OnActionExecuting(context);
+            }
+
             private void QueueAuthorUpdate(int authorId)
             {
                 if (authorId <= 0)
@@ -350,49 +386,6 @@ namespace Chaptarr.Api.V1.Author
         }
 
 
-        private static void ApplyFacadeAuthorSingleFields(AuthorResource authorResource, ReadarrFacadeContext facadeContext)
-        {
-            if (authorResource == null || facadeContext == null)
-            {
-                return;
-            }
-
-            if (facadeContext.MediaType == "audiobook")
-            {
-                authorResource.AudiobookQualityProfileId ??= authorResource.QualityProfileId;
-                authorResource.AudiobookRootFolderPath ??= authorResource.RootFolderPath;
-                authorResource.AudiobookTags ??= authorResource.Tags;
-                authorResource.AudiobookMonitored = authorResource.Monitored;
-                authorResource.AudiobookMonitorNewItems = ParseMonitorNewItems(authorResource.MonitorNewItems) ?? authorResource.AudiobookMonitorNewItems;
-            }
-            else if (facadeContext.MediaType == "ebook")
-            {
-                authorResource.EbookQualityProfileId ??= authorResource.QualityProfileId;
-                authorResource.EbookRootFolderPath ??= authorResource.RootFolderPath;
-                authorResource.EbookTags ??= authorResource.Tags;
-                authorResource.EbookMonitored = authorResource.Monitored;
-                authorResource.EbookMonitorNewItems = ParseMonitorNewItems(authorResource.MonitorNewItems) ?? authorResource.EbookMonitorNewItems;
-            }
-
-            AuthorResourceMapper.NormalizeFacadeBooksToMonitor(authorResource.AddOptions, facadeContext);
-        }
-
-        private static NewItemMonitorTypes? ParseMonitorNewItems(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return null;
-            }
-
-            return value.Trim().ToLowerInvariant() switch
-            {
-                "all" => NewItemMonitorTypes.All,
-                "new" => NewItemMonitorTypes.New,
-                "none" => NewItemMonitorTypes.None,
-                _ => null
-            };
-        }
-
         private ActionResult GetProviderAmbiguityResult(ProviderAmbiguityResource ambiguity)
         {
             return ambiguity == null ? null : StatusCode(ProviderAmbiguityHelper.StatusCode, ambiguity);
@@ -403,8 +396,6 @@ namespace Chaptarr.Api.V1.Author
         public async Task<ActionResult<AuthorResource>> AddAuthor([FromBody] AuthorResource authorResource, [FromQuery] bool queueIfUnavailable = true)
         {
             var facadeContext = HttpContext.GetReadarrFacadeContext();
-            ApplyFacadeAuthorSingleFields(authorResource, facadeContext);
-            AuthorResourceMapper.NormalizeLegacySingleFields(authorResource, facadeContext);
             if (ReadarrFacadeProviderIdTranslator.RequiresProviderPrefix(authorResource.ForeignAuthorId, facadeContext))
             {
                 throw new ValidationException(new[]
@@ -458,6 +449,9 @@ namespace Chaptarr.Api.V1.Author
             var exactEbookRequest = specificBookProviderIds?.Any() == true && addOptions?.MediaType == BookMediaType.Ebook;
             var audiobookSpecificBookProviderIds = addOptions?.MediaType == BookMediaType.Ebook ? null : specificBookProviderIds;
             var ebookSpecificBookProviderIds = addOptions?.MediaType == BookMediaType.Audiobook ? null : specificBookProviderIds;
+            var lastSelectedMediaType = string.IsNullOrWhiteSpace(authorResource.LastSelectedMediaType)
+                ? null
+                : MediaTypeParameterParser.NormalizeOptional(authorResource.LastSelectedMediaType, allowAll: false);
 
             var config = new MonitoringConfig
             {
@@ -476,6 +470,7 @@ namespace Chaptarr.Api.V1.Author
                 EbookMetadataProfileId = authorResource.EbookMetadataProfileId,
                 AudiobookRootFolderPath = authorResource.AudiobookRootFolderPath,
                 EbookRootFolderPath = authorResource.EbookRootFolderPath,
+                LastSelectedMediaType = lastSelectedMediaType,
                 QueueIfUnavailable = queueIfUnavailable,
                 Tags = authorResource.Tags,
                 SearchForMissingBooks = authorResource.AddOptions?.SearchForMissingBooks,
@@ -638,6 +633,7 @@ namespace Chaptarr.Api.V1.Author
                 }
 
                 var selectedRootFolderPath = selectedRootFolder?.Path;
+                var selectedMediaType = MediaTypeParameterParser.ToApiValue(bookMediaType);
 
                 var monitoring = ResolveImportMonitoring(importResource, bookMediaType);
                 var monitored = monitoring.Monitored;
@@ -728,6 +724,7 @@ namespace Chaptarr.Api.V1.Author
                     existingAuthor.Tags = (existingAuthor.AudiobookTags ?? new HashSet<int>())
                         .Concat(existingAuthor.EbookTags ?? new HashSet<int>())
                         .ToHashSet();
+                    existingAuthor.LastSelectedMediaType = selectedMediaType;
 
                     existingAuthor = _authorService.UpdateAuthor(existingAuthor);
 
@@ -747,7 +744,8 @@ namespace Chaptarr.Api.V1.Author
                             QueueIfUnavailable = false,
                             RequestedBy = "UserInterface",
                             CreateAudiobook = bookMediaType == BookMediaType.Audiobook,
-                            CreateEbook = bookMediaType == BookMediaType.Ebook
+                            CreateEbook = bookMediaType == BookMediaType.Ebook,
+                            LastSelectedMediaType = selectedMediaType
                         };
 
                         if (bookMediaType == BookMediaType.Audiobook)
@@ -824,7 +822,8 @@ namespace Chaptarr.Api.V1.Author
                     CreateAudiobook = bookMediaType == BookMediaType.Audiobook,
                     CreateEbook = bookMediaType == BookMediaType.Ebook,
                     AuthorName = "Pending Import",
-                    SearchForMissingBooks = shouldSearchForMissingBooks
+                    SearchForMissingBooks = shouldSearchForMissingBooks,
+                    LastSelectedMediaType = selectedMediaType
                 };
 
                 switch (authorProvider.ToLowerInvariant())
@@ -1182,7 +1181,8 @@ namespace Chaptarr.Api.V1.Author
                     EbookTags = author.EbookTags,
                     SearchForMissingBooks = false,
                     RequestedBy = "PurgeAndRescan",
-                    AuthorName = author.Name
+                    AuthorName = author.Name,
+                    LastSelectedMediaType = author.LastSelectedMediaType
                 };
 
                 try

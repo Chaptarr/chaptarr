@@ -12,6 +12,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
 
@@ -20,6 +21,111 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class AuthorControllerPurgeAndReaddFixture
     {
+        [Test]
+        public async Task add_author_should_pass_last_selected_media_type_to_queued_import()
+        {
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var libraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
+            var libraryProxy = (AuthorLibraryServiceProxy)(object)libraryService;
+            libraryProxy.PreflightResult = new Author { Id = -77, Name = "Pending Import" };
+
+            var controller = new AuthorController(
+                signalRBroadcaster: null,
+                authorService: authorService,
+                bookService: null,
+                bookMonitoredService: null,
+                seriesService: null,
+                authorLibraryService: libraryService,
+                authorStatisticsService: null,
+                coverMapper: null,
+                commandQueueManager: null,
+                rootFolderService: null,
+                eventAggregator: null,
+                appFolderInfo: null,
+                fileNameBuilder: null,
+                logger: LogManager.GetLogger(nameof(AuthorControllerPurgeAndReaddFixture)),
+                recycleBinValidator: new RecycleBinValidator(null),
+                rootFolderValidator: new RootFolderValidator(null),
+                mappedNetworkDriveValidator: new MappedNetworkDriveValidator(null, null),
+                authorPathValidator: new AuthorPathValidator(authorService),
+                authorExistsValidator: new AuthorExistsValidator(authorService),
+                authorAncestorValidator: new AuthorAncestorValidator(authorService),
+                systemFolderValidator: new SystemFolderValidator(),
+                qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
+                metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
+                authorFolderAsRootFolderValidator: new AuthorFolderAsRootFolderValidator(null));
+
+            var result = await controller.AddAuthor(new AuthorResource
+            {
+                ForeignAuthorId = "hc:123",
+                EbookRootFolderPath = "/ebooks",
+                LastSelectedMediaType = " EBOOK "
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Result, Is.TypeOf<AcceptedResult>());
+                Assert.That(libraryProxy.LastConfig.LastSelectedMediaType, Is.EqualTo("ebook"));
+            });
+        }
+
+        [Test]
+        public async Task import_author_should_use_the_requested_media_type_as_the_initial_view()
+        {
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var libraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
+            var libraryProxy = (AuthorLibraryServiceProxy)(object)libraryService;
+            libraryProxy.PreflightResult = new Author { Id = -78, Name = "Pending Import" };
+            var rootFolderService = DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>();
+            ((RootFolderServiceProxy)(object)rootFolderService).RootFolders.Add(new RootFolder
+            {
+                Path = "/ebooks",
+                FolderType = FolderType.Ebook
+            });
+
+            var controller = new AuthorController(
+                signalRBroadcaster: null,
+                authorService: authorService,
+                bookService: null,
+                bookMonitoredService: null,
+                seriesService: null,
+                authorLibraryService: libraryService,
+                authorStatisticsService: null,
+                coverMapper: null,
+                commandQueueManager: null,
+                rootFolderService: rootFolderService,
+                eventAggregator: null,
+                appFolderInfo: null,
+                fileNameBuilder: null,
+                logger: LogManager.GetLogger(nameof(AuthorControllerPurgeAndReaddFixture)),
+                recycleBinValidator: new RecycleBinValidator(null),
+                rootFolderValidator: new RootFolderValidator(rootFolderService),
+                mappedNetworkDriveValidator: new MappedNetworkDriveValidator(null, null),
+                authorPathValidator: new AuthorPathValidator(authorService),
+                authorExistsValidator: new AuthorExistsValidator(authorService),
+                authorAncestorValidator: new AuthorAncestorValidator(authorService),
+                systemFolderValidator: new SystemFolderValidator(),
+                qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
+                metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
+                authorFolderAsRootFolderValidator: new AuthorFolderAsRootFolderValidator(null));
+
+            var result = await controller.ImportAuthor(new AuthorImportResource
+            {
+                ForeignAuthorId = "hc:123",
+                MediaType = "ebook",
+                RootFolder = "/ebooks",
+                QualityProfileId = 1,
+                MetadataProfileId = 1,
+                Monitor = "none"
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Result, Is.TypeOf<AcceptedResult>());
+                Assert.That(libraryProxy.LastConfig.LastSelectedMediaType, Is.EqualTo("ebook"));
+            });
+        }
+
         [Test]
         public async Task purge_and_readd_should_retry_only_retained_unmapped_book_file_rows()
         {
@@ -114,6 +220,8 @@ namespace Chaptarr.Core.Test.Api
                 {
                     case nameof(IAuthorService.GetAuthor):
                         return Original;
+                    case nameof(IAuthorService.FindByProviderId):
+                        return null;
                     case nameof(IAuthorService.DeleteAuthorForReadd):
                         DeleteForReaddCalls++;
                         return RetainedBookFileIds;
@@ -128,16 +236,33 @@ namespace Chaptarr.Core.Test.Api
             public Author PreflightResult { get; set; }
             public Author ReaddResult { get; set; }
             public int AddCalls { get; private set; }
+            public MonitoringConfig LastConfig { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IAuthorLibraryService.AddAuthorAsync))
                 {
                     AddCalls++;
+                    LastConfig = (MonitoringConfig)args[1];
                     return Task.FromResult(AddCalls == 1 ? PreflightResult : ReaddResult);
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IAuthorLibraryService.{targetMethod?.Name}");
+            }
+        }
+
+        public class RootFolderServiceProxy : DispatchProxy
+        {
+            public List<RootFolder> RootFolders { get; } = new List<RootFolder>();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IRootFolderService.All))
+                {
+                    return RootFolders;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IRootFolderService.{targetMethod?.Name}");
             }
         }
 

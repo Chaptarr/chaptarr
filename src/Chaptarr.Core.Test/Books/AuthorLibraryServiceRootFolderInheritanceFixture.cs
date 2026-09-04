@@ -413,6 +413,25 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public async Task add_author_should_persist_requested_initial_media_type()
+        {
+            var root = BuildEbookRoot("/ebooks");
+            var authorService = new StubAuthorService();
+            var service = BuildService(authorService, new StubAuthorInfo(BuildRemoteAuthor()), new StubRootFolderService(root));
+
+            var author = await service.AddAuthorAsync("hc:123", new MonitoringConfig
+            {
+                CreateAudiobook = false,
+                CreateEbook = true,
+                EbookRootFolderPath = root.Path,
+                LastSelectedMediaType = "ebook"
+            });
+
+            Assert.That(author.LastSelectedMediaType, Is.EqualTo("ebook"));
+            Assert.That(authorService.AddedAuthor.LastSelectedMediaType, Is.EqualTo("ebook"));
+        }
+
+        [Test]
         public async Task add_author_should_inherit_missing_audiobook_settings_from_explicit_root_folder()
         {
             var root = BuildAudiobookRoot(

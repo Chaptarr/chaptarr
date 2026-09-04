@@ -64,6 +64,7 @@ namespace NzbDrone.Core.Books
         // Common fields
         public string Tags { get; set; } // JSON serialized HashSet<int>
         public bool SearchForMissingBooks { get; set; }
+        public string LastSelectedMediaType { get; set; }
 
         // Tracking fields
         public DateTime CreatedAt { get; set; }

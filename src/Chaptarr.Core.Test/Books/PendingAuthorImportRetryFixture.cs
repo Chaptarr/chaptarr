@@ -148,6 +148,42 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public async Task pending_import_should_persist_and_update_the_last_requested_media_type()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var subject = new PendingAuthorImportService(
+                repository,
+                authorService,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            await subject.EnqueueAsync(
+                "gr:123",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    LastSelectedMediaType = "audiobook"
+                },
+                "test");
+
+            Assert.That(repositoryProxy.Inserted.LastSelectedMediaType, Is.EqualTo("audiobook"));
+
+            repositoryProxy.Active = repositoryProxy.Inserted;
+            await subject.EnqueueAsync(
+                "gr:123",
+                new MonitoringConfig
+                {
+                    CreateEbook = true,
+                    LastSelectedMediaType = "ebook"
+                },
+                "test");
+
+            Assert.That(repositoryProxy.Updated.LastSelectedMediaType, Is.EqualTo("ebook"));
+        }
+
+        [Test]
         public async Task pending_import_should_preserve_distinct_media_tags_and_explicit_empty_sets()
         {
             var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();

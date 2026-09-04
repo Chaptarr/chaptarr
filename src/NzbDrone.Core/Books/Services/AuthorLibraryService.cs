@@ -81,6 +81,7 @@ namespace NzbDrone.Core.Books.Services
         public int? EbookMetadataProfileId { get; set; }
         public string AudiobookRootFolderPath { get; set; }
         public string EbookRootFolderPath { get; set; }
+        public string LastSelectedMediaType { get; set; }
 
         // FOLDER-PRESERVATION: Discovered author folder path to preserve existing structure
         public string DiscoveredAuthorFolderPath { get; set; }
@@ -1185,20 +1186,27 @@ namespace NzbDrone.Core.Books.Services
                     // Single path param: prefer audiobook path if present else ebook
                     config.AudiobookRootFolderPath ?? config.EbookRootFolderPath);
 
-                var tagsChanged = false;
+                var authorChanged = false;
                 if (config.CreateAudiobook && updated.AudiobookTags == null && config.AudiobookTags != null)
                 {
                     updated.AudiobookTags = new HashSet<int>(config.AudiobookTags);
-                    tagsChanged = true;
+                    authorChanged = true;
                 }
 
                 if (config.CreateEbook && updated.EbookTags == null && config.EbookTags != null)
                 {
                     updated.EbookTags = new HashSet<int>(config.EbookTags);
-                    tagsChanged = true;
+                    authorChanged = true;
                 }
 
-                if (tagsChanged)
+                if (!string.IsNullOrWhiteSpace(config.LastSelectedMediaType) &&
+                    !string.Equals(updated.LastSelectedMediaType, config.LastSelectedMediaType, StringComparison.OrdinalIgnoreCase))
+                {
+                    updated.LastSelectedMediaType = config.LastSelectedMediaType;
+                    authorChanged = true;
+                }
+
+                if (authorChanged)
                 {
                     updated.Tags = (updated.AudiobookTags ?? new HashSet<int>())
                         .Concat(updated.EbookTags ?? new HashSet<int>())
@@ -1879,6 +1887,15 @@ namespace NzbDrone.Core.Books.Services
             if (config.CreateEbook && !string.IsNullOrWhiteSpace(config.EbookRootFolderPath))
             {
                 author.EbookRootFolderPath = config.EbookRootFolderPath;
+            }
+
+            // POST /author accepts this preference before an author exists. Keep it on
+            // both immediate and queued creation paths instead of silently reverting the
+            // requested eBook view to the model's audiobook default. The reported API
+            // reproduction did not identify a specific author.
+            if (!string.IsNullOrWhiteSpace(config.LastSelectedMediaType))
+            {
+                author.LastSelectedMediaType = config.LastSelectedMediaType;
             }
 
             ApplyAuthorPaths(author, config);

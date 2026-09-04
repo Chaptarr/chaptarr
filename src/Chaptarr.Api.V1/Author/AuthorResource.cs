@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Api.V1.Books;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using NLog;
@@ -9,6 +10,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
 
 namespace Chaptarr.Api.V1.Author
@@ -435,31 +437,10 @@ namespace Chaptarr.Api.V1.Author
                 }
             }
 
-            // Readarr/Seerr compatibility: when only the legacy single fields are provided,
-            // native/bare compatibility keeps the old both-media behavior. Dialect facades project
-            // a single fake Readarr instance, so those fields write only the active media side.
             var audiobookQualityProfileId = resource.AudiobookQualityProfileId;
             var ebookQualityProfileId = resource.EbookQualityProfileId;
             var audiobookRootFolderPath = resource.AudiobookRootFolderPath;
             var ebookRootFolderPath = resource.EbookRootFolderPath;
-
-            if (facadeContext?.MediaType == "audiobook")
-            {
-                audiobookQualityProfileId ??= resource.QualityProfileId;
-                audiobookRootFolderPath ??= resource.RootFolderPath;
-            }
-            else if (facadeContext?.MediaType == "ebook")
-            {
-                ebookQualityProfileId ??= resource.QualityProfileId;
-                ebookRootFolderPath ??= resource.RootFolderPath;
-            }
-            else
-            {
-                audiobookQualityProfileId ??= resource.QualityProfileId;
-                ebookQualityProfileId ??= resource.QualityProfileId;
-                audiobookRootFolderPath ??= resource.RootFolderPath;
-                ebookRootFolderPath ??= resource.RootFolderPath;
-            }
 
             // Seerr sends monitorNewItems="none" + addOptions.booksToMonitor=[...]
             // Map that to our explicit SpecificBook monitor mode.
@@ -551,7 +532,9 @@ namespace Chaptarr.Api.V1.Author
                 Tags = combinedTags,
                 Added = resource.Added,
                 AddOptions = addOptions,
-                LastSelectedMediaType = resource.LastSelectedMediaType,
+                LastSelectedMediaType = resource.LastSelectedMediaType == null
+                    ? null
+                    : MediaTypeParameterParser.NormalizeOptional(resource.LastSelectedMediaType, allowAll: false),
                 // Set provider IDs from ForeignAuthorId
                 HardcoverAuthorId = hardcoverAuthorId,
                 GoodreadsAuthorId = goodreadsAuthorId,
@@ -574,7 +557,7 @@ namespace Chaptarr.Api.V1.Author
                 .ToList();
         }
 
-        internal static void NormalizeLegacySingleFields(AuthorResource resource, ReadarrFacadeContext facadeContext)
+        internal static void NormalizeLegacySingleFields(AuthorResource resource, ReadarrFacadeContext facadeContext, RootFolder legacyRootFolder = null)
         {
             if (resource == null)
             {
@@ -597,6 +580,27 @@ namespace Chaptarr.Api.V1.Author
 
             if (facadeContext != null)
             {
+                var facadeMonitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems);
+                if (facadeContext.MediaType == "audiobook")
+                {
+                    resource.AudiobookQualityProfileId ??= resource.QualityProfileId;
+                    resource.AudiobookMetadataProfileId ??= resource.MetadataProfileId;
+                    resource.AudiobookRootFolderPath ??= resource.RootFolderPath;
+                    resource.AudiobookTags ??= resource.Tags;
+                    resource.AudiobookMonitored = resource.Monitored;
+                    resource.AudiobookMonitorNewItems = facadeMonitorNewItems ?? resource.AudiobookMonitorNewItems;
+                }
+                else if (facadeContext.MediaType == "ebook")
+                {
+                    resource.EbookQualityProfileId ??= resource.QualityProfileId;
+                    resource.EbookMetadataProfileId ??= resource.MetadataProfileId;
+                    resource.EbookRootFolderPath ??= resource.RootFolderPath;
+                    resource.EbookTags ??= resource.Tags;
+                    resource.EbookMonitored = resource.Monitored;
+                    resource.EbookMonitorNewItems = facadeMonitorNewItems ?? resource.EbookMonitorNewItems;
+                }
+
+                NormalizeFacadeBooksToMonitor(resource.AddOptions, facadeContext);
                 return;
             }
 
@@ -608,24 +612,61 @@ namespace Chaptarr.Api.V1.Author
                 return;
             }
 
-            resource.AudiobookQualityProfileId ??= resource.QualityProfileId;
-            resource.EbookQualityProfileId ??= resource.QualityProfileId;
-            resource.AudiobookMetadataProfileId ??= resource.MetadataProfileId;
-            resource.EbookMetadataProfileId ??= resource.MetadataProfileId;
-            resource.AudiobookRootFolderPath ??= resource.RootFolderPath;
-            resource.EbookRootFolderPath ??= resource.RootFolderPath;
-            resource.AudiobookMonitored ??= resource.Monitored;
-            resource.EbookMonitored ??= resource.Monitored;
-
+            var targetAudiobook = legacyRootFolder == null
+                ? HasAudiobookSpecificSettings(resource) || !HasEbookSpecificSettings(resource)
+                : RootFolderDefaultResolver.IsCompatibleRootFolder(legacyRootFolder, FolderType.Audiobook);
+            var targetEbook = legacyRootFolder == null
+                ? HasEbookSpecificSettings(resource) || !HasAudiobookSpecificSettings(resource)
+                : RootFolderDefaultResolver.IsCompatibleRootFolder(legacyRootFolder, FolderType.Ebook);
             var monitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems);
-            resource.AudiobookMonitorNewItems ??= monitorNewItems;
-            resource.EbookMonitorNewItems ??= monitorNewItems;
 
-            if (resource.Tags != null)
+            if (targetAudiobook)
             {
-                resource.AudiobookTags ??= new HashSet<int>(resource.Tags);
-                resource.EbookTags ??= new HashSet<int>(resource.Tags);
+                resource.AudiobookQualityProfileId ??= resource.QualityProfileId;
+                resource.AudiobookMetadataProfileId ??= resource.MetadataProfileId;
+                resource.AudiobookRootFolderPath ??= resource.RootFolderPath;
+                resource.AudiobookMonitored ??= resource.Monitored;
+                resource.AudiobookMonitorNewItems ??= monitorNewItems;
+                if (resource.Tags != null)
+                {
+                    resource.AudiobookTags ??= new HashSet<int>(resource.Tags);
+                }
             }
+
+            if (targetEbook)
+            {
+                resource.EbookQualityProfileId ??= resource.QualityProfileId;
+                resource.EbookMetadataProfileId ??= resource.MetadataProfileId;
+                resource.EbookRootFolderPath ??= resource.RootFolderPath;
+                resource.EbookMonitored ??= resource.Monitored;
+                resource.EbookMonitorNewItems ??= monitorNewItems;
+                if (resource.Tags != null)
+                {
+                    resource.EbookTags ??= new HashSet<int>(resource.Tags);
+                }
+            }
+        }
+
+        private static bool HasAudiobookSpecificSettings(AuthorResource resource)
+        {
+            return resource.AudiobookQualityProfileId.HasValue ||
+                   resource.AudiobookMetadataProfileId.HasValue ||
+                   resource.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() ||
+                   resource.AudiobookMonitored.HasValue ||
+                   resource.AudiobookMonitorExistingMode.HasValue ||
+                   resource.AudiobookMonitorNewItems.HasValue ||
+                   resource.AudiobookTags != null;
+        }
+
+        private static bool HasEbookSpecificSettings(AuthorResource resource)
+        {
+            return resource.EbookQualityProfileId.HasValue ||
+                   resource.EbookMetadataProfileId.HasValue ||
+                   resource.EbookRootFolderPath.IsNotNullOrWhiteSpace() ||
+                   resource.EbookMonitored.HasValue ||
+                   resource.EbookMonitorExistingMode.HasValue ||
+                   resource.EbookMonitorNewItems.HasValue ||
+                   resource.EbookTags != null;
         }
 
         private static (bool? Monitored, NewItemMonitorTypes? MonitorNewItems, MonitorTypes? MonitorExistingMode) TranslateLegacyMediaMonitoring(

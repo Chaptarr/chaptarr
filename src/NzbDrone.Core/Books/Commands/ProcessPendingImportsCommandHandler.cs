@@ -360,6 +360,7 @@ namespace NzbDrone.Core.Books.Commands
                 EbookRootFolderPath = item.EbookRootFolderPath,
                 DiscoveredAuthorFolderPath = item.DiscoveredAuthorFolderPath,
                 SearchForMissingBooks = item.SearchForMissingBooks,
+                LastSelectedMediaType = item.LastSelectedMediaType,
                 CreateAudiobook = item.HasAudiobook(),
                 CreateEbook = item.HasEbook(),
                 AudiobookBooksToMonitor = audiobookMonitorTargets,

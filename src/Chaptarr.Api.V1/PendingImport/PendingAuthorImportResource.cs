@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http.REST;
 using Newtonsoft.Json;
 using NzbDrone.Core.Books;
@@ -44,6 +45,7 @@ namespace Chaptarr.Api.V1.PendingImport
         // Common
         public HashSet<int> Tags { get; set; }
         public bool SearchForMissingBooks { get; set; }
+        public string LastSelectedMediaType { get; set; }
         
         // Tracking
         public DateTime CreatedAt { get; set; }
@@ -153,6 +155,7 @@ namespace Chaptarr.Api.V1.PendingImport
                 EbookRootFolderPath = model.EbookRootFolderPath,
                 
                 SearchForMissingBooks = model.SearchForMissingBooks,
+                LastSelectedMediaType = model.LastSelectedMediaType,
                 
                 CreatedAt = model.CreatedAt,
                 UpdatedAt = model.UpdatedAt,
@@ -256,6 +259,9 @@ namespace Chaptarr.Api.V1.PendingImport
                 EbookRootFolderPath = resource.EbookRootFolderPath,
                 
                 SearchForMissingBooks = resource.SearchForMissingBooks,
+                LastSelectedMediaType = resource.LastSelectedMediaType == null
+                    ? null
+                    : MediaTypeParameterParser.NormalizeOptional(resource.LastSelectedMediaType, allowAll: false),
                 
                 CreatedAt = resource.CreatedAt,
                 UpdatedAt = resource.UpdatedAt,

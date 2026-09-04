@@ -679,6 +679,7 @@ namespace NzbDrone.Core.Datastore.Migration
                 .WithColumn("EbookTags").AsString().Nullable()
                 .WithColumn("Tags").AsString().Nullable()
                 .WithColumn("SearchForMissingBooks").AsBoolean().WithDefaultValue(false)
+                .WithColumn("LastSelectedMediaType").AsString().Nullable()
                 .WithColumn("CreatedAt").AsDateTime().NotNullable()
                 .WithColumn("UpdatedAt").AsDateTime().Nullable()
                 .WithColumn("LastAttemptAt").AsDateTime().Nullable()

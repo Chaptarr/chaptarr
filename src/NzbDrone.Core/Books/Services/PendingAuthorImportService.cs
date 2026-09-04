@@ -263,6 +263,13 @@ namespace NzbDrone.Core.Books.Services
                         updated = true;
                     }
 
+                    if (!string.IsNullOrWhiteSpace(config.LastSelectedMediaType) &&
+                        !string.Equals(existing.LastSelectedMediaType, config.LastSelectedMediaType, StringComparison.OrdinalIgnoreCase))
+                    {
+                        existing.LastSelectedMediaType = config.LastSelectedMediaType;
+                        updated = true;
+                    }
+
                     // Preserve discovered author folder path if provided and not already set
                     if (string.IsNullOrWhiteSpace(existing.DiscoveredAuthorFolderPath) && !string.IsNullOrWhiteSpace(config.DiscoveredAuthorFolderPath))
                     {
@@ -308,6 +315,7 @@ namespace NzbDrone.Core.Books.Services
                     SourceApplication = sourceApplication,
                     RequestedBy = config.RequestedBy,
                     SearchForMissingBooks = config.SearchForMissingBooks ?? false,
+                    LastSelectedMediaType = config.LastSelectedMediaType,
                     Version = 1
                 };
 

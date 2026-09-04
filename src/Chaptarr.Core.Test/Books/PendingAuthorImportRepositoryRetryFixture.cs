@@ -60,6 +60,7 @@ namespace Chaptarr.Core.Test.Books
                     AudiobookTags = "[1]",
                     EbookTags = "[]",
                     Tags = "[1]",
+                    LastSelectedMediaType = "ebook",
                     NextAttemptAt = DateTime.UtcNow
                 };
 
@@ -71,12 +72,13 @@ namespace Chaptarr.Core.Test.Books
                 {
                     verifyUpdate.Open();
                     var tags = verifyUpdate.QuerySingle<TagProjection>(@"
-                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags""
+                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags"", ""LastSelectedMediaType""
                         FROM ""PendingAuthorImport""
                         WHERE ""Id"" = 1;");
                     Assert.That(tags.AudiobookTags, Is.EqualTo("[1]"));
                     Assert.That(tags.EbookTags, Is.EqualTo("[]"));
                     Assert.That(tags.Tags, Is.EqualTo("[1]"));
+                    Assert.That(tags.LastSelectedMediaType, Is.EqualTo("ebook"));
                 }
 
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
@@ -131,6 +133,7 @@ namespace Chaptarr.Core.Test.Books
                             ""EbookTags"" TEXT,
                             ""Tags"" TEXT,
                             ""SearchForMissingBooks"" INTEGER,
+                            ""LastSelectedMediaType"" TEXT,
                             ""AttemptCount"" INTEGER,
                             ""MaxAttempts"" INTEGER,
                             ""LastAttemptAt"" DATETIME,
@@ -237,6 +240,7 @@ namespace Chaptarr.Core.Test.Books
             public string AudiobookTags { get; set; }
             public string EbookTags { get; set; }
             public string Tags { get; set; }
+            public string LastSelectedMediaType { get; set; }
         }
     }
 }

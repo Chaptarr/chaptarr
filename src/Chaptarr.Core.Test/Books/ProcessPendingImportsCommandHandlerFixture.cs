@@ -350,6 +350,35 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void deferred_import_should_restore_last_selected_media_type()
+        {
+            var pendingImportService = new StubPendingAuthorImportService();
+            var pending = Pending(160);
+            pending.LastSelectedMediaType = "ebook";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            var commandQueue = new RecordingCommandQueue();
+            var eventAggregator = new RecordingEventAggregator();
+            var authorLibrary = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibrary).AddedAuthor = new Author { Id = 42, Name = "Deferred Author" };
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)authorService).CurrentAuthor = ((AuthorLibraryProxy)authorLibrary).AddedAuthor;
+            var handler = new ProcessPendingImportsCommandHandler(
+                pendingImportService,
+                authorLibrary,
+                authorService,
+                DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                DispatchProxy.Create<IProvideBookInfo, BookInfoProxy>(),
+                commandQueue,
+                eventAggregator,
+                LogManager.GetCurrentClassLogger());
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(((AuthorLibraryProxy)authorLibrary).LastConfig.LastSelectedMediaType, Is.EqualTo("ebook"));
+        }
+
+        [Test]
         public void deferred_import_should_restore_media_specific_tags_without_bleeding_between_sides()
         {
             var pendingImportService = new StubPendingAuthorImportService();
