@@ -25,6 +25,8 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class AuthorControllerLegacyValidationFixture
     {
+        private static readonly string EbookRootPath = @"C:\ebooks".AsOsAgnostic();
+
         [TestCase(false)]
         [TestCase(true)]
         public async Task should_normalize_generic_ebook_fields_before_native_validation(bool useFacade)
@@ -34,7 +36,7 @@ namespace Chaptarr.Core.Test.Api
             {
                 AuthorName = "Ted Chiang",
                 ForeignAuthorId = useFacade ? "161938" : "gr:130698",
-                RootFolderPath = "/ebooks",
+                RootFolderPath = EbookRootPath,
                 QualityProfileId = 1,
                 MetadataProfileId = 2,
                 Monitored = true,
@@ -55,7 +57,7 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(result.Result, Is.TypeOf<AcceptedResult>());
                 Assert.That(resource.EbookQualityProfileId, Is.EqualTo(1));
                 Assert.That(resource.EbookMetadataProfileId, Is.EqualTo(2));
-                Assert.That(resource.EbookRootFolderPath, Is.EqualTo("/ebooks"));
+                Assert.That(resource.EbookRootFolderPath, Is.EqualTo(EbookRootPath));
                 Assert.That(resource.EbookMonitored, Is.True);
                 Assert.That(resource.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
                 Assert.That(resource.AudiobookQualityProfileId, Is.Null);
@@ -65,7 +67,7 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(resource.AudiobookMonitorNewItems, Is.Null);
                 Assert.That(authorLibraryProxy.LastConfig.EbookQualityProfileId, Is.EqualTo(1));
                 Assert.That(authorLibraryProxy.LastConfig.EbookMetadataProfileId, Is.EqualTo(2));
-                Assert.That(authorLibraryProxy.LastConfig.EbookRootFolderPath, Is.EqualTo("/ebooks"));
+                Assert.That(authorLibraryProxy.LastConfig.EbookRootFolderPath, Is.EqualTo(EbookRootPath));
                 Assert.That(authorLibraryProxy.LastConfig.EbookMonitored, Is.True);
                 Assert.That(authorLibraryProxy.LastConfig.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.All));
                 Assert.That(authorLibraryProxy.LastConfig.AudiobookRootFolderPath, Is.Null);
@@ -103,7 +105,7 @@ namespace Chaptarr.Core.Test.Api
             var rootFolderService = DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>();
             ((RootFolderServiceProxy)(object)rootFolderService).RootFolders.Add(new RootFolder
             {
-                Path = "/ebooks",
+                Path = EbookRootPath,
                 FolderType = FolderType.Ebook
             });
             var fileNameBuilder = DispatchProxy.Create<IBuildFileNames, FileNameBuilderProxy>();
