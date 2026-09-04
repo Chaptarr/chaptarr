@@ -8,6 +8,8 @@ interface CssExports {
   'message': string;
   'noResults': string;
   'providerSelect': string;
+  'providerSelectContainer': string;
+  'providerSelectIcon': string;
   'searchContainer': string;
   'searchIconContainer': string;
   'searchInput': string;
