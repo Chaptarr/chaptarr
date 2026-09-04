@@ -1,5 +1,5 @@
 import PropTypes from 'prop-types';
-import React, { Component } from 'react';
+import React, { Component, Fragment } from 'react';
 import { Tab, TabList, TabPanel, Tabs } from 'react-tabs';
 import AuthorHistoryTable from 'Author/History/AuthorHistoryTable';
 import DeleteBookModal from 'Book/Delete/DeleteBookModal';
@@ -177,19 +177,17 @@ class BookDetails extends Component {
 
             {
               showRePush ?
-                <PageToolbarButton
-                  label={translate('ResendToCalibre')}
-                  title={translate('ResendToCalibreContentServerConnections')}
-                  iconName={icons.EXPORT}
-                  isSpinning={isRePushing}
-                  onPress={onRePushPress}
-                /> :
-                null
-            }
+                <Fragment>
+                  <PageToolbarButton
+                    label={translate('ResendToCalibre')}
+                    title={translate('ResendToCalibreContentServerConnections')}
+                    iconName={icons.EXPORT}
+                    isSpinning={isRePushing}
+                    onPress={onRePushPress}
+                  />
 
-            {
-              showRePush ?
-                <PageToolbarSeparator /> :
+                  <PageToolbarSeparator />
+                </Fragment> :
                 null
             }
 

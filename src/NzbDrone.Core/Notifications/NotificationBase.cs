@@ -127,6 +127,7 @@ namespace NzbDrone.Core.Notifications
         public bool SupportsOnDownloadFailure => HasConcreteImplementation("OnDownloadFailure");
         public bool SupportsOnImportFailure => HasConcreteImplementation("OnImportFailure");
         public bool SupportsOnBookRetag => HasConcreteImplementation("OnBookRetag");
+        public bool SupportsOnLibraryFileAdded => HasConcreteImplementation("OnLibraryFileAdded");
         public bool SupportsOnApplicationUpdate => HasConcreteImplementation("OnApplicationUpdate");
 
         protected TSettings Settings => (TSettings)Definition.Settings;

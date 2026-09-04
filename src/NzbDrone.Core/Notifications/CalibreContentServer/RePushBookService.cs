@@ -35,6 +35,15 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
 
         public void Handle(MediaCoversUpdatedEvent message)
         {
+            // Check for a subscribed connector before queueing anything: this event fires
+            // after every author refresh and would otherwise fill the queue with no-ops.
+            if (!_notificationFactory.GetAvailableProviders()
+                    .OfType<CalibreContentServer>()
+                    .Any(c => ((CalibreContentServerSettings)c.Definition.Settings).PushLibraryEdits))
+            {
+                return;
+            }
+
             if (message.Book != null && message.Book.Id > 0)
             {
                 _commandQueueManager.Push(new RePushBookCommand { BookId = message.Book.Id, FromLibraryEdit = true });
@@ -87,7 +96,7 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
             {
                 try
                 {
-                    RePushBook(bookId, connectors);
+                    RePushBook(bookId, connectors, message.FromLibraryEdit);
                 }
                 catch (Exception ex)
                 {
@@ -96,7 +105,7 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
             }
         }
 
-        private void RePushBook(int bookId, List<CalibreContentServer> connectors)
+        private void RePushBook(int bookId, List<CalibreContentServer> connectors, bool metadataOnly)
         {
             var book = _bookService.GetBook(bookId);
 
@@ -115,15 +124,24 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
                 return;
             }
 
+            var pushedConnectors = 0;
+
             foreach (var connector in connectors)
             {
-                connector.RePush(book, files);
+                if (connector.RePush(book, files, metadataOnly))
+                {
+                    pushedConnectors++;
+                }
             }
 
-            _logger.Info("Re-pushed {0} file(s) of {1} to {2} content server connector(s)",
-                files.Count,
-                book.Title,
-                connectors.Count);
+            if (pushedConnectors > 0)
+            {
+                _logger.Info("Re-pushed {0} to {1} of {2} content server connector(s)", book.Title, pushedConnectors, connectors.Count);
+            }
+            else
+            {
+                _logger.Info("No content server connector accepted {0}; nothing was matched or added", book.Title);
+            }
         }
     }
 }

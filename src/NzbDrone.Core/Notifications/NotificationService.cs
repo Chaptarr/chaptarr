@@ -382,8 +382,9 @@ namespace NzbDrone.Core.Notifications
             {
                 book = bookFile.Edition?.Book;
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.Debug(ex, "Unable to read the edition for {0}", bookFile.Path);
             }
 
             if (book == null)
@@ -396,6 +397,17 @@ namespace NzbDrone.Core.Notifications
                 return;
             }
 
+            Author author = null;
+
+            try
+            {
+                author = book.Author ?? bookFile.Author;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to resolve the author for {0}", bookFile.Path);
+            }
+
             foreach (var notification in _notificationFactory.OnReleaseImportEnabled())
             {
                 if (!notification.NotifyOnLibraryImports)
@@ -405,6 +417,11 @@ namespace NzbDrone.Core.Notifications
 
                 try
                 {
+                    if (author != null && !ShouldHandleAuthor(notification.Definition, author))
+                    {
+                        continue;
+                    }
+
                     notification.OnLibraryFileAdded(bookFile, book);
                     _notificationStatusService.RecordSuccess(notification.Definition.Id);
                 }

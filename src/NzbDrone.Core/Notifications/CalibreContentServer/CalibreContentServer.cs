@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -20,6 +21,12 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
 {
     public class CalibreContentServer : NotificationBase<CalibreContentServerSettings>
     {
+        // BookFileAddedEvent also fires for tracked downloads, which push through
+        // OnReleaseImport on another handler thread; instances are transient, so the
+        // claim set is static and keyed per definition.
+        private static readonly ConcurrentDictionary<string, DateTime> RecentlyPushedPaths = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan RecentPushWindow = TimeSpan.FromMinutes(5);
+
         private readonly IHttpClient _httpClient;
         private readonly IRootFolderService _rootFolderService;
         private readonly IMapCoversToLocal _coverMapper;
@@ -47,17 +54,64 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
                 return;
             }
 
-            if (Settings.SyncChanges && message.OldFiles?.Any() == true)
-            {
-                DeleteBook(message.Book);
-            }
-
             var mirrorBookId = 0;
 
             foreach (var file in ebooks)
             {
+                if (!TryClaimPush(file.Path))
+                {
+                    continue;
+                }
+
                 mirrorBookId = PushFile(mirrorBookId, message.Book, file.Path);
             }
+
+            if (Settings.SyncChanges && mirrorBookId > 0 && message.OldFiles?.Any() == true)
+            {
+                RemoveReplacedFormats(mirrorBookId, message.OldFiles, ebooks);
+            }
+        }
+
+        private void RemoveReplacedFormats(int calibreId, List<NzbDrone.Core.MediaFiles.BookFile> oldFiles, List<NzbDrone.Core.MediaFiles.BookFile> newFiles)
+        {
+            // An upgrade must not delete and re-add the whole record - that would churn
+            // the calibre id and destroy whatever the server side attached to it. The
+            // new files overwrite their formats in place; only drop extensions the
+            // upgrade no longer provides.
+            var newExtensions = newFiles
+                .Select(f => (Path.GetExtension(f?.Path) ?? string.Empty).TrimStart('.'))
+                .Where(e => e.IsNotNullOrWhiteSpace())
+                .ToList();
+
+            var staleExtensions = oldFiles
+                .Select(f => (Path.GetExtension(f?.Path) ?? string.Empty).TrimStart('.'))
+                .Where(e => e.IsNotNullOrWhiteSpace() && !newExtensions.Contains(e, StringComparer.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var extension in staleExtensions)
+            {
+                try
+                {
+                    RemoveFormat(calibreId.ToString(), extension);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Unable to remove the stale {0} format from Calibre content server book {1}", extension, calibreId);
+                }
+            }
+        }
+
+        private bool TryClaimPush(string path)
+        {
+            var now = DateTime.UtcNow;
+
+            foreach (var stale in RecentlyPushedPaths.Where(p => now - p.Value > RecentPushWindow).Select(p => p.Key).ToList())
+            {
+                RecentlyPushedPaths.TryRemove(stale, out _);
+            }
+
+            return RecentlyPushedPaths.TryAdd($"{Definition.Id}:{path}", now);
         }
 
         public override void OnBookDelete(BookDeleteMessage message)
@@ -83,12 +137,25 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
                 return;
             }
 
+            if (!TryClaimPush(bookFile.Path))
+            {
+                return;
+            }
+
             PushFile(0, book, bookFile.Path);
         }
 
-        public void RePush(Book book, List<NzbDrone.Core.MediaFiles.BookFile> files)
+        public bool RePush(Book book, List<NzbDrone.Core.MediaFiles.BookFile> files, bool metadataOnly = false)
         {
-            var mirrorBookId = 0;
+            var mirrorBookId = FindMirrorBookIds(book).Select(int.Parse).FirstOrDefault();
+
+            if (metadataOnly && mirrorBookId > 0)
+            {
+                // Library edits only change the record; re-uploading every format on
+                // each refresh would send whole files for nothing.
+                SetCanonicalMetadata(mirrorBookId, book);
+                return true;
+            }
 
             foreach (var file in files)
             {
@@ -98,7 +165,10 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
             if (mirrorBookId > 0)
             {
                 SetCanonicalMetadata(mirrorBookId, book);
+                return true;
             }
+
+            return false;
         }
 
         public override void OnBookRetag(BookRetagMessage message)
@@ -123,9 +193,12 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
 
             try
             {
-                var request = BuildRequest("cdb/add-book/0/0/chaptarr-connection-test.epub").Build();
+                // Book id 0 never exists, so this exercises cdb write permissions
+                // without ever creating or touching a record.
+                var request = BuildRequest("cdb/delete-books/0").Build();
+                var anonymousProbe = Settings.Username.IsNullOrWhiteSpace();
 
-                if (Settings.Username.IsNullOrWhiteSpace())
+                if (anonymousProbe)
                 {
                     request.Credentials = new NetworkCredential("chaptarr-connection-test", Guid.NewGuid().ToString("N"));
                 }
@@ -136,7 +209,9 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    failures.Add(new ValidationFailure("Username", "Authentication failed"));
+                    failures.Add(anonymousProbe
+                        ? new ValidationFailure("Username", "The content server requires authentication, enter a username and password")
+                        : new ValidationFailure("Username", "Authentication failed"));
                 }
                 else if (response.StatusCode == HttpStatusCode.Forbidden)
                 {
@@ -145,6 +220,10 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
                 else if (response.StatusCode == HttpStatusCode.NotFound || ((int)response.StatusCode >= 300 && (int)response.StatusCode < 400))
                 {
                     failures.Add(new ValidationFailure("Url", "Not a Calibre content server, check the URL"));
+                }
+                else if ((int)response.StatusCode >= 500)
+                {
+                    failures.Add(new ValidationFailure("Url", $"The content server returned {(int)response.StatusCode} to a Calibre API request"));
                 }
             }
             catch (Exception ex)
@@ -182,7 +261,19 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
 
         private static bool IsLoopbackHost(string host)
         {
-            return host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || host.StartsWith("127.");
+            if (host.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            var trimmed = host.Trim().Trim('[', ']');
+
+            if (trimmed.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return IPAddress.TryParse(trimmed, out var ip) && IPAddress.IsLoopback(ip);
         }
 
         private int AddBook(string path)
@@ -475,6 +566,13 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
             }
 
             var titles = TitleForms(book.Title);
+
+            if (titles.Length == 0)
+            {
+                _logger.Debug("Title '{0}' has no comparable normalized form, refusing to match by title", book.Title);
+                return new List<KeyValuePair<string, CalibreBookData>>();
+            }
+
             var booksRequest = BuildRequest($"ajax/books?ids={string.Join(",", ids)}").Build();
             var calibreBooks = _httpClient.Get<Dictionary<string, CalibreBookData>>(booksRequest).Resource;
             var matches = calibreBooks.Where(x => x.Value != null && TitleForms(x.Value.Title).Intersect(titles).Any()).ToList();
@@ -516,38 +614,23 @@ namespace NzbDrone.Core.Notifications.CalibreContentServer
 
         private static string[] TitleForms(string title)
         {
-            return new[] { Normalize(title), Normalize(Regex.Replace(title ?? string.Empty, @"\s*\([^)]*\)\s*$", "")) };
+            // A fully non-Latin title normalizes to an empty string; an empty form must
+            // never survive here, or every such title matches every other and the
+            // matches feed deletions.
+            return new[] { Normalize(title), Normalize(Regex.Replace(title ?? string.Empty, @"\s*\([^)]*\)\s*$", "")) }
+                .Where(form => form.IsNotNullOrWhiteSpace())
+                .Distinct()
+                .ToArray();
         }
 
         private static bool TitlesMatch(IEnumerable<string> bookForms, IEnumerable<string> recordForms)
         {
-            foreach (var bookForm in bookForms)
-            {
-                foreach (var recordForm in recordForms)
-                {
-                    if (bookForm.IsNullOrWhiteSpace() || recordForm.IsNullOrWhiteSpace())
-                    {
-                        continue;
-                    }
-
-                    if (bookForm == recordForm)
-                    {
-                        return true;
-                    }
-
-                    if (recordForm.Length >= 8 && bookForm.Length > recordForm.Length && bookForm.EndsWith(recordForm, StringComparison.Ordinal))
-                    {
-                        return true;
-                    }
-
-                    if (bookForm.Length >= 8 && recordForm.Length > bookForm.Length && recordForm.EndsWith(bookForm, StringComparison.Ordinal))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
+            // Exact normalized equality only: suffix heuristics match sibling titles
+            // ("Foundation" vs "Second Foundation") and this result gates deletions.
+            return bookForms
+                .Where(form => form.IsNotNullOrWhiteSpace())
+                .Intersect(recordForms.Where(form => form.IsNotNullOrWhiteSpace()), StringComparer.Ordinal)
+                .Any();
         }
 
         private static string Normalize(string title)

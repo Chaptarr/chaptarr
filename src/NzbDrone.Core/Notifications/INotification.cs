@@ -41,5 +41,6 @@ namespace NzbDrone.Core.Notifications
         bool SupportsOnDownloadFailure { get; }
         bool SupportsOnImportFailure { get; }
         bool SupportsOnBookRetag { get; }
+        bool SupportsOnLibraryFileAdded { get; }
     }
 }

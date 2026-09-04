@@ -52,7 +52,8 @@ function createMapStateToProps() {
     createCommandsSelector(),
     createUISettingsSelector(),
     createDimensionsSelector(),
-    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions) => {
+    (state) => state.settings.notifications.items,
+    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions, notifications) => {
       try {
         const book = books.items.find((b) => b.id === bookId);
 
@@ -107,6 +108,13 @@ function createMapStateToProps() {
         isSearchingCommand.body.bookIds &&
         isSearchingCommand.body.bookIds.indexOf(book.id) > -1
         );
+        const rePushCommand = findCommand(commands, { name: commandNames.REPUSH_BOOK });
+        const isRePushing = !!(
+          rePushCommand &&
+        isCommandExecuting(rePushCommand) &&
+        rePushCommand.body &&
+        rePushCommand.body.bookId === book.id
+        );
         const isRenamingFiles = isCommandExecuting(findCommand(commands, { name: commandNames.RENAME_FILES, authorId: author.id }));
         const isRenamingAuthorCommand = findCommand(commands, { name: commandNames.RENAME_AUTHOR });
         const isRenamingAuthor = (
@@ -141,6 +149,8 @@ function createMapStateToProps() {
           author,
           isRefreshing,
           isSearching,
+          isRePushing,
+          showRePush: notifications.some((n) => n.implementation === 'CalibreContentServer'),
           isRenamingFiles,
           isRenamingAuthor,
           isFetching,
@@ -160,33 +170,6 @@ function createMapStateToProps() {
       }
     }
   );
-}
-
-function createMergedMapStateToProps() {
-  const selectProps = createMapStateToProps();
-
-  return (state, props) => {
-    const innerProps = selectProps(state, props);
-
-    if (!innerProps || !innerProps.author) {
-      return innerProps;
-    }
-
-    const notifications = state.settings.notifications.items;
-    const hasContentServerConnector = notifications.some((n) => n.implementation === 'CalibreContentServer');
-    const rePushCommand = findCommand(state.commands.items, { name: commandNames.REPUSH_BOOK });
-    const isRePushing = !!(
-      rePushCommand &&
-      isCommandExecuting(rePushCommand) &&
-      rePushCommand.body &&
-      rePushCommand.body.bookId === innerProps.id
-    );
-    return {
-      ...innerProps,
-      showRePush: hasContentServerConnector,
-      isRePushing
-    };
-  };
 }
 
 const mapDispatchToProps = {
@@ -285,7 +268,6 @@ class BookDetailsConnector extends Component {
     });
   };
 
-
   onRefreshPress = () => {
     this.props.executeCommand({
       name: commandNames.REFRESH_BOOK,
@@ -338,4 +320,4 @@ BookDetailsConnector.propTypes = {
   executeCommand: PropTypes.func.isRequired
 };
 
-export default connect(createMergedMapStateToProps, mapDispatchToProps)(BookDetailsConnector);
+export default connect(createMapStateToProps, mapDispatchToProps)(BookDetailsConnector);
