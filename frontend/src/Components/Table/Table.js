@@ -81,7 +81,7 @@ function Table(props) {
                 return (
                   <TableHeaderCell
                     key={name}
-                    className={styles[name]}
+                    className={column.className || styles[name]}
                     name={name}
                     isSortable={false}
                     {...otherProps}
