@@ -746,15 +746,44 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var localBook = decision.Item;
                 var matchedBook = localBook?.Book;
-                if (!CanRetargetSameWorkMatch(targetBook, matchedBook))
+                if (!SharesRetargetableRowIdentity(targetBook, matchedBook))
                 {
                     continue;
                 }
 
                 var matchedEdition = localBook.Edition;
+
+                // Two independent same-book signals are accepted here:
+                //
+                //  1. Work-level provider IDs intersect (hc/gr/ol work IDs). This is the original signal and
+                //     covers duplicate rows catalogued through the same metadata provider.
+                //
+                //  2. The matched edition itself also exists under the grabbed book row, identified by an
+                //     edition-level provider ID (ISBN-10/13, ASIN/Audible ASIN, or a Goodreads/Hardcover/
+                //     OpenLibrary/Google Books edition ID). Duplicate rows created by author-bibliography
+                //     re-discovery are frequently sourced from a *different* provider than the row that was
+                //     grabbed, so their work-level ID sets never intersect even though they describe the same
+                //     title. Signal 2 recognises those without weakening the guarantee: edition-level provider
+                //     IDs are globally unique per physical edition, so a shared one means both rows carry the
+                //     very same edition. Combined with the same-author and same-media-type guards in
+                //     SharesRetargetableRowIdentity, this cannot collide two different books that merely share
+                //     a title -- which is exactly why title similarity is deliberately NOT used as a signal.
+                //
+                // Both signals still have to land on a concrete equivalent edition below before anything is
+                // retargeted, so a match on either one can only ever move the file to an edition the grabbed
+                // book row already owns.
+                var sameWorkProviderId = WorkIdMatcher.WorkProviderIdMatches(targetBook, matchedBook);
                 var targetEdition = FindEquivalentEditionForTargetBook(targetBook, matchedEdition);
+
                 if (targetEdition == null)
                 {
+                    if (!sameWorkProviderId)
+                    {
+                        // Neither signal fired: nothing establishes that these two rows are the same book.
+                        // Leave the decision untouched so the caller's expected-book check rejects it.
+                        continue;
+                    }
+
                     decision.Reject(new Rejection(
                         $"Completed download was grabbed for {FormatBookLabel(targetBook)} and matched same-work sibling {FormatBookLabel(matchedBook)}, but no equivalent edition exists under the grabbed book row. Refresh metadata and retry."));
                     continue;
@@ -801,7 +830,12 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private static bool CanRetargetSameWorkMatch(Book targetBook, Book matchedBook)
+        /// <summary>
+        /// Baseline guards every retarget must clear, independent of how "same book" is established:
+        /// two distinct persisted rows, the same media type, and the same (known) author. These are
+        /// hard requirements -- retargeting across authors or across media types would misfile the download.
+        /// </summary>
+        private static bool SharesRetargetableRowIdentity(Book targetBook, Book matchedBook)
         {
             if (targetBook == null ||
                 matchedBook == null ||
@@ -824,7 +858,7 @@ namespace NzbDrone.Core.MediaFiles
                 return false;
             }
 
-            return WorkIdMatcher.WorkProviderIdMatches(targetBook, matchedBook);
+            return true;
         }
 
         private Edition FindEquivalentEditionForTargetBook(Book targetBook, Edition matchedEdition)
