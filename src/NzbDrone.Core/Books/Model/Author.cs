@@ -272,7 +272,16 @@ namespace NzbDrone.Core.Books
 
         public override void ApplyChanges(Author other)
         {
-            Path = other.Path;
+            // Only overwrite when a value is supplied. ApplyChanges is called both from
+            // the API -- where a PUT may legitimately omit fields it is not changing --
+            // and from metadata refresh, where the incoming Author is built from remote
+            // metadata and carries no local paths at all. That is the same reason the
+            // quality and metadata profiles below are guarded; these three were not, so
+            // an update that omitted them wiped the stored paths.
+            if (other.Path != null)
+            {
+                Path = other.Path;
+            }
 
             // Don't overwrite quality profiles if they're already set
             // Quality profiles from metadata sources are always null/0
@@ -327,8 +336,15 @@ namespace NzbDrone.Core.Books
 
             Tags = (AudiobookTags ?? new HashSet<int>()).Concat(EbookTags ?? new HashSet<int>()).ToHashSet();
             AddOptions = other.AddOptions;
-            AudiobookRootFolderPath = other.AudiobookRootFolderPath;
-            EbookRootFolderPath = other.EbookRootFolderPath;
+            if (other.AudiobookRootFolderPath != null)
+            {
+                AudiobookRootFolderPath = other.AudiobookRootFolderPath;
+            }
+
+            if (other.EbookRootFolderPath != null)
+            {
+                EbookRootFolderPath = other.EbookRootFolderPath;
+            }
             Monitored = other.Monitored;
             // Copy optional monitoring values only when explicitly provided. This keeps
             // partial metadata updates from wiping a user's monitoring choices.
