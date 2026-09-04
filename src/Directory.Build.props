@@ -74,9 +74,9 @@
     <Copyright>Copyright 2017-$([System.DateTime]::Now.ToString('yyyy')) chaptarr.com (GNU General Public v3)</Copyright>
 
     <!-- Chaptarr Development Version -->
-    <AssemblyVersion>0.9.956.0</AssemblyVersion>
-    <AssemblyFileVersion>0.9.956.0</AssemblyFileVersion>
-    <AssemblyInformationalVersion>0.9.956-chaptarr-dev</AssemblyInformationalVersion>
+    <AssemblyVersion>0.9.957.0</AssemblyVersion>
+    <AssemblyFileVersion>0.9.957.0</AssemblyFileVersion>
+    <AssemblyInformationalVersion>0.9.957-chaptarr-dev</AssemblyInformationalVersion>
     <AssemblyConfiguration>$(Configuration)-chaptarr-dev</AssemblyConfiguration>
     <NeutralLanguage>en</NeutralLanguage>
 

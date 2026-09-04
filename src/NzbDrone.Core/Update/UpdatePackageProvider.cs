@@ -264,12 +264,15 @@ namespace NzbDrone.Core.Update
                             "In Interactive Import, rows you never selected no longer keep the Import button disabled. Thanks @ZZerker.",
                             "Skip Secondary Series Books now filters as intended. Thanks @JordanFromIT.",
                             "Root folders added through the API must declare audiobook, eBook, or mixed content and provide the required profiles. Existing incomplete sides are skipped and now surface a health warning instead of aborting the whole import. Thanks @jbob06.",
+                            "Adding an author with Readarr-style settings now applies them instead of rejecting the request or silently dropping the eBook side. Thanks @Hisent and @Bubberbup.",
+                            "The format you pick when adding an author is remembered, including when the author has to be queued because the metadata server does not have them yet.",
                             "Import lists now apply book monitoring to existing authors without silently enabling the author.",
                             "Removed some old hacky ways of trying to clean up Hardcover search results.",
                             "A manually requested one-book search now runs once even when that book or author side is paused; automatic and bulk searches remain gated.",
                             "Remote path mapping health checks now report permission and Docker path problems, and Test works for host-wide mappings.",
                             "Restoring a settings backup (not a full backup) better handles remote path mappings for download clients.",
                             "rTorrent files marked 'don't download' are no longer waited on during import.",
+                            "Path errors now name the actual path instead of showing a placeholder.",
                             "API compatibility note: remote path mappings require downloadClientId; root folders require folderType; author editor and pending-import fields use the per-format model; and the obsolete POST /api/v1/author/statistics/aggregate endpoint was removed."
                         }
                     }
