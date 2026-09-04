@@ -131,23 +131,31 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubBookFileMover : IMoveBookFiles
         {
             private readonly Func<BookFile, string> _destinationFactory;
+            private readonly bool _colocationApplied;
 
-            public StubBookFileMover(Func<BookFile, string> destinationFactory)
+            public StubBookFileMover(Func<BookFile, string> destinationFactory, bool colocationApplied = true)
             {
                 _destinationFactory = destinationFactory;
+                _colocationApplied = colocationApplied;
             }
+
+            public List<BookFile> Moved { get; } = new();
 
             public BookFileMovePlan GetOrganizeDestination(BookFile bookFile, Author author, bool moveToCanonicalAuthorFolder, RenameBatchContext renameBatchContext = null)
             {
+                // Mirror the real service in that ReplicaPaths is populated only when colocation applied.
                 return new BookFileMovePlan
                 {
                     CanOrganize = true,
+                    ColocationApplied = _colocationApplied,
+                    ReplicaPaths = _colocationApplied ? new List<string>() : null,
                     DestinationPath = _destinationFactory(bookFile)
                 };
             }
 
             public BookFile MoveBookFile(BookFile bookFile, Author author, BookFileMovePlan plan, RenameBatchContext renameBatchContext = null)
             {
+                Moved.Add(bookFile);
                 bookFile.Path = plan.DestinationPath;
                 return bookFile;
             }
@@ -232,7 +240,23 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(context.Events.Events, Is.Empty);
         }
 
-        private static TestContext CreateContext(Func<BookFile, string> destinationFactory, bool includeMobi = false)
+        [Test]
+        public void should_not_move_ebook_when_no_colocated_destination_applies()
+        {
+            // The planner declines to colocate (separate ebook-only root, or the feature disabled on that root),
+            // so the plan carries the plain naming destination. This handler must leave the file alone rather
+            // than re-organizing a file that was not part of the audiobook import.
+            var context = CreateContext(_ => "/library/Author/Series/Book/Book.epub", colocationApplied: false);
+
+            context.Handler.Handle(context.Event);
+
+            Assert.That(context.EbookFile.Path, Is.EqualTo("/library/Author/Book/Book.epub"));
+            Assert.That(context.BookFileMover.Moved, Is.Empty);
+            Assert.That(context.MediaFileService.Updated, Is.Empty);
+            Assert.That(context.Events.Events, Is.Empty);
+        }
+
+        private static TestContext CreateContext(Func<BookFile, string> destinationFactory, bool includeMobi = false, bool colocationApplied = true)
         {
             var author = new Author
             {
@@ -289,6 +313,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             mediaFileService.FilesByBook[ebookBook.Id] = ebookFiles;
 
             var events = new StubEventAggregator();
+            var bookFileMover = new StubBookFileMover(destinationFactory, colocationApplied);
 
             var handler = new EbookColocateOnAudiobookImportHandler(
                 new StubRootFolderService(new RootFolder
@@ -300,7 +325,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }),
                 bookService,
                 mediaFileService,
-                new StubBookFileMover(destinationFactory),
+                bookFileMover,
                 DiskWith(ebookFiles.Select(f => f.Path).ToArray()),
                 events,
                 LogManager.GetCurrentClassLogger());
@@ -316,7 +341,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 ebookFile,
                 ebookFiles,
                 mediaFileService,
-                events);
+                events,
+                bookFileMover);
         }
 
         private static IDiskProvider DiskWith(params string[] existingFiles)
@@ -338,6 +364,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             BookFile EbookFile,
             List<BookFile> EbookFiles,
             StubMediaFileService MediaFileService,
-            StubEventAggregator Events);
+            StubEventAggregator Events,
+            StubBookFileMover BookFileMover);
     }
 }

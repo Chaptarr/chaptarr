@@ -291,6 +291,52 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(plan.DestinationPath, Is.EqualTo(colocatedPath));
             Assert.That(plan.DestinationAuthorFolderPath, Is.EqualTo(sourceAuthorFolder));
             Assert.That(plan.ShouldUpdateStoredAuthorPath, Is.False);
+            Assert.That(plan.ColocationApplied, Is.True);
+        }
+
+        [Test]
+        public void should_not_flag_colocation_when_planner_declines()
+        {
+            var rootFolder = @"C:\ebooks".AsOsAgnostic();
+            var sourceAuthorFolder = Path.Combine(rootFolder, "George R. R. Martin");
+            var fileNameBuilder = DispatchProxy.Create<IBuildFileNames, BuildFileNamesProxy>();
+            var fileNameProxy = (BuildFileNamesProxy)(object)fileNameBuilder;
+            fileNameProxy.AuthorFolderFactory = (_, _) => "George R.R. Martin";
+            fileNameProxy.BookFileNameFactory = (_, _, _, _) => Path.Combine("Wild Cards", "file");
+            var namingConfigService = DispatchProxy.Create<INamingConfigService, NamingConfigServiceProxy>();
+            var colocationPlanner = DispatchProxy.Create<IEbookColocationPlanner, ColocatingPlannerProxy>();
+            ((ColocatingPlannerProxy)(object)colocationPlanner).PlanResult =
+                EbookColocationPlan.Skipped(EbookColocationSkipReason.RootNotMixedOrDisabled, cleanupReplicas: true);
+            var service = CreateService(
+                fileNameBuilder,
+                namingConfigService,
+                ebookColocationPlanner: colocationPlanner);
+            var author = new Author
+            {
+                Id = 1,
+                Name = "George R.R. Martin",
+                EbookRootFolderPath = rootFolder,
+                EbookPath = sourceAuthorFolder
+            };
+            var bookFile = new BookFile
+            {
+                Path = Path.Combine(sourceAuthorFolder, "Wild Cards", "original.epub"),
+                EditionId = 7,
+                Edition = new Edition
+                {
+                    Id = 7,
+                    BookId = 42,
+                    Book = new Book { Id = 42, AuthorId = author.Id }
+                },
+                Quality = new QualityModel(Quality.EPUB),
+                MediaType = "ebook"
+            };
+
+            var plan = service.GetOrganizeDestination(bookFile, author, false);
+
+            Assert.That(plan.CanOrganize, Is.True);
+            Assert.That(plan.ColocationApplied, Is.False);
+            Assert.That(plan.DestinationPath, Is.EqualTo(Path.Combine(sourceAuthorFolder, "Wild Cards", "file.epub")));
         }
 
         [Test]
