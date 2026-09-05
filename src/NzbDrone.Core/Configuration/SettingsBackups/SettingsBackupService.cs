@@ -626,6 +626,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 CutoffFormatScore = profile.CutoffFormatScore,
                 ConvertMp3ToM4b = profile.ConvertMp3ToM4b,
                 ConvertToQualityId = profile.ConvertToQualityId,
+                MergeMultiPartFiles = profile.MergeMultiPartFiles,
                 UpgradeAllowed = profile.UpgradeAllowed,
                 PreferCustomFormatsOverQuality = profile.ProfileType == ProfileType.Audiobook && profile.PreferCustomFormatsOverQuality,
                 FormatItems = (profile.FormatItems ?? new List<NzbDrone.Core.Profiles.ProfileFormatItem>())
@@ -1735,6 +1736,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 CutoffFormatScore = profile.CutoffFormatScore,
                 ConvertMp3ToM4b = profile.ConvertMp3ToM4b,
                 ConvertToQualityId = profile.ConvertToQualityId,
+                MergeMultiPartFiles = profile.MergeMultiPartFiles,
                 UpgradeAllowed = profile.UpgradeAllowed,
                 PreferCustomFormatsOverQuality = profile.ProfileType == ProfileType.Audiobook && profile.PreferCustomFormatsOverQuality,
                 FormatItems = new List<NzbDrone.Core.Profiles.ProfileFormatItem>()

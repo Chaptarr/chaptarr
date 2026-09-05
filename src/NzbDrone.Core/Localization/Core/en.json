@@ -1129,6 +1129,8 @@
   "MediaManagementSettingsSummary": "Naming, file management settings and root folders",
   "Medium": "Medium",
   "Member": "Member",
+  "MergeMultiPartFiles": "Create Single File",
+  "MergeMultiPartFilesHelpText": "All multi-part downloads will be merged into a single M4B file",
   "Message": "Message",
   "Metadata": "Metadata",
   "MetadataConsumers": "Metadata Consumers",

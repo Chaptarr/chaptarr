@@ -1532,7 +1532,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 var sourceQuality = first?.Quality?.Quality ?? Qualities.Quality.Unknown;
                 var qualityProfile = author.GetQualityProfileForQuality(sourceQuality);
                 var targetQuality = QualityConversionHelper.GetPlannedConversionTarget(author, first?.Quality);
-                if (targetQuality != Qualities.Quality.M4B)
+                var mergeMultiPartM4b = QualityConversionHelper.ShouldMergeMultiPartM4b(qualityProfile, first?.Quality);
+                if (targetQuality != Qualities.Quality.M4B && !mergeMultiPartM4b)
                 {
                     return (bookDecisions, null, false, null);
                 }
@@ -1549,7 +1550,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return (bookDecisions, null, false, null);
                 }
 
-                if (inputFiles.All(p => Path.GetExtension(p).Equals(".m4b", StringComparison.OrdinalIgnoreCase)))
+                if (inputFiles.All(p => Path.GetExtension(p).Equals(".m4b", StringComparison.OrdinalIgnoreCase)) &&
+                    (inputFiles.Length == 1 || qualityProfile?.MergeMultiPartFiles != true))
                 {
                     return (bookDecisions, null, false, null);
                 }
