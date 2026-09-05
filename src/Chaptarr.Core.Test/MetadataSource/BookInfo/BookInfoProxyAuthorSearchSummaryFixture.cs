@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -13,6 +14,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
+using NzbDrone.Core.MetadataSource.Goodreads;
 using NzbDrone.Core.MetadataSource.Hardcover;
 
 namespace Chaptarr.Core.Test.MetadataSource.BookInfo
@@ -22,6 +24,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
     {
         private sealed class SummaryHttpClient : IHttpClient
         {
+            public string BodyOverride { get; set; }
+
             public List<HttpRequest> Requests { get; } = new List<HttpRequest>();
 
             public HashSet<string> MissingAuthorIds { get; } = new HashSet<string>();
@@ -63,7 +67,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     { ""url"": ""https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/nophoto/user/u_700x933.png"", ""provider"": ""goodreads"", ""isPrimary"": false }
                   ]
                 }";
-                return new HttpResponse(request, new HttpHeader(), body, HttpStatusCode.OK);
+                return new HttpResponse(request, new HttpHeader(), BodyOverride ?? body, HttpStatusCode.OK);
             }
 
             public void DownloadFile(string url, string fileName, string userAgent = null) => throw new NotImplementedException();
@@ -79,6 +83,23 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             public Task<HttpResponse> HeadAsync(HttpRequest request) => throw new NotImplementedException();
             public Task<HttpResponse> PostAsync(HttpRequest request) => throw new NotImplementedException();
             public Task<HttpResponse<T>> PostAsync<T>(HttpRequest request) where T : new() => throw new NotImplementedException();
+        }
+
+        private sealed class GoodreadsSearchClient : IGoodreadsSearchProxy
+        {
+            public List<SearchJsonResource> Search(string query)
+            {
+                return new List<SearchJsonResource>
+                {
+                    new SearchJsonResource
+                    {
+                        BookId = 1,
+                        WorkId = 2,
+                        Title = "The Old Man and the Sea",
+                        Author = new AuthorJsonResource { Id = 70940350, Name = "Ernest Hemingway" }
+                    }
+                };
+            }
         }
 
         private sealed class HardcoverSearchClient : IHardcoverSearchClient
@@ -118,6 +139,61 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     _ => throw new NotImplementedException($"Config proxy does not implement {targetMethod?.Name}")
                 };
             }
+        }
+
+        [TestCase("https://www.goodreads.com/author/show/1455.Ernest_Hemingway")]
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("javascript:alert(1)")]
+        public void goodreads_search_should_prefer_valid_summary_url_without_changing_lookup_identity(string summaryUrl)
+        {
+            const string fallback = "https://www.goodreads.com/author/show/70940350.Ernest_Hemingway";
+            var httpClient = new SummaryHttpClient
+            {
+                BodyOverride = JsonConvert.SerializeObject(new
+                {
+                    name = "Ernest Hemingway",
+                    providerUrls = new Dictionary<string, string> { ["goodreads"] = summaryUrl }
+                })
+            };
+            var results = CreateGoodreadsProxy(httpClient).SearchForNewEntity("Hemingway", "goodreads");
+            var author = results.OfType<Author>().Single();
+            var expectedUrl = summaryUrl?.StartsWith("https://", StringComparison.Ordinal) == true ? summaryUrl : fallback;
+
+            Assert.That(author.Links.Select(link => (link.Name, link.Url)),
+                Is.EqualTo(new[] { ("goodreads", expectedUrl) }));
+            Assert.That(author.GoodreadsAuthorId, Is.EqualTo("gr:70940350"));
+            Assert.That(httpClient.Requests.Single().Url.FullUri, Does.Contain("/api/v5/author/summary/gr%3A70940350"));
+
+            var ensureLink = typeof(BookInfoProxy).GetMethod("EnsureGoodreadsAuthorLink", BindingFlags.NonPublic | BindingFlags.Static);
+            ensureLink.Invoke(null, new object[] { author });
+            Assert.That(author.Links.Select(link => (link.Name, link.Url)),
+                Is.EqualTo(new[] { ("goodreads", expectedUrl) }), "fallback must preserve an existing valid provider URL");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void goodreads_search_should_keep_generated_link_when_summary_is_unavailable(bool timeout)
+        {
+            var httpClient = new SummaryHttpClient();
+            (timeout ? httpClient.TimedOutAuthorIds : httpClient.MissingAuthorIds).Add("gr:70940350");
+
+            var author = CreateGoodreadsProxy(httpClient).SearchForNewEntity("Hemingway", "goodreads").OfType<Author>().Single();
+
+            Assert.That(author.GoodreadsAuthorId, Is.EqualTo("gr:70940350"));
+            Assert.That(author.Links.Select(link => (link.Name, link.Url)), Is.EqualTo(new[]
+            {
+                ("goodreads", "https://www.goodreads.com/author/show/70940350.Ernest_Hemingway")
+            }));
+        }
+
+        private static BookInfoProxy CreateGoodreadsProxy(SummaryHttpClient httpClient)
+        {
+            var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            var logger = LogManager.GetCurrentClassLogger();
+            return new BookInfoProxy(httpClient, null, new GoodreadsSearchClient(), null, null, null, null, null,
+                configService, new MetadataRequestBuilder(configService), logger, new CacheManager(),
+                new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger));
         }
 
         [Test]

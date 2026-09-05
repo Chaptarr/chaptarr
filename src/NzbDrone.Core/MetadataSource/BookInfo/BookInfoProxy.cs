@@ -2407,13 +2407,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 }
 
                 ApplyAuthorSearchSummaries(authors, "goodreads");
-
-                foreach (var author in authors)
-                {
-                    EnsureGoodreadsAuthorLink(author);
-                    result.Add(author);
-                }
-
+                result.AddRange(authors);
                 result.AddRange(books.Cast<object>());
             }
 
@@ -3809,7 +3803,9 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             private static void EnsureGoodreadsAuthorLink(Author author)
             {
-            if (author == null)
+            if (author == null || author.Links?.Any(link =>
+                link?.Url.IsValidHttpUrl() == true &&
+                link.Url.Contains("goodreads.com/author/show", StringComparison.OrdinalIgnoreCase)) == true)
             {
                 return;
             }
@@ -3839,28 +3835,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             }
 
             author.Links ??= new List<Links>();
-
-            var existingIndex = author.Links.FindIndex(l =>
-                l != null &&
-                !string.IsNullOrWhiteSpace(l.Url) &&
-                l.Url.Contains("goodreads.com/author/show", StringComparison.OrdinalIgnoreCase));
-
-            if (existingIndex >= 0)
-            {
-                var existing = author.Links[existingIndex];
-                existing.Name = string.IsNullOrWhiteSpace(existing.Name) ? "goodreads" : existing.Name;
-                existing.Url = url;
-
-                // Ensure Goodreads is the primary external link for Goodreads authors.
-                if (existingIndex != 0)
-                {
-                    author.Links.RemoveAt(existingIndex);
-                    author.Links.Insert(0, existing);
-                }
-
-                return;
-            }
-
             author.Links.Insert(0, new Links { Name = "goodreads", Url = url });
             }
 
@@ -5095,7 +5069,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 .ToList();
 
             var existingLinks = author.Links ?? new List<Links>();
-            var summaryLinks = (summary.ProviderUrls?.ValidateProviderUrls() ?? new ProviderUrlMap())
+            var providerUrls = summary.ProviderUrls?.ValidateProviderUrls() ?? new ProviderUrlMap();
+            var summaryLinks = providerUrls
                 .Where(link => !string.Equals(link.Key, "_metadata", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(link => IsPhotoFromSearchProvider(link.Key, searchProvider) ? 0 : 1)
                 .ThenBy(link => link.Key, StringComparer.OrdinalIgnoreCase)
@@ -5105,8 +5080,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     Url = link.Value.Trim()
                 });
 
-            author.Links = existingLinks
-                .Concat(summaryLinks)
+            // Summary URLs replace search-generated links for the same provider. The candidate's
+            // lookup ID is left as the search returned it; the server resolves aliases.
+            author.Links = summaryLinks
+                .Concat(existingLinks.Where(link => !providerUrls.ContainsKey(link?.Name?.Trim() ?? string.Empty)))
                 .Where(link => link?.Url.IsValidHttpUrl() == true)
                 .DistinctBy(link => link.Url.Trim(), StringComparer.OrdinalIgnoreCase)
                 .ToList();
