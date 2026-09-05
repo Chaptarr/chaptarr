@@ -14,7 +14,11 @@ function createUnoptimizedSelector(uiSection) {
 }
 
 function authorListEqual(a, b) {
-  return hasDifferentItemsOrOrder(a, b);
+  // Reselect equality functions must return true when the inputs are EQUAL
+  // (reuse the cached result). hasDifferentItemsOrOrder returns true when
+  // they DIFFER, so it must be negated here or filtering/sorting reuses the
+  // stale unfiltered collection.
+  return !hasDifferentItemsOrOrder(a, b);
 }
 
 const createAuthorEqualSelector = createSelectorCreator(
