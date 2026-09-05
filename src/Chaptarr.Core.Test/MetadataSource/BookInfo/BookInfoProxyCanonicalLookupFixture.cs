@@ -21,6 +21,18 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
     [TestFixture]
     public class BookInfoProxyCanonicalLookupFixture
     {
+        private sealed class GoodreadsSearchProxyStub : IGoodreadsSearchProxy
+        {
+            private readonly List<SearchJsonResource> _results;
+
+            public GoodreadsSearchProxyStub(List<SearchJsonResource> results)
+            {
+                _results = results;
+            }
+
+            public List<SearchJsonResource> Search(string query) => _results;
+        }
+
         private class RecordingHttpClient : IHttpClient
         {
             private readonly Func<HttpRequest, HttpResponse> _handler;
@@ -74,14 +86,14 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             return new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger);
         }
 
-        private static BookInfoProxy CreateProxy(IHttpClient httpClient)
+        private static BookInfoProxy CreateProxy(IHttpClient httpClient, IGoodreadsSearchProxy goodreadsSearchProxy = null)
         {
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
             var requestBuilder = new MetadataRequestBuilder(configService);
 
             return new BookInfoProxy(httpClient,
                 cachedHttpClient: null,
-                goodreadsSearchProxy: null,
+                goodreadsSearchProxy: goodreadsSearchProxy,
                 hardcoverSearchClient: null,
                 audibleCatalogProxy: null,
                 authorService: null,
@@ -107,7 +119,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     WorkId = 22733728,
                     Title = "The Long Way to a Small, Angry Planet",
                     Author = new AuthorJsonResource { Id = 1306980, Name = "Becky Chambers" }
-                }
+                },
+                null
             });
 
             var resource = book.ToResource();
@@ -125,6 +138,28 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 Assert.That(resource.Editions.Single().ForeignEditionId, Is.EqualTo("gr:22733729"));
                 Assert.That(prefixFailures, Is.Empty);
             });
+        }
+
+        [Test]
+        public void should_preserve_requested_media_type_on_goodreads_text_search()
+        {
+            var proxy = CreateProxy(
+                new RecordingHttpClient(_ => throw new AssertionException("HTTP should not be called")),
+                new GoodreadsSearchProxyStub(new List<SearchJsonResource>
+                {
+                    new SearchJsonResource
+                    {
+                        BookId = 22733729,
+                        WorkId = 22733728,
+                        Title = "The Long Way to a Small, Angry Planet",
+                        Author = new AuthorJsonResource { Id = 1306980, Name = "Becky Chambers" }
+                    }
+                }));
+
+            var results = proxy.SearchForNewBook("dune", author: null, mediaType: BookMediaType.Ebook);
+
+            Assert.That(results, Has.Count.EqualTo(1));
+            Assert.That(results.Single().MediaType, Is.EqualTo(BookMediaType.Ebook));
         }
 
         [Test]

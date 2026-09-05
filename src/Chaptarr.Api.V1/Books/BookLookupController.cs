@@ -80,7 +80,7 @@ namespace Chaptarr.Api.V1.Books
             }
 
             // 2) Fall back to existing remote search path if nothing local
-            var searchResults = localMatches ?? _searchProxy.SearchForNewBook(term, null);
+            var searchResults = localMatches ?? _searchProxy.SearchForNewBook(term, null, mediaType: requestedMediaType);
 
             // Apply mediaType filter to remote results
             if (requestedMediaType.HasValue)

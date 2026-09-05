@@ -2434,7 +2434,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 .ToList();
         }
 
-            public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true)
+            public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true, BookMediaType? mediaType = null)
             {
                 var q = title.ToLower().Trim();
                 if (author != null)
@@ -2512,7 +2512,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     q = slug;
                 }
 
-                return Search(q, getAllEditions);
+                return Search(q, getAllEditions, mediaType);
             }
             catch (HttpException ex)
             {
@@ -2549,7 +2549,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             return Search(asin, true);
         }
 
-        private List<Book> Search(string query, bool getAllEditions)
+        private List<Book> Search(string query, bool getAllEditions, BookMediaType? mediaType = null)
         {
             List<SearchJsonResource> result;
             try
@@ -2571,7 +2571,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             foreach (var searchResult in result)
             {
-                var book = CreateBookFromSearchResult(searchResult);
+                var book = CreateBookFromSearchResult(searchResult, mediaType);
                 if (book != null)
                 {
                     books.Add(book);
@@ -3728,7 +3728,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             return false;
         }
 
-        private Book CreateBookFromSearchResult(SearchJsonResource searchResult)
+        private Book CreateBookFromSearchResult(SearchJsonResource searchResult, BookMediaType? mediaType = null)
         {
             if (searchResult == null || searchResult.Author == null)
             {
@@ -3757,6 +3757,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 AudiobookMonitored = false,
                 EbookMonitored = false,
                 AnyEditionOk = true,
+                MediaType = mediaType ?? BookMediaType.Audiobook,
                 Author = author,
                 Ratings = new Ratings
                 {
