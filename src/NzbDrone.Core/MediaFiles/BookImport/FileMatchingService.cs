@@ -3134,7 +3134,31 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             if (!allowAuthorImport)
             {
-                return (null, suggestion, s.Reason);
+                // Import is off-limits here, but linking to an author the
+                // library already has is not an import. Without this lookup
+                // every V5 suggestion whose author entered the library under
+                // a different provider id dies as "no match in local library"
+                // even though the author (and often the book) is present.
+                var existingOnly = TryFindExistingSuggestedAuthor(s.ProviderId);
+                if (existingOnly == null || existingOnly.Id <= 0)
+                {
+                    return (null, suggestion, s.Reason);
+                }
+
+                var scopedExistingMatch = EvaluateHolyGrailMatchFileInternal(
+                    file,
+                    mediaType,
+                    existingOnly.Id,
+                    disablePathFallback: true,
+                    inferAuthorFromPathDuringPathFallback: true,
+                    unscoped: false,
+                    hardAllowedBookIds: hardAllowedBookIds)?.Match;
+                if (scopedExistingMatch != null)
+                {
+                    return (scopedExistingMatch, suggestion, $"Recovered via existing V5 author '{s.AuthorName}'");
+                }
+
+                return (null, suggestion, $"NO_EDITION_FOUND (existing authorId={existingOnly.Id})");
             }
 
             var recoveredAuthor = TryGetOrImportSuggestedAuthorForRestrictedRecovery(s.ProviderId, s.AuthorName, file.Path, mediaType);
@@ -3157,6 +3181,30 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             return (null, suggestion, $"NO_EDITION_FOUND (authorId={recoveredAuthor.Id})");
+        }
+
+        private Author TryFindExistingSuggestedAuthor(string providerId)
+        {
+            if (string.IsNullOrWhiteSpace(providerId))
+            {
+                return null;
+            }
+
+            var colon = providerId.IndexOf(':');
+            if (colon <= 0 || colon >= providerId.Length - 1)
+            {
+                return null;
+            }
+
+            try
+            {
+                return _authorService?.FindByProviderId(providerId.Substring(0, colon), providerId.Substring(colon + 1));
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "[FALLBACK-V5] Existing-author lookup failed for '{0}'", providerId);
+                return null;
+            }
         }
 
         private Author TryGetOrImportSuggestedAuthorForRestrictedRecovery(string providerId, string authorName, string samplePath, BookMediaType mediaType)
