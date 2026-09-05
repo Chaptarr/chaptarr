@@ -61,9 +61,21 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             _rootFolderSettingsResolver = rootFolderSettingsResolver;
         }
 
+        private const int DefaultRefreshIntervalMinutes = 720;
+
         public override string Name => "Goodreads Bookshelves";
         public override ImportListType ListType => ImportListType.Goodreads;
-        public override TimeSpan MinRefreshInterval => TimeSpan.FromHours(12);
+        public override TimeSpan MinRefreshInterval
+        {
+            get
+            {
+                var minutes = Definition?.Settings is GoodreadsBookshelfImportListSettings settings && settings.RefreshIntervalMinutes > 0
+                    ? settings.RefreshIntervalMinutes
+                    : DefaultRefreshIntervalMinutes;
+
+                return TimeSpan.FromMinutes(minutes);
+            }
+        }
 
         public override IList<ImportListItemInfo> Fetch()
         {
