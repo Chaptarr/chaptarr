@@ -211,6 +211,8 @@ namespace Chaptarr.Api.V1.Author
             PostValidator.RuleFor(s => s.ForeignAuthorId).NotEmpty().SetValidator(authorExistsValidator);
 
 	            PutValidator.RuleFor(s => s.Path).IsValidPath();
+	            PutValidator.RuleFor(s => s.AudiobookPath).IsValidPath().When(s => s.AudiobookPath.IsNotNullOrWhiteSpace());
+	            PutValidator.RuleFor(s => s.EbookPath).IsValidPath().When(s => s.EbookPath.IsNotNullOrWhiteSpace());
 	        }
 
 	        private bool IsImportActive()
