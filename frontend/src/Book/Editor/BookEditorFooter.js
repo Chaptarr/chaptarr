@@ -1,9 +1,14 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import { connect } from 'react-redux';
+import * as commandNames from 'Commands/commandNames';
 import SelectInput from 'Components/Form/SelectInput';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import PageContentFooter from 'Components/Page/PageContentFooter';
 import { kinds } from 'Helpers/Props';
+import { executeCommand } from 'Store/Actions/commandActions';
+import { fetchNotifications } from 'Store/Actions/settingsActions';
+import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import translate from 'Utilities/String/translate';
 import BookEditorFooterLabel from './BookEditorFooterLabel';
 import DeleteBookModal from './Delete/DeleteBookModal';
@@ -28,6 +33,10 @@ class BookEditorFooter extends Component {
       isConfirmMoveModalOpen: false,
       destinationRootFolder: null
     };
+  }
+
+  componentDidMount() {
+    this.props.fetchNotifications();
   }
 
   componentDidUpdate(prevProps) {
@@ -64,6 +73,13 @@ class BookEditorFooter extends Component {
     }
   };
 
+  onResendToCalibrePress = () => {
+    this.props.executeCommand({
+      name: commandNames.REPUSH_BOOK,
+      bookIds: this.props.bookIds
+    });
+  };
+
   onDeleteSelectedPress = () => {
     this.setState({ isDeleteBookModalOpen: true });
   };
@@ -80,7 +96,9 @@ class BookEditorFooter extends Component {
       bookIds,
       selectedCount,
       isSaving,
-      isDeleting
+      isDeleting,
+      isResendingToCalibre,
+      showResendToCalibre
     } = this.props;
 
     const {
@@ -119,6 +137,20 @@ class BookEditorFooter extends Component {
             />
 
             <div className={styles.buttons}>
+              {
+                showResendToCalibre ?
+                  <SpinnerButton
+                    className={styles.organizeSelectedButton}
+                    kind={kinds.WARNING}
+                    isSpinning={isResendingToCalibre}
+                    isDisabled={!selectedCount || isResendingToCalibre}
+                    onPress={this.onResendToCalibrePress}
+                  >
+                    {translate('ResendToCalibre')}
+                  </SpinnerButton> :
+                  null
+              }
+
               <SpinnerButton
                 className={styles.deleteSelectedButton}
                 kind={kinds.DANGER}
@@ -144,6 +176,10 @@ class BookEditorFooter extends Component {
 }
 
 BookEditorFooter.propTypes = {
+  isResendingToCalibre: PropTypes.bool.isRequired,
+  showResendToCalibre: PropTypes.bool.isRequired,
+  executeCommand: PropTypes.func.isRequired,
+  fetchNotifications: PropTypes.func.isRequired,
   bookIds: PropTypes.arrayOf(PropTypes.number).isRequired,
   selectedCount: PropTypes.number.isRequired,
   isSaving: PropTypes.bool.isRequired,
@@ -153,4 +189,13 @@ BookEditorFooter.propTypes = {
   onSaveSelected: PropTypes.func.isRequired
 };
 
-export default BookEditorFooter;
+const selectIsResendingToCalibre = createCommandExecutingSelector(commandNames.REPUSH_BOOK);
+
+function mapStateToProps(state) {
+  return {
+    isResendingToCalibre: selectIsResendingToCalibre(state),
+    showResendToCalibre: state.settings.notifications.items.some((n) => n.implementation === 'CalibreContentServer')
+  };
+}
+
+export default connect(mapStateToProps, { executeCommand, fetchNotifications })(BookEditorFooter);
