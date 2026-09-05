@@ -91,6 +91,24 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                 Settings.EbookImportedCategory);
         }
 
+        private bool TorrentExistsInClient(string hash)
+        {
+            if (hash.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            try
+            {
+                return Proxy.GetTorrents(Settings).Any(t => hash.Equals(t.Hash, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to check whether torrent {0} already exists in qBittorrent", hash);
+                return false;
+            }
+        }
+
         protected override string AddFromMagnetLink(RemoteBook remoteBook, string hash, string magnetLink)
         {
             if (!Proxy.GetConfig(Settings).DhtEnabled && !magnetLink.Contains("&tr="))
@@ -112,6 +130,10 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             catch (DownloadClientException ex) when (ex.InnerException is HttpException httpException && httpException.Response.StatusCode is HttpStatusCode.Conflict)
             {
                 throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the magnet link due to a conflict", ex);
+            }
+            catch (DownloadClientException) when (TorrentExistsInClient(hash))
+            {
+                _logger.Info("qBittorrent already has torrent {0}; adopting the existing download instead of failing the grab", hash);
             }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
@@ -177,6 +199,10 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             catch (DownloadClientException ex) when (ex.InnerException is HttpException httpException && httpException.Response.StatusCode is HttpStatusCode.Conflict)
             {
                 throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the torrent file due to a conflict", ex);
+            }
+            catch (DownloadClientException) when (TorrentExistsInClient(hash))
+            {
+                _logger.Info("qBittorrent already has torrent {0}; adopting the existing download instead of failing the grab", hash);
             }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
