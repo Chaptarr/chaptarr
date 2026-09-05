@@ -19,30 +19,53 @@
 .searchInput {
   composes: input from '~Components/Form/TextInput.css';
 
-  height: 46px;
-  border-radius: 0;
-  font-size: 18px;
   flex: 1;
-}
 
-.providerSelect {
   height: 46px;
-  width: 140px;
-  margin-left: 10px;
-  font-size: 18px;
-  border: 1px solid var(--inputBorderColor);
   border-radius: 0;
-  background-color: var(--inputBackgroundColor);
-  color: var(--textColor);
-  padding: 0 16px;
+  font-size: 18px;
 }
 
 .clearLookupButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 46px;
+  height: 46px;
   border: 1px solid var(--inputBorderColor);
   border-left: none;
-  border-top-right-radius: 4px;
-  border-bottom-right-radius: 4px;
-  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075);
+  border-radius: 4px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  box-shadow: inset 0 1px 1px var(--inputBoxShadowColor);
+}
+
+.providerSelectContainer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-left: 10px;
+}
+
+.providerSelect {
+  composes: input from '~Components/Form/Input.css';
+
+  padding-right: 40px;
+  padding-left: 16px;
+  width: auto;
+  height: 46px;
+  font-size: 18px;
+  cursor: pointer;
+  appearance: none;
+}
+
+.providerSelectIcon {
+  position: absolute;
+  right: 16px;
+  color: var(--textColor);
+  font-size: 14px;
+  pointer-events: none;
 }
 
 .message {
@@ -69,25 +92,25 @@
 
 .filterButtons {
   display: flex;
-  gap: 10px;
+  justify-content: center;
   margin-top: 20px;
   margin-bottom: 20px;
-  justify-content: center;
+  gap: 10px;
 }
 
 .filterButtons button {
   padding: 8px 16px;
   border: 1px solid var(--inputBorderColor);
-  background-color: var(--inputBackgroundColor);
   border-radius: 4px;
+  background-color: var(--inputBackgroundColor);
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .filterButtons button:hover:not(:disabled) {
-  background-color: var(--inputHoverBackgroundColor);
   border-color: var(--themeLightColor);
+  background-color: var(--inputHoverBackgroundColor);
 }
 
 .filterButtons button:disabled {
@@ -96,7 +119,7 @@
 }
 
 .activeFilter {
+  border-color: var(--themeLightColor) !important;
   background-color: var(--themeLightColor) !important;
   color: var(--white) !important;
-  border-color: var(--themeLightColor) !important;
 }

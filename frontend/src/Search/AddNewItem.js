@@ -220,14 +220,6 @@ class AddNewItem extends Component {
               onKeyPress={this.onSearchKeyPress}
             />
 
-            <SelectInput
-              className={styles.providerSelect}
-              name="provider"
-              value={selectedProvider}
-              values={metadataProviders}
-              onChange={this.onProviderChange}
-            />
-
             <Button
               className={styles.clearLookupButton}
               onPress={this.onClearSearchPress}
@@ -237,6 +229,20 @@ class AddNewItem extends Component {
                 size={20}
               />
             </Button>
+
+            <div className={styles.providerSelectContainer}>
+              <SelectInput
+                className={styles.providerSelect}
+                name="provider"
+                value={selectedProvider}
+                values={metadataProviders}
+                onChange={this.onProviderChange}
+              />
+              <Icon
+                className={styles.providerSelectIcon}
+                name={icons.CARET_DOWN}
+              />
+            </div>
           </div>
 
           {
