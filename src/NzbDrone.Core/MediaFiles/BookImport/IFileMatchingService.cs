@@ -8,6 +8,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 {
     public sealed class MatchingContext
     {
+        // Manual preview needs an exact verdict for every file, so sibling
+        // files must not share cached negative results.
+        public bool SuppressNegativeUnitCache { get; set; }
+
         /// <summary>
         /// When true, call V5 to identify potential authors for unmatched files.
         /// Populates <see cref="UnmatchedFile.PotentialAuthors"/>.
