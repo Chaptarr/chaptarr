@@ -21,16 +21,22 @@
   padding-left: 38px;
   padding-right: 30px;
   height: 35px;
-  border-radius: 20px;
   border: 1px solid var(--inputBorderColor);
+  border-radius: 20px;
   background-color: var(--inputBackgroundColor);
+  color: var(--textColor);
   transition: all 0.2s ease-in-out;
+
+  &::placeholder {
+    color: var(--gray);
+    opacity: 1;
+  }
 }
 
 .searchInput:focus {
+  outline: 0;
   border-color: var(--inputFocusBorderColor);
   box-shadow: 0 0 0 1px var(--inputFocusBorderColor);
-  background-color: var(--white);
 }
 
 .clearIcon {
