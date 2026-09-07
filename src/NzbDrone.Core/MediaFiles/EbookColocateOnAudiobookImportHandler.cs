@@ -117,6 +117,13 @@ namespace NzbDrone.Core.MediaFiles
                             continue;
                         }
 
+                        // Different roots can yield a naming-only plan; this event must only apply colocation.
+                        if (plan.ReplicaPaths == null)
+                        {
+                            _logger.Debug("Skipping ebook colocation for {0}: colocation does not apply; leaving file unchanged", previousPath);
+                            continue;
+                        }
+
                         _bookFileMover.MoveBookFile(ebookFile, author, plan);
                         _mediaFileService.Update(ebookFile);
 

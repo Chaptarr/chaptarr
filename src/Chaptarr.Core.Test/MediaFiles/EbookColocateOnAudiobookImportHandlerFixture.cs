@@ -14,6 +14,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
+using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
@@ -131,6 +132,9 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubBookFileMover : IMoveBookFiles
         {
             private readonly Func<BookFile, string> _destinationFactory;
+            public Func<BookFile, Author, BookFileMovePlan> PlanFactory { get; set; }
+            public List<BookFileMovePlan> Plans { get; } = new();
+            public List<BookFile> Moved { get; } = new();
 
             public StubBookFileMover(Func<BookFile, string> destinationFactory)
             {
@@ -139,15 +143,19 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public BookFileMovePlan GetOrganizeDestination(BookFile bookFile, Author author, bool moveToCanonicalAuthorFolder, RenameBatchContext renameBatchContext = null)
             {
-                return new BookFileMovePlan
+                var plan = PlanFactory?.Invoke(bookFile, author) ?? new BookFileMovePlan
                 {
                     CanOrganize = true,
-                    DestinationPath = _destinationFactory(bookFile)
+                    DestinationPath = _destinationFactory(bookFile),
+                    ReplicaPaths = new List<string>()
                 };
+                Plans.Add(plan);
+                return plan;
             }
 
             public BookFile MoveBookFile(BookFile bookFile, Author author, BookFileMovePlan plan, RenameBatchContext renameBatchContext = null)
             {
+                Moved.Add(bookFile);
                 bookFile.Path = plan.DestinationPath;
                 return bookFile;
             }
@@ -185,26 +193,39 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        private class NamingProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return targetMethod.Name switch
+                {
+                    nameof(INamingConfigService.GetConfig) => new NamingConfig(),
+                    nameof(IBuildFileNames.BuildBookFileName) => Path.Combine("Renamed", "Book"),
+                    _ => throw new NotImplementedException(targetMethod.Name)
+                };
+            }
+        }
+
         [Test]
         public void should_publish_rename_events_when_backfill_moves_ebook()
         {
-            var context = CreateContext(_ => "/library/Author/Book - Narrator/Book.epub");
+            var context = CreateContext(_ => @"C:\library\Author\Book - Narrator\Book.epub".AsOsAgnostic());
 
             context.Handler.Handle(context.Event);
 
             Assert.That(context.MediaFileService.Updated, Is.EqualTo(new[] { context.EbookFile }));
-            Assert.That(context.Events.Events.OfType<BookFileRenamedEvent>().Single().OriginalPath, Is.EqualTo("/library/Author/Book/Book.epub"));
+            Assert.That(context.Events.Events.OfType<BookFileRenamedEvent>().Single().OriginalPath, Is.EqualTo(@"C:\library\Author\Book\Book.epub".AsOsAgnostic()));
 
             var authorEvent = context.Events.Events.OfType<AuthorRenamedEvent>().Single();
             Assert.That(authorEvent.RenamedFiles.Single().BookFile, Is.EqualTo(context.EbookFile));
-            Assert.That(authorEvent.RenamedFiles.Single().PreviousPath, Is.EqualTo("/library/Author/Book/Book.epub"));
+            Assert.That(authorEvent.RenamedFiles.Single().PreviousPath, Is.EqualTo(@"C:\library\Author\Book\Book.epub".AsOsAgnostic()));
         }
 
         [Test]
         public void should_batch_author_renamed_event_when_backfill_moves_multiple_ebooks()
         {
             var context = CreateContext(
-                file => $"/library/Author/Book - Narrator/{Path.GetFileName(file.Path)}",
+                file => Path.Combine(@"C:\library\Author\Book - Narrator".AsOsAgnostic(), Path.GetFileName(file.Path)),
                 includeMobi: true);
 
             context.Handler.Handle(context.Event);
@@ -216,8 +237,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(authorEvent.RenamedFiles.Select(f => f.BookFile), Is.EqualTo(context.EbookFiles));
             Assert.That(authorEvent.RenamedFiles.Select(f => f.PreviousPath), Is.EqualTo(new[]
             {
-                "/library/Author/Book/Book.epub",
-                "/library/Author/Book/Book.mobi"
+                @"C:\library\Author\Book\Book.epub".AsOsAgnostic(),
+                @"C:\library\Author\Book\Book.mobi".AsOsAgnostic()
             }));
         }
 
@@ -232,13 +253,74 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(context.Events.Events, Is.Empty);
         }
 
-        private static TestContext CreateContext(Func<BookFile, string> destinationFactory, bool includeMobi = false)
+        [TestCase(FolderType.Ebook, false, false)]
+        [TestCase(FolderType.Mixed, false, false)]
+        [TestCase(FolderType.Mixed, true, false)]
+        [TestCase(FolderType.Mixed, true, true)]
+        public void should_only_move_ebooks_when_the_real_planner_applies(FolderType ebookRootType, bool colocationEnabled, bool sameRoot)
+        {
+            var ebookRoot = sameRoot ? null : new RootFolder
+            {
+                Id = 8,
+                Path = @"C:\ebooks".AsOsAgnostic(),
+                FolderType = ebookRootType,
+                PlaceEbooksWithAudiobooks = colocationEnabled
+            };
+            var context = CreateContext(file => file.Path, includeMobi: true, ebookRoot: ebookRoot);
+            var originalPaths = context.EbookFiles.Select(file => file.Path).ToList();
+            var planner = new EbookColocationPlanner(context.Books, context.MediaFileService, context.Roots, context.Disk);
+            var mover = new BookFileMovingService(
+                null, null, DispatchProxy.Create<IBuildFileNames, NamingProxy>(), null,
+                DispatchProxy.Create<INamingConfigService, NamingProxy>(), planner, null, context.Disk,
+                null, null, null, context.Events, null, null, LogManager.GetCurrentClassLogger());
+            context.Mover.PlanFactory = (file, author) => mover.GetOrganizeDestination(file, author, false);
+
+            context.Handler.Handle(context.Event);
+
+            Assert.That(context.Mover.Plans, Has.Count.EqualTo(2), "Both ebooks must reach the real planner");
+            Assert.That(context.Mover.Plans.All(plan => plan.CanOrganize), Is.True);
+            if (sameRoot)
+            {
+                Assert.That(context.Mover.Plans.All(plan => plan.ReplicaPaths is { Count: 0 }), Is.True);
+                Assert.That(context.Mover.Moved, Is.EqualTo(context.EbookFiles));
+                Assert.That(context.MediaFileService.Updated, Is.EqualTo(context.EbookFiles));
+                Assert.That(context.EbookFiles.All(file => Path.GetDirectoryName(file.Path) == Path.GetDirectoryName(context.Event.ImportedBook.Path)), Is.True);
+                Assert.That(context.Events.Events.OfType<BookFileRenamedEvent>().Count(), Is.EqualTo(2));
+                Assert.That(context.Events.Events.OfType<AuthorRenamedEvent>().Count(), Is.EqualTo(1));
+            }
+            else
+            {
+                Assert.That(context.Mover.Plans.All(plan => plan.ReplicaPaths == null && plan.ShouldCleanupReplicas), Is.True);
+                Assert.That(context.Mover.Moved, Is.Empty);
+                Assert.That(context.MediaFileService.Updated, Is.Empty);
+                Assert.That(context.Events.Events, Is.Empty);
+                Assert.That(context.EbookFiles.Select(file => file.Path), Is.EqualTo(originalPaths));
+            }
+        }
+
+        [TestCase(false, FolderType.Mixed)]
+        [TestCase(true, FolderType.Audiobook)]
+        public void should_not_plan_when_the_audiobook_root_does_not_enable_colocation(bool enabled, FolderType folderType)
+        {
+            var context = CreateContext(file => file.Path);
+            context.Roots.All()[0].PlaceEbooksWithAudiobooks = enabled;
+            context.Roots.All()[0].FolderType = folderType;
+
+            context.Handler.Handle(context.Event);
+
+            Assert.That(context.Mover.Plans, Is.Empty);
+            Assert.That(context.Mover.Moved, Is.Empty);
+            Assert.That(context.MediaFileService.Updated, Is.Empty);
+            Assert.That(context.Events.Events, Is.Empty);
+        }
+
+        private static TestContext CreateContext(Func<BookFile, string> destinationFactory, bool includeMobi = false, RootFolder ebookRoot = null)
         {
             var author = new Author
             {
                 Id = 5,
-                AudiobookRootFolderPath = "/library",
-                EbookRootFolderPath = "/library"
+                AudiobookRootFolderPath = @"C:\library".AsOsAgnostic(),
+                EbookRootFolderPath = ebookRoot?.Path ?? @"C:\library".AsOsAgnostic()
             };
 
             var audiobookBook = new Book { Id = 10, AuthorId = author.Id, MediaType = BookMediaType.Audiobook, GoodreadsWorkId = "gr:100", Author = author };
@@ -253,7 +335,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 EditionId = ebookEdition.Id,
                 MediaType = "ebook",
                 Quality = new QualityModel(Quality.EPUB),
-                Path = "/library/Author/Book/Book.epub"
+                Path = Path.Combine(author.EbookRootFolderPath, "Author", "Book", "Book.epub")
             };
             var ebookFiles = new List<BookFile> { ebookFile };
 
@@ -267,7 +349,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     EditionId = ebookEdition.Id,
                     MediaType = "ebook",
                     Quality = new QualityModel(Quality.MOBI),
-                    Path = "/library/Author/Book/Book.mobi"
+                    Path = Path.Combine(author.EbookRootFolderPath, "Author", "Book", "Book.mobi")
                 });
             }
 
@@ -279,7 +361,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 EditionId = audiobookEdition.Id,
                 MediaType = "audiobook",
                 Quality = new QualityModel(Quality.M4B),
-                Path = "/library/Author/Book - Narrator/Book.m4b"
+                Path = @"C:\library\Author\Book - Narrator\Book.m4b".AsOsAgnostic()
             };
 
             var bookService = new StubBookService();
@@ -287,21 +369,29 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var mediaFileService = new StubMediaFileService();
             mediaFileService.FilesByBook[ebookBook.Id] = ebookFiles;
+            mediaFileService.FilesByBook[audiobookBook.Id] = new List<BookFile> { imported };
 
             var events = new StubEventAggregator();
-
-            var handler = new EbookColocateOnAudiobookImportHandler(
-                new StubRootFolderService(new RootFolder
+            var roots = new StubRootFolderService(new RootFolder
                 {
                     Id = 7,
-                    Path = "/library",
+                    Path = author.AudiobookRootFolderPath,
                     FolderType = FolderType.Mixed,
                     PlaceEbooksWithAudiobooks = true
-                }),
+                });
+            if (ebookRoot != null)
+            {
+                roots.All().Add(ebookRoot);
+            }
+
+            var mover = new StubBookFileMover(destinationFactory);
+            var disk = DiskWith(ebookFiles.Select(f => f.Path).Append(imported.Path).ToArray());
+            var handler = new EbookColocateOnAudiobookImportHandler(
+                roots,
                 bookService,
                 mediaFileService,
-                new StubBookFileMover(destinationFactory),
-                DiskWith(ebookFiles.Select(f => f.Path).ToArray()),
+                mover,
+                disk,
                 events,
                 LogManager.GetCurrentClassLogger());
 
@@ -316,7 +406,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                 ebookFile,
                 ebookFiles,
                 mediaFileService,
-                events);
+                events,
+                bookService,
+                roots,
+                mover,
+                disk);
         }
 
         private static IDiskProvider DiskWith(params string[] existingFiles)
@@ -338,6 +432,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             BookFile EbookFile,
             List<BookFile> EbookFiles,
             StubMediaFileService MediaFileService,
-            StubEventAggregator Events);
+            StubEventAggregator Events,
+            StubBookService Books,
+            StubRootFolderService Roots,
+            StubBookFileMover Mover,
+            IDiskProvider Disk);
     }
 }
