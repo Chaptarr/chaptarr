@@ -5,6 +5,7 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.EnvironmentInfo;
@@ -54,6 +55,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IEventAggregator _eventAggregator;
         private readonly IRuntimeInfo _runtimeInfo;
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
+        private readonly IArchiveService _archiveService;
         private readonly Logger _logger;
 
         public DownloadedBooksImportService(
@@ -73,7 +75,8 @@ namespace NzbDrone.Core.MediaFiles
             IEventAggregator eventAggregator,
             IRuntimeInfo runtimeInfo,
             IMediaInfoExtractor mediaInfoExtractor,
-            Logger logger)
+            Logger logger,
+            IArchiveService archiveService = null)
         {
             _diskProvider = diskProvider;
             _diskScanService = diskScanService;
@@ -92,6 +95,7 @@ namespace NzbDrone.Core.MediaFiles
             _runtimeInfo = runtimeInfo;
             _mediaInfoExtractor = mediaInfoExtractor;
             _logger = logger;
+            _archiveService = archiveService ?? new ArchiveService(logger);
         }
 
         public List<ImportResult> ProcessRootFolder(IDirectoryInfo directoryInfo)
@@ -161,6 +165,15 @@ namespace NzbDrone.Core.MediaFiles
             mediaFiles = visibleFiles
                 .Where(f => MediaFileExtensions.AllExtensions.Contains(f.Extension))
                 .ToList();
+
+            if (!mediaFiles.Any())
+            {
+                ExtractArchivesInFolder(directoryInfo);
+                visibleFiles = _diskProvider.GetFileInfos(directoryInfo.FullName, true);
+                mediaFiles = visibleFiles
+                    .Where(f => MediaFileExtensions.AllExtensions.Contains(f.Extension))
+                    .ToList();
+            }
 
             if (!mediaFiles.Any())
             {
@@ -1479,6 +1492,32 @@ namespace NzbDrone.Core.MediaFiles
 
             var fileInfo = _diskProvider.GetFileInfo(path);
             return ProcessFile(fileInfo, importMode, author, downloadClientItem, remoteBook, requireDefaultRootFolderForMissingAuthors: requireDefaultRootFolderForMissingAuthors);
+        }
+
+        private void ExtractArchivesInFolder(IDirectoryInfo directoryInfo)
+        {
+            var archives = _diskProvider.GetFiles(directoryInfo.FullName, true)
+                .Where(IsSupportedArchive)
+                .ToList();
+
+            foreach (var archive in archives)
+            {
+                try
+                {
+                    _archiveService.Extract(archive, directoryInfo.FullName);
+                }
+                catch (Exception e)
+                {
+                    _logger.Warn(e, "Failed to extract archive during import: {0}", archive);
+                }
+            }
+        }
+
+        private static bool IsSupportedArchive(string path)
+        {
+            return path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+                   path.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase) ||
+                   path.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase);
         }
     }
 }
