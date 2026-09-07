@@ -2,32 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
-using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
     internal static class MatchingTextUtils
     {
-        // Unicode-aware normalization for comparison/tokenization.
-        // Preserves letters/digits from any script, strips diacritics by default,
-        // and normalizes punctuation/whitespace to token boundaries.
-        public static string NormalizeUnicode(string s, bool stripDiacritics = true)
-        {
-            return UnicodeComparisonNormalizer.NormalizeWords(s, stripDiacritics);
-        }
-
-        // Unicode-aware tokenization using NormalizeUnicode
-        public static List<string> TokenizeUnicodeToList(string s, bool stripDiacritics = true)
-        {
-            var norm = NormalizeUnicode(s, stripDiacritics);
-            if (string.IsNullOrWhiteSpace(norm)) return new List<string>();
-            return norm.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
-        }
-
-        public static HashSet<string> TokenizeUnicodeToSet(string s, bool stripDiacritics = true)
-        {
-            return new HashSet<string>(TokenizeUnicodeToList(s, stripDiacritics), StringComparer.Ordinal);
-        }
         public static string NormalizeBasic(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return string.Empty;

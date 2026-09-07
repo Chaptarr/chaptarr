@@ -150,6 +150,56 @@ namespace Chaptarr.Core.Test.DecisionEngine
             }
         }
 
+        [TestCase(true, true)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(false, false)]
+        public void should_match_unicode_titles_and_continue_processing_releases(bool rss, bool emojiInRelease)
+        {
+            var author = new Author { Id = 1, Name = "Test Author" };
+            var book = new Book
+            {
+                Id = 101,
+                AuthorId = author.Id,
+                Author = author,
+                Title = emojiInRelease ? "Astorias Smutty Smut" : "Astorias Smutty Smut 🌶️",
+                MediaType = BookMediaType.Ebook
+            };
+            author.Books = new List<Book> { book };
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = author.Books };
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = book.Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = book.Title });
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(
+                new List<IDecisionEngineSpecification> { new ReleaseTitleMatchSpecification(logger) },
+                parsing, fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                new NoOpReleaseNarratorMetadataEnricher(), (IConfigService)null, logger);
+            var reports = new[] { emojiInRelease ? "Astorias Smutty Smut 🌶️" : "Astorias Smutty Smut", "Astorias Smutty Smut" }
+                .Select(title => new ReleaseInfo
+                {
+                    Title = title,
+                    Author = author.Name,
+                    Indexer = "MyAnonaMouse",
+                    Categories = new List<int>(),
+                    PublishDate = DateTime.UtcNow
+                }).ToList();
+
+            var decisions = rss
+                ? decisionMaker.GetRssDecision(reports)
+                : decisionMaker.GetSearchDecision(reports, new BookSearchCriteria
+                {
+                    Author = author,
+                    Books = author.Books
+                });
+
+            Assert.That(decisions, Has.Count.EqualTo(2));
+            foreach (var decision in decisions)
+            {
+                Assert.That(decision.Rejections, Is.Empty);
+                Assert.That(decision.RemoteBook.Books, Is.EqualTo(new[] { book }));
+            }
+        }
+
         private static DownloadDecision RunSingleSearchDecision(Author author, Book book, ReleaseInfo report)
         {
             var logger = LogManager.GetCurrentClassLogger();

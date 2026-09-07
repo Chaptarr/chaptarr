@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.Text;
@@ -15,17 +16,17 @@ namespace NzbDrone.Core.Utilities
     {
         private static readonly Regex CollapseWhitespaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
 
-        public static string NormalizeKey(string text, bool stripDiacritics = true)
+        public static string NormalizeKey(string text)
         {
-            return NormalizeInternal(text, preserveWhitespace: false, stripDiacritics);
+            return NormalizeInternal(text, preserveWhitespace: false);
         }
 
-        public static string NormalizeWords(string text, bool stripDiacritics = true)
+        public static string NormalizeWords(string text)
         {
-            return NormalizeInternal(text, preserveWhitespace: true, stripDiacritics);
+            return NormalizeInternal(text, preserveWhitespace: true);
         }
 
-        public static NormalizedMappedText NormalizeWordsWithSourceSpans(string text, IReadOnlyList<(int Start, int End)> sourceSpans, bool stripDiacritics = true)
+        public static NormalizedMappedText NormalizeWordsWithSourceSpans(string text, IReadOnlyList<(int Start, int End)> sourceSpans)
         {
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -52,25 +53,28 @@ namespace NzbDrone.Core.Utilities
             var pendingSeparator = false;
             (int Start, int End)? pendingSeparatorSpan = null;
 
-            for (var i = 0; i < text.Length; i++)
+            // Normalize whole characters: splitting an emoji surrogate pair rejects otherwise valid release titles.
+            // EnumerateRunes also replaces lone surrogates without shifting the original UTF-16 offsets.
+            var sourceIndex = 0;
+            foreach (var character in text.EnumerateRunes())
             {
-                var sourceSpan = sourceSpans[i];
-                var decomposed = text[i].ToString().Normalize(NormalizationForm.FormD);
+                var sourceSpan = (sourceSpans[sourceIndex].Start, sourceSpans[sourceIndex + character.Utf16SequenceLength - 1].End);
+                sourceIndex += character.Utf16SequenceLength;
+                var decomposed = character.ToString().Normalize(NormalizationForm.FormD);
                 var letterOrDigitSegment = new StringBuilder(decomposed.Length);
 
-                foreach (var ch in decomposed)
+                foreach (var rune in decomposed.EnumerateRunes())
                 {
-                    var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+                    var category = Rune.GetUnicodeCategory(rune);
 
-                    if (stripDiacritics &&
-                        (category == UnicodeCategory.NonSpacingMark ||
-                         category == UnicodeCategory.SpacingCombiningMark ||
-                         category == UnicodeCategory.EnclosingMark))
+                    if (category == UnicodeCategory.NonSpacingMark ||
+                        category == UnicodeCategory.SpacingCombiningMark ||
+                        category == UnicodeCategory.EnclosingMark)
                     {
                         continue;
                     }
 
-                    if (ch == '\uFFFD')
+                    if (rune.Value == '\uFFFD')
                     {
                         if (builder.Length > 0)
                         {
@@ -81,13 +85,13 @@ namespace NzbDrone.Core.Utilities
                         continue;
                     }
 
-                    if (char.IsLetterOrDigit(ch))
+                    if (Rune.IsLetterOrDigit(rune))
                     {
-                        letterOrDigitSegment.Append(char.ToLowerInvariant(ch));
+                        letterOrDigitSegment.Append(Rune.ToLowerInvariant(rune).ToString());
                         continue;
                     }
 
-                    if (IsSeparator(ch, category) && builder.Length > 0)
+                    if (IsSeparator(rune, category) && builder.Length > 0)
                     {
                         pendingSeparator = true;
                         pendingSeparatorSpan ??= sourceSpan;
@@ -123,30 +127,45 @@ namespace NzbDrone.Core.Utilities
             };
         }
 
-        private static string NormalizeInternal(string text, bool preserveWhitespace, bool stripDiacritics)
+        private static string NormalizeInternal(string text, bool preserveWhitespace)
         {
             if (string.IsNullOrWhiteSpace(text))
             {
                 return string.Empty;
             }
 
-            var normalized = text.Normalize(NormalizationForm.FormD);
+            string normalized;
+            try
+            {
+                normalized = text.Normalize(NormalizationForm.FormD);
+            }
+            catch (ArgumentException)
+            {
+                // Keep the existing replacement-character policy for malformed UTF-16 as well.
+                var sanitized = new StringBuilder(text.Length);
+                foreach (var rune in text.EnumerateRunes())
+                {
+                    sanitized.Append(rune.ToString());
+                }
+
+                normalized = sanitized.ToString().Normalize(NormalizationForm.FormD);
+            }
+
             var builder = new StringBuilder(normalized.Length);
             var pendingSeparator = false;
 
-            foreach (var ch in normalized)
+            foreach (var rune in normalized.EnumerateRunes())
             {
-                var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+                var category = Rune.GetUnicodeCategory(rune);
 
-                if (stripDiacritics &&
-                    (category == UnicodeCategory.NonSpacingMark ||
-                     category == UnicodeCategory.SpacingCombiningMark ||
-                     category == UnicodeCategory.EnclosingMark))
+                if (category == UnicodeCategory.NonSpacingMark ||
+                    category == UnicodeCategory.SpacingCombiningMark ||
+                    category == UnicodeCategory.EnclosingMark)
                 {
                     continue;
                 }
 
-                if (ch == '\uFFFD')
+                if (rune.Value == '\uFFFD')
                 {
                     if (preserveWhitespace && builder.Length > 0)
                     {
@@ -156,19 +175,19 @@ namespace NzbDrone.Core.Utilities
                     continue;
                 }
 
-                if (char.IsLetterOrDigit(ch))
+                if (Rune.IsLetterOrDigit(rune))
                 {
                     if (preserveWhitespace && pendingSeparator && builder.Length > 0 && builder[builder.Length - 1] != ' ')
                     {
                         builder.Append(' ');
                     }
 
-                    builder.Append(char.ToLowerInvariant(ch));
+                    builder.Append(Rune.ToLowerInvariant(rune).ToString());
                     pendingSeparator = false;
                     continue;
                 }
 
-                if (preserveWhitespace && IsSeparator(ch, category) && builder.Length > 0)
+                if (preserveWhitespace && IsSeparator(rune, category) && builder.Length > 0)
                 {
                     pendingSeparator = true;
                 }
@@ -184,9 +203,9 @@ namespace NzbDrone.Core.Utilities
             return CollapseWhitespaceRegex.Replace(result, " ").Trim();
         }
 
-        private static bool IsSeparator(char ch, UnicodeCategory category)
+        private static bool IsSeparator(Rune rune, UnicodeCategory category)
         {
-            if (char.IsWhiteSpace(ch))
+            if (Rune.IsWhiteSpace(rune))
             {
                 return true;
             }

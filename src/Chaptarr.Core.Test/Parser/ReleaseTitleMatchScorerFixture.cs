@@ -19,13 +19,30 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(tokens.Select(token => (token.Start, token.End)), Is.EqualTo(new[] { (0, 10), (11, 12), (13, 17), (18, 21) }));
         }
 
-        [Test]
-        public void should_keep_span_tokenizer_unicode_output_in_parity_with_shared_normalizer()
+        [TestCase("한글 제목 Café")]
+        [TestCase("Astorias𠀀Smut")]
+        public void should_keep_span_tokenizer_unicode_output_in_parity_with_shared_normalizer(string title)
         {
-            var title = "한글 제목 Café";
             var expectedTokens = UnicodeComparisonNormalizer.NormalizeWords(title).Split(' ');
 
             Assert.That(ReleaseTitleMatchScorer.Tokenize(title), Is.EqualTo(expectedTokens));
+        }
+
+        [Test]
+        public void should_preserve_supplementary_letters_with_token_boundaries_and_source_offsets()
+        {
+            var tokens = ReleaseTitleMatchScorer.TokenizeWithSpans("Astorias𠀀Smut 🌶️ 1.5");
+
+            Assert.That(tokens.Select(token => token.Value), Is.EqualTo(new[] { "astorias𠀀smut", "1.5" }));
+            Assert.That(tokens.Select(token => (token.Start, token.End)), Is.EqualTo(new[] { (0, 14), (19, 22) }));
+        }
+
+        [Test]
+        public void should_not_throw_on_release_titles_containing_supplementary_plane_characters()
+        {
+            var tokens = ReleaseTitleMatchScorer.Tokenize("Astorias Smutty Smut 🌶️");
+
+            Assert.That(tokens, Is.EqualTo(new[] { "astorias", "smutty", "smut" }));
         }
 
         [Test]

@@ -72,7 +72,8 @@ namespace NzbDrone.Core.Parser
         private const int HintOnlyPrefixGuardTokenThreshold = 2;
         private const string DecimalPointToken = "chaptarrdecimalpoint";
 
-        private static readonly Regex TokenRegex = new Regex(@"\p{Nd}+(?:\.\p{Nd}+)+|[\p{L}\p{Nd}]+", RegexOptions.Compiled);
+        // Normalization already classifies characters; rechecking UTF-16 halves would discard supplementary letters.
+        private static readonly Regex TokenRegex = new Regex(@"\S+", RegexOptions.Compiled);
         private static readonly Regex PossessiveRegex = new Regex(@"['\u2018\u2019]s\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex DecimalPointBetweenDigitsRegex = new Regex(@"(?<=\p{Nd})\.(?=\p{Nd})", RegexOptions.Compiled);
         private static readonly Regex OptionalQualifierSegmentRegex = new Regex(@"\s*[\(\[](?<label>[^\)\]]+)[\)\]]\s*", RegexOptions.Compiled);
