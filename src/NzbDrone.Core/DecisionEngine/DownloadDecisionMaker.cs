@@ -104,6 +104,8 @@ namespace NzbDrone.Core.DecisionEngine
 
             EnrichReleaseNarratorMetadata(reports, searchCriteria);
             var orderedReports = reports;
+            // One result batch owns the prepared catalog; nothing survives into the next search.
+            var catalogPreparation = searchCriteria == null ? null : new ReleaseTitleMatchScorer.CatalogPreparation();
 
             var reportNumber = 1;
 
@@ -130,7 +132,7 @@ namespace NzbDrone.Core.DecisionEngine
                     ParsedBookInfo parsedBookInfo = null;
                     RemoteBook remoteBook = null;
                     var attemptedCriteriaParse = false;
-                    var searchDecision = TryBuildSearchCriteriaDecision(report, searchCriteria, releaseSource);
+                    var searchDecision = TryBuildSearchCriteriaDecision(report, searchCriteria, releaseSource, catalogPreparation);
 
                     if (searchDecision != null)
                     {
@@ -301,7 +303,7 @@ namespace NzbDrone.Core.DecisionEngine
 
                             remoteBook.CustomFormatScore = qualityProfile?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
 
-                            decision = GetDecisionForReport(remoteBook, searchCriteria);
+                            decision = GetDecisionForReport(remoteBook, searchCriteria, catalogPreparation);
                         }
                     }
 
@@ -383,7 +385,7 @@ namespace NzbDrone.Core.DecisionEngine
             }
         }
 
-        private DownloadDecision TryBuildSearchCriteriaDecision(ReleaseInfo report, SearchCriteriaBase searchCriteria, ReleaseSourceType releaseSource)
+        private DownloadDecision TryBuildSearchCriteriaDecision(ReleaseInfo report, SearchCriteriaBase searchCriteria, ReleaseSourceType releaseSource, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
         {
             if (searchCriteria?.Author == null ||
                 searchCriteria.Books?.Any() != true)
@@ -400,7 +402,8 @@ namespace NzbDrone.Core.DecisionEngine
                                                                     searchCriteria.Author.Name,
                                                                     searchedBooks,
                                                                     report.Author,
-                                                                    authorCatalog);
+                                                                    authorCatalog,
+                                                                    catalogPreparation);
 
             var parsedBookInfo = searchMatch?.IsMatch == true
                 ? CreateParsedBookInfoForSearchMatch(report, searchCriteria.Author, searchMatch)
@@ -427,7 +430,7 @@ namespace NzbDrone.Core.DecisionEngine
             var qualityProfile = remoteBook.Author?.GetQualityProfileForQuality(remoteBook.ParsedBookInfo.Quality.Quality);
             remoteBook.CustomFormatScore = qualityProfile?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
 
-            return GetDecisionForReport(remoteBook, searchCriteria);
+            return GetDecisionForReport(remoteBook, searchCriteria, catalogPreparation);
         }
 
         private RemoteBook TryMapRssRelease(ReleaseInfo report, ParsedBookInfo parsedBookInfo)
@@ -781,13 +784,13 @@ namespace NzbDrone.Core.DecisionEngine
             return new QualityModel(left).CompareTo(new QualityModel(right));
         }
 
-        private DownloadDecision GetDecisionForReport(RemoteBook remoteBook, SearchCriteriaBase searchCriteria = null)
+        private DownloadDecision GetDecisionForReport(RemoteBook remoteBook, SearchCriteriaBase searchCriteria = null, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation = null)
         {
             var reasons = new Rejection[0];
 
             foreach (var specifications in _specifications.GroupBy(v => v.Priority).OrderBy(v => v.Key))
             {
-                reasons = specifications.Select(c => EvaluateSpec(c, remoteBook, searchCriteria))
+                reasons = specifications.Select(c => EvaluateSpec(c, remoteBook, searchCriteria, catalogPreparation))
                                                         .Where(c => c != null)
                                                         .ToArray();
 
@@ -800,11 +803,13 @@ namespace NzbDrone.Core.DecisionEngine
             return new DownloadDecision(remoteBook, reasons.ToArray());
         }
 
-        private Rejection EvaluateSpec(IDecisionEngineSpecification spec, RemoteBook remoteBook, SearchCriteriaBase searchCriteriaBase = null)
+        private Rejection EvaluateSpec(IDecisionEngineSpecification spec, RemoteBook remoteBook, SearchCriteriaBase searchCriteriaBase = null, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation = null)
         {
             try
             {
-                var result = spec.IsSatisfiedBy(remoteBook, searchCriteriaBase);
+                var result = spec is ReleaseTitleMatchSpecification titleMatchSpecification
+                    ? titleMatchSpecification.IsSatisfiedBy(remoteBook, searchCriteriaBase, catalogPreparation)
+                    : spec.IsSatisfiedBy(remoteBook, searchCriteriaBase);
 
                 if (!result.Accepted)
                 {

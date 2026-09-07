@@ -70,6 +70,26 @@ namespace NzbDrone.Core.Parser
 
     public static class ReleaseTitleMatchScorer
     {
+        internal sealed class CatalogPreparation
+        {
+            private readonly Dictionary<Book, IReadOnlyList<ContradictoryVariant>> _variants = new(BookReferenceComparer.Instance);
+
+            internal IReadOnlyList<ContradictoryVariant> GetVariants(Book book)
+            {
+                if (!_variants.TryGetValue(book, out var variants))
+                {
+                    variants = GetContradictoryTitleVariants(book)
+                        .Where(title => !string.IsNullOrWhiteSpace(title))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Select(title => new ContradictoryVariant { Title = title, Tokens = Tokenize(title) })
+                        .ToList();
+                    _variants.Add(book, variants);
+                }
+
+                return variants;
+            }
+        }
+
         private const int HintOnlyPrefixGuardTokenThreshold = 2;
         private const string DecimalPointToken = "chaptarrdecimalpoint";
 
@@ -154,6 +174,11 @@ namespace NzbDrone.Core.Parser
 
         public static TitleMatchResult FindBestMatch(string releaseTitle, string authorName, IEnumerable<Book> candidateBooks, string releaseAuthorHint, IEnumerable<Book> authorCatalogBooks)
         {
+            return FindBestMatch(releaseTitle, authorName, candidateBooks, releaseAuthorHint, authorCatalogBooks, new CatalogPreparation());
+        }
+
+        internal static TitleMatchResult FindBestMatch(string releaseTitle, string authorName, IEnumerable<Book> candidateBooks, string releaseAuthorHint, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation)
+        {
             if (string.IsNullOrWhiteSpace(releaseTitle) || candidateBooks == null)
             {
                 return null;
@@ -183,14 +208,14 @@ namespace NzbDrone.Core.Parser
 
             foreach (var book in books)
             {
-                var candidate = ScoreAgainstBook(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, authorCatalog);
+                var candidate = ScoreAgainstBook(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, authorCatalog, preparation);
                 best = ChooseBetterResult(best, candidate);
             }
 
             return best;
         }
 
-        private static TitleMatchResult ScoreAgainstBook(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, bool hasAuthorInTitle, Book book, IEnumerable<Book> authorCatalogBooks)
+        private static TitleMatchResult ScoreAgainstBook(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, bool hasAuthorInTitle, Book book, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation)
         {
             var context = GetBookTitleMatchContext(book);
             if (context.PrimaryVariants.Count == 0)
@@ -198,7 +223,7 @@ namespace NzbDrone.Core.Parser
                 return null;
             }
 
-            var contradictoryVariants = BuildContradictoryVariants(book, authorCatalogBooks).ToList();
+            var contradictoryVariants = BuildContradictoryVariants(book, authorCatalogBooks, preparation);
             return ScoreAgainstVariants(releaseTokens, hasAuthorEvidence, hasAuthorInTitle, book, context.PrimaryVariants, context, contradictoryVariants);
         }
 
@@ -629,11 +654,11 @@ namespace NzbDrone.Core.Parser
             }
         }
 
-        private static IEnumerable<ContradictoryVariant> BuildContradictoryVariants(Book targetBook, IEnumerable<Book> authorCatalogBooks)
+        private static IReadOnlyCollection<ContradictoryVariant> BuildContradictoryVariants(Book targetBook, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation)
         {
             if (targetBook == null || authorCatalogBooks == null)
             {
-                return Enumerable.Empty<ContradictoryVariant>();
+                return Array.Empty<ContradictoryVariant>();
             }
 
             var variants = new List<ContradictoryVariant>();
@@ -641,24 +666,21 @@ namespace NzbDrone.Core.Parser
 
             foreach (var otherBook in authorCatalogBooks.Where(book => CanContradict(targetBook, book)))
             {
-                foreach (var variant in GetContradictoryTitleVariants(otherBook))
+                // Longer sibling titles must still contradict their shorter prefixes.
+                // Reuse preparation, but keep provider-work exclusions per target.
+                foreach (var variant in preparation.GetVariants(otherBook))
                 {
-                    if (string.IsNullOrWhiteSpace(variant) || !seen.Add(variant))
+                    if (!seen.Add(variant.Title))
                     {
                         continue;
                     }
 
-                    var tokens = Tokenize(variant);
-                    if (tokens.Count < 2)
+                    if (variant.Tokens.Count < 2)
                     {
                         continue;
                     }
 
-                    variants.Add(new ContradictoryVariant
-                    {
-                        Title = variant,
-                        Tokens = tokens
-                    });
+                    variants.Add(variant);
                 }
             }
 

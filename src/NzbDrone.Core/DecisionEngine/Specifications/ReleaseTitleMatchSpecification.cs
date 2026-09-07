@@ -26,6 +26,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
+            return IsSatisfiedBy(subject, searchCriteria, null);
+        }
+
+        internal Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
+        {
             if (subject?.Release?.Title == null)
             {
                 return Decision.Accept();
@@ -51,7 +56,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             var best = context.ExistingMatch;
             if (best == null)
             {
-                best = ReleaseTitleMatchScorer.FindBestMatch(subject.Release.Title, context.AuthorName, context.Books, authorHint, context.AuthorCatalog);
+                best = ReleaseTitleMatchScorer.FindBestMatch(subject.Release.Title, context.AuthorName, context.Books, authorHint, context.AuthorCatalog, catalogPreparation ?? new ReleaseTitleMatchScorer.CatalogPreparation());
             }
 
             if (best == null)
