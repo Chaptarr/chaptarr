@@ -73,7 +73,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Integrate with Audiobookshelf", HelpText = "If you've connected ABS this will enhance your MAM searching", Hidden = HiddenType.Hidden)]
         public bool IntegrateWithAbs { get; set; }
 
-        [FieldDefinition(7, Type = FieldType.Number, Label = "Seed Time", Unit = "hours", HelpText = "Number of hours to seed after download completes. MAM requires 72 hours within 30 days; values below 72 hours will warn.")]
+        [FieldDefinition(7, Type = FieldType.Number, Label = "Seed Time", Unit = "hours", HelpText = "Time in hours to seed before the download client stops the torrent. Leave empty to use the download client's default seeding rules. MAM requires at least 72 hours within 30 days; values below 72 hours will warn.")]
         public int? SeedTimeHours { get; set; }
 
         [FieldDefinition(8, Type = FieldType.Number, Label = "Early Download Limit", Unit = "days", HelpText = "Time before release date Chaptarr will download from this indexer, empty is no limit", Advanced = true)]
