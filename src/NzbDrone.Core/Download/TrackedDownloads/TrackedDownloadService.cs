@@ -489,8 +489,17 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 remoteBook.ParsedBookInfo?.ReleaseTitle);
 
             release.Guid = FirstNotBlank(release.Guid, storedRelease?.Guid, GetHistoryData(grabbedEvent, "guid"));
+            release.Author = FirstNotBlank(release.Author, storedRelease?.Author, GetHistoryData(grabbedEvent, "author"), remoteBook.ParsedBookInfo?.AuthorName);
+            release.Book = FirstNotBlank(release.Book, storedRelease?.Book, GetHistoryData(grabbedEvent, "book"), remoteBook.ParsedBookInfo?.BookTitle);
+            release.Isbn = FirstNotBlank(release.Isbn, storedRelease?.Isbn, GetHistoryData(grabbedEvent, "isbn"));
             release.DownloadUrl = FirstNotBlank(release.DownloadUrl, storedRelease?.DownloadUrl, GetHistoryData(grabbedEvent, "downloadUrl"));
             release.InfoUrl = FirstNotBlank(release.InfoUrl, storedRelease?.InfoUrl, GetHistoryData(grabbedEvent, "nzbInfoUrl"));
+            release.CommentUrl = FirstNotBlank(release.CommentUrl, storedRelease?.CommentUrl, GetHistoryData(grabbedEvent, "commentUrl"));
+            release.Container = FirstNotBlank(release.Container, storedRelease?.Container, GetHistoryData(grabbedEvent, "container"));
+            release.Origin = FirstNotBlank(release.Origin, storedRelease?.Origin, GetHistoryData(grabbedEvent, "origin"));
+            release.Source = FirstNotBlank(release.Source, storedRelease?.Source, GetHistoryData(grabbedEvent, "source"));
+            release.Narrator = FirstNotBlank(release.Narrator, storedRelease?.Narrator, GetHistoryData(grabbedEvent, "Narrator"));
+            release.Duration = FirstNotBlank(release.Duration, storedRelease?.Duration, GetHistoryData(grabbedEvent, "Duration"));
 
             if (release.IndexerId <= 0)
             {
@@ -531,7 +540,40 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             if (release.PublishDate == default && storedRelease != null)
             {
                 release.PublishDate = storedRelease.PublishDate;
+            }
+
+            release.IsGraphicAudio = release.IsGraphicAudio ||
+                                     storedRelease?.IsGraphicAudio == true ||
+                                     bool.TryParse(GetHistoryData(grabbedEvent, "IsGraphicAudio"), out var historyIsGraphicAudio) && historyIsGraphicAudio;
+
+            HydrateParsedBookInfoFromReleaseMetadata(remoteBook);
         }
+
+        private static void HydrateParsedBookInfoFromReleaseMetadata(RemoteBook remoteBook)
+        {
+            if (remoteBook?.Release == null)
+            {
+                return;
+            }
+
+            remoteBook.ParsedBookInfo ??= new ParsedBookInfo();
+            var parsed = remoteBook.ParsedBookInfo;
+            var release = remoteBook.Release;
+
+            parsed.AuthorName = FirstNotBlank(parsed.AuthorName, release.Author);
+            parsed.BookTitle = FirstNotBlank(parsed.BookTitle, release.Book);
+            parsed.ReleaseTitle = FirstNotBlank(parsed.ReleaseTitle, release.Title);
+            parsed.Narrator = FirstNotBlank(parsed.Narrator, release.Narrator);
+
+            if (release.Isbn.IsNotNullOrWhiteSpace() && !parsed.ExtraInfo.ContainsKey("Isbn"))
+            {
+                parsed.ExtraInfo["Isbn"] = release.Isbn;
+            }
+
+            if (release.Container.IsNotNullOrWhiteSpace() && !parsed.ExtraInfo.ContainsKey("Container"))
+            {
+                parsed.ExtraInfo["Container"] = release.Container;
+            }
         }
 
         public List<TrackedDownload> GetTrackedDownloads()

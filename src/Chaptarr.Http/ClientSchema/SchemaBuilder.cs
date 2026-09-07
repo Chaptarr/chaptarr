@@ -258,7 +258,17 @@ namespace Chaptarr.Http.ClientSchema
 
         private static Func<object, object> GetValueConverter(Type propertyType)
         {
-            if (propertyType == typeof(int))
+            if (propertyType == typeof(string))
+            {
+                return fieldValue => fieldValue switch
+                {
+                    null => null,
+                    JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString(),
+                    JsonElement element => element.GetRawText(),
+                    _ => fieldValue.ToString()
+                };
+            }
+            else if (propertyType == typeof(int))
             {
                 return fieldValue => fieldValue?.ToString().ParseInt32() ?? 0;
             }

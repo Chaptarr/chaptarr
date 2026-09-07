@@ -26,11 +26,12 @@ class AddIndexerModalContent extends Component {
       schemaError,
       usenetIndexers,
       torrentIndexers,
+      directIndexers,
       onIndexerSelect,
       onModalClose
     } = this.props;
 
-    const implementationNameCounts = [...usenetIndexers, ...torrentIndexers].reduce((counts, indexer) => {
+    const implementationNameCounts = [...usenetIndexers, ...torrentIndexers, ...directIndexers].reduce((counts, indexer) => {
       const key = (indexer.implementationName || '').toLowerCase();
       counts[key] = (counts[key] || 0) + 1;
       return counts;
@@ -112,6 +113,27 @@ class AddIndexerModalContent extends Component {
                     }
                   </div>
                 </FieldSet>
+
+                {
+                  directIndexers.length > 0 &&
+                    <FieldSet legend={translate('DirectDownload')}>
+                      <div className={styles.indexers}>
+                        {
+                          directIndexers.map((indexer) => {
+                            return (
+                              <AddIndexerItem
+                                key={indexer.implementation}
+                                implementation={indexer.implementation}
+                                {...indexer}
+                                implementationName={getDisplayName(indexer)}
+                                onIndexerSelect={onIndexerSelect}
+                              />
+                            );
+                          })
+                        }
+                      </div>
+                    </FieldSet>
+                }
               </div>
           }
         </ModalBody>
@@ -133,6 +155,7 @@ AddIndexerModalContent.propTypes = {
   schemaError: PropTypes.object,
   usenetIndexers: PropTypes.arrayOf(PropTypes.object).isRequired,
   torrentIndexers: PropTypes.arrayOf(PropTypes.object).isRequired,
+  directIndexers: PropTypes.arrayOf(PropTypes.object).isRequired,
   onIndexerSelect: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

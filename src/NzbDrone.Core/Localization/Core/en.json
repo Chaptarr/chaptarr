@@ -609,6 +609,7 @@
   "DonationsKofiTitle": "Buy me a coffee",
   "DonationsLegend": "Support Chaptarr Development",
   "Download": "Download",
+  "DirectDownload": "Direct Download",
   "DownloadClient": "Download Client",
   "DownloadClientCheckDownloadingToRoot": "Download client {0} places downloads in the root folder {1}. You should not download to a root folder.",
   "DownloadClientCheckNoneAvailableMessage": "No download client is available",

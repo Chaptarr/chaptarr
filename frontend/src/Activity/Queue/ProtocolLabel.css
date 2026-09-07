@@ -11,3 +11,14 @@
   border-color: var(--usenetColor);
   background-color: var(--usenetColor);
 }
+
+.direct {
+  composes: label from '~Components/Label.css';
+
+  border-color: var(--themePrimary);
+  background-color: var(--themePrimary);
+}
+
+.defaultProtocol {
+  composes: label from '~Components/Label.css';
+}

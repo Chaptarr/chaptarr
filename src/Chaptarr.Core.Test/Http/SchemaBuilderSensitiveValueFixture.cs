@@ -97,6 +97,18 @@ namespace Chaptarr.Core.Test.Http
         }
 
         [Test]
+        public void should_leave_empty_sensitive_values_unmasked()
+        {
+            var schema = SchemaBuilder.ToSchema(new SensitiveSettings
+            {
+                ApiKey = string.Empty,
+                Name = "visible"
+            });
+
+            Assert.That(schema.Single(f => f.Name == "apiKey").Value, Is.EqualTo(string.Empty));
+        }
+
+        [Test]
         public void should_keep_existing_sensitive_value_when_placeholder_is_saved()
         {
             using var nameValue = JsonDocument.Parse("\"new\"");

@@ -147,7 +147,7 @@ namespace NzbDrone.Core.Qualities
         private static bool LooksLikeAudiobook(ReleaseInfo release)
         {
             var torrent = release as TorrentInfo;
-            var fileType = torrent?.FileType;
+            var fileType = torrent?.FileType ?? release?.Container;
             if (!string.IsNullOrWhiteSpace(fileType))
             {
                 var parts = fileType.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
@@ -168,7 +168,7 @@ namespace NzbDrone.Core.Qualities
         private static bool LooksLikeEbook(ReleaseInfo release)
         {
             var torrent = release as TorrentInfo;
-            var fileType = torrent?.FileType;
+            var fileType = torrent?.FileType ?? release?.Container;
             if (!string.IsNullOrWhiteSpace(fileType))
             {
                 var parts = fileType.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);

@@ -5,9 +5,10 @@ import styles from './ProtocolLabel.css';
 
 function ProtocolLabel({ protocol }) {
   const protocolName = protocol === 'usenet' ? 'nzb' : protocol;
+  const protocolClassName = styles[protocol] || styles.defaultProtocol;
 
   return (
-    <Label className={styles[protocol]}>
+    <Label className={protocolClassName}>
       {protocolName}
     </Label>
   );

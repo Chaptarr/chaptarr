@@ -134,8 +134,7 @@ namespace NzbDrone.Core.IndexerSearch
                 .FirstOrDefault();
 
             searchSpec.BookTitle = GetSearchBookTitle(book, selectedEdition) ?? string.Empty;
-
-            // searchSpec.BookIsbn = book.Isbn13;
+            searchSpec.BookIsbn = GetSearchBookIsbn(book, selectedEdition);
             if (book.ReleaseDate.HasValue)
             {
                 searchSpec.BookYear = book.ReleaseDate.Value.Year;
@@ -161,6 +160,92 @@ namespace NzbDrone.Core.IndexerSearch
             }
 
             return book.Title ?? string.Empty;
+        }
+
+        internal static string GetSearchBookIsbn(Book book, Edition selectedEdition)
+        {
+            if (!string.IsNullOrWhiteSpace(selectedEdition?.Isbn13))
+            {
+                return selectedEdition.Isbn13;
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedEdition?.Isbn10))
+            {
+                return selectedEdition.Isbn10;
+            }
+
+            var fallbackEdition = book?.Editions?
+                .Where(edition => edition != null && edition != selectedEdition && IsSuitableEbookEdition(edition))
+                .Where(edition => !string.IsNullOrWhiteSpace(edition.Isbn13) || !string.IsNullOrWhiteSpace(edition.Isbn10))
+                .OrderBy(edition => GetEditionIsbnFallbackRank(edition, selectedEdition, book))
+                .ThenBy(edition => edition.Id)
+                .FirstOrDefault();
+
+            if (!string.IsNullOrWhiteSpace(fallbackEdition?.Isbn13))
+            {
+                return fallbackEdition.Isbn13;
+            }
+
+            if (!string.IsNullOrWhiteSpace(fallbackEdition?.Isbn10))
+            {
+                return fallbackEdition.Isbn10;
+            }
+
+            if (!string.IsNullOrWhiteSpace(book?.ISBN13))
+            {
+                return book.ISBN13;
+            }
+
+            return string.IsNullOrWhiteSpace(book?.ISBN10) ? null : book.ISBN10;
+        }
+
+        private static bool IsSuitableEbookEdition(Edition edition)
+        {
+            if (edition == null)
+            {
+                return false;
+            }
+
+            if (edition.ReadingFormatId == 3 || edition.IsEbook)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int GetEditionIsbnFallbackRank(Edition edition, Edition selectedEdition, Book book)
+        {
+            var selectedTitle = selectedEdition?.Title;
+            if (TitlesMatch(edition?.Title, selectedTitle))
+            {
+                return 0;
+            }
+
+            if (TitlesMatch(edition?.Title, book?.Title))
+            {
+                return 1;
+            }
+
+            return 2;
+        }
+
+        private static bool TitlesMatch(string left, string right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return false;
+            }
+
+            return string.Equals(NormalizeComparisonTitle(left), NormalizeComparisonTitle(right), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeComparisonTitle(string value)
+        {
+            return value?
+                .Trim()
+                .Replace('’', '\'')
+                .Replace('‘', '\'');
         }
 
         internal static bool HasConfiguredQualityProfileForMediaType(Author author, BookMediaType mediaType)

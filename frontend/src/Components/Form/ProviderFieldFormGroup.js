@@ -35,6 +35,8 @@ function getType({ type, selectOptionsProviderAction }) {
       return inputTypes.TAG_SELECT;
     case 'textbox':
       return inputTypes.TEXT;
+    case 'textArea':
+      return inputTypes.TEXT_AREA;
     case 'oAuth':
       return inputTypes.OAUTH;
     default:

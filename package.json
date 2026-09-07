@@ -10,6 +10,7 @@
     "watch": "webpack --watch --config ./frontend/build/webpack.config.js",
     "typecheck": "tsc -p frontend/tsconfig.json",
     "lint": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore frontend/",
+    "check-direct-download": "node frontend/build/check-direct-download-contract.js",
     "lint-fix": "yarn lint --fix",
     "check-translations": "node frontend/build/check-missing-translation-keys.js",
     "stylelint-linux": "stylelint $(find frontend -name '*.css') --config frontend/.stylelintrc",
