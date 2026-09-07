@@ -28,6 +28,7 @@ using NzbDrone.Core.MediaFiles.TagExtraction;
 using NzbDrone.Core.Parser;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport
 {
@@ -5378,18 +5379,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return new List<string>();
                     }
 
-                text = System.Text.RegularExpressions.Regex.Replace(text, "['\\u2018\\u2019]s\\b", "s");
-
-                text = text.Normalize(NormalizationForm.FormD);
-                var sb = new StringBuilder();
-                foreach (var c in text)
-                {
-                    if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
-                    {
-                        sb.Append(c);
-                    }
-                }
-                text = sb.ToString();
+                text = StringSuperNormalizer.NormalizeForFts(text);
 
                 text = System.Text.RegularExpressions.Regex.Replace(text, @"[–—-]", " ");
                 text = text.Replace('.', ' ');
@@ -5445,9 +5435,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return true;
                     }
 
-                    var matches = System.Text.RegularExpressions.Regex.Matches(text.ToLowerInvariant(), @"[\p{L}\p{Nd}]+");
-                    var tokens = new List<string>(matches.Count);
-                    foreach (System.Text.RegularExpressions.Match m in matches)
+                    var matches = UnicodeComparisonNormalizer.WordSpans(text.ToLowerInvariant());
+                    var tokens = new List<string>();
+                    foreach (var m in matches)
                     {
                         var tok = m.Value;
                         if (string.IsNullOrWhiteSpace(tok))
@@ -10693,21 +10683,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return null;
             }
 
-            raw = raw.Trim();
+            raw = UnicodeComparisonNormalizer.NormalizeText(raw).Trim();
 
             raw = raw
                 .Replace('–', '-')
                 .Replace('—', '-')
                 .Replace('−', '-');
-
-            if (Regex.IsMatch(raw, @"^[IVXLCDM]+$", RegexOptions.IgnoreCase))
-            {
-                if (TryParseRomanNumeral(raw, out var romanValue))
-                {
-                    return NormalizeSeriesPosition(romanValue.ToString(CultureInfo.InvariantCulture));
-                }
-                return null;
-            }
 
             raw = Regex.Replace(raw, @"\s*-\s*", "-");
 
@@ -10721,12 +10702,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             foreach (var part in parts)
             {
                 var p = part.Trim();
-                if (!Regex.IsMatch(p, @"^\d+(\.\d+)?$"))
-                {
-                    return null;
-                }
-
-                if (!decimal.TryParse(p, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value))
+                if (!SeriesPositionTokenHelper.TryParseNumber(p, out var value))
                 {
                     return null;
                 }
@@ -10756,57 +10732,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             return string.Join("-", normalizedParts);
-        }
-
-        private bool TryParseRomanNumeral(string raw, out int value)
-        {
-            value = 0;
-
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                return false;
-            }
-
-            raw = raw.Trim().ToUpperInvariant();
-
-            var map = new Dictionary<char, int>
-            {
-                ['I'] = 1,
-                ['V'] = 5,
-                ['X'] = 10,
-                ['L'] = 50,
-                ['C'] = 100,
-                ['D'] = 500,
-                ['M'] = 1000
-            };
-
-            var total = 0;
-            var prev = 0;
-            foreach (var ch in raw.Reverse())
-            {
-                if (!map.TryGetValue(ch, out var current))
-                {
-                    return false;
-                }
-
-                if (current < prev)
-                {
-                    total -= current;
-                }
-                else
-                {
-                    total += current;
-                    prev = current;
-                }
-            }
-
-            if (total <= 0)
-            {
-                return false;
-            }
-
-            value = total;
-            return true;
         }
 
         /// <summary>
@@ -12207,23 +12132,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return output;
             }
 
-            foreach (Match match in Regex.Matches(value, @"[\p{L}\p{Nd}]+"))
+            var mapped = UnicodeComparisonNormalizer.NormalizeTextWithSourceSpans(value);
+            foreach (var match in UnicodeComparisonNormalizer.WordSpans(mapped.Text))
             {
-                var decomposed = match.Value.Normalize(NormalizationForm.FormD);
-                var normalized = new string(decomposed
-                        .Where(character => CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
-                        .ToArray())
-                    .ToLowerInvariant();
-                if (normalized.Length == 0)
-                {
-                    continue;
-                }
-
                 output.Add(new NormalizedWordSpan
                 {
-                    Token = normalized,
-                    Start = match.Index,
-                    End = match.Index + match.Length
+                    Token = match.Value,
+                    Start = mapped.SourceSpans[match.Index].Start,
+                    End = mapped.SourceSpans[match.Index + match.Length - 1].End
                 });
             }
 

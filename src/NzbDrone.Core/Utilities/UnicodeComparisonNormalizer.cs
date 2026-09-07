@@ -1,8 +1,8 @@
 using System;
-using System.Globalization;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
+using NzbDrone.Core.MediaFiles.BookImport;
 
 namespace NzbDrone.Core.Utilities
 {
@@ -14,217 +14,323 @@ namespace NzbDrone.Core.Utilities
 
     public static class UnicodeComparisonNormalizer
     {
-        private static readonly Regex CollapseWhitespaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
-
-        public static string NormalizeKey(string text)
+        internal static IEnumerable<(string Value, int Index, int Length)> WordSpans(string text, bool preserveFtsConnectors = false, bool includePossessive = false, bool splitNumbers = false)
         {
-            return NormalizeInternal(text, preserveWhitespace: false);
-        }
-
-        public static string NormalizeWords(string text)
-        {
-            return NormalizeInternal(text, preserveWhitespace: true);
-        }
-
-        public static NormalizedMappedText NormalizeWordsWithSourceSpans(string text, IReadOnlyList<(int Start, int End)> sourceSpans)
-        {
-            if (string.IsNullOrWhiteSpace(text))
+            var index = 0;
+            while (index < (text?.Length ?? 0))
             {
-                return new NormalizedMappedText
+                if (!Rune.TryGetRuneAt(text, index, out var rune) || !IsWordCharacter(rune))
                 {
-                    Text = string.Empty,
-                    SourceSpans = new List<(int Start, int End)>()
-                };
-            }
-
-            if (sourceSpans == null || sourceSpans.Count != text.Length)
-            {
-                var generatedSpans = new List<(int Start, int End)>(text.Length);
-                for (var i = 0; i < text.Length; i++)
-                {
-                    generatedSpans.Add((i, i + 1));
+                    index += rune.Utf16SequenceLength;
+                    continue;
                 }
 
-                sourceSpans = generatedSpans;
-            }
-
-            var builder = new StringBuilder(text.Length);
-            var spans = new List<(int Start, int End)>();
-            var pendingSeparator = false;
-            (int Start, int End)? pendingSeparatorSpan = null;
-
-            // Normalize whole characters: splitting an emoji surrogate pair rejects otherwise valid release titles.
-            // EnumerateRunes also replaces lone surrogates without shifting the original UTF-16 offsets.
-            var sourceIndex = 0;
-            foreach (var character in text.EnumerateRunes())
-            {
-                var sourceSpan = (sourceSpans[sourceIndex].Start, sourceSpans[sourceIndex + character.Utf16SequenceLength - 1].End);
-                sourceIndex += character.Utf16SequenceLength;
-                var decomposed = character.ToString().Normalize(NormalizationForm.FormD);
-                var letterOrDigitSegment = new StringBuilder(decomposed.Length);
-
-                foreach (var rune in decomposed.EnumerateRunes())
+                var start = index;
+                var numeric = Rune.IsNumber(rune);
+                do
                 {
-                    var category = Rune.GetUnicodeCategory(rune);
-
-                    if (category == UnicodeCategory.NonSpacingMark ||
-                        category == UnicodeCategory.SpacingCombiningMark ||
-                        category == UnicodeCategory.EnclosingMark)
+                    index += rune.Utf16SequenceLength;
+                    if (index + 1 < text.Length &&
+                        ((preserveFtsConnectors && (text[index] == '-' || text[index] == '.')) ||
+                         (text[index] == '.' && Rune.IsNumber(rune))) &&
+                        Rune.TryGetRuneAt(text, index + 1, out var next) && IsWordCharacter(next) &&
+                        (preserveFtsConnectors || Rune.IsNumber(next)))
                     {
-                        continue;
+                        index++;
+                    }
+                }
+                while (index < text.Length && Rune.TryGetRuneAt(text, index, out rune) &&
+                       (IsWordCharacter(rune) || IsCombiningMark(rune)) &&
+                       (!splitNumbers || IsCombiningMark(rune) || Rune.IsNumber(rune) == numeric));
+
+                if (includePossessive && index + 1 < text.Length &&
+                    (text[index] == '\'' || text[index] == '\u2018' || text[index] == '\u2019') &&
+                    (text[index + 1] == 's' || text[index + 1] == 'S'))
+                {
+                    index += 2;
+                }
+
+                yield return (text.Substring(start, index - start), start, index - start);
+            }
+        }
+
+        public static string NormalizeKey(string text) => Normalize(text, false, false, false, null).Text;
+
+        public static string NormalizeWords(string text) => Normalize(text, true, false, false, null).Text;
+
+        // Keep punctuation for callers whose parsers give it meaning, using the same character fold as stored keys.
+        public static string NormalizeText(string text) => Normalize(text, true, true, false, null).Text;
+
+        public static NormalizedMappedText NormalizeWordsWithSourceSpans(string text, IReadOnlyList<(int Start, int End)> sourceSpans)
+            => Normalize(text, true, false, true, sourceSpans);
+
+        internal static NormalizedMappedText NormalizeTextWithSourceSpans(string text)
+            => Normalize(text, true, true, true, null);
+
+        private static NormalizedMappedText Normalize(string text, bool preserveWhitespace, bool preservePunctuation, bool mapSource, IReadOnlyList<(int Start, int End)> sourceSpans)
+        {
+            var builder = new StringBuilder(text?.Length ?? 0);
+            var spans = mapSource ? new List<(int Start, int End)>() : null;
+            (int Start, int End)? separator = null;
+            var suppliedSpans = sourceSpans != null && sourceSpans.Count == text?.Length;
+
+            var nextWordEnd = 0;
+            for (var index = 0; index < (text?.Length ?? 0);)
+            {
+                Rune.TryGetRuneAt(text, index, out var rune);
+                var length = rune.Utf16SequenceLength;
+                string folded = null;
+                if (index >= nextWordEnd && IsWordCharacter(rune))
+                {
+                    nextWordEnd = index + length;
+                    var asciiWord = rune.IsAscii;
+                    while (nextWordEnd < text.Length && Rune.TryGetRuneAt(text, nextWordEnd, out var next) &&
+                           (IsWordCharacter(next) || IsCombiningMark(next)))
+                    {
+                        asciiWord &= next.IsAscii;
+                        nextWordEnd += next.Utf16SequenceLength;
                     }
 
-                    if (rune.Value == '\uFFFD')
+                    if (SeriesPositionTokenHelper.TryParseCardinal(text.AsSpan(index, nextWordEnd - index), out var cardinal))
                     {
-                        if (builder.Length > 0)
+                        length = nextWordEnd - index;
+                        var secondStart = nextWordEnd;
+                        while (secondStart < text.Length && (char.IsWhiteSpace(text[secondStart]) || text[secondStart] == '-'))
                         {
-                            pendingSeparator = true;
-                            pendingSeparatorSpan ??= sourceSpan;
+                            secondStart++;
+                        }
+
+                        var secondEnd = secondStart;
+                        while (secondEnd < text.Length && Rune.TryGetRuneAt(text, secondEnd, out var nextPart) &&
+                               (IsWordCharacter(nextPart) || IsCombiningMark(nextPart)))
+                        {
+                            secondEnd += nextPart.Utf16SequenceLength;
+                        }
+
+                        var joiner = text.AsSpan(nextWordEnd, secondStart - nextWordEnd).Trim();
+                        if (secondEnd > secondStart && (joiner.IsEmpty || joiner.SequenceEqual("-")) &&
+                            SeriesPositionTokenHelper.TryParseCardinal(text.AsSpan(secondStart, secondEnd - secondStart), out var units) &&
+                            cardinal >= 20 && cardinal % 10 == 0 && units < 10)
+                        {
+                            cardinal += units;
+                            length = secondEnd - index;
+                        }
+
+                        folded = cardinal.ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    var wholeEnd = folded == null ? nextWordEnd : index + length;
+                    if ((folded != null || Rune.IsNumber(rune)) && wholeEnd + 1 < text.Length &&
+                        char.IsWhiteSpace(text[wholeEnd]) && (index == 0 || (text[index - 1] != '.' && text[index - 1] != '/')) &&
+                        TryReadFraction(text, wholeEnd + 1, out var fraction, out var fractionEnd) &&
+                        decimal.TryParse(folded ?? NormalizeText(text.Substring(index, wholeEnd - index)),
+                            NumberStyles.None, CultureInfo.InvariantCulture, out var whole) && whole < decimal.MaxValue)
+                    {
+                        folded = (whole + fraction).ToString(CultureInfo.InvariantCulture);
+                        length = fractionEnd - index;
+                    }
+
+                    if (folded == null && asciiWord)
+                    {
+                        if (separator.HasValue)
+                        {
+                            builder.Append(' ');
+                            spans?.Add(separator.Value);
+                            separator = null;
+                        }
+
+                        for (; index < nextWordEnd; index++)
+                        {
+                            builder.Append(char.ToLowerInvariant(text[index]));
+                            spans?.Add(suppliedSpans ? sourceSpans[index] : (index, index + 1));
                         }
 
                         continue;
                     }
+                }
 
-                    if (Rune.IsLetterOrDigit(rune))
+                if (folded == null && rune.Value >= 0x2160 && rune.Value <= 0x217f)
+                {
+                    var end = index + length;
+                    while (end < text.Length && text[end] >= '\u2160' && text[end] <= '\u217f')
                     {
-                        letterOrDigitSegment.Append(Rune.ToLowerInvariant(rune).ToString());
-                        continue;
+                        end++;
                     }
 
-                    if (IsSeparator(rune, category) && builder.Length > 0)
+                    var roman = text.Substring(index, end - index).Normalize(NormalizationForm.FormKC);
+                    folded = TryParseRomanNumeral(roman, out var number) ? number.ToString(CultureInfo.InvariantCulture) : roman;
+                    length = end - index;
+                }
+                else if (folded == null && !rune.IsAscii && Rune.IsNumber(rune) && Rune.GetNumericValue(rune) != -1)
+                {
+                    folded = ((decimal)Rune.GetNumericValue(rune)).ToString(CultureInfo.InvariantCulture);
+                }
+
+                if (Rune.IsNumber(rune) && index + length < text.Length && Rune.TryGetRuneAt(text, index + length, out var fractionRune))
+                {
+                    var fraction = Rune.GetNumericValue(fractionRune);
+                    if (fraction > 0 && fraction < 1 &&
+                        decimal.TryParse(folded ?? rune.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var whole))
                     {
-                        pendingSeparator = true;
-                        pendingSeparatorSpan ??= sourceSpan;
+                        folded = (whole + (decimal)fraction).ToString(CultureInfo.InvariantCulture);
+                        length += fractionRune.Utf16SequenceLength;
                     }
                 }
 
-                if (letterOrDigitSegment.Length == 0)
+                if (folded == null && !rune.IsAscii)
                 {
-                    continue;
-                }
-
-                if (pendingSeparator && builder.Length > 0 && builder[builder.Length - 1] != ' ')
-                {
-                    builder.Append(' ');
-                    spans.Add(pendingSeparatorSpan ?? sourceSpan);
-                }
-
-                var normalizedSegment = letterOrDigitSegment.ToString().Normalize(NormalizationForm.FormC);
-                foreach (var ch in normalizedSegment)
-                {
-                    builder.Append(ch);
-                    spans.Add(sourceSpan);
-                }
-
-                pendingSeparator = false;
-                pendingSeparatorSpan = null;
-            }
-
-            return new NormalizedMappedText
-            {
-                Text = builder.ToString(),
-                SourceSpans = spans
-            };
-        }
-
-        private static string NormalizeInternal(string text, bool preserveWhitespace)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return string.Empty;
-            }
-
-            string normalized;
-            try
-            {
-                normalized = text.Normalize(NormalizationForm.FormD);
-            }
-            catch (ArgumentException)
-            {
-                // Keep the existing replacement-character policy for malformed UTF-16 as well.
-                var sanitized = new StringBuilder(text.Length);
-                foreach (var rune in text.EnumerateRunes())
-                {
-                    sanitized.Append(rune.ToString());
-                }
-
-                normalized = sanitized.ToString().Normalize(NormalizationForm.FormD);
-            }
-
-            var builder = new StringBuilder(normalized.Length);
-            var pendingSeparator = false;
-
-            foreach (var rune in normalized.EnumerateRunes())
-            {
-                var category = Rune.GetUnicodeCategory(rune);
-
-                if (category == UnicodeCategory.NonSpacingMark ||
-                    category == UnicodeCategory.SpacingCombiningMark ||
-                    category == UnicodeCategory.EnclosingMark)
-                {
-                    continue;
-                }
-
-                if (rune.Value == '\uFFFD')
-                {
-                    if (preserveWhitespace && builder.Length > 0)
+                    var decomposed = rune.ToString().Normalize(NormalizationForm.FormD);
+                    var clean = new StringBuilder(decomposed.Length);
+                    foreach (var part in decomposed.EnumerateRunes())
                     {
-                        pendingSeparator = true;
+                        if (!IsCombiningMark(part) || (preservePunctuation && Rune.GetUnicodeCategory(part) != UnicodeCategory.NonSpacingMark))
+                        {
+                            clean.Append(part.ToString());
+                        }
                     }
 
-                    continue;
+                    folded = clean.ToString().Normalize(NormalizationForm.FormC);
                 }
 
-                if (Rune.IsLetterOrDigit(rune))
+                while (index + length < text.Length && Rune.TryGetRuneAt(text, index + length, out var mark) && IsCombiningMark(mark))
                 {
-                    if (preserveWhitespace && pendingSeparator && builder.Length > 0 && builder[builder.Length - 1] != ' ')
+                    if (preservePunctuation && Rune.GetUnicodeCategory(mark) != UnicodeCategory.NonSpacingMark)
+                    {
+                        folded = (folded ?? rune.ToString()) + mark.ToString();
+                    }
+
+                    length += mark.Utf16SequenceLength;
+                }
+
+                var sourceSpan = suppliedSpans
+                    ? (sourceSpans[index].Start, sourceSpans[index + length - 1].End)
+                    : (index, index + length);
+                if (folded == null)
+                {
+                    Append(rune, sourceSpan, rune.Value == '.' && builder.Length > 0 && char.IsAsciiDigit(builder[builder.Length - 1]) &&
+                        index + length < text.Length && Rune.TryGetRuneAt(text, index + length, out var next) && Rune.IsNumber(next));
+                }
+                else
+                {
+                    foreach (var part in folded.EnumerateRunes())
+                    {
+                        if (!IsCombiningMark(part) || (preservePunctuation && Rune.GetUnicodeCategory(part) != UnicodeCategory.NonSpacingMark))
+                        {
+                            Append(part, sourceSpan, part.Value == '.');
+                        }
+                    }
+                }
+
+                index += length;
+            }
+
+            return new NormalizedMappedText { Text = builder.ToString(), SourceSpans = spans };
+
+            void Append(Rune rune, (int Start, int End) sourceSpan, bool numericPoint)
+            {
+                if (IsWordCharacter(rune) || preservePunctuation || (preserveWhitespace && numericPoint))
+                {
+                    if (separator.HasValue)
                     {
                         builder.Append(' ');
+                        spans?.Add(separator.Value);
+                        separator = null;
                     }
 
-                    builder.Append(Rune.ToLowerInvariant(rune).ToString());
-                    pendingSeparator = false;
-                    continue;
+                    var lower = Rune.ToLowerInvariant(rune);
+                    if (lower.IsBmp)
+                    {
+                        builder.Append(lower.Value == '\uFFFD' ? ' ' : (char)lower.Value);
+                        spans?.Add(sourceSpan);
+                    }
+                    else
+                    {
+                        Span<char> characters = stackalloc char[2];
+                        lower.EncodeToUtf16(characters);
+                        builder.Append(characters);
+                        spans?.Add(sourceSpan);
+                        spans?.Add(sourceSpan);
+                    }
                 }
-
-                if (preserveWhitespace && IsSeparator(rune, category) && builder.Length > 0)
+                else if (preserveWhitespace && builder.Length > 0 && !IsCombiningMark(rune))
                 {
-                    pendingSeparator = true;
+                    // Unclassified characters must separate evidence instead of joining unrelated words.
+                    separator ??= sourceSpan;
                 }
             }
-
-            var result = builder.ToString().Normalize(NormalizationForm.FormC);
-
-            if (!preserveWhitespace)
-            {
-                return result;
-            }
-
-            return CollapseWhitespaceRegex.Replace(result, " ").Trim();
         }
 
-        private static bool IsSeparator(Rune rune, UnicodeCategory category)
+        private static bool TryReadFraction(string text, int start, out decimal fraction, out int end)
         {
-            if (Rune.IsWhiteSpace(rune))
+            fraction = 0;
+            end = start;
+            while (end < text.Length && Rune.TryGetRuneAt(text, end, out var rune) &&
+                   (Rune.IsNumber(rune) || rune.Value == '/'))
             {
-                return true;
+                end += rune.Utf16SequenceLength;
             }
 
-            return category == UnicodeCategory.ConnectorPunctuation ||
-                   category == UnicodeCategory.DashPunctuation ||
-                   category == UnicodeCategory.OpenPunctuation ||
-                   category == UnicodeCategory.ClosePunctuation ||
-                   category == UnicodeCategory.InitialQuotePunctuation ||
-                   category == UnicodeCategory.FinalQuotePunctuation ||
-                   category == UnicodeCategory.OtherPunctuation ||
-                   category == UnicodeCategory.MathSymbol ||
-                   category == UnicodeCategory.CurrencySymbol ||
-                   category == UnicodeCategory.ModifierSymbol ||
-                   category == UnicodeCategory.OtherSymbol ||
-                   category == UnicodeCategory.Control ||
-                   category == UnicodeCategory.Format ||
-                   category == UnicodeCategory.LineSeparator ||
-                   category == UnicodeCategory.ParagraphSeparator;
+            if (end == start || (end < text.Length && Rune.TryGetRuneAt(text, end, out var following) &&
+                (IsWordCharacter(following) || IsCombiningMark(following) ||
+                 (following.Value == '.' && end + 1 < text.Length && Rune.TryGetRuneAt(text, end + 1, out var next) && Rune.IsNumber(next)))))
+            {
+                return false;
+            }
+
+            var parts = NormalizeText(text.Substring(start, end - start)).Split('/');
+            if (!decimal.TryParse(parts[0], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out fraction))
+            {
+                return false;
+            }
+
+            if (parts.Length == 2 && fraction == decimal.Truncate(fraction) &&
+                decimal.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var denominator) && denominator > 0)
+            {
+                fraction = (decimal)((double)fraction / (double)denominator);
+            }
+            else if (parts.Length != 1)
+            {
+                return false;
+            }
+
+            return fraction > 0 && fraction < 1;
         }
+
+        internal static bool TryParseRomanNumeral(string raw, out int value)
+        {
+            value = 0;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            raw = raw.Trim().ToUpperInvariant();
+            long total = 0;
+            var previous = 0;
+            for (var index = raw.Length - 1; index >= 0; index--)
+            {
+                var current = raw[index] switch { 'I' => 1, 'V' => 5, 'X' => 10, 'L' => 50, 'C' => 100, 'D' => 500, 'M' => 1000, _ => 0 };
+                if (current == 0)
+                {
+                    return false;
+                }
+
+                total += current < previous ? -current : current;
+                previous = current < previous ? previous : current;
+            }
+
+            if (total <= 0 || total > int.MaxValue)
+            {
+                return false;
+            }
+
+            value = (int)total;
+            return true;
+        }
+
+        private static bool IsWordCharacter(Rune rune) => Rune.IsLetter(rune) || Rune.IsNumber(rune);
+
+        private static bool IsCombiningMark(Rune rune) => Rune.GetUnicodeCategory(rune) is
+            UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark;
     }
 }

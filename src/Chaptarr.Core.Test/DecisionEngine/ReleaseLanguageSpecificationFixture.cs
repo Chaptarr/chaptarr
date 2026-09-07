@@ -248,6 +248,16 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(decision.Reason, Does.Contain("spa"));
         }
 
+        [TestCase("𠀀German", true)]
+        [TestCase("村German", true)]
+        [TestCase("🌶️German", false)]
+        public void language_hint_boundary_should_classify_whole_unicode_characters(string hint, bool accepted)
+        {
+            var profile = new MetadataProfile { Id = 2, AllowedLanguages = "eng" };
+            var decision = CreateSubject(profile).IsSatisfiedBy(BuildRemoteBook("1984 " + hint, 2), new BookSearchCriteria());
+            Assert.That(decision.Accepted, Is.EqualTo(accepted));
+        }
+
         private static RemoteBook BuildRemoteBook(string title, int profileId, string bookTitle = "1984", string authorName = "George Orwell", List<Language> languages = null, Quality quality = null, BookMediaType mediaType = BookMediaType.Ebook)
         {
             var book = new Book

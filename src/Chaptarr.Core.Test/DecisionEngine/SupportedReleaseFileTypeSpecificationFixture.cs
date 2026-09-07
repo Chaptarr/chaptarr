@@ -72,6 +72,16 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(decision.Reason, Is.EqualTo($"Unsupported file type: {fileType}"));
         }
 
+        [TestCase("Book.cbz𠀀", true)]
+        [TestCase("Book.cbz村", true)]
+        [TestCase("Book.cbz 🌶️", false)]
+        [TestCase("Book.cbz", false)]
+        public void title_extension_boundary_should_classify_whole_unicode_characters(string title, bool accepted)
+        {
+            var decision = CreateSubject().IsSatisfiedBy(BuildRemoteBook(null, title), null);
+            Assert.That(decision.Accepted, Is.EqualTo(accepted));
+        }
+
         [Test]
         public void should_not_reject_unknown_title_file_extension_as_known_unsupported()
         {

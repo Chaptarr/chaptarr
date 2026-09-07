@@ -25,9 +25,6 @@ namespace NzbDrone.Core.Books.Services
             // Handle Roman numerals (convert to numbers)
             normalized = ReplaceRomanNumerals(normalized);
 
-            // Handle written numbers (convert to digits)
-            normalized = ReplaceWrittenNumbers(normalized);
-
             // Handle initials: "j.k." → "jk", "j. k." → "jk"
             normalized = Regex.Replace(normalized, @"\b(\w)\.(\w)\.", "$1$2");
             normalized = Regex.Replace(normalized, @"\b(\w)\.\s*(\w)\.", "$1$2");
@@ -125,24 +122,6 @@ namespace NzbDrone.Core.Books.Services
             };
 
             foreach (var kvp in romanMap)
-            {
-                text = text.Replace(kvp.Key, kvp.Value);
-            }
-            return text;
-        }
-
-        // Replace written numbers with digits
-        private static string ReplaceWrittenNumbers(string text)
-        {
-            var numberMap = new Dictionary<string, string>
-            {
-                { " one ", " 1 " }, { " two ", " 2 " }, { " three ", " 3 " },
-                { " four ", " 4 " }, { " five ", " 5 " }, { " six ", " 6 " },
-                { " seven ", " 7 " }, { " eight ", " 8 " }, { " nine ", " 9 " },
-                { " ten ", " 10 " }, { " eleven ", " 11 " }, { " twelve ", " 12 " }
-            };
-
-            foreach (var kvp in numberMap)
             {
                 text = text.Replace(kvp.Key, kvp.Value);
             }

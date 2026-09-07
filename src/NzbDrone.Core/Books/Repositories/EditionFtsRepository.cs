@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using NLog;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Datastore;
-using System.Text.RegularExpressions;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.Books
 {
@@ -464,11 +466,10 @@ namespace NzbDrone.Core.Books
             }
 
             // Build a safe tsquery string (OR'ed terms) using Unicode-aware lexeme extraction.
-            // \p{L} = any Unicode letter, \p{Nd} = any Unicode digit
-            // This supports Chinese, Japanese, Korean, Arabic, Cyrillic, etc.
+            // Scalar boundaries preserve supplementary letters without admitting tsquery operators.
             var parts = tokens
                 .Where(t => !string.IsNullOrWhiteSpace(t))
-                .SelectMany(t => Regex.Matches(t, @"[\p{L}\p{Nd}]+").Cast<Match>().Select(m => m.Value))
+                .SelectMany(t => UnicodeComparisonNormalizer.WordSpans(StringSuperNormalizer.NormalizeForFts(t)).Select(m => m.Value))
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -487,7 +488,17 @@ namespace NzbDrone.Core.Books
             // Token must contain at least one letter or digit (any Unicode script)
             // This allows Chinese, Japanese, Korean, Arabic, Cyrillic, Greek, Hebrew, etc.
             // Rejects pure punctuation tokens like "..." or "---"
-            return token.Any(c => char.IsLetterOrDigit(c));
+            return UnicodeComparisonNormalizer.WordSpans(token).Any();
+        }
+
+        private static List<string> NormalizeFtsTerms(IEnumerable<string> tokens)
+        {
+            return tokens?
+                .Where(token => !string.IsNullOrWhiteSpace(token))
+                .Select(StringSuperNormalizer.NormalizeForFts)
+                .Where(token => !string.IsNullOrWhiteSpace(token) && IsValidFtsToken(token))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? new List<string>();
         }
 
         /// <summary>
@@ -626,10 +637,7 @@ namespace NzbDrone.Core.Books
                 return new List<BookFtsMatch>();
             }
 
-            var terms = tokens?
-                .Where(token => !string.IsNullOrWhiteSpace(token) && IsValidFtsToken(token))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList() ?? new List<string>();
+            var terms = NormalizeFtsTerms(tokens);
             if (terms.Count == 0)
             {
                 return new List<BookFtsMatch>();
@@ -657,7 +665,15 @@ namespace NzbDrone.Core.Books
             }
 
             var queries = (fieldQueries ?? Array.Empty<EditionFtsFieldQuery>())
-                .Where(query => query?.Terms != null && query.Terms.Any(IsValidFtsToken))
+                .Where(query => query?.Terms != null)
+                .Select(query => new EditionFtsFieldQuery
+                {
+                    Key = query.Key,
+                    ResidualValue = query.ResidualValue,
+                    Terms = NormalizeFtsTerms(query.Terms),
+                    SourceFields = query.SourceFields
+                })
+                .Where(query => query.Terms.Count > 0)
                 .GroupBy(query => query.Key ?? string.Join(" ", query.Terms), StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
@@ -1467,10 +1483,10 @@ namespace NzbDrone.Core.Books
 
             if (_dbType == DatabaseType.PostgreSQL)
             {
-                return SearchWithTwoStepPostgres(authorId, tokens, mediaType, limit, trace);
+                return SearchWithTwoStepPostgres(authorId, NormalizeFtsTerms(tokens), mediaType, limit, trace);
             }
 
-            var tokenList = tokens?.Where(t => !string.IsNullOrWhiteSpace(t) && IsValidFtsToken(t)).ToList();
+            var tokenList = NormalizeFtsTerms(tokens);
             if (tokenList == null || tokenList.Count == 0)
             {
                 _logger.Warn("[TWO-STEP] No valid tokens provided");
@@ -1767,10 +1783,9 @@ namespace NzbDrone.Core.Books
             }
 
             // Extract individual tokens for token count expression
-            // Unicode-aware: \p{L} = any letter, \p{Nd} = any digit
             var tokenList = inputTerms
                 .Where(t => !string.IsNullOrWhiteSpace(t))
-                .SelectMany(t => Regex.Matches(t, @"[\p{L}\p{Nd}]+").Cast<Match>().Select(m => m.Value))
+                .SelectMany(t => UnicodeComparisonNormalizer.WordSpans(t).Select(m => m.Value))
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport
 {
@@ -85,7 +87,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         };
 
         private static readonly Dictionary<string, int> WordToNumber = BuildWordToNumber();
-        private static readonly Regex IdentityTokenRegex = new Regex(@"\p{L}+|\p{Nd}+", RegexOptions.Compiled);
 
         internal static readonly IReadOnlySet<string> PositionDecorationTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -103,7 +104,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return tokens;
             }
 
-            raw = raw.Trim();
+            raw = UnicodeComparisonNormalizer.NormalizeText(raw).Trim();
             tokens.Add(raw.ToLowerInvariant());
 
             if (WordToNumber.TryGetValue(raw.ToLowerInvariant(), out var wordNumber))
@@ -111,7 +112,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 AddNumberTokens(tokens, wordNumber);
             }
 
-            if (TryParseRomanNumeral(raw, out var romanNumber))
+            if (LooksLikeRomanNumeralToken(raw) && UnicodeComparisonNormalizer.TryParseRomanNumeral(raw, out var romanNumber))
             {
                 AddNumberTokens(tokens, romanNumber);
             }
@@ -134,8 +135,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return false;
             }
 
-            var tokens = IdentityTokenRegex.Matches(raw)
-                .Cast<Match>()
+            var tokens = UnicodeComparisonNormalizer.WordSpans(UnicodeComparisonNormalizer.NormalizeText(raw), splitNumbers: true)
                 .Select(match => match.Value.ToLowerInvariant())
                 .Where(token => !string.IsNullOrWhiteSpace(token))
                 .ToList();
@@ -148,7 +148,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 return token.All(char.IsDigit) ||
                        WordToNumber.ContainsKey(token) ||
-                       TryParseRomanNumeral(token, out _);
+                       (LooksLikeRomanNumeralToken(token) && UnicodeComparisonNormalizer.TryParseRomanNumeral(token, out _));
             }
 
             var positionIndexes = Enumerable.Range(0, tokens.Count)
@@ -303,55 +303,38 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return one == 0 ? TensOrdinals[ten] : $"{TensCardinals[ten]} {Ordinals[one]}";
         }
 
-        private static bool TryParseRomanNumeral(string raw, out int value)
+        internal static bool TryParseCardinal(ReadOnlySpan<char> raw, out int value)
         {
-            value = 0;
-
-            if (string.IsNullOrWhiteSpace(raw) || !LooksLikeRomanNumeralToken(raw))
+            if (raw.ContainsAnyExceptInRange('\0', '\u007f'))
             {
-                return false;
+                raw = raw.ToString().RemoveAccent().AsSpan();
             }
 
-            raw = raw.Trim().ToUpperInvariant();
+            return WordToNumber.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(raw, out value) &&
+                   raw.Equals(ToCardinalWords(value), StringComparison.OrdinalIgnoreCase);
+        }
 
-            var map = new Dictionary<char, int>
+        internal static bool TryParseNumber(string raw, out decimal value, bool allowRoman = true)
+        {
+            raw = UnicodeComparisonNormalizer.NormalizeText(raw).Trim();
+            if (decimal.TryParse(raw, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out value))
             {
-                ['I'] = 1,
-                ['V'] = 5,
-                ['X'] = 10,
-                ['L'] = 50,
-                ['C'] = 100,
-                ['D'] = 500,
-                ['M'] = 1000
-            };
-
-            var total = 0;
-            var prev = 0;
-            foreach (var ch in raw.Reverse())
-            {
-                if (!map.TryGetValue(ch, out var current))
-                {
-                    return false;
-                }
-
-                if (current < prev)
-                {
-                    total -= current;
-                }
-                else
-                {
-                    total += current;
-                    prev = current;
-                }
+                return true;
             }
 
-            if (total <= 0)
+            if (WordToNumber.TryGetValue(raw, out var wordNumber))
             {
-                return false;
+                value = wordNumber;
+                return true;
             }
 
-            value = total;
-            return true;
+            if (allowRoman && UnicodeComparisonNormalizer.TryParseRomanNumeral(raw, out var romanNumber))
+            {
+                value = romanNumber;
+                return true;
+            }
+
+            return false;
         }
 
         private static Dictionary<string, int> BuildWordToNumber()

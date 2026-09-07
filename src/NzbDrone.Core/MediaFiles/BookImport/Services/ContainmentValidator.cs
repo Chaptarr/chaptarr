@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.Parser;
+using NzbDrone.Core.Utilities;
 using NLog;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
@@ -68,10 +68,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	        // ineligible for edition-title evidence (defense-in-depth against non-standard comment fields).
 	        private const int MaxTitleEvidenceValueLength = 400;
 	        
-	        // Unicode-aware word boundary pattern
-	        private static readonly Regex WordPattern = new Regex(@"\p{L}+", RegexOptions.Compiled);
-        // Numeric tokens (e.g., 1984)
-        private static readonly Regex NumberPattern = new Regex(@"\b\d+\b", RegexOptions.Compiled);
         // Roman numerals (conservative)
         private static readonly Regex RomanRegex = new Regex(@"^(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         
@@ -884,20 +880,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         /// </summary>
         private static List<string> ExtractTokensAsList(string normalized)
         {
-            var list = new List<string>();
-            if (string.IsNullOrWhiteSpace(normalized)) return list;
-
-            foreach (Match m in WordPattern.Matches(normalized))
-            {
-                var v = m.Value.ToLowerInvariant();
-                if (!string.IsNullOrEmpty(v)) list.Add(v);
-            }
-            foreach (Match m in NumberPattern.Matches(normalized))
-            {
-                var v = m.Value.ToLowerInvariant();
-                if (!string.IsNullOrEmpty(v)) list.Add(v);
-            }
-            return list;
+            // Keep numeric evidence after the words so an inserted series position does not interrupt title alignment.
+            return UnicodeComparisonNormalizer.WordSpans(normalized)
+                .OrderBy(word => word.Value.All(char.IsDigit))
+                .Select(word => word.Value)
+                .ToList();
         }
 
         /// <summary>
@@ -917,13 +904,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         private List<AuthorWord> ParseIntoWords(string authorName)
         {
             var normalized = NormalizeForWordExtraction(authorName);
-            var words = WordPattern.Matches(normalized);
+            var words = UnicodeComparisonNormalizer.WordSpans(normalized).ToList();
             var result = new List<AuthorWord>();
 
             for (int i = 0; i < words.Count; i++)
             {
                 var word = words[i].Value.ToLowerInvariant();
-                var type = word.Length == 1 ? WordType.Initial : WordType.Full;
+                var type = word.EnumerateRunes().Count() == 1 ? WordType.Initial : WordType.Full;
                 
                 // Check if this is a surname particle
                 if (SurnameParticles.Contains(word))
@@ -1100,49 +1087,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         private List<string> ExtractFieldWords(string text)
         {
             var normalized = NormalizeForWordExtraction(text);
-            var words = WordPattern.Matches(normalized);
-            var result = new List<string>();
-
-            foreach (Match match in words)
+            var words = UnicodeComparisonNormalizer.WordSpans(normalized).ToList();
+            var result = words.Select(word => word.Value).ToList();
+            var initials = words.Where(word => word.Value.EnumerateRunes().Count() == 1 &&
+                Rune.IsLetter(Rune.GetRuneAt(word.Value, 0))).ToList();
+            for (var index = 0; index + 1 < initials.Count; index++)
             {
-                var word = match.Value.ToLowerInvariant();
-                result.Add(word);
-            }
-
-            // Look for actual initial clusters (consecutive single letters)
-            // This helps match "J.K." written as "JK" in tags
-            var singleLetters = new List<(char letter, int index)>();
-            var cleanText = normalized.ToLowerInvariant();
-            
-            for (int i = 0; i < cleanText.Length; i++)
-            {
-                if (char.IsLetter(cleanText[i]))
+                if (initials[index + 1].Index - initials[index].Index - initials[index].Length <= 2)
                 {
-                    // Check if this is a single letter (not part of a larger word)
-                    bool isStart = i == 0 || !char.IsLetter(cleanText[i - 1]);
-                    bool isEnd = i == cleanText.Length - 1 || !char.IsLetter(cleanText[i + 1]);
-                    
-                    if (isStart && isEnd)
+                    result.Add(initials[index].Value + initials[index + 1].Value);
+                    if (index + 2 < initials.Count &&
+                        initials[index + 2].Index - initials[index + 1].Index - initials[index + 1].Length <= 2)
                     {
-                        singleLetters.Add((cleanText[i], i));
-                    }
-                }
-            }
-            
-            // Create clusters from consecutive single letters
-            for (int i = 0; i < singleLetters.Count - 1; i++)
-            {
-                // Check if the next letter is close enough to be a cluster
-                if (singleLetters[i + 1].index - singleLetters[i].index <= 3)
-                {
-                    var cluster = new string(new[] { singleLetters[i].letter, singleLetters[i + 1].letter });
-                    result.Add(cluster);
-                    
-                    // Also try three-letter clusters
-                    if (i < singleLetters.Count - 2 && singleLetters[i + 2].index - singleLetters[i + 1].index <= 3)
-                    {
-                        var tripleCluster = new string(new[] { singleLetters[i].letter, singleLetters[i + 1].letter, singleLetters[i + 2].letter });
-                        result.Add(tripleCluster);
+                        result.Add(initials[index].Value + initials[index + 1].Value + initials[index + 2].Value);
                     }
                 }
             }
@@ -1181,26 +1138,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             if (string.IsNullOrWhiteSpace(text))
                 return string.Empty;
 
-            // Unicode normalization to decomposed form
-            text = text.Normalize(NormalizationForm.FormD);
-
-            // Remove combining diacritical marks
-            var sb = new StringBuilder();
-            foreach (var ch in text)
-            {
-                var category = CharUnicodeInfo.GetUnicodeCategory(ch);
-                if (category != UnicodeCategory.NonSpacingMark)
-                {
-                    sb.Append(ch);
-                }
-            }
-            text = sb.ToString();
-
-            // Normalize back to composed form
-            text = text.Normalize(NormalizationForm.FormC);
-
-            // Basic normalization while preserving word structure
-            text = text.Trim();
+            text = UnicodeComparisonNormalizer.NormalizeText(text).Trim();
 
             // Normalize apostrophes and quotes to standard forms
             // Apostrophes: ' ` ´ ′ ʼ ’ ‘ ‛ ＇
@@ -1212,7 +1150,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             // This matches FTS tokenizer behavior in FileMatchingService.TokenizeText
             // "Housemaid's" → "Housemaids", "Philosopher's" → "Philosophers"
             // Does NOT affect: Can't, O'Brien, ma'am (not word-final 's)
-            text = Regex.Replace(text, @"(\p{L})'s\b", "$1s");
+            text = Regex.Replace(text, @"'s\b", "s");
 
             // Normalize dashes to spaces for word separation
             text = Regex.Replace(text, @"[–—-]", " ");

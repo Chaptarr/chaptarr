@@ -9,6 +9,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
 using NzbDrone.Core.Utilities;
 
@@ -85,7 +86,6 @@ namespace NzbDrone.Core.Parser
         private static readonly Regex SpaceAfterPunctuationRegex = new Regex(@"([:;,])(?=\S)", RegexOptions.Compiled);
         private static readonly Regex YearTokenRegex = new Regex(@"^(?:18\d{2}|19\d{2}|20\d{2}|21\d{2})$", RegexOptions.Compiled);
         private static readonly Regex CompactMetadataCodeRegex = new Regex(@"^[\p{L}]{1,3}\d{1,3}$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex NumericTokenRegex = new Regex(@"^\d+(?:\.\d+)?$", RegexOptions.Compiled);
         private static readonly Regex BareSeriesPositionRegex = new Regex(@"^\s*#?\s*(?<number>\d+(?:\.\d+)?)(?:\s*,?\s*(?:part|pt)\s+\d+\s+of\s+\d+)?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex MarkedSeriesPositionRegex = new Regex(@"^\s*(?:book|bk|vol|volume|tome)\s+#?\s*(?<number>\d+(?:\.\d+)?)(?:\s*,?\s*(?:part|pt)\s+\d+\s+of\s+\d+)?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -446,7 +446,7 @@ namespace NzbDrone.Core.Parser
 
             return MetadataTokens.Contains(token) ||
                    YearTokenRegex.IsMatch(token) ||
-                   token.All(char.IsDigit) ||
+                   IsNumericToken(token) ||
                    CompactMetadataCodeRegex.IsMatch(token) ||
                    SeriesPositionMatches(context, token) ||
                    (context?.PrefixAllowanceTokens.Contains(token) ?? false);
@@ -582,7 +582,8 @@ namespace NzbDrone.Core.Parser
                 return false;
             }
 
-            return TryParseSeriesPositionPattern(seriesPosition, BareSeriesPositionRegex, out number) ||
+            return SeriesPositionTokenHelper.TryParseNumber(seriesPosition, out number) ||
+                   TryParseSeriesPositionPattern(seriesPosition, BareSeriesPositionRegex, out number) ||
                    TryParseSeriesPositionPattern(seriesPosition, MarkedSeriesPositionRegex, out number);
         }
 
@@ -590,7 +591,7 @@ namespace NzbDrone.Core.Parser
         {
             number = default;
 
-            var match = regex.Match(seriesPosition ?? string.Empty);
+            var match = regex.Match(UnicodeComparisonNormalizer.NormalizeText(seriesPosition));
             if (!match.Success)
             {
                 return false;
@@ -601,14 +602,7 @@ namespace NzbDrone.Core.Parser
 
         private static bool TryParseNumberToken(string token, out decimal number)
         {
-            number = default;
-
-            if (string.IsNullOrWhiteSpace(token) || !NumericTokenRegex.IsMatch(token))
-            {
-                return false;
-            }
-
-            return decimal.TryParse(token, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out number);
+            return SeriesPositionTokenHelper.TryParseNumber(token, out number, allowRoman: false);
         }
 
         private static bool IsPartMarker(string token)
@@ -1293,20 +1287,8 @@ namespace NzbDrone.Core.Parser
 
         private static MappedText CreateMappedText(string text)
         {
-            var builder = new StringBuilder(text.Length);
-            var spans = new List<(int Start, int End)>(text.Length);
-
-            for (var i = 0; i < text.Length; i++)
-            {
-                builder.Append(text[i]);
-                spans.Add((i, i + 1));
-            }
-
-            return new MappedText
-            {
-                Text = builder.ToString(),
-                SourceSpans = spans
-            };
+            var normalized = UnicodeComparisonNormalizer.NormalizeTextWithSourceSpans(text);
+            return new MappedText { Text = normalized.Text, SourceSpans = normalized.SourceSpans };
         }
 
         private static MappedText ReplaceAmpersands(MappedText input)
@@ -1434,7 +1416,7 @@ namespace NzbDrone.Core.Parser
 
             return MetadataTokens.Contains(token) ||
                    YearTokenRegex.IsMatch(token) ||
-                   token.All(char.IsDigit) ||
+                   IsNumericToken(token) ||
                    CompactMetadataCodeRegex.IsMatch(token) ||
                    IsLanguageToken(token);
         }

@@ -9,6 +9,40 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     public class MatchEvidenceValueBuilderFixture
     {
         [Test]
+        public void supplementary_letters_should_distinguish_proof_and_preserve_highlights()
+        {
+            const string raw = "🌶️ Astorias𠀀Smut’s edition";
+            var sut = new MatchEvidenceValueBuilder();
+            sut.AddPhrase("embedded_tag", "TITLE", raw, "Astorias𠀀Smuts", "supporting", "title", "book", "Title proof");
+            var value = sut.Build().Single();
+            Assert.That(Slice(value, value.Ranges.Single()), Is.EqualTo("Astorias𠀀Smut’s"));
+
+            var other = new MatchEvidenceValueBuilder();
+            other.AddPhrase("embedded_tag", "TITLE", raw, "Astorias𠀁Smuts", "supporting", "title", "book", "Title proof");
+            Assert.That(other.Build().SelectMany(v => v.Ranges), Is.Empty);
+        }
+
+        [TestCase("Ready Player 𝟚", "Ready Player Two")]
+        [TestCase("Ready Player ②", "Ready Player Two")]
+        [TestCase("23 1/2 Lies", "23 ½ Lies")]
+        [TestCase("The 7 ½ Deaths of Evelyn Hardcastle", "The 7½ Deaths of Evelyn Hardcastle")]
+        public void numeric_title_proof_should_highlight_the_original_spelling(string raw, string title)
+        {
+            var sut = new MatchEvidenceValueBuilder();
+            sut.AddPhrase("embedded_tag", "TITLE", raw, title, "supporting", "title", "book", "Title proof");
+            var value = sut.Build().Single();
+            Assert.That(Slice(value), Is.EqualTo(raw));
+        }
+
+        [Test]
+        public void a_different_numeric_title_should_not_be_highlighted_as_proof()
+        {
+            var sut = new MatchEvidenceValueBuilder();
+            sut.AddPhrase("embedded_tag", "TITLE", "Ready Player ②", "Ready Player One", "supporting", "title", "book", "Title proof");
+            Assert.That(sut.Build(), Is.Empty);
+        }
+
+        [Test]
         public void should_group_duplicate_extractor_fields_by_the_exact_raw_value()
         {
             const string rawValue = "The Deal (Off-Campus #1)";

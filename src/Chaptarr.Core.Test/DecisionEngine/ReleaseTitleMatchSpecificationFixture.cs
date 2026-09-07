@@ -608,5 +608,50 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             return (author, targetBook, siblingBook);
         }
+
+        [TestCase("1", true)]
+        [TestCase("𝟙", true)]
+        [TestCase("١", true)]
+        [TestCase("１", true)]
+        [TestCase("①", true)]
+        [TestCase("one", true)]
+        [TestCase("2", false)]
+        [TestCase("𝟚", false)]
+        [TestCase("٢", false)]
+        [TestCase("２", false)]
+        [TestCase("②", false)]
+        [TestCase("Ⅱ", false)]
+        [TestCase("two", false)]
+        [TestCase("٧", false)]
+        public void numeric_release_positions_should_keep_mode_semantics_across_scripts(string position, bool samePosition)
+        {
+            var author = new Author { Name = "Frank Herbert" };
+            var book = new Book { Title = "Dune", Author = author, SeriesName = "Dune", SeriesPosition = "1" };
+            var criteria = new BookSearchCriteria { Author = author, Books = new List<Book> { book } };
+            foreach (var mode in new[] { BookMatchingStrictness.Strict, BookMatchingStrictness.Balanced, BookMatchingStrictness.Aggressive })
+            {
+                var subject = new RemoteBook { Release = new ReleaseInfo { Title = "Frank Herbert - Dune " + position, Author = author.Name } };
+                var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger(), ConfigServiceTestProxy.Create(mode));
+                Assert.That(spec.IsSatisfiedBy(subject, criteria).Accepted, Is.EqualTo(samePosition || mode != BookMatchingStrictness.Strict), mode + ": " + position);
+            }
+        }
+
+        [TestCase("Ready Player 2", "Ready Player Two")]
+        [TestCase("Ready Player 𝟚", "Ready Player Two")]
+        [TestCase("Ready Player ٢", "Ready Player Two")]
+        [TestCase("Ready Player ２", "Ready Player Two")]
+        [TestCase("Ready Player ②", "Ready Player Two")]
+        [TestCase("Ready Player Ⅱ", "Ready Player Two")]
+        [TestCase("Ready Player 1", "Ready Player One")]
+        public void numeric_title_equality_should_not_merge_distinct_siblings(string release, string expectedTitle)
+        {
+            var author = new Author { Name = "Ernest Cline" };
+            var books = new List<Book> { new Book { Title = "Ready Player One", Author = author }, new Book { Title = "Ready Player Two", Author = author } };
+            var result = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, books, author.Name, books);
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Book.Title, Is.EqualTo(expectedTitle));
+            Assert.That(result.IsMatch, Is.True);
+        }
+
     }
 }

@@ -10,6 +10,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class BookImportUnitGroupingFixture
     {
+        [TestCase("Astorias𠀀Smut", "astorias𠀀smut")]
+        [TestCase("Astorias𠀁Smut", "astorias𠀁smut")]
+        [TestCase("𠀀 🌶️ high-opp 1.5", "𠀀|high-opp|1.5")]
+        public void fts_tokens_should_preserve_supplementary_letters_and_connector_rules(string title, string expected)
+        {
+            Assert.That(string.Join("|", BookImportUnitGroupingService.TokenizeText(title)), Is.EqualTo(expected));
+        }
+
         [Test]
         public void standalone_ebooks_in_one_folder_should_each_be_their_own_unit()
         {

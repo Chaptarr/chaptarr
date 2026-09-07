@@ -10,12 +10,12 @@ using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
     internal static class TrackedMultipartAudioRepairHelper
     {
-        private static readonly Regex ProofTokenRegex = new Regex(@"[\p{L}\p{Nd}]+", RegexOptions.Compiled);
         private static readonly Regex RomanNumeralRegex = new Regex(@"^(m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3}))$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly HashSet<string> PackagingTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -593,9 +593,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return null;
             }
 
-            var tokens = ProofTokenRegex
-                .Matches(value.ToLowerInvariant())
-                .Cast<Match>()
+            var tokens = UnicodeComparisonNormalizer.WordSpans(value.ToLowerInvariant())
                 .Select(match => match.Value)
                 .ToList();
 

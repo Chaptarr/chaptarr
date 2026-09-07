@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
@@ -19,7 +20,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
     internal static class ExactMatchEvidenceBuilder
     {
-        private static readonly Regex ProofTokenRegex = new Regex(@"[\p{L}\p{Nd}]+", RegexOptions.Compiled);
 
         internal static ExactMatchEvidence Build(
             string authorName,
@@ -410,29 +410,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return Enumerable.Empty<string>();
             }
 
-            // Match TokenizeForLeftoverGate/TokenizeText behavior from FileMatchingService:
-            // 1. Normalize possessives ('s → s) before tokenizing
-            value = Regex.Replace(value, "['\\u2018\\u2019]s\\b", "s");
+            value = Regex.Replace(value, "['\\u2018\\u2019]s\\b", "s").RemoveAccent().Replace('.', ' ');
 
-            // 2. Strip diacritics (NFD decomposition + remove combining marks)
-            value = value.Normalize(NormalizationForm.FormD);
-            var sb = new StringBuilder(value.Length);
-            foreach (var c in value)
-            {
-                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
-                {
-                    sb.Append(c);
-                }
-            }
-
-            value = sb.ToString();
-
-            // 3. Replace dashes and dots with spaces (same as TokenizeForLeftoverGate)
-            value = Regex.Replace(value, @"[–—-]", " ");
-            value = value.Replace('.', ' ');
-
-            return ProofTokenRegex.Matches(value.ToLowerInvariant())
-                .Cast<Match>()
+            return UnicodeComparisonNormalizer.WordSpans(value.ToLowerInvariant())
                 .Select(match => match.Value);
         }
     }
