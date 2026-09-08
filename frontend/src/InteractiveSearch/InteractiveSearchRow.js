@@ -7,6 +7,7 @@ import BookQuality from 'Book/BookQuality';
 import IndexerFlags from 'Book/IndexerFlags';
 import Icon from 'Components/Icon';
 import Label from 'Components/Label';
+import labelStyles from 'Components/Label.css';
 import Link from 'Components/Link/Link';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -341,7 +342,11 @@ class InteractiveSearchRow extends Component {
         </TableRowCell>
 
         <TableRowCell className={styles.quality}>
-          <BookQuality quality={quality} showRevision={true} />
+          <BookQuality
+            className={labelStyles.wrapping}
+            quality={quality}
+            showRevision={true}
+          />
         </TableRowCell>
 
         <TableRowCell className={styles.customFormatScore}>

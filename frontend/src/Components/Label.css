@@ -10,6 +10,14 @@
   cursor: default;
 }
 
+.wrapping {
+  composes: label;
+
+  max-width: calc(100% - 4px);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /** Kinds **/
 
 .danger {

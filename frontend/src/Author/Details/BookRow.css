@@ -76,6 +76,10 @@
   width: 100px;
 }
 
+.status {
+  width: 108px;
+}
+
 .releaseDate {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
 

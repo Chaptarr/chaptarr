@@ -7,9 +7,10 @@
 .table {
   composes: table from '~Components/Table/Table.css';
 
+  /* Reserve 240px for Title plus 930px of fixed columns, a 1px collapsed border and 1px slack. */
+  min-width: 1172px;
   max-width: 100%;
   width: 100%;
-  min-width: 100%;
   table-layout: fixed;
 }
 
@@ -34,7 +35,7 @@
 }
 
 .table th:nth-child(7) {
-  width: 68px;
+  width: 88px;
 }
 
 .table th:nth-child(8) {
@@ -46,11 +47,11 @@
 }
 
 .table th:nth-child(10) {
-  width: 70px;
+  width: 120px;
 }
 
 .table th:nth-child(11) {
-  width: 44px;
+  width: 64px;
 }
 
 .table th:nth-child(12),

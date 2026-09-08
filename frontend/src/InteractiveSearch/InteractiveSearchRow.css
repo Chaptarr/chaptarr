@@ -69,18 +69,18 @@
 .quality {
   composes: cell;
 
-  width: 70px;
+  width: 120px;
   text-align: center;
-}
-
-.quality {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .customFormatScore {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
 
-  width: 44px;
+  width: 64px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+
   font-weight: bold;
   cursor: default;
 }
@@ -162,7 +162,8 @@
 .peers {
   composes: cell;
 
-  width: 68px;
+  width: 88px;
+  white-space: normal;
 }
 
 .goldStar {

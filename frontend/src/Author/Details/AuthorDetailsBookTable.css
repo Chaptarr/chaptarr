@@ -14,9 +14,12 @@
 }
 
 .position,
-.rating,
-.status {
+.rating {
   width: 100px;
+}
+
+.status {
+  width: 108px;
 }
 
 .releaseDate {
