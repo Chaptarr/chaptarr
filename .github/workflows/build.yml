@@ -146,6 +146,10 @@ jobs:
     - name: Build
       run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
     
+    - name: Build Windows tray host
+      if: matrix.os == 'windows-latest'
+      run: dotnet build src/NzbDrone/Chaptarr.csproj --configuration Release
+
     - name: Test
       run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore --verbosity normal
     
