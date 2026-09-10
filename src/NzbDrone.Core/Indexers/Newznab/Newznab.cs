@@ -35,7 +35,7 @@ namespace NzbDrone.Core.Indexers.Newznab
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new NewznabRequestGenerator(_capabilitiesProvider)
+            return new NewznabRequestGenerator(_capabilitiesProvider, _logger, Definition.Name)
             {
                 PageSize = PageSize,
                 Settings = Settings,

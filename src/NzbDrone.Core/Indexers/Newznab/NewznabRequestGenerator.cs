@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -10,14 +11,18 @@ namespace NzbDrone.Core.Indexers.Newznab
     public class NewznabRequestGenerator : IIndexerRequestGenerator
     {
         protected readonly INewznabCapabilitiesProvider _capabilitiesProvider;
+        private readonly Logger _logger;
+        private readonly string _indexerName;
         public int MaxPages { get; set; }
         public int PageSize { get; set; }
         public NewznabSettings Settings { get; set; }
         public int? ProxyId { get; set; }
 
-        public NewznabRequestGenerator(INewznabCapabilitiesProvider capabilitiesProvider)
+        public NewznabRequestGenerator(INewznabCapabilitiesProvider capabilitiesProvider, Logger logger, string indexerName)
         {
             _capabilitiesProvider = capabilitiesProvider;
+            _logger = logger;
+            _indexerName = indexerName;
 
             MaxPages = 30;
             PageSize = 100;
@@ -67,7 +72,17 @@ namespace NzbDrone.Core.Indexers.Newznab
         public virtual IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
-            var searchCategories = SearchMediaTypeHelper.FilterCategoriesForMediaType(Settings.Categories, SearchMediaTypeHelper.GetRequestedMediaType(searchCriteria));
+            var mediaType = SearchMediaTypeHelper.GetRequestedMediaType(searchCriteria);
+            var searchCategories = SearchMediaTypeHelper.FilterCategoriesForMediaType(Settings.Categories, mediaType);
+
+            // Single-format indexers are valid; distinguish a skipped search from an empty response.
+            if (mediaType.HasValue && searchCategories.Count == 0)
+            {
+                _logger.Log(searchCriteria.InteractiveSearch ? LogLevel.Warn : LogLevel.Debug,
+                    "Skipping {0} search on indexer '{1}': configured categories [{2}] contain no categories for this format. No request was sent.",
+                    mediaType.Value.ToString().ToLowerInvariant(), _indexerName, string.Join(", ", Settings.Categories ?? Enumerable.Empty<int>()));
+                return pageableRequests;
+            }
 
             if (SupportsBookSearch)
             {
