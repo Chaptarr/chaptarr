@@ -57,6 +57,7 @@ namespace NzbDrone.Core.Parser
         public string PrimaryTitle { get; set; }
         public string SeriesName { get; set; }
         public string SeriesPosition { get; set; }
+        public string SeriesSetVariant { get; set; }
         public List<string> PrimaryVariants { get; } = new List<string>();
         public HashSet<string> PrefixAllowanceTokens { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
@@ -80,6 +81,7 @@ namespace NzbDrone.Core.Parser
         private static readonly Regex SubtitleArticleInsertionPointRegex = new Regex(@"(?<prefix>[:;\-\u2013\u2014]\s+)(?<head>[\p{L}\p{Nd}])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex LeadingOptionalArticleRegex = new Regex(@"^(?:a|an|the)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex WhitespaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
+        private static readonly Regex SeriesSetTitleRegex = new Regex(@"^(?<series>.+\s+series)\s+\d+[\s-]+books?\s+(?:box(?:ed)?\s+)?set$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SpaceBeforePunctuationRegex = new Regex(@"\s+([:;,])", RegexOptions.Compiled);
         private static readonly Regex SpaceAfterPunctuationRegex = new Regex(@"([:;,])(?=\S)", RegexOptions.Compiled);
         private static readonly Regex YearTokenRegex = new Regex(@"^(?:18\d{2}|19\d{2}|20\d{2}|21\d{2})$", RegexOptions.Compiled);
@@ -233,6 +235,12 @@ namespace NzbDrone.Core.Parser
 
             foreach (var span in spans)
             {
+                if (TokenizedEquals(bookTitleVariant, context?.SeriesSetVariant) &&
+                    HasSeriesSetExtras(releaseTokens, span.Start, span.End, book?.Author?.Name))
+                {
+                    continue;
+                }
+
                 var problems = GetProblems(releaseTokens, span.Start, span.End, titleTokens.Count, hasAuthorInTitle, book?.Author?.Name, context, contradictoryVariants);
                 var leftovers = problems.Select(problem => problem.Value).ToList();
 
@@ -254,6 +262,14 @@ namespace NzbDrone.Core.Parser
             }
 
             return best;
+        }
+
+        private static bool HasSeriesSetExtras(IReadOnlyList<string> releaseTokens, int matchedStart, int matchedEnd, string authorName)
+        {
+            var authorTokens = Tokenize(authorName);
+            return releaseTokens.Where((_, index) => index < matchedStart || index > matchedEnd).Any(token =>
+                (IsNumericToken(token) && !YearTokenRegex.IsMatch(token)) ||
+                (!IsMetadataToken(token) && !authorTokens.Any(authorToken => TokensMatch(authorToken, token))));
         }
 
         private static bool IsLongAuthorlessYearTitleMatch(IReadOnlyList<string> releaseTokens, int matchedStart, int matchedEnd, IReadOnlyCollection<string> titleTokens, IReadOnlyCollection<TitleMatchProblem> problems)
@@ -317,7 +333,10 @@ namespace NzbDrone.Core.Parser
                         continue;
                     }
 
-                    if (IsTargetSeriesContext(contradiction.Title, context))
+                    // A catalogue can contain a book named after its author. The author
+                    // credit in a release is not evidence that it contains that book.
+                    if (TokenizedEquals(contradiction.Title, authorName) ||
+                        IsTargetSeriesContext(contradiction.Title, context))
                     {
                         continue;
                     }
@@ -885,6 +904,16 @@ namespace NzbDrone.Core.Parser
 
             AddTitleVariants(context.PrimaryVariants, primaryTitle);
             context.PrimaryTitle = primaryTitle;
+
+            // Keep "series" in this variant so a bare title or an individual volume
+            // cannot stand in for the set. Explicit counts and extra titles are checked
+            // before scoring this variant, including in relaxed matching modes.
+            var seriesSet = SeriesSetTitleRegex.Match(primaryTitle);
+            if (seriesSet.Success)
+            {
+                context.SeriesSetVariant = seriesSet.Groups["series"].Value;
+                AddTitleVariants(context.PrimaryVariants, context.SeriesSetVariant);
+            }
 
             foreach (var variant in context.PrimaryVariants)
             {
