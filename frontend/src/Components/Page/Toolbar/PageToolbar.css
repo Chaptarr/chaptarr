@@ -1,6 +1,5 @@
 .toolbar {
   display: flex;
-  justify-content: space-between;
   flex: 0 0 auto;
   padding: 0 20px;
   height: $toolbarHeight;
@@ -9,8 +8,60 @@
   line-height: 60px;
 }
 
-@media only screen and (max-width: $breakpointSmall) {
+.controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: 15px;
+
+  /* stylelint-disable-next-line selector-max-universal -- Size the supplied control root. */
+  > * {
+    margin: 0;
+  }
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media only screen and (max-width: $toolbarCompactWidth) {
   .toolbar {
+    flex-direction: column;
     padding: 0 10px;
+    height: auto;
+  }
+
+  .controls {
+    margin-right: 0;
+    padding: 8px 0;
+    min-width: 0;
+    border-bottom: 1px solid var(--borderColor);
+    line-height: normal;
+
+    /* stylelint-disable-next-line selector-max-universal -- Fill the mobile control row. */
+    > * {
+      width: 100%;
+    }
+  }
+
+  .actions {
+    flex: 0 0 auto;
+    overflow-x: auto;
+    min-height: $toolbarHeight;
+    /* Local covers hide each edge shadow when that end is reached. The
+       remaining shadow signals more actions even when touch scrollbars vanish. */
+    background-image:
+      linear-gradient(to right, var(--toolbarBackgroundColor) 30%, transparent),
+      linear-gradient(to left, var(--toolbarBackgroundColor) 30%, transparent),
+      linear-gradient(to right, var(--toolbarColor), transparent),
+      linear-gradient(to left, var(--toolbarColor), transparent);
+    background-attachment: local, local, scroll, scroll;
+    background-position: left center, right center, left center, right center;
+    background-size: 32px 100%, 32px 100%, 6px 100%, 6px 100%;
+    background-repeat: no-repeat;
+    scrollbar-width: thin;
   }
 }

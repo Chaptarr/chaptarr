@@ -30,11 +30,11 @@
 
 .poster {
   flex-shrink: 0;
-  margin-right: 35px;
-  height: 250px;
-  width: 200px;
-  object-fit: cover;
   overflow: hidden;
+  margin-right: 35px;
+  width: 200px;
+  height: 250px;
+  object-fit: cover;
 }
 
 .info {
@@ -137,6 +137,12 @@
 @media only screen and (max-width: $breakpointSmall) {
   .headerContent {
     padding: 15px;
+  }
+
+  /* The shorter mobile title has no spare height for the desktop offset;
+     lifting it clips the monitoring icon against the info container. */
+  .titleContainer {
+    margin-top: 0;
   }
 
   .title {

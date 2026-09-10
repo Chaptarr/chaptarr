@@ -30,7 +30,17 @@
   margin-right: 8px;
 }
 
-@media only screen and (max-width: $breakpointSmall) {
+@media only screen and (max-width: $toolbarCompactWidth) {
+  .sectionContainer {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  /* stylelint-disable-next-line selector-max-universal -- Preserve each action, including menu/modal wrappers. */
+  .section > * {
+    flex-shrink: 0;
+  }
+
   .overflowMenuButton {
     &::after {
       margin-left: 0;

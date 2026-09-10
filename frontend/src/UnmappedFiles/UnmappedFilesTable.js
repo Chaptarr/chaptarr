@@ -821,12 +821,16 @@ class UnmappedFilesTable extends Component {
 
     return (
       <PageContent title={titleWithCount}>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <UnmappedFilesMediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={this.onMediaTypeChange}
             />
+          }
+        >
+          <PageToolbarSection>
+
             <PageToolbarButton
               label={refreshFilesLabel}
               iconName={icons.RESCAN}

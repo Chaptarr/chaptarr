@@ -454,13 +454,15 @@ class BookIndex extends Component {
 
     return (
       <PageContent>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <MediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={onMediaTypeChange}
             />
-
+          }
+        >
+          <PageToolbarSection>
             <PageToolbarButton
               label={refreshLabel}
               iconName={icons.REFRESH}

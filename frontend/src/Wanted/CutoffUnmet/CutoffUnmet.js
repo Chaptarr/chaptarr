@@ -149,13 +149,15 @@ class CutoffUnmet extends Component {
 
     return (
       <PageContent title={translate('CutoffUnmet')}>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <UnmappedFilesMediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={this.onMediaTypeChange}
             />
-
+          }
+        >
+          <PageToolbarSection>
             <PageToolbarButton
               label={translate('SearchSelected')}
               iconName={icons.SEARCH}

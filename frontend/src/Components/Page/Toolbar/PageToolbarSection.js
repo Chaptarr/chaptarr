@@ -1,6 +1,7 @@
 import classNames from 'classnames';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import { connect } from 'react-redux';
 import Measure from 'Components/Measure';
 import Menu from 'Components/Menu/Menu';
 import MenuContent from 'Components/Menu/MenuContent';
@@ -117,6 +118,7 @@ class PageToolbarSection extends Component {
     const {
       children,
       alignContent,
+      isCompact,
       collapseButtons
     } = this.props;
 
@@ -129,14 +131,18 @@ class PageToolbarSection extends Component {
       buttons,
       buttonCount,
       overflowItems
-    } = calculateOverflowItems(children, isMeasured, width, collapseButtons);
+    } = calculateOverflowItems(children, isMeasured, width, collapseButtons && !isCompact);
+
+    // Wide selectors and non-collapsing menu sections need the scroll layout
+    // while the sidebar is open, too. Keep original controls and their wrappers
+    // available rather than converting them into bare overflow-menu props.
 
     return (
       <Measure
         onMeasure={this.onMeasure}
         className={styles.sectionContainer}
         style={{
-          flexGrow: buttonCount
+          flexGrow: isCompact ? 0 : buttonCount
         }}
       >
         {
@@ -205,6 +211,7 @@ class PageToolbarSection extends Component {
 PageToolbarSection.propTypes = {
   children: PropTypes.node,
   alignContent: PropTypes.oneOf([align.LEFT, align.CENTER, align.RIGHT]),
+  isCompact: PropTypes.bool.isRequired,
   collapseButtons: PropTypes.bool.isRequired
 };
 
@@ -213,4 +220,6 @@ PageToolbarSection.defaultProps = {
   collapseButtons: true
 };
 
-export default PageToolbarSection;
+export default connect((state) => ({
+  isCompact: state.app.dimensions.width <= parseInt(dimensions.toolbarCompactWidth)
+}))(PageToolbarSection);
