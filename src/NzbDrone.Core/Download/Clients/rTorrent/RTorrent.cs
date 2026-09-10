@@ -143,7 +143,7 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
 
         public override string Name => "rTorrent";
 
-        public override ProviderMessage Message => new ProviderMessage($"rTorrent will not pause torrents when they meet the seed criteria. Chaptarr can remove torrents after seeding is done only when Remove Completed is enabled and the torrent is not protected by Keep seeding permanently or Post-Import Category. After importing it will also set \"{_imported_view}\" as an rTorrent view, which can be used in rTorrent scripts to customize behavior.", ProviderMessageType.Info);
+        public override ProviderMessage Message => new ProviderMessage($"Chaptarr does not configure rTorrent's seeding limits; rTorrent settings and scripts control seeding. Seed goals only make imported torrents eligible for Chaptarr's automatic removal, which happens when Remove Completed is enabled and the torrent is not protected by Preserve torrents or Post-Import Category. After importing it will also set \"{_imported_view}\" as an rTorrent view, which can be used in rTorrent scripts to customize behavior.", ProviderMessageType.Info);
 
         public override IEnumerable<DownloadClientItem> GetItems()
         {

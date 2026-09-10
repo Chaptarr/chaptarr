@@ -108,7 +108,7 @@ namespace NzbDrone.Core.Download
         {
             if (_downloadImportModeResolver.ShouldPreserveDownloadClientItem(trackedDownload.DownloadItem))
             {
-                _logger.Info("[{0}] Preserving download-client item and data due to permanent seeding/download preservation policy",
+                _logger.Info("[{0}] Preserving download-client item and data due to download preservation policy",
                     trackedDownload.DownloadItem.Title);
                 return true;
             }
