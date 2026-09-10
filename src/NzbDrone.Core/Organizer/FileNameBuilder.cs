@@ -448,7 +448,7 @@ namespace NzbDrone.Core.Organizer
             
             // Series position only (e.g., "3" or "2.5")
             tokenHandlers["{Book SeriesPosition}"] = m => 
-                seriesPosition ?? m.DefaultValue("");
+                FormatSeriesPosition(seriesPosition, m.CustomFormat) ?? m.DefaultValue("");
             
             // Combined series with position (e.g., "Dresden Files #3")
             tokenHandlers["{Book SeriesTitle}"] = m => 
@@ -665,6 +665,19 @@ namespace NzbDrone.Core.Organizer
                 tokenHandlers["{PartNumber}"] = m => FormatPartToken(bookFile.Part, bookFile.PartCount, m.CustomFormat);
                 tokenHandlers["{PartCount}"] = m => FormatPartToken(bookFile.PartCount, bookFile.PartCount, m.CustomFormat);
             }
+        }
+
+        private static string FormatSeriesPosition(string position, string customFormat)
+        {
+            if (position.IsNullOrWhiteSpace() || customFormat.IsNullOrWhiteSpace() || customFormat.Any(c => c != '0'))
+            {
+                return position;
+            }
+
+            // Pad only a single numeric position's integer part: numeric formatting would round
+            // fractional positions. Preserve the fraction verbatim and leave ranges/lists untouched.
+            return Regex.Replace(position, @"\A(?<sign>[+-]?)(?<whole>[0-9]+)(?<fraction>\.[0-9]+)?\z",
+                match => match.Groups["sign"].Value + match.Groups["whole"].Value.PadLeft(customFormat.Length, '0') + match.Groups["fraction"].Value);
         }
 
         private static string FormatPartToken(int value, int partCount, string customFormat)

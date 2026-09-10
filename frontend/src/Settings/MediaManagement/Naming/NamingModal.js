@@ -123,6 +123,7 @@ const narratorTokens = [
 const seriesTokens = [
   { token: '{Book Series}', example: 'Dresden Files' },
   { token: '{Book SeriesPosition}', example: '3' },
+  { token: '{Book SeriesPosition:00}', example: '03' },
   { token: '{Book SeriesTitle}', example: 'Dresden Files #3' },
   { token: '{Series Folder}', example: 'Dresden Files' },
   { token: '{Book TitleWithSeries}', example: 'Grave Peril - Dresden Files #3' },

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Chaptarr.Api.V1.Config;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -41,6 +42,90 @@ namespace Chaptarr.Core.Test.Organizer
             public List<CustomFormat> ParseCustomFormat(Blocklist blocklist, Author artist) => new();
             public List<CustomFormat> ParseCustomFormat(EntityHistory history, Author artist) => new();
             public List<CustomFormat> ParseCustomFormat(LocalBook localBook) => new();
+        }
+
+        [TestCase("1", "00", "01")]
+        [TestCase("3", "000", "003")]
+        [TestCase("10", "00", "10")]
+        [TestCase("123", "00", "123")]
+        [TestCase("0", "00", "00")]
+        [TestCase("2.5", "00", "02.5")]
+        [TestCase("0.50", "000", "000.50")]
+        [TestCase("-2.5", "00", "-02.5")]
+        [TestCase("+2", "00", "+02")]
+        [TestCase("003", "00", "003")]
+        [TestCase("1234567890123456789012345678901234567890", "00", "1234567890123456789012345678901234567890")]
+        [TestCase("2.5", null, "2.5")]
+        [TestCase("3", "0", "3")]
+        [TestCase("3", "bogus", "3")]
+        [TestCase("3", "smart", "3")]
+        [TestCase("1-3", "00", "1-3")]
+        [TestCase("1,2,3", "00", "1,2,3")]
+        [TestCase("3.5,4.5,6.7", "00", "3.5,4.5,6.7")]
+        [TestCase("2A", "00", "2A")]
+        [TestCase("Part 1", "00", "Part 1")]
+        [TestCase("序章", "00", "序章")]
+        [TestCase("2,5", "00", "2,5")]
+        [TestCase("2.5.1", "00", "2.5.1")]
+        [TestCase(null, "00", null)]
+        [TestCase("", "00", "")]
+        [SetCulture("fr-FR")]
+        public void should_zero_pad_numeric_series_positions_without_changing_their_meaning(string position, string format, string expected)
+        {
+            var builder = CreateBuilder();
+            var author = new Author { Name = "Jim Butcher" };
+            var book = new Book { Author = author, SeriesName = "Dresden Files", SeriesPosition = position };
+            var edition = new Edition { Title = "Grave Peril", Book = book };
+            var suffix = format == null ? "" : ":" + format;
+            var pattern = "{Book Series}/Book {Book SeriesPosition" + suffix + " - }{Book Title}";
+
+            foreach (var mediaType in new[] { "audiobook", "ebook" })
+            {
+                var config = NamingConfig.Default;
+                config.RenameBooks = true;
+                config.EbookRenameBooks = true;
+                config.StandardBookFormat = pattern;
+                config.EbookStandardBookFormat = pattern;
+                var file = new BookFile
+                {
+                    Path = @"C:\books\Grave Peril.m4b".AsOsAgnostic(),
+                    MediaType = mediaType,
+                    Quality = new QualityModel(mediaType == "ebook" ? Quality.EPUB : Quality.M4B)
+                };
+
+                var result = builder.BuildBookFileName(author, edition, file, config, new List<CustomFormat>());
+
+                var positionPart = string.IsNullOrEmpty(expected) ? "" : expected + " - ";
+                Assert.That(result, Is.EqualTo(Path.Combine("Dresden Files", "Book " + positionPart + "Grave Peril")), mediaType);
+            }
+        }
+
+        [TestCase("audiobook")]
+        [TestCase("ebook")]
+        public void should_render_padded_series_position_in_naming_examples_from_series_links(string mediaType)
+        {
+            var builder = CreateBuilder();
+            var controller = new NamingConfigController(new StubNamingConfigService(),
+                new FileNameSampleService(builder), new FileNameValidationService(), builder);
+            var pattern = "{Book Series}/{Book SeriesPosition:00 - }{Book Title}";
+            var config = new NamingConfigResource
+            {
+                Id = 1,
+                RenameBooks = true,
+                EbookRenameBooks = true,
+                StandardBookFormat = mediaType == "audiobook" ? pattern : "{Book Title}",
+                EbookStandardBookFormat = mediaType == "ebook" ? pattern : "{Book Title}"
+            };
+
+            var examples = (NamingExampleResource)controller.GetExamples(config, mediaType);
+
+            Assert.That(examples.SingleBookExample, Is.EqualTo(Path.Combine("Series Title", "01 - The Edition Title")));
+        }
+
+        private static FileNameBuilder CreateBuilder()
+        {
+            return new FileNameBuilder(new StubNamingConfigService(), new StubQualityDefinitionService(),
+                new CacheManager(), new StubCustomFormatCalculationService(), LogManager.GetCurrentClassLogger());
         }
 
         [Test]
