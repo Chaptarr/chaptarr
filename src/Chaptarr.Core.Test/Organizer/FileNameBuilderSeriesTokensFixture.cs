@@ -1,7 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
 using Chaptarr.Api.V1.Config;
+using Chaptarr.Http.ErrorManagement;
+using FluentValidation;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -11,6 +18,7 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Organizer;
+using NzbDrone.Core.Organizer.NamingPattern;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
@@ -21,8 +29,9 @@ namespace Chaptarr.Core.Test.Organizer
     {
         private class StubNamingConfigService : INamingConfigService
         {
+            public int SaveCount { get; private set; }
             public NamingConfig GetConfig() => NamingConfig.Default;
-            public void Save(NamingConfig namingConfig) { }
+            public void Save(NamingConfig namingConfig) => SaveCount++;
         }
 
         private class StubQualityDefinitionService : IQualityDefinitionService
@@ -74,7 +83,7 @@ namespace Chaptarr.Core.Test.Organizer
         {
             var builder = CreateBuilder();
             var author = new Author { Name = "Jim Butcher" };
-            var book = new Book { Author = author, SeriesName = "Dresden Files", SeriesPosition = position };
+            var book = new Book { Author = author, SeriesLinks = SeriesLinks("Dresden Files", position) };
             var edition = new Edition { Title = "Grave Peril", Book = book };
             var suffix = format == null ? "" : ":" + format;
             var pattern = "{Book Series}/Book {Book SeriesPosition" + suffix + " - }{Book Title}";
@@ -122,14 +131,277 @@ namespace Chaptarr.Core.Test.Organizer
             Assert.That(examples.SingleBookExample, Is.EqualTo(Path.Combine("Series Title", "01 - The Edition Title")));
         }
 
+        [TestCase("audiobook", "Audio", "MP3", true)]
+        [TestCase("ebook", "Text", "EPUB", false)]
+        public void naming_examples_should_use_the_selected_scheme_and_media_metadata(string mediaType, string folder, string quality, bool hasNarrator)
+        {
+            var builder = CreateBuilder();
+            var controller = new NamingConfigController(new StubNamingConfigService(),
+                new FileNameSampleService(builder), new FileNameValidationService(), builder);
+            var config = NamingConfig.Default;
+            config.Id = 1;
+            config.RenameBooks = config.EbookRenameBooks = true;
+            config.StandardBookFormat = "Audio/{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:00)}";
+            config.EbookStandardBookFormat = "Text/{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:00)}";
+            config.AuthorFolderFormat = "Audio/{Author Name}";
+            config.EbookAuthorFolderFormat = "Text/{Author Name}";
+
+            var result = (NamingExampleResource)controller.GetExamples(config.ToResource(), mediaType);
+            var name = "The Edition Title - " + quality + (hasNarrator ? " - Alice Reader + Bob Voice" : "");
+            Assert.That(result.SingleBookExample, Is.EqualTo(Path.Combine(folder, name)));
+            Assert.That(result.MultiPartBookExample, Is.EqualTo(Path.Combine(folder, name + " (01)")));
+            Assert.That(result.AuthorFolderExample, Is.EqualTo(Path.Combine(folder, "The Author Name")));
+        }
+
+        [TestCase("audiobook", true, "Q")]
+        [TestCase("ebook", true, "Q")]
+        [TestCase("audiobook", false, "Q")]
+        [TestCase("ebook", false, "Q")]
+        [TestCase("audiobook", true, "bogus")]
+        [TestCase("ebook", true, "bogus")]
+        public async Task invalid_multipart_format_should_be_a_field_error_and_never_saved(string mediaType, bool rename, string format)
+        {
+            var builder = CreateBuilder();
+            var service = new StubNamingConfigService();
+            var controller = new NamingConfigController(service, new FileNameSampleService(builder), new FileNameValidationService(), builder);
+            var config = NamingConfig.Default;
+            config.Id = 1;
+            config.RenameBooks = config.EbookRenameBooks = rename;
+            if (mediaType == "ebook")
+            {
+                config.EbookStandardBookFormat = "{Book Title}{ (PartNumber:" + format + ")}";
+            }
+            else
+            {
+                config.StandardBookFormat = "{Book Title}{ (PartNumber:" + format + ")}";
+            }
+
+            var exception = Assert.Throws<ValidationException>(() => controller.UpdateNamingConfig(config.ToResource()));
+            Assert.That(exception.Errors.Select(e => e.PropertyName), Is.EquivalentTo(new[]
+            {
+                mediaType == "ebook" ? "EbookStandardBookFormat" : "StandardBookFormat"
+            }));
+            Assert.That(service.SaveCount, Is.Zero);
+            var context = new DefaultHttpContext();
+            context.Response.Body = new MemoryStream();
+            context.Features.Set<IExceptionHandlerPathFeature>(new ExceptionHandlerFeature { Error = exception });
+            await new ChaptarrErrorPipeline(LogManager.GetCurrentClassLogger()).HandleException(context);
+            Assert.That(context.Response.StatusCode, Is.EqualTo(StatusCodes.Status400BadRequest));
+            context.Response.Body.Position = 0;
+            using var json = await JsonDocument.ParseAsync(context.Response.Body);
+            Assert.That(json.RootElement[0].GetProperty("propertyName").GetString(),
+                Is.EqualTo(mediaType == "ebook" ? "EbookStandardBookFormat" : "StandardBookFormat"));
+            var examples = (NamingExampleResource)controller.GetExamples(config.ToResource(), mediaType);
+            Assert.That(examples.MultiPartBookExample, Is.Null);
+        }
+
+        [TestCase("audiobook", "{Book Title}{ (PartNumber:00)}")]
+        [TestCase("audiobook", "{Book Title}{ (PartNumber:smart)}")]
+        [TestCase("audiobook", "{Book Title}{ (PartNumber:bogus)}{ (PartNumber:00)}")]
+        [TestCase("audiobook", "{Original Title}")]
+        [TestCase("ebook", "{Book Title}{ (PartNumber:bogus)}{ (PartNumber:00)}")]
+        [TestCase("ebook", "{Original Title}")]
+        public void valid_multipart_formats_should_be_saved_when_complete_sample_names_differ(string mediaType, string pattern)
+        {
+            var builder = CreateBuilder();
+            var service = new StubNamingConfigService();
+            var controller = new NamingConfigController(service, new FileNameSampleService(builder), new FileNameValidationService(), builder);
+            var config = NamingConfig.Default;
+            config.Id = 1;
+            if (mediaType == "ebook")
+            {
+                config.EbookStandardBookFormat = pattern;
+            }
+            else
+            {
+                config.StandardBookFormat = pattern;
+            }
+
+            Assert.DoesNotThrow(() => controller.UpdateNamingConfig(config.ToResource()));
+            Assert.That(service.SaveCount, Is.EqualTo(1));
+        }
+
+        [TestCase("Q", false)]
+        [TestCase("00", true)]
+        [TestCase("smart", true)]
+        [TestCase("bogus", false)]
+        public void visual_builder_should_validate_multipart_formats(string format, bool valid)
+        {
+            var service = new NamingPatternService(new PatternCompiler(), CreateBuilder());
+            var result = service.ValidatePattern("{Book Title}{ (PartNumber:" + format + ")}");
+            Assert.That(result.IsValid, Is.EqualTo(valid));
+            var controller = new NamingPatternController(service);
+            var response = JsonSerializer.SerializeToElement(controller.Validate(new ValidateRequest
+            {
+                Pattern = "{Book Title}{ (PartNumber:" + format + ")}"
+            }));
+            Assert.That(response.GetProperty("ok").GetBoolean(), Is.EqualTo(valid));
+        }
+
+        [TestCase("{Book Title}{ (PartNumber:bogus)}", false)]
+        [TestCase("{Book Title}{ (PartNumber:bogus)}{ (PartNumber:00)}", true)]
+        [TestCase("{Book Title}{ (PartNumber:00)}", true)]
+        [TestCase("{Book Title}{ (PartNumber:smart)}", true)]
+        [TestCase("{Original Title}", true)]
+        public void visual_builder_should_validate_complete_multipart_sample_names(string pattern, bool valid)
+        {
+            var service = new NamingPatternService(new PatternCompiler(), CreateBuilder());
+            var result = service.ValidatePattern(pattern);
+            Assert.That(result.IsValid, Is.EqualTo(valid));
+        }
+
+        [TestCase("MP3", "audiobook")]
+        [TestCase("EPUB", "ebook")]
+        public void pattern_preview_should_render_series_tokens_for_the_sample_media_type(string quality, string mediaType)
+        {
+            var service = new NamingPatternService(new PatternCompiler(), CreateBuilder());
+            var result = service.PreviewPattern("{Book SeriesTitle}/{Book Title}", sampleContext: new SampleContext
+            {
+                AuthorName = "Jim Butcher",
+                BookTitle = "Grave Peril",
+                SeriesTitle = "Dresden Files",
+                SeriesPosition = "3",
+                Quality = quality
+            });
+
+            Assert.That(result.Path, Is.EqualTo(Path.Combine("Dresden Files #3", "Grave Peril")), mediaType);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void filename_builder_should_keep_media_schemes_and_rename_switches_independent(bool renameAudio)
+        {
+            var builder = CreateBuilder();
+            var author = new Author { Name = "Jim Butcher" };
+            var edition = new Edition { Title = "Grave Peril", Book = new Book { Author = author } };
+            var config = NamingConfig.Default;
+            config.RenameBooks = renameAudio;
+            config.EbookRenameBooks = !renameAudio;
+            config.StandardBookFormat = "Audio/{Book Title}";
+            config.EbookStandardBookFormat = "Text/{Book Title}";
+            foreach (var mediaType in new[] { "audiobook", "ebook" })
+            {
+                var file = new BookFile
+                {
+                    Path = @"C:\books\original-file.epub".AsOsAgnostic(),
+                    MediaType = mediaType,
+                    Quality = new QualityModel(mediaType == "ebook" ? Quality.EPUB : Quality.MP3)
+                };
+                var rename = mediaType == "ebook" ? !renameAudio : renameAudio;
+                Assert.That(builder.BuildBookFileName(author, edition, file, config, new List<CustomFormat>()),
+                    Is.EqualTo(Path.Combine(mediaType == "ebook" ? "Text" : "Audio", rename ? edition.Title : "original-file")));
+            }
+        }
+
+        [Test]
+        public void samples_should_not_leak_metadata_between_media_types_or_calls()
+        {
+            var service = new FileNameSampleService(CreateBuilder());
+            var config = NamingConfig.Default;
+            config.RenameBooks = config.EbookRenameBooks = true;
+            config.StandardBookFormat = config.EbookStandardBookFormat = "{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:00)}";
+            var audio = service.GetMultiDiscTrackSample(config, "audiobook");
+            var ebook = service.GetMultiDiscTrackSample(config, "ebook");
+            Assert.That(audio.BookFile.PartCount, Is.EqualTo(2));
+            Assert.That(ebook.BookFile.PartCount, Is.EqualTo(2));
+            Assert.That(ebook.BookFile.MediaType, Is.EqualTo("ebook"));
+            Assert.That(ebook.BookFile.MediaInfo, Is.Null);
+            Assert.That(ebook.BookFile.Edition.NarratorNames, Is.Empty);
+            audio.BookFile.Edition.Title = "changed sample";
+            Assert.That(service.GetMultiDiscTrackSample(config, "audiobook").FileName,
+                Is.EqualTo("The Edition Title - MP3 - Alice Reader + Bob Voice (01)"));
+            Assert.That(ebook.FileName, Is.EqualTo("The Edition Title - EPUB (01)"));
+        }
+
+        [TestCase("EPUB", "Grave Peril - EPUB")]
+        [TestCase("M4B", "Grave Peril - M4B - Narrator Name")]
+        public void pattern_preview_should_use_the_requested_quality_without_inventing_ebook_narrators(string quality, string expected)
+        {
+            var controller = new NamingPatternController(new NamingPatternService(new PatternCompiler(), CreateBuilder()));
+            var result = controller.Preview(new PreviewRequest
+            {
+                Pattern = "{Book Title}{ - Quality Title}{ - Narrator}",
+                Sample = new SampleContext { AuthorName = "Jim Butcher", BookTitle = "Grave Peril", Quality = quality }
+            });
+            Assert.That(JsonSerializer.SerializeToElement(result).GetProperty("path").GetString(), Is.EqualTo(expected));
+        }
+
+        [TestCase("audiobook", 1, "Shared.Release")]
+        [TestCase("audiobook", 2, "chapter-1")]
+        [TestCase("ebook", 1, "Shared.Release")]
+        [TestCase("ebook", 2, "chapter-1")]
+        public void original_release_title_should_not_bypass_multipart_filename_protection(string mediaType, int partCount, string expected)
+        {
+            var builder = CreateBuilder();
+            var author = new Author { Name = "Jim Butcher" };
+            var edition = new Edition { Title = "Grave Peril", Book = new Book { Author = author } };
+            var config = NamingConfig.Default;
+            config.RenameBooks = config.EbookRenameBooks = true;
+            config.StandardBookFormat = "Audio/{Book Title}/{Original Title}";
+            config.EbookStandardBookFormat = "Text/{Book Title}/{Original Title}";
+            var file = new BookFile
+            {
+                Path = @"C:\downloads\chapter-1.mp3".AsOsAgnostic(),
+                SceneName = "Shared.Release",
+                MediaType = mediaType,
+                Quality = new QualityModel(mediaType == "ebook" ? Quality.EPUB : Quality.MP3),
+                Part = 1,
+                PartCount = partCount
+            };
+            var result = builder.BuildBookFileName(author, edition, file, config, new List<CustomFormat>());
+            Assert.That(result, Is.EqualTo(Path.Combine(mediaType == "ebook" ? "Text" : "Audio", edition.Title, expected)));
+            if (partCount > 1)
+            {
+                file.Part = 2;
+                file.Path = @"C:\downloads\chapter-2.mp3".AsOsAgnostic();
+                Assert.That(builder.BuildBookFileName(author, edition, file, config, new List<CustomFormat>()),
+                    Is.EqualTo(Path.Combine(mediaType == "ebook" ? "Text" : "Audio", edition.Title, "chapter-2")));
+            }
+        }
+
+        [TestCase("Dresden Files", null, "Dresden Files #3")]
+        [TestCase("Dresden Files", "3.5,4.5,6.7", "Dresden Files #3")]
+        [TestCase(null, null, "Dresden Files #3")]
+        [TestCase(null, "99", "Dresden Files #3")]
+        public void series_membership_should_override_scalar_and_keep_name_and_position_paired(string name, string position, string expected)
+        {
+            var author = new Author { Name = "Jim Butcher" };
+            var book = new Book
+            {
+                Author = author,
+                SeriesName = name,
+                SeriesPosition = position,
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    new SeriesBookLink { Series = new Series { Title = "Other Series", GoodreadsSeriesId = "gr:1" }, Position = "1", SeriesPosition = 1 },
+                    new SeriesBookLink { Series = new Series { Title = "Dresden Files", GoodreadsSeriesId = "gr:40346" }, Position = "3", SeriesPosition = 3, IsPrimary = true }
+                }
+            };
+            var edition = new Edition { Title = "Grave Peril", Book = book };
+            var config = NamingConfig.Default;
+            config.RenameBooks = config.EbookRenameBooks = true;
+            config.StandardBookFormat = config.EbookStandardBookFormat = "{Book SeriesTitle}";
+            foreach (var mediaType in new[] { "audiobook", "ebook" })
+            {
+                var file = new BookFile { Path = @"C:\books\Grave Peril.epub".AsOsAgnostic(), MediaType = mediaType, Quality = new QualityModel(Quality.EPUB) };
+                Assert.That(CreateBuilder().BuildBookFileName(author, edition, file, config, new List<CustomFormat>()), Is.EqualTo(expected));
+            }
+        }
+
         private static FileNameBuilder CreateBuilder()
         {
             return new FileNameBuilder(new StubNamingConfigService(), new StubQualityDefinitionService(),
                 new CacheManager(), new StubCustomFormatCalculationService(), LogManager.GetCurrentClassLogger());
         }
 
+        private static List<SeriesBookLink> SeriesLinks(string name, string position) => new()
+        {
+            new SeriesBookLink { Position = position, IsPrimary = true,
+                Series = new Series { Title = name, GoodreadsSeriesId = "gr:40346" } }
+        };
+
         [Test]
-        public void should_render_series_tokens_from_book_fields_when_links_not_loaded()
+        public void should_not_render_unbacked_scalar_series_tokens()
         {
             var cacheManager = new CacheManager();
             var builder = new FileNameBuilder(
@@ -155,11 +427,11 @@ namespace Chaptarr.Core.Test.Organizer
 
             var namingConfig = NamingConfig.Default;
             namingConfig.RenameBooks = true;
-            namingConfig.StandardBookFormat = "{Book SeriesTitle}";
+            namingConfig.StandardBookFormat = "{Book SeriesTitle}/{Book Title}";
 
             var result = builder.BuildBookFileName(author, edition, bookFile, namingConfig, customFormats: new List<CustomFormat>());
 
-            Assert.That(result, Is.EqualTo("Dresden Files #3"));
+            Assert.That(result, Is.EqualTo("Grave Peril"));
         }
 
         [Test]
@@ -213,7 +485,8 @@ namespace Chaptarr.Core.Test.Organizer
             {
                 Author = author,
                 SeriesName = "Dresden Files",
-                SeriesPosition = "3"
+                SeriesPosition = "3",
+                SeriesLinks = SeriesLinks("Dresden Files", "3")
             };
             var edition = new Edition
             {

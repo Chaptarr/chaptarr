@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
@@ -95,12 +97,20 @@ namespace NzbDrone.Core.Organizer.NamingPattern
                 }
 
                 // Validate against actual runtime naming behavior.
-                // If this throws, the format is not safe to save.
+                // Single-file samples omit part tokens, so multipart formats need their own evaluation.
                 if (!result.Errors.Any())
                 {
                     try
                     {
-                        _ = BuildSampleFileName(patternToValidate, CreateDefaultSampleContext());
+                        var sampleContext = CreateDefaultSampleContext();
+                        _ = BuildSampleFileName(patternToValidate, sampleContext);
+                        var firstPartName = BuildSampleFileName(patternToValidate, sampleContext, partCount: 2, partNumber: 1);
+                        var secondPartName = BuildSampleFileName(patternToValidate, sampleContext, partCount: 2, partNumber: 2);
+                        // Compare completed names so one token can distinguish a constant token elsewhere.
+                        if (string.Equals(firstPartName, secondPartName, DiskProviderBase.PathStringComparison))
+                        {
+                            throw new NamingFormatException("Multipart pattern produces the same filename for separate parts.");
+                        }
                     }
                     catch (NamingFormatException ex)
                     {
@@ -226,18 +236,19 @@ namespace NzbDrone.Core.Organizer.NamingPattern
                    FileNameValidation.OriginalTokenRegex.IsMatch(pattern);
         }
 
-        private string BuildSampleFileName(string pattern, SampleContext context)
+        private string BuildSampleFileName(string pattern, SampleContext context, int partCount = 1, int partNumber = 1)
         {
-            var (author, edition, bookFile) = CreateSampleEntities(context);
+            var (author, edition, bookFile) = CreateSampleEntities(context, partNumber);
+            bookFile.PartCount = partCount;
 
             var namingConfig = NamingConfig.Default;
-            namingConfig.RenameBooks = true;
-            namingConfig.StandardBookFormat = pattern;
+            namingConfig.RenameBooks = namingConfig.EbookRenameBooks = true;
+            namingConfig.StandardBookFormat = namingConfig.EbookStandardBookFormat = pattern;
 
             return _fileNameBuilder.BuildBookFileName(author, edition, bookFile, namingConfig, new List<CustomFormat>());
         }
 
-        private static (Author author, Edition edition, BookFile bookFile) CreateSampleEntities(SampleContext context)
+        private static (Author author, Edition edition, BookFile bookFile) CreateSampleEntities(SampleContext context, int partNumber)
         {
             context ??= CreateDefaultSampleContext();
 
@@ -259,7 +270,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
                 NameLastFirst = authorName
             };
 
-            var series = new Series { Title = seriesTitle };
+            var series = new Series { Title = seriesTitle, GoodreadsSeriesId = "gr:40346" };
             var seriesLink = new SeriesBookLink
             {
                 Position = seriesPosition,
@@ -298,13 +309,23 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             var bookFile = new BookFile
             {
                 Quality = new QualityModel(quality, new Revision(1)),
-                Path = "/music/Author.Name.Book.Name.Part01.mp3",
-                SceneName = "Author.Name.Book.Name.Part01",
+                // Each part sample uses a distinct source filename for Original Title patterns.
+                Path = "/music/Author.Name.Book.Name.Part" + partNumber.ToString("00", CultureInfo.InvariantCulture) + ".mp3",
+                SceneName = "Author.Name.Book.Name.Part" + partNumber.ToString("00", CultureInfo.InvariantCulture),
                 ReleaseGroup = "RlsGrp",
                 Edition = edition,
-                Part = 1,
+                Part = partNumber,
                 PartCount = 1
             };
+            bookFile.MediaType = BookFile.DetermineMediaType(bookFile.Quality);
+            if (bookFile.MediaType == "ebook")
+            {
+                book.MediaType = BookMediaType.Ebook;
+                edition.Narrator = null;
+                edition.NarratorNames.Clear();
+            }
+
+            series.MediaType = book.MediaType;
 
             return (author, edition, bookFile);
         }

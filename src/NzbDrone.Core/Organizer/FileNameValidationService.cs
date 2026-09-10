@@ -13,21 +13,9 @@ namespace NzbDrone.Core.Organizer
 
         public ValidationFailure ValidateTrackFilename(SampleResult sampleResult)
         {
-            var validationFailure = new ValidationFailure("StandardBookFormat", ERROR_MESSAGE);
-
-            //TODO Add Validation for TrackFilename
-            //var parsedEpisodeInfo = Parser.Parser.ParseTitle(sampleResult.FileName);
-
-            //if (parsedEpisodeInfo == null)
-            //{
-            //    return validationFailure;
-            //}
-
-            //if (!ValidateSeasonAndEpisodeNumbers(sampleResult.Episodes, parsedEpisodeInfo))
-            //{
-            //    return validationFailure;
-            //}
-            return null;
+            return string.IsNullOrWhiteSpace(sampleResult.FileName)
+                ? new ValidationFailure("StandardBookFormat", ERROR_MESSAGE)
+                : null;
         }
     }
 }

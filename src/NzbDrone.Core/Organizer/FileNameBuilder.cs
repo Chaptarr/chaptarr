@@ -147,14 +147,11 @@ namespace NzbDrone.Core.Organizer
                 return Path.Combine(components.ToArray());
             }
 
-            // Multi-part audiobooks often arrive as many separate audio files (mp3 chapters/tracks).
-            // If the naming pattern doesn't include any per-file disambiguator (PartNumber / Original Filename),
-            // all tracks would be renamed to the same destination and only the first one would import.
-            // Default to preserving the original filename for the final path component in that case.
+            // A release title is shared by chapters, not a per-file discriminator.
+            // Preserve filenames when parts would otherwise collide.
             if (bookFile.PartCount > 1 &&
                 !pattern.Contains("PartNumber", StringComparison.InvariantCultureIgnoreCase) &&
                 !pattern.Contains("Original Filename", StringComparison.InvariantCultureIgnoreCase) &&
-                !pattern.Contains("Original Title", StringComparison.InvariantCultureIgnoreCase) &&
                 components.Count > 0)
             {
                 components[^1] = CleanFileName(originalFileName, namingConfig);
@@ -424,23 +421,9 @@ namespace NzbDrone.Core.Organizer
             tokenHandlers["{Book CleanSubtitle}"] = m => CleanTitle(subtitle);
             tokenHandlers["{Book SubtitleThe}"] = m => TitleThe(subtitle);
 
-            // Series tokens - automatically handle "if applicable" logic
-            var seriesName = edition.Book?.SeriesName;
-            var seriesPosition = edition.Book?.SeriesPosition;
-
-            // Fall back to SeriesLinks if present (not always loaded during renaming).
-            var seriesLinks = edition.Book?.SeriesLinks;
-            var primarySeries = seriesLinks?.OrderBy(x => x.SeriesPosition).FirstOrDefault();
-
-            if (seriesName.IsNullOrWhiteSpace())
-            {
-                seriesName = primarySeries?.Series?.Value?.Title;
-            }
-
-            if (seriesPosition.IsNullOrWhiteSpace())
-            {
-                seriesPosition = primarySeries?.Position;
-            }
+            var primarySeries = BookSeries.Select(edition.Book);
+            var seriesName = primarySeries?.Series?.Value?.Title;
+            var seriesPosition = primarySeries?.Position;
             
             // Series name only (returns empty if no series)
             tokenHandlers["{Book Series}"] = m => 
@@ -450,7 +433,7 @@ namespace NzbDrone.Core.Organizer
             tokenHandlers["{Book SeriesPosition}"] = m => 
                 FormatSeriesPosition(seriesPosition, m.CustomFormat) ?? m.DefaultValue("");
             
-            // Combined series with position (e.g., "Dresden Files #3")
+            // Combined series name and position.
             tokenHandlers["{Book SeriesTitle}"] = m => 
             {
                 if (seriesName.IsNotNullOrWhiteSpace())
@@ -689,7 +672,15 @@ namespace NzbDrone.Core.Organizer
 
             if (!customFormat.Equals("smart", StringComparison.OrdinalIgnoreCase))
             {
-                return value.ToString(customFormat);
+                try
+                {
+                    return value.ToString(customFormat);
+                }
+                catch (FormatException)
+                {
+                    // Invalid part formats must follow naming validation, not become API/server errors.
+                    throw new NamingFormatException($"Invalid part number format: '{customFormat}'");
+                }
             }
 
             var width = Math.Max(1, partCount.ToString().Length);
