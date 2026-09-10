@@ -9,6 +9,24 @@ namespace Chaptarr.Core.Test.Indexers
     [TestFixture]
     public class ReleaseSearchServiceTitleSelectionFixture
     {
+        [TestCase("Galactic Empire Series 3 Books Set", "Galactic+Empire")]
+        [TestCase("Galactic Empire 3-Book Box Set", "Galactic+Empire")]
+        [TestCase("Galactic Empire 3 Books Set: Pebble in the Sky and more", "Galactic+Empire")]
+        [TestCase("The Three-Body Problem", "Three+Body+Problem")]
+        [TestCase("Foundation Book 3", "Foundation+Book+3")]
+        [TestCase("3 Books Set", "3+Books+Set")]
+        public void book_query_should_remove_only_trailing_box_set_packaging(string title, string query)
+        {
+            var criteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "Isaac Asimov" },
+                BookTitle = title
+            };
+
+            Assert.That(criteria.BookQuery, Is.EqualTo(query));
+            Assert.That(criteria.BookTitle, Is.EqualTo(title));
+        }
+
         [Test]
         public void should_use_selected_edition_title_when_any_edition_ok()
         {

@@ -317,7 +317,10 @@ namespace NzbDrone.Core.Parser
                         continue;
                     }
 
-                    if (IsTargetSeriesContext(contradiction.Title, context))
+                    // A catalogue can contain a book named after its author. The author
+                    // credit in a release is not evidence that it contains that book.
+                    if (TokenizedEquals(contradiction.Title, authorName) ||
+                        IsTargetSeriesContext(contradiction.Title, context))
                     {
                         continue;
                     }
