@@ -147,6 +147,20 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void series_removal_must_clear_the_pair_and_converge_on_the_second_refresh()
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var local = new Book { Title = "Standalone", HardcoverBookId = "hc:1", SeriesId = 5, SeriesName = "Old series", SeriesPosition = "3" };
+            var remote = new Book { Title = "Standalone", HardcoverBookId = "hc:1" };
+
+            Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.Standard));
+            Assert.That(local.SeriesId, Is.Null);
+            Assert.That(local.SeriesName, Is.Null);
+            Assert.That(local.SeriesPosition, Is.Null);
+            Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.None));
+        }
+
+        [Test]
         public void update_entity_should_converge_when_provider_ids_and_isbns_change()
         {
             var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());

@@ -285,13 +285,7 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
 
         private static List<string> GetSeries(Book book)
         {
-            if (book.SeriesName.IsNullOrWhiteSpace())
-            {
-                return new List<string>();
-            }
-
-            var position = book.SeriesPosition.IsNotNullOrWhiteSpace() ? $" #{book.SeriesPosition}" : string.Empty;
-            return new List<string> { book.SeriesName + position };
+            return BookSeries.GetLinks(book).Select(BookSeries.Label).ToList();
         }
 
         private static MediaCoverModel SelectCover(Edition edition)

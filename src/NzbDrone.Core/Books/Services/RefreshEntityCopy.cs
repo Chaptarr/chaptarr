@@ -279,6 +279,7 @@ namespace NzbDrone.Core.Books
                 PrimaryBooks = source.PrimaryBooks,
 
                 // Narrator variant fields
+                MediaType = source.MediaType,
                 Narrator = source.Narrator,
                 BaseSeriesId = source.BaseSeriesId,
                 InstanceNumber = source.InstanceNumber,

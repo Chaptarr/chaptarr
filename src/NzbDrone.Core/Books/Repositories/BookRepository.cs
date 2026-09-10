@@ -656,7 +656,7 @@ namespace NzbDrone.Core.Books
             return Query(Builder()
                          .Join<Book, SeriesBookLink>((b, sbl) => b.Id == sbl.BookId)
                          .Where<SeriesBookLink>(sbl => sbl.SeriesId == seriesId))
-                         .OrderBy(b => b.SeriesLinks?.FirstOrDefault()?.SeriesPosition ?? 0).ToList();
+                         .OrderBy(b => BookSeries.PositionOrder(b.SeriesLinks?.FirstOrDefault(link => link.SeriesId == seriesId)?.Position)).ToList();
         }
 
         public void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null)

@@ -151,19 +151,13 @@ namespace Chaptarr.Api.V1.Books
             var selectedEdition = SelectMonitoredEdition(model.Editions);
             var title = (selectedEdition?.Title ?? model.Title) ?? string.Empty;
 
-            // Use SeriesName and SeriesPosition from Book model until SeriesBookLink is properly populated
-            var seriesTitle = !string.IsNullOrWhiteSpace(model.SeriesName)
-                ? model.SeriesName + (!string.IsNullOrWhiteSpace(model.SeriesPosition) ? $" #{model.SeriesPosition}" : string.Empty)
-                : null;
+            var seriesLabels = BookSeries.GetLinks(model).Select(BookSeries.Label).ToList();
+            var seriesTitle = seriesLabels.ConcatToString("; ");
 
-            // Fallback to SeriesLinks if available (for future when SeriesBookLink is populated)
-            if (string.IsNullOrWhiteSpace(seriesTitle) && model.SeriesLinks?.Any() == true)
+            foreach (var label in seriesLabels)
             {
-                var seriesLinks = model.SeriesLinks.OrderBy(x => x.SeriesPosition);
-                seriesTitle = seriesLinks.Select(x => x?.Series?.Value?.Title + (x?.Position.IsNotNullOrWhiteSpace() ?? false ? $" #{x.Position}" : string.Empty)).ConcatToString("; ");
+                title = StripDuplicatedSeriesSuffix(title, label);
             }
-
-            title = StripDuplicatedSeriesSuffix(title, seriesTitle);
 
             var authorTitle = $"{model.Author?.SortNameLastFirst} {title}";
             var hasFiles = options.Statistics != null

@@ -85,8 +85,10 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             book.LanguageCode = "work-language";
             book.PublicationYear = 2019;
             book.ReleaseDate = new DateTime(2019, 1, 1);
-            book.SeriesName = "Work Series";
-            book.SeriesPosition = "2";
+            book.SeriesName = "Unbacked scalar series";
+            book.SeriesPosition = "99";
+            book.SeriesLinks = new List<SeriesBookLink> { new SeriesBookLink { Position = "2",
+                Series = new Series { Title = "Work Series", GoodreadsSeriesId = "gr:1", MediaType = book.MediaType } } };
 
             edition.Title = "Matched Edition Title";
             edition.Subtitle = "Matched Edition Subtitle";
@@ -288,6 +290,9 @@ namespace Chaptarr.Core.Test.Extras.Metadata
                 SeriesName = "Dungeon Crawler Carl",
                 SeriesPosition = "8"
             };
+            book.MediaType = mediaType == "ebook" ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            book.SeriesLinks = new List<SeriesBookLink> { new SeriesBookLink { Position = "8",
+                Series = new Series { Title = "Dungeon Crawler Carl", GoodreadsSeriesId = "gr:1", MediaType = book.MediaType } } };
 
             var edition = new Edition
             {

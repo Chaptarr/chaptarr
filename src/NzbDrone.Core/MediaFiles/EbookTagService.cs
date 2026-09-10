@@ -252,11 +252,11 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var edition = file.Edition;
                 var book = edition.Book;
-                var serieslink = book.SeriesLinks.OrderBy(x => x.SeriesPosition).FirstOrDefault(x => x.Series.Value.Title.IsNotNullOrWhiteSpace());
+                var serieslink = BookSeries.Select(book);
 
                 var series = serieslink?.Series.Value;
                 double? seriesIndex = null;
-                if (double.TryParse(serieslink?.Position, out var index))
+                if (double.TryParse(serieslink?.Position, NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var index))
                 {
                     _logger.Trace($"Parsed {serieslink?.Position} as {index}");
                     seriesIndex = index;

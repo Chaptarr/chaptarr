@@ -93,9 +93,7 @@ namespace NzbDrone.Core.Books.Services
 
             try
             {
-                var booksInSeries = _bookRepository.GetBooksBySeries(seriesId)
-                    .OrderBy(b => b.SeriesLinks?.FirstOrDefault()?.SeriesPosition ?? 0)
-                    .ToList();
+                var booksInSeries = _bookRepository.GetBooksBySeries(seriesId);
 
                 if (booksInSeries.Count < 2)
                 {

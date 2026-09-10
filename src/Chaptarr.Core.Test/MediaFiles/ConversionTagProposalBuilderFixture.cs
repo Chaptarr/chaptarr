@@ -138,8 +138,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Overview = "The fourth Harry Potter audiobook.",
                     Genres = new List<string> { "Fantasy", "Young Adult", "Fantasy" },
                     Publisher = "Fallback Publisher",
-                    SeriesName = "Harry Potter",
-                    SeriesPosition = "4"
+                    SeriesName = "Unbacked scalar series",
+                    SeriesPosition = "99",
+                    SeriesLinks = new List<SeriesBookLink> { new SeriesBookLink { Position = "4",
+                        Series = new Series { Title = "Harry Potter", GoodreadsSeriesId = "gr:1" } } }
                 },
                 new Author { Name = "J.K. Rowling" },
                 new Edition

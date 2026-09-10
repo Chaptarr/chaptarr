@@ -272,9 +272,11 @@ namespace NzbDrone.Core.Books
             LanguageName = other.LanguageName ?? LanguageName;
             PublicationYear = other.PublicationYear ?? PublicationYear;
             Publisher = other.Publisher ?? Publisher;
-            SeriesId = other.SeriesId ?? SeriesId;
-            SeriesName = other.SeriesName ?? SeriesName;
-            SeriesPosition = other.SeriesPosition ?? SeriesPosition;
+            // Copy the summary as one unit: retaining individual old components mixes
+            // memberships and prevents refresh from converging after metadata removes them.
+            SeriesId = other.SeriesId;
+            SeriesName = other.SeriesName;
+            SeriesPosition = other.SeriesPosition;
 
 		            // Provider IDs and book identifiers.
 		            // NOTE: ISBN10/ISBN13 are metadata identifiers, NOT provider IDs, and are never used for remote matching.
