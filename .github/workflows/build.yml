@@ -23,6 +23,30 @@ permissions:
   contents: read
 
 jobs:
+  # Validate the UI before release.yml creates a tag or release, not just during
+  # the later Docker build. The same frontend is used on every runtime platform.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+    - name: Setup Node
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version-file: package.json
+
+    - name: Setup Yarn
+      run: npm install -g "yarn@$(node -p 'require("./package.json").volta.yarn')" --force
+
+    - name: Install frontend dependencies
+      run: yarn install --frozen-lockfile
+
+    - name: Typecheck
+      run: yarn typecheck
+
+    - name: Build frontend
+      run: yarn build
+
   build:
     runs-on: ${{ matrix.os }}
     strategy:

@@ -2,8 +2,6 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
-    <!-- Disable Chaptarr's implicit test-package group (it currently pulls a coverlet preview chain that fails restore). -->
-    <TestProject>false</TestProject>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
