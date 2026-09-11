@@ -132,6 +132,12 @@ namespace NzbDrone.Core.Messaging.Commands
             _logger.Trace("Publishing {0}", command.Name);
             _logger.Trace("Checking if command is queued or started: {0}", command.Name);
 
+            // Explicit queue intent must reach the executor; omitted intent preserves command defaults.
+            if (trigger != CommandTrigger.Unspecified)
+            {
+                command.Trigger = trigger;
+            }
+
             lock (_commandQueue)
             {
                 var existingCommands = QueuedOrStarted(command.Name);
