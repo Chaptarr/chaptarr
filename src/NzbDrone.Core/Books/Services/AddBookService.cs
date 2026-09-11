@@ -14,6 +14,9 @@ using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Books.Calibre;
+using NzbDrone.Core.Books.Commands;
+using NzbDrone.Core.IndexerSearch;
+using NzbDrone.Core.Messaging.Commands;
 
 namespace NzbDrone.Core.Books
 {
@@ -42,6 +45,7 @@ namespace NzbDrone.Core.Books
         private readonly IEditionService _editionService;
         private readonly IEditionSelector _editionSelector;
         private readonly IEditionMetadataProfileFilter _editionMetadataProfileFilter;
+        private readonly IManageCommandQueue _commandQueueManager;
 
         public AddBookService(IAuthorService authorService,
                                IAuthorLibraryService authorLibraryService,
@@ -59,7 +63,8 @@ namespace NzbDrone.Core.Books
                                IEditionSelector editionSelector,
                                IEditionMetadataProfileFilter editionMetadataProfileFilter,
                                IMetadataProfileService metadataProfileService,
-                               Logger logger)
+                               Logger logger,
+                               IManageCommandQueue commandQueueManager)
         {
             _authorService = authorService;
             _authorLibraryService = authorLibraryService;
@@ -76,6 +81,7 @@ namespace NzbDrone.Core.Books
             _editionService = editionService;
             _editionSelector = editionSelector;
             _editionMetadataProfileFilter = editionMetadataProfileFilter;
+            _commandQueueManager = commandQueueManager;
             _metadataProfileService = metadataProfileService;
             _logger = logger;
         }
@@ -129,6 +135,21 @@ namespace NzbDrone.Core.Books
             if (dbBook == null)
             {
                 return await RequestBookThroughAuthorCatalog(book);
+            }
+
+            if (GetInitialBookPolicy(book).HasValue)
+            {
+                var existing = FindExistingAuthorForAdd(book);
+                var configured = book.MediaType == BookMediaType.Audiobook
+                    ? existing?.AudiobookQualityProfileId.HasValue == true && !string.IsNullOrWhiteSpace(existing.AudiobookRootFolderPath)
+                    : existing?.EbookQualityProfileId.HasValue == true && !string.IsNullOrWhiteSpace(existing.EbookRootFolderPath);
+                if (!configured)
+                {
+                    return await RequestBookThroughAuthorCatalog(book);
+                }
+
+                RemoveMatchingImportListExclusions(dbBook);
+                return CompleteScopedBookRequest(dbBook, book.AddOptions?.SearchForNewBook == true);
             }
 
             book.UseDbFieldsFrom(dbBook);
@@ -450,6 +471,12 @@ namespace NzbDrone.Core.Books
                 throw new InvalidOperationException($"Requested work {workProviderId} was not found after importing author {authorProviderId}.");
             }
 
+            if (GetInitialBookPolicy(requestedBook).HasValue)
+            {
+                RemoveMatchingImportListExclusions(localBook);
+                return CompleteScopedBookRequest(localBook, searchRequested);
+            }
+
             author = EnsureMediaTypeMonitoringForRequestedBook(author, mediaType);
             localBook.Author = author;
             localBook.SetMonitored(true);
@@ -502,9 +529,10 @@ namespace NzbDrone.Core.Books
             var mediaType = book.MediaType;
             var isAudiobook = mediaType == BookMediaType.Audiobook;
             var isSpecificBook = author.AddOptions?.Monitor == MonitorTypes.SpecificBook;
-            var initialMonitorMode = author.AddOptions?.Monitor == MonitorTypes.All
+            var initialPolicy = GetInitialBookPolicy(book);
+            var initialMonitorMode = initialPolicy ?? (author.AddOptions?.Monitor == MonitorTypes.All
                 ? MonitorTypes.All
-                : MonitorTypes.SpecificBook;
+                : MonitorTypes.SpecificBook);
 
             return new MonitoringConfig
             {
@@ -512,12 +540,12 @@ namespace NzbDrone.Core.Books
                 AuthorName = author.Name,
                 CreateAudiobook = isAudiobook,
                 CreateEbook = !isAudiobook,
-                AudiobookMonitored = isAudiobook ? true : author.AudiobookMonitored,
+                AudiobookMonitored = isAudiobook && !initialPolicy.HasValue ? true : author.AudiobookMonitored,
                 AudiobookMonitorNewItems = author.AudiobookMonitorNewItems,
                 AudiobookMonitorExistingMode = isAudiobook && requestedIds?.Any() == true
                     ? initialMonitorMode
                     : null,
-                EbookMonitored = !isAudiobook ? true : author.EbookMonitored,
+                EbookMonitored = !isAudiobook && !initialPolicy.HasValue ? true : author.EbookMonitored,
                 EbookMonitorNewItems = author.EbookMonitorNewItems,
                 EbookMonitorExistingMode = !isAudiobook && requestedIds?.Any() == true
                     ? initialMonitorMode
@@ -540,6 +568,38 @@ namespace NzbDrone.Core.Books
                 AudiobookBooksToSearch = isAudiobook && searchRequested ? requestedIds : null,
                 EbookBooksToSearch = !isAudiobook && searchRequested ? requestedIds : null
             };
+        }
+
+        private static MonitorTypes? GetInitialBookPolicy(Book book)
+        {
+            return book.MediaType == BookMediaType.Audiobook
+                ? book.Author?.AddOptions?.AudiobookMonitor
+                : book.Author?.AddOptions?.EbookMonitor;
+        }
+
+        private Book CompleteScopedBookRequest(Book book, bool searchRequested)
+        {
+            var mediaType = book.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook";
+            // A request must remain eligible after its initial search, without selecting siblings.
+            _authorService.EnsureMediaTypeMonitoring(book.AuthorId, mediaType);
+            _bookService.SetMonitoredForMediaType(new[] { book.Id }, mediaType, true);
+            var author = _authorService.GetAuthor(book.AuthorId);
+
+            // Request preservation survives the initial scan; it does not pin an edition.
+            book.AddOptions ??= new AddBookOptions();
+            book.AddOptions.AddType = BookAddType.Manual;
+            _bookService.SetAddOptions(new[] { book });
+            if (author?.AddOptions != null)
+            {
+                _commandQueueManager.Push(new RefreshAuthorCommand(author.Id, refreshMetadata: false, rescanFolders: true));
+            }
+
+            if (searchRequested)
+            {
+                _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: CommandTrigger.Manual);
+            }
+
+            return _bookService.GetBook(book.Id);
         }
 
         private Book ResolveLocalRequestedBook(int authorId, string workProviderId, BookMediaType mediaType)

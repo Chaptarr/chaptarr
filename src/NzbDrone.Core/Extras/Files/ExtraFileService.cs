@@ -125,11 +125,14 @@ namespace NzbDrone.Core.Extras.Files
 
                 if (author != null)
                 {
-                    var preferredBase = author.GetPathForMediaType(book.MediaType == BookMediaType.Audiobook);
+                    var files = book.BookFiles ?? new List<BookFile>();
+                    var selectedPaths = message.DeletedBooks.SelectMany(item => item.BookFiles ?? new List<BookFile>())
+                        .SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
+                        .Where(path => path.IsNotNullOrWhiteSpace()).ToList();
 
                     foreach (var extra in _repository.GetFilesByBook(authorId, book.Id))
                     {
-                        RecycleExtraFile(author, extra, preferredBase);
+                        RecycleExtraFile(author, extra, files, selectedPaths);
                     }
                 }
             }
@@ -149,11 +152,10 @@ namespace NzbDrone.Core.Extras.Files
             else
             {
                 var author = bookFile.Author;
-                var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
 
                 foreach (var extra in _repository.GetFilesByBookFile(bookFile.Id))
                 {
-                    RecycleExtraFile(author, extra, preferredBase);
+                    RecycleExtraFile(author, extra, new[] { bookFile }, new[] { bookFile.Path });
                 }
             }
 
@@ -161,12 +163,22 @@ namespace NzbDrone.Core.Extras.Files
             _repository.DeleteForBookFile(bookFile.Id);
         }
 
-        private void RecycleExtraFile(Author author, TExtraFile extra, string preferredBase)
+        private void RecycleExtraFile(Author author, TExtraFile extra, IEnumerable<BookFile> files, IEnumerable<string> selectedPaths)
         {
-            var path = ExtraFilePathHelper.ResolveFullPath(author, extra.RelativePath, _diskProvider.FileExists, preferredBase);
+            var path = ExtraFilePathHelper.ResolveOwnedSidecarPath(author, extra, files, _diskProvider);
 
-            if (path.IsNullOrWhiteSpace() || !_diskProvider.FileExists(path))
+            if (path.IsNullOrWhiteSpace())
             {
+                _logger.Warn("Keeping sidecar with unresolved physical ownership: {0}", extra.RelativePath);
+                return;
+            }
+
+            // Folder sidecars can serve remaining files even when linked to a deleted producer.
+            if (_diskProvider.GetFiles(Path.GetDirectoryName(path), false)
+                .Any(file => MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(file)) &&
+                    !selectedPaths.Any(selected => selected.PathEquals(file))))
+            {
+                _logger.Debug("Keeping shared sidecar after file deletion: {0}", path);
                 return;
             }
 
@@ -174,7 +186,7 @@ namespace NzbDrone.Core.Extras.Files
             var basePath = ExtraFilePathHelper.GetAuthorBasePaths(author)
                 .Where(p => p.IsParentPath(path) || p.PathEquals(path))
                 .OrderByDescending(p => p.Length)
-                .FirstOrDefault() ?? preferredBase;
+                .FirstOrDefault();
 
             string subfolder;
             try

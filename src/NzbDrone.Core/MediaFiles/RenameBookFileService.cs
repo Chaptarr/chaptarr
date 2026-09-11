@@ -259,6 +259,7 @@ namespace NzbDrone.Core.MediaFiles
             foreach (var bookFile in ordered)
             {
                 var previousPath = bookFile.Path;
+                var previousAuthorPath = Extras.ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
                 var plan = _bookFileMover.GetOrganizeDestination(bookFile, author, moveToCanonicalAuthorFolder, batchContext);
                 if (!plan.CanOrganize)
                 {
@@ -287,7 +288,8 @@ namespace NzbDrone.Core.MediaFiles
                     renamed.Add(new RenamedBookFile
                     {
                         BookFile = bookFile,
-                        PreviousPath = previousPath
+                        PreviousPath = previousPath,
+                        PreviousAuthorPath = previousAuthorPath
                     });
                     result.RenamedCount++;
                     cleanupCandidates.Add((previousPath, plan.SourceAuthorFolderPath));
@@ -413,49 +415,8 @@ namespace NzbDrone.Core.MediaFiles
 
         private void CleanupEmptySourceFolders(List<(string PreviousPath, string SourceAuthorFolderPath)> cleanupCandidates)
         {
-            foreach (var candidate in cleanupCandidates ?? new List<(string PreviousPath, string SourceAuthorFolderPath)>())
-            {
-                var folder = candidate.PreviousPath.IsNotNullOrWhiteSpace()
-                    ? Path.GetDirectoryName(candidate.PreviousPath)
-                    : null;
-                var sourceAuthorFolder = candidate.SourceAuthorFolderPath;
-
-                if (folder.IsNullOrWhiteSpace() || sourceAuthorFolder.IsNullOrWhiteSpace())
-                {
-                    continue;
-                }
-
-                try
-                {
-                    while (folder.PathEquals(sourceAuthorFolder) || sourceAuthorFolder.IsParentPath(folder))
-                    {
-                        if (_diskProvider.FolderExists(folder))
-                        {
-                            _diskProvider.RemoveEmptySubfolders(folder);
-                            if (_diskProvider.GetFiles(folder, true).Empty())
-                            {
-                                _logger.Debug("Removing empty source folder after organize: {0}", folder);
-                                _diskProvider.DeleteFolder(folder, true);
-                            }
-                        }
-
-                        if (folder.PathEquals(sourceAuthorFolder))
-                        {
-                            break;
-                        }
-
-                        folder = Path.GetDirectoryName(folder);
-                        if (folder.IsNullOrWhiteSpace())
-                        {
-                            break;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "Failed to clean empty source folders after organizing {0}", candidate.PreviousPath);
-                }
-            }
+            Extras.ExtraFilePathHelper.CleanupEmptySourceFolders(_diskProvider, _logger,
+                cleanupCandidates.Select(c => (Path.GetDirectoryName(c.PreviousPath), c.SourceAuthorFolderPath)));
         }
 
         public void Execute(RenameFilesCommand message)

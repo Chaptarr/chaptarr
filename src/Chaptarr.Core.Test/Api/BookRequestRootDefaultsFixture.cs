@@ -1,0 +1,121 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using NLog;
+using Chaptarr.Api.V1.Author;
+using Chaptarr.Api.V1.Books;
+using Chaptarr.Http.Middleware;
+using NUnit.Framework;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.RootFolders;
+
+namespace Chaptarr.Core.Test.Api
+{
+    [TestFixture]
+    public class BookRequestRootDefaultsFixture
+    {
+        public class ServiceProxy : DispatchProxy
+        {
+            public Func<MethodInfo, object[], object> Handler { get; set; }
+            protected override object Invoke(MethodInfo method, object[] args) => Handler(method, args);
+        }
+
+        [Test]
+        public void initial_scan_should_keep_explicit_requests_but_later_edits_should_not(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(MonitorTypes.None, MonitorTypes.All, MonitorTypes.Missing, MonitorTypes.Existing)] MonitorTypes initial,
+            [Values(false, true)] bool initialScan)
+        {
+            var author = new Author { Id = 42, AddOptions = initialScan ? new AddAuthorOptions() : null };
+            var requested = new Book { Id = 1, MediaType = mediaType, AddOptions = new AddBookOptions { AddType = BookAddType.Manual } };
+            requested.SetMonitored(true);
+            var withFiles = new Book { Id = 2, MediaType = mediaType };
+            var withoutFiles = new Book { Id = 3, MediaType = mediaType };
+            var opposite = new Book { Id = 4, MediaType = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook };
+            var books = new List<Book> { requested, withFiles, withoutFiles, opposite };
+            var usedUnscopedWrite = false;
+            var bookService = DispatchProxy.Create<IBookService, ServiceProxy>();
+            ((ServiceProxy)bookService).Handler = (method, args) => method.Name switch
+            {
+                nameof(IBookService.GetBooksByAuthor) => books,
+                nameof(IBookService.GetAuthorBooksWithFiles) => new List<Book> { withFiles },
+                nameof(IBookService.SetMonitoredForMediaType) when initialScan => null,
+                nameof(IBookService.UpdateManyWithLifecycle) => usedUnscopedWrite = true,
+                _ => throw new NotImplementedException(method.Name)
+            };
+            var authorService = DispatchProxy.Create<IAuthorService, ServiceProxy>();
+            ((ServiceProxy)authorService).Handler = (method, args) => method.Name == nameof(IAuthorService.UpdateAuthor)
+                ? args[0] : throw new NotImplementedException(method.Name);
+            var service = new BookMonitoredService(authorService, bookService, LogManager.GetCurrentClassLogger());
+
+            service.SetBookMonitoredStatus(author, new MonitoringOptions { Monitor = initial, MediaType = mediaType });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(requested.IsMonitored(), Is.EqualTo(initialScan || initial is MonitorTypes.All or MonitorTypes.Missing));
+                Assert.That(withFiles.IsMonitored(), Is.EqualTo(initial is MonitorTypes.All or MonitorTypes.Existing));
+                Assert.That(withoutFiles.IsMonitored(), Is.EqualTo(initial is MonitorTypes.All or MonitorTypes.Missing));
+                Assert.That(opposite.IsMonitored(), Is.False);
+                Assert.That(usedUnscopedWrite, Is.EqualTo(!initialScan));
+            });
+        }
+
+        [Test]
+        public void facade_should_resolve_first_setup_per_format_and_preserve_configured_settings(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(0, 1, 2)] int existingSide,
+            [Values(MonitorTypes.All, MonitorTypes.None)] MonitorTypes rootInitial,
+            [Values(false, true)] bool rootGate)
+        {
+            var audiobook = mediaType == BookMediaType.Audiobook;
+            var existing = existingSide == 0 ? null : new Author();
+            if (existing != null)
+            {
+                var configureAudio = existingSide == 2 ? audiobook : !audiobook;
+                if (configureAudio)
+                {
+                    existing.AudiobookQualityProfileId = 2;
+                    existing.AudiobookRootFolderPath = @"C:\Audio";
+                    existing.AudiobookMonitored = false;
+                    existing.AudiobookMonitorNewItems = NewItemMonitorTypes.New;
+                }
+                else
+                {
+                    existing.EbookQualityProfileId = 4;
+                    existing.EbookRootFolderPath = @"C:\Books";
+                    existing.EbookMonitored = false;
+                    existing.EbookMonitorNewItems = NewItemMonitorTypes.New;
+                }
+            }
+
+            var requested = new AuthorResource
+            {
+                Monitored = true,
+                MonitorNewItems = "none",
+                AddOptions = new AddAuthorOptions { BooksToMonitor = new List<string> { "hc:1001" } }
+            };
+            BookController.ApplyFacadeBookRequestDefaults(requested, existing, new MediaTypeSettings
+            {
+                Monitored = rootGate,
+                MonitorExistingMode = rootInitial,
+                MonitorNewItems = NewItemMonitorTypes.All
+            }, mediaType);
+
+            var model = requested.ToModel(new ReadarrFacadeContext("hc", audiobook ? "audiobook" : "ebook", "/readarr"));
+            Assert.Multiple(() =>
+            {
+                Assert.That(audiobook ? model.AudiobookMonitored : model.EbookMonitored,
+                    Is.EqualTo(existingSide == 2 ? false : rootGate));
+                Assert.That(audiobook ? model.AudiobookMonitorNewItems : model.EbookMonitorNewItems,
+                    Is.EqualTo(existingSide == 2 ? NewItemMonitorTypes.New : NewItemMonitorTypes.All));
+                Assert.That(audiobook ? model.AddOptions.AudiobookMonitor : model.AddOptions.EbookMonitor,
+                    Is.EqualTo(existingSide == 2 ? MonitorTypes.None : rootInitial));
+                Assert.That(audiobook ? model.EbookMonitored : model.AudiobookMonitored, Is.Null);
+                Assert.That(audiobook ? model.EbookMonitorNewItems : model.AudiobookMonitorNewItems, Is.Null);
+                Assert.That(model.AddOptions.BooksToMonitor, Is.EqualTo(new[] { "hc:1001" }));
+                Assert.That(model.AddOptions.SearchForMissingBooks, Is.False);
+            });
+        }
+    }
+}

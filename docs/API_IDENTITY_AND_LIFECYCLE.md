@@ -2,6 +2,10 @@
 
 This document is the public-facing contract for clients building against Chaptarr and the Chaptarr Metadata Server. It describes identity semantics that the generated OpenAPI schema cannot express by itself.
 
+## Series Membership and Labels
+
+Series are shared across authors and scoped by media type. Goodreads-backed `SeriesBookLink` memberships supply the book resource's `seriesTitle`: all memberships, each with its own position, joined by semicolons. The book-level summary pair is not a fallback label when memberships are missing. Naming and single-series metadata formats select one membership and keep its name/position together. Positions, including decimals, ranges and lists, are presentation data, never book identity or a unique slot key.
+
 ## Identity Model
 
 Provider IDs are durable identity. Local database row IDs are not.
@@ -101,6 +105,10 @@ Do not infer that a missing local row means a provider item is unknown globally.
 
 ## Media-Scoped Author Import Settings
 
+Root-folder POST and PUT both require quality and metadata profiles for every format supported by the folder type: both for Mixed, only the corresponding side for Audiobook or Ebook. Existing incomplete Mixed roots are not automatically narrowed or assigned profiles; saving them returns field-specific validation errors until corrected. Creation-only monitoring defaults are unchanged.
+
+For book requests, an explicitly supplied root must exist, support the requested format, and have both required profiles. An unusable explicit destination returns a validation error; it is never silently replaced with another root. Omitting the root retains the existing default-selection behavior, restricted to usable roots. These checks do not reassign existing authors.
+
 Chaptarr-native author-import requests carry monitoring and tags independently for the audiobook and eBook sides. A supplied tag array replaces the tags for that requested side: `null` or an omitted field means "not supplied," while `[]` explicitly means "no tags." The compatibility `tags` field remains a shared fallback for older clients, but new clients should send the media-scoped fields.
 
 Root-folder defaults are creation defaults, not continuing policy. Chaptarr fills an unset media side when that side is first created or hydrated and never overwrites an existing value, including an explicit empty tag set. An audiobook-only request does not initialize or mutate eBook settings, and the reverse is also true.
@@ -148,6 +156,12 @@ This means the item is queued or not ready. It is not a final not-found response
 For author imports, Chaptarr keeps the request active without an arbitrary attempt ceiling. It uses its ordinary retry cadence (roughly one minute for the first three attempts, then roughly five minutes with jitter) until the metadata server returns a served payload or a typed declared-stop outcome. `PendingAuthorImportResource.maxAttempts` is `0` for this unbounded lifecycle; `attemptCount` remains an observational counter, not a failure threshold.
 
 When a book add queues an author that is not available yet, `addOptions.searchForNewBook=true` remains attached to that exact media-specific request. `PendingAuthorImportResource.audiobookBooksToSearch` and `ebookBooksToSearch` expose the queued provider IDs; they are durable provider identities, not local Book row IDs. Once the authoritative author catalog imports, Chaptarr resolves those IDs within the requested media type and queues an exact Book search. If the imported catalog does not contain a requested provider ID, Chaptarr logs the missing target and does not broaden the search or synthesize a Book.
+
+For Readarr/Seerr facade book requests, first setup of a media side inherits the selected root folder's initial book selection and new-book policy. Successful request completion enables the requested author media side and selects the requested book, even when the root's gate is off or its initial selection is `None`. `All` may initially select siblings but does not search them. Later requests preserve profiles, paths, new-book policy, sibling selections and the opposite media side; resuming the requested side also makes its previously selected siblings eligible for automatic acquisition. Requested books retain a manual-add preservation marker, not an edition pin. Search-on-add is optional, user-invoked and limited to exact requested targets. Queued requests retain these settings and provider identities through the existing pending-import lifecycle.
+
+An explicit facade `PUT /book` with `monitored: true` applies this request contract even when the book is already selected. Lookup GETs and search-only commands never change saved monitoring settings. Clients that skip the update because a book is already monitored therefore do not request that its paused author side be resumed. In particular, Chaptarr does not infer an approved request from Seerr's lookup or change the meaning of the resource's `monitored` field to induce a client update.
+
+Command duplicate handling is first-command-wins: a later manual request matching an already queued or running automatic command reuses it without upgrading its trigger. For newly queued commands, an explicitly supplied trigger is propagated to the executable command body. Omitting that argument preserves any trigger already set by the command itself. This does not change monitoring settings or broaden search targets.
 
 All non-`200` responses are negative/transitional state and must never be stored as reusable metadata. HTTP `200` is cacheable only when the endpoint confirms a real positive result; semantic-empty bodies such as `null`, empty arrays, or empty search/match result containers are also `BYPASS`. The metadata-server origin sends `Cache-Control: no-store, no-cache, must-revalidate` plus CDN no-store directives for negative results. Chaptarr evicts historical non-`200` and endpoint-defined semantic-empty entries, while successful positive `200` responses retain normal cache reuse. A later positive `200` must never be hidden by an earlier empty, pending, or blocked response.
 

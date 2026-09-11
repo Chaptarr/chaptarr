@@ -35,6 +35,8 @@ namespace NzbDrone.Core.MediaFiles
         void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason);
         List<IFileInfo> FilterUnchangedFiles(List<IFileInfo> files, FilterFilesType filter);
         List<BookFile> GetFilesByAuthor(int authorId);
+        List<BookFile> GetFilePathOwnership() => throw new NotSupportedException();
+        void DeleteRecordsForAuthorDeletion(List<BookFile> files) => throw new NotSupportedException();
         List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
         {
             var requestedMediaType = (mediaType ?? "all").Trim().ToLowerInvariant();
@@ -423,6 +425,16 @@ namespace NzbDrone.Core.MediaFiles
         public List<BookFile> GetFilesByAuthor(int authorId)
         {
             return _mediaFileRepository.GetFilesByAuthor(authorId);
+        }
+
+        public List<BookFile> GetFilePathOwnership() => _mediaFileRepository.GetFilePathOwnership();
+
+        public void DeleteRecordsForAuthorDeletion(List<BookFile> files)
+        {
+            // The author deletion executor has already handled physical files and extras.
+            // Do not publish per-file delete events that would attempt those operations again.
+            PurgeIngestQueueEntries(files);
+            _mediaFileRepository.DeleteMany(files);
         }
 
         public List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)

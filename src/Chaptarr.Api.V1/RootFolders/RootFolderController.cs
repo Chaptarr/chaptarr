@@ -73,10 +73,6 @@ namespace Chaptarr.Api.V1.RootFolders
             PostValidator.RuleFor(c => c.Path)
                 .SetValidator(rootFolderValidator);
 
-            PostValidator.RuleFor(c => c)
-                .Must(HasAtLeastOneConfiguredMediaSide)
-                .WithMessage("Mixed root folders must configure at least one media type with quality and metadata profiles");
-
             AddMediaSettingsValidation(BookMediaType.Audiobook, qualityProfileExistsValidator, metadataProfileExistsValidator);
             AddMediaSettingsValidation(BookMediaType.Ebook, qualityProfileExistsValidator, metadataProfileExistsValidator);
 
@@ -105,7 +101,8 @@ namespace Chaptarr.Api.V1.RootFolders
         {
             var mediaLabel = mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
 
-            PostValidator.RuleFor(resource => RootFolderResourceMapper.GetQualityProfileId(resource, mediaType))
+            // Every supported format needs usable profiles on both create and edit.
+            SharedValidator.RuleFor(resource => RootFolderResourceMapper.GetQualityProfileId(resource, mediaType))
                 .Cascade(CascadeMode.Stop)
                 .NotNull()
                 .WithMessage($"A {mediaLabel} quality profile is required")
@@ -115,7 +112,7 @@ namespace Chaptarr.Api.V1.RootFolders
                 .When(resource => RequiresMediaSettings(resource, mediaType))
                 .WithName($"{mediaLabel}QualityProfileId");
 
-            PostValidator.RuleFor(resource => RootFolderResourceMapper.GetMetadataProfileId(resource, mediaType))
+            SharedValidator.RuleFor(resource => RootFolderResourceMapper.GetMetadataProfileId(resource, mediaType))
                 .Cascade(CascadeMode.Stop)
                 .NotNull()
                 .WithMessage($"An {mediaLabel} metadata profile is required")
@@ -124,13 +121,6 @@ namespace Chaptarr.Api.V1.RootFolders
                 .SetValidator(metadataProfileExistsValidator)
                 .When(resource => RequiresMediaSettings(resource, mediaType))
                 .WithName($"{mediaLabel}MetadataProfileId");
-        }
-
-        private static bool HasAtLeastOneConfiguredMediaSide(RootFolderResource resource)
-        {
-            return resource?.FolderType != (int)FolderType.Mixed ||
-                   RootFolderResourceMapper.HasAnyMediaTypeSettings(resource, BookMediaType.Audiobook) ||
-                   RootFolderResourceMapper.HasAnyMediaTypeSettings(resource, BookMediaType.Ebook);
         }
 
         private static bool RequiresMediaSettings(RootFolderResource resource, BookMediaType mediaType)
@@ -156,8 +146,7 @@ namespace Chaptarr.Api.V1.RootFolders
                 return mediaType == BookMediaType.Ebook;
             }
 
-            return folderType == FolderType.Mixed &&
-                   RootFolderResourceMapper.HasAnyMediaTypeSettings(resource, mediaType);
+            return folderType == FolderType.Mixed;
         }
 
         private bool CalibreLibraryOnlyUsedOnce(RootFolderResource settings)

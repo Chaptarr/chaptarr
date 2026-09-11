@@ -287,11 +287,7 @@ namespace NzbDrone.Core.Books
             // Find matching book by any provider ID.
             // With dual-instance architecture, remote can contain both audiobook and ebook instances that share provider IDs,
             // so prefer matching by MediaType to avoid cross-contaminating metadata/editions between instances.
-            var matchingBooks = BookIdentity.FindWorkFirstMatches(
-                remote?.Where(x => x.MediaType == local.MediaType),
-                local);
-
-            var book = matchingBooks.FirstOrDefault();
+            var book = BookIdentity.FindMatchingRemotePocket(remote, local);
 
             if (book != null && !HasUsableRemoteEditions(local, book, "author payload"))
             {
@@ -303,11 +299,7 @@ namespace NzbDrone.Core.Books
                 data = GetSkyhookData(local);
                 if (data != null && data.Books != null)
                 {
-                    var skyhookMatches = BookIdentity.FindWorkFirstMatches(
-                        data.Books?.Where(x => x.MediaType == local.MediaType),
-                        local);
-
-                    book = skyhookMatches.FirstOrDefault();
+                    book = BookIdentity.FindMatchingRemotePocket(data.Books, local);
                 }
             }
             else if (book == null)
@@ -415,35 +407,14 @@ namespace NzbDrone.Core.Books
         {
             // Readarr-style pruning:
             // Delete books that disappear from metadata (or are filtered out by metadata profiles)
-            // unless they are pinned by user intent (manual add, wanted narrator, strict/manual edition)
+            // unless they are pinned by user intent (manual add, strict/manual edition)
             // or have physical files.
-            if (HasLocalBookInstancePreservationMarker(local))
+            if (BookIdentity.HasUserPreservationMarker(local))
             {
                 return false;
             }
 
             return !HasKnownFiles(local);
-        }
-
-        private static bool HasLocalBookInstancePreservationMarker(Book book)
-        {
-            if (book == null)
-            {
-                return true;
-            }
-
-            if (book.AddOptions?.AddType == BookAddType.Manual)
-            {
-                return true;
-            }
-
-
-            if (!book.AnyEditionOk)
-            {
-                return true;
-            }
-
-            return book.Editions?.Any(edition => edition?.ManualAdd == true) == true;
         }
 
         private bool HasKnownFiles(Book book)
@@ -1281,7 +1252,7 @@ namespace NzbDrone.Core.Books
             // CRITICAL FIX: When refreshing a single book, GetSkyhookData returns an Author object
             // with a single book that has editions populated. We need to pass THIS book
             // (which has editions) as the remote book, not the entire author book list.
-            var remoteBook = BookIdentity.FindWorkFirstMatches(data.Books?.Where(b => b.MediaType == book.MediaType), book).FirstOrDefault();
+            var remoteBook = BookIdentity.FindMatchingRemotePocket(data.Books, book);
 
             if (remoteBook != null)
             {

@@ -106,7 +106,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => false;
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => ExistingAuthor = author;
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -142,7 +142,7 @@ namespace Chaptarr.Core.Test.Books
 
             public Book GetBook(int bookId) => throw new NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByAuthor(int authorId) => ExistingBooks;
+            public List<Book> GetBooksByAuthor(int authorId) => ExistingBooks.Concat(InsertedBooks).ToList();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
@@ -303,7 +303,7 @@ namespace Chaptarr.Core.Test.Books
             public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor)
             {
                 Reconciled = true;
-                var knownIds = _bookService.ExistingBooks
+                var knownIds = _bookService.GetBooksByAuthor(localAuthor.Id)
                     .SelectMany(BookEditionIdentity.GetCanonicalWorkProviderIds)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 _bookService.ExistingBooks.AddRange(authoritativeRemoteAuthor.Books
@@ -313,17 +313,19 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public async Task existing_author_should_reconcile_media_scoped_pending_target_from_the_author_blob()
+        public async Task existing_author_should_reconcile_media_scoped_pending_target_from_the_author_blob(
+            [Values(false, true)] bool configured,
+            [Values(false, true)] bool hasCatalogRows)
         {
             var existingAuthor = new Author
             {
                 Id = 77,
                 Name = "Existing Author",
-                EbookQualityProfileId = 4,
-                EbookMetadataProfileId = 3,
-                EbookRootFolderPath = "/ebooks",
-                EbookMonitored = true,
-                EbookMonitorNewItems = NewItemMonitorTypes.None
+                EbookQualityProfileId = configured ? 4 : null,
+                EbookMetadataProfileId = configured ? 3 : null,
+                EbookRootFolderPath = configured ? "/ebooks" : null,
+                EbookMonitored = configured ? true : null,
+                EbookMonitorNewItems = configured ? NewItemMonitorTypes.None : null
             };
             var existingBook = BuildEbook("Existing Ebook", "hc:2001");
             existingBook.AuthorId = existingAuthor.Id;
@@ -336,7 +338,7 @@ namespace Chaptarr.Core.Test.Books
                 Series = new List<Series>()
             };
             var authorService = new StubAuthorService { ExistingAuthor = existingAuthor };
-            var bookService = new StubBookService { ExistingBooks = new List<Book> { existingBook } };
+            var bookService = new StubBookService { ExistingBooks = hasCatalogRows ? new List<Book> { existingBook } : new List<Book>() };
             var refreshAuthorService = new StubRefreshAuthorService(bookService);
             var service = new AuthorLibraryService(
                 authorService,
@@ -363,11 +365,21 @@ namespace Chaptarr.Core.Test.Books
             await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
             {
                 CreateEbook = true,
-                EbookBooksToSearch = new List<string> { "hc:2002" }
+                EbookBooksToSearch = new List<string> { "hc:2002" },
+                EbookRootFolderPath = "/ebooks",
+                EbookMonitorExistingMode = MonitorTypes.All,
+                EbookMonitorNewItems = NewItemMonitorTypes.None
             });
 
             Assert.That(refreshAuthorService.Reconciled, Is.True);
-            Assert.That(bookService.ExistingBooks.Select(book => book.HardcoverBookId), Does.Contain("hc:2002"));
+            Assert.That(bookService.GetBooksByAuthor(existingAuthor.Id).Select(book => book.HardcoverBookId), Does.Contain("hc:2002"));
+            Assert.That(existingAuthor.AddOptions?.EbookMonitor, Is.EqualTo(configured ? (MonitorTypes?)null : MonitorTypes.All));
+            if (!hasCatalogRows)
+            {
+                Assert.That(bookService.InsertedBooks, Has.Count.EqualTo(2));
+                Assert.That(bookService.InsertedBooks.All(book => book.IsMonitored()), Is.True,
+                    "The initial All policy must run before ongoing None can initialize the missing catalog.");
+            }
         }
 
         [Test]

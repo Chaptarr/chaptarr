@@ -64,6 +64,10 @@ namespace Chaptarr.Core.Test.Extras
                 Title = "Captain's Fury",
                 MediaType = BookMediaType.Audiobook
             };
+            _book.BookFiles = new List<BookFile>
+            {
+                new() { Id = 4001, Path = Path.Combine(AudiobookFolder, "book.m4b"), Edition = new Edition { BookId = _book.Id } }
+            };
 
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             ((AuthorServiceProxy)(object)authorService).Author = _author;
@@ -120,9 +124,10 @@ namespace Chaptarr.Core.Test.Extras
         }
 
         [Test]
-        public void should_resolve_the_extra_under_the_root_matching_the_books_media_type()
+        public void should_resolve_the_extra_under_the_physical_file_folder()
         {
             _book.MediaType = BookMediaType.Ebook;
+            _book.BookFiles[0].Path = Path.Combine(EbookFolder, "book.epub");
             _repository.Files.Add(new MetadataFile
             {
                 Id = 11,
@@ -222,9 +227,14 @@ namespace Chaptarr.Core.Test.Extras
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IDiskProvider.FileExists))
+                if (targetMethod?.Name == nameof(IDiskProvider.FileExists) || targetMethod?.Name == nameof(IDiskProvider.FileExistsCanonical))
                 {
                     return true;
+                }
+
+                if (targetMethod?.Name == nameof(IDiskProvider.GetFiles))
+                {
+                    return Array.Empty<string>();
                 }
 
                 if (targetMethod?.Name == nameof(IDiskProvider.GetParentFolder))

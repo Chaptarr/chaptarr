@@ -275,6 +275,10 @@ namespace NzbDrone.Core.Books.Commands
                     ResolveLocalBooks(requestedWorks, addedAuthor);
                     var requestedSearchBookIds = GetRequestedSearchBookIds(addedAuthor, requestedWorks);
                     QueueRequestedSearches(item, addedAuthor, requestedSearchBookIds);
+                    if (requestedWorks.Any() && addedAuthor.AddOptions != null)
+                    {
+                        _commandQueueManager.Push(new RefreshAuthorCommand(addedAuthor.Id, refreshMetadata: false, rescanFolders: true));
+                    }
 
                     _logger.Info("Successfully imported author {0} (ID: {1})", item.ProviderId, addedAuthor.Id);
                     MarkSucceeded(item);
@@ -398,6 +402,8 @@ namespace NzbDrone.Core.Books.Commands
                 return author;
             }
 
+            // Apply the same request contract after metadata becomes available as on immediate adds.
+            // Only sides with resolved, provider-identified targets are resumed.
             if (item.HasAudiobook() && audiobookTargets.Any())
             {
                 _authorService.EnsureMediaTypeMonitoring(author.Id, "audiobook");
@@ -409,6 +415,20 @@ namespace NzbDrone.Core.Books.Commands
             }
 
             author = _authorService.GetAuthor(author.Id) ?? author;
+            var initialRequests = requestedWorks.Where(target =>
+                (target.MediaType == BookMediaType.Audiobook ? item.AudiobookMonitorExistingMode : item.EbookMonitorExistingMode).HasValue)
+                .Select(target => target.Book).Where(book => book != null).ToList();
+            foreach (var book in initialRequests)
+            {
+                book.AddOptions ??= new AddBookOptions();
+                book.AddOptions.AddType = BookAddType.Manual;
+            }
+
+            if (initialRequests.Any())
+            {
+                _bookService.SetAddOptions(initialRequests);
+            }
+
             ApplyRequestedBookMonitoring(BookMediaType.Audiobook, item.HasAudiobook(), audiobookTargets);
             ApplyRequestedBookMonitoring(BookMediaType.Ebook, item.HasEbook(), ebookTargets);
 
@@ -452,20 +472,22 @@ namespace NzbDrone.Core.Books.Commands
 
         private static HashSet<int> GetRequestedSearchBookIds(Author author, List<RequestedWork> requestedWorks)
         {
+            // Disabling the immediate search must not let a failed monitoring request report success.
             return requestedWorks
-                .Where(target => target.Search)
-                .Select(target => target.Book)
-                .Where(book => book != null)
-                .Select(book =>
+                .Where(target => target.Book != null)
+                .Select(target =>
                 {
+                    var book = target.Book;
                     book.Author = author;
                     if (!book.IsMonitoredWithAuthor())
                     {
-                        throw new InvalidOperationException($"Requested {book.MediaType} book {book.Id} remained unmonitored after applying the saved add settings.");
+                        throw new InvalidOperationException($"Requested {book.MediaType} book {book.Id} remained unmonitored or its author side remained paused after applying the saved request monitoring.");
                     }
 
-                    return book.Id;
+                    return target;
                 })
+                .Where(target => target.Search)
+                .Select(target => target.Book.Id)
                 .ToHashSet();
         }
 
@@ -482,7 +504,9 @@ namespace NzbDrone.Core.Books.Commands
 
             if (bookIds.Any())
             {
-                _commandQueueManager.Push(new BookSearchCommand(bookIds.ToList()));
+                // These exact targets carry explicit search-on-add intent. Author-wide background
+                // searches above retain their normal trigger and delay-profile behavior.
+                _commandQueueManager.Push(new BookSearchCommand(bookIds.ToList()), trigger: CommandTrigger.Manual);
                 _logger.Debug("Queued exact search for {0} requested books after importing author {1} (ID: {2})", bookIds.Count, item.ProviderId, author.Id);
             }
         }

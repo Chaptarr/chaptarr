@@ -73,7 +73,7 @@ namespace NzbDrone.Core.Books
                 }
 
                 author.AddOptions = null;
-                _authorService.RemoveAddOptions(author);
+                _authorService.SetAddOptions(author);
             }
 
             _bookAddedService.SearchForRecentlyAdded(author.Id);

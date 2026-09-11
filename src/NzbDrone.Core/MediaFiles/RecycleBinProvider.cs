@@ -50,7 +50,15 @@ namespace NzbDrone.Core.MediaFiles
             }
             else
             {
-                var destination = Path.Combine(recyclingBin, new DirectoryInfo(path).Name);
+                var folderName = new DirectoryInfo(path).Name;
+                var destination = Path.Combine(recyclingBin, folderName);
+                var index = 1;
+                // Separate format roots can have the same author folder name. Never merge
+                // recycled folders, since their covers and other filenames can collide.
+                while (_diskProvider.FolderExists(destination) || _diskProvider.FileExists(destination))
+                {
+                    destination = Path.Combine(recyclingBin, folderName + "_" + ++index);
+                }
 
                 _logger.Debug("Moving '{0}' to '{1}'", path, destination);
                 _diskTransferService.TransferFolder(path, destination, TransferMode.Move);

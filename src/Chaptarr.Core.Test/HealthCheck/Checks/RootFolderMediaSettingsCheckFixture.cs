@@ -56,6 +56,7 @@ namespace Chaptarr.Core.Test.HealthCheck.Checks
             audiobook.SetAudiobookSettings(CompleteSettings());
 
             var mixed = new RootFolder { Name = "Mixed", FolderType = FolderType.Mixed };
+            mixed.SetAudiobookSettings(CompleteSettings());
             mixed.SetEbookSettings(CompleteSettings());
 
             var result = CreateSubject(audiobook, mixed).Check();
@@ -84,14 +85,15 @@ namespace Chaptarr.Core.Test.HealthCheck.Checks
         }
 
         [Test]
-        public void mixed_root_should_not_require_an_unconfigured_second_side()
+        public void mixed_root_should_require_an_unconfigured_second_side()
         {
             var mixed = new RootFolder { Name = "Mixed", FolderType = FolderType.Mixed };
             mixed.SetAudiobookSettings(CompleteSettings());
 
             var result = CreateSubject(mixed).Check();
 
-            Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Ok));
+            Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Warning));
+            Assert.That(result.Message, Does.Contain("Mixed (Ebook)"));
         }
 
         [Test]

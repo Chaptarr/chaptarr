@@ -18,7 +18,7 @@ namespace NzbDrone.Core.Extras.Files
         IEnumerable<ExtraFile> CreateAfterAuthorScan(Author author, List<BookFile> bookFiles);
         IEnumerable<ExtraFile> CreateAfterBookImport(Author author, BookFile bookFile);
         IEnumerable<ExtraFile> CreateAfterBookImport(Author author, Book book, string authorFolder, string bookFolder);
-        IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles);
+        IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<RenamedBookFile> bookFiles);
         ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly);
     }
 
@@ -45,7 +45,7 @@ namespace NzbDrone.Core.Extras.Files
         public abstract IEnumerable<ExtraFile> CreateAfterAuthorScan(Author author, List<BookFile> bookFiles);
         public abstract IEnumerable<ExtraFile> CreateAfterBookImport(Author author, BookFile bookFile);
         public abstract IEnumerable<ExtraFile> CreateAfterBookImport(Author author, Book book, string authorFolder, string bookFolder);
-        public abstract IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles);
+        public abstract IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<RenamedBookFile> bookFiles);
         public abstract ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly);
 
         protected TExtraFile ImportFile(Author author, BookFile bookFile, string path, bool readOnly, string extension, string fileNameSuffix = null)
@@ -86,104 +86,74 @@ namespace NzbDrone.Core.Extras.Files
             };
         }
 
-        protected TExtraFile MoveFile(Author author, BookFile bookFile, TExtraFile extraFile, string fileNameSuffix = null)
+        protected string ResolveRenameSource(TExtraFile extra, RenamedBookFile move)
         {
-            _logger.Trace("Renaming extra file: {0}", extraFile);
-
-            var newFolder = Path.GetDirectoryName(bookFile.Path);
-            var filenameBuilder = new StringBuilder(Path.GetFileNameWithoutExtension(bookFile.Path));
-
-            if (fileNameSuffix.IsNotNullOrWhiteSpace())
+            if (move?.BookFile == null || move.PreviousPath.IsNullOrWhiteSpace() ||
+                move.PreviousAuthorPath.IsNullOrWhiteSpace() || extra.RelativePath.IsNullOrWhiteSpace() ||
+                Path.IsPathRooted(extra.RelativePath))
             {
-                filenameBuilder.Append(fileNameSuffix);
+                return null;
             }
 
-            filenameBuilder.Append(extraFile.Extension);
-
-            var newFileName = Path.Combine(newFolder, filenameBuilder.ToString());
-            var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
-            var existingFileName = ExtraFilePathHelper.ResolveFullPath(author, extraFile.RelativePath, _diskProvider.FileExists, preferredBase);
-            var existingFolder = Path.GetDirectoryName(existingFileName);
-
-            if (newFileName.PathNotEquals(existingFileName))
+            if ((extra.BookFileId.HasValue && extra.BookFileId != move.BookFile.Id) ||
+                (extra.BookId.HasValue && extra.BookId != move.BookFile.Edition?.BookId))
             {
-                try
-                {
-                    _logger.Trace("Renaming extra file: {0} to {1}", extraFile, newFileName);
-
-                    _diskProvider.MoveFile(existingFileName, newFileName);
-
-                    if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))
-                    {
-                        throw new NotParentException("Unable to resolve extra file path '{0}' under any author base path", newFileName);
-                    }
-
-                    extraFile.RelativePath = relativePath;
-
-                    _logger.Trace("Renamed extra file from: {0}", extraFile);
-
-                    return extraFile;
-                }
-                catch (FileAlreadyExistsException) when (!existingFolder.PathEquals(newFolder))
-                {
-                    try
-                    {
-                        var availableName = GetAvailableFilename(newFileName);
-                        _logger.Debug("Destination file exists, moving extra file to alternate name: {0}", availableName);
-
-                        _diskProvider.MoveFile(existingFileName, availableName);
-
-                        if (!ExtraFilePathHelper.TryGetRelativePath(author, availableName, out var relativePath, out _, preferredBase))
-                        {
-                            throw new NotParentException("Unable to resolve extra file path '{0}' under any author base path", availableName);
-                        }
-
-                        extraFile.RelativePath = relativePath;
-
-                        _logger.Trace("Renamed extra file from: {0}", extraFile);
-
-                        return extraFile;
-                    }
-                    catch (Exception retryEx)
-                    {
-                        _logger.Warn(retryEx, "Unable to move file after rename: {0}", existingFileName);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "Unable to move file after rename: {0}", existingFileName);
-                }
+                return null;
             }
 
-            return null;
+            // Relative names alone do not locate a sidecar across media roots or copies.
+            var source = Path.GetFullPath(Path.Combine(move.PreviousAuthorPath, extra.RelativePath));
+            return Path.GetDirectoryName(source).PathEquals(Path.GetDirectoryName(move.PreviousPath)) &&
+                _diskProvider.FileExistsCanonical(source) ? source : null;
         }
 
-        private string GetAvailableFilename(string destinationPath)
+        protected TExtraFile RelocateFile(Author author, RenamedBookFile move, TExtraFile extra,
+            string source, string destination, Action<TExtraFile> persist)
         {
-            if (destinationPath.IsNullOrWhiteSpace())
+            if (source.PathEquals(destination))
             {
-                return destinationPath;
+                return null;
             }
 
-            var directory = Path.GetDirectoryName(destinationPath);
-            var filenameWithoutExtension = Path.GetFileNameWithoutExtension(destinationPath);
-            var extension = Path.GetExtension(destinationPath);
-
-            if (directory.IsNullOrWhiteSpace() || filenameWithoutExtension.IsNullOrWhiteSpace())
+            var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, move.BookFile);
+            if (!ExtraFilePathHelper.TryGetRelativePath(author, destination, out var relativePath, out _, preferredBase))
             {
-                return destinationPath;
+                _logger.Warn("Keeping sidecar {0}: destination cannot be represented under the author paths", source);
+                return null;
             }
 
-            for (var i = 1; i < 1000; i++)
+            var previousRelativePath = extra.RelativePath;
+            try
             {
-                var candidate = Path.Combine(directory, $"{filenameWithoutExtension} ({i}){extension}");
-                if (!_diskProvider.FileExists(candidate))
+                // Keep the original until its new tracking is saved. No overwrite or blind rollback
+                // may destroy a file that appeared while the filesystem/database operations ran.
+                if (!_configService.CopyUsingHardlinks || !_diskProvider.TryCreateHardLink(source, destination))
                 {
-                    return candidate;
+                    // Do not use transfer rollback here: a failed exclusive copy does not prove
+                    // that its destination belongs to this operation and may be deleted.
+                    _diskProvider.CopyFile(source, destination, false);
                 }
+
+                extra.RelativePath = relativePath;
+                persist(extra);
+            }
+            catch (Exception ex)
+            {
+                extra.RelativePath = previousRelativePath;
+                _logger.Warn(ex, "Sidecar relocation did not complete; preserving source {0} and any destination {1}", source, destination);
+                return null;
             }
 
-            return Path.Combine(directory, $"{filenameWithoutExtension} ({Guid.NewGuid():N}){extension}");
+            try
+            {
+                _diskProvider.DeleteFile(source);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Sidecar is tracked at {0}, but its original remains at {1}", destination, source);
+            }
+
+            return extra;
         }
     }
 }

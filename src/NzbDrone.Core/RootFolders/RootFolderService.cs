@@ -8,6 +8,7 @@ using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.MediaFiles;
@@ -150,6 +151,18 @@ namespace NzbDrone.Core.RootFolders
             // Note: FolderType.Unknown no longer exists - Mixed is now the default
             // All root folders should have a valid FolderType (Mixed, Audiobook, or Ebook)
 
+            // Default only at creation: author monitoring is on, but selecting books
+            // is opt-in. Explicit choices and settings on existing roots stay untouched.
+            if (rootFolder.FolderType is FolderType.Audiobook or FolderType.Mixed)
+            {
+                rootFolder.SetAudiobookSettings(WithCreationDefaults(rootFolder.GetAudiobookSettings()));
+            }
+
+            if (rootFolder.FolderType is FolderType.Ebook or FolderType.Mixed)
+            {
+                rootFolder.SetEbookSettings(WithCreationDefaults(rootFolder.GetEbookSettings()));
+            }
+
             _rootFolderRepository.Insert(rootFolder);
 
             _logger.Info($"Successfully inserted root folder '{rootFolder.Path}' with type {rootFolder.FolderType}");
@@ -161,6 +174,15 @@ namespace NzbDrone.Core.RootFolders
             _commandQueueManager.Push(new RescanFoldersCommand(new List<string> { rootFolder.Path }, FilterFilesType.None, null, true));
 
             return rootFolder;
+        }
+
+        private static MediaTypeSettings WithCreationDefaults(MediaTypeSettings settings)
+        {
+            settings ??= new MediaTypeSettings();
+            settings.Monitored ??= true;
+            settings.MonitorExistingMode ??= MonitorTypes.None;
+            settings.MonitorNewItems ??= NewItemMonitorTypes.None;
+            return settings;
         }
 
         public RootFolder Update(RootFolder rootFolder)

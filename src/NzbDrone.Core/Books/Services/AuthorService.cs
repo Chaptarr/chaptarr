@@ -58,7 +58,7 @@ namespace NzbDrone.Core.Books
         List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder);
         Dictionary<int, string> AllAuthorPaths();
         bool AuthorPathExists(string folder);
-        void RemoveAddOptions(Author author);
+        void SetAddOptions(Author author);
         void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored);
         // The default exists only for lightweight test doubles. Every production implementation must override it.
         void EnsureMediaTypeMonitoring(int authorId, string mediaType)
@@ -75,6 +75,8 @@ namespace NzbDrone.Core.Books
     public class AuthorService : IAuthorService
     {
         private readonly IAuthorRepository _authorRepository;
+        // Calibre cover resolution depends on AuthorService; resolve deletion only on demand.
+        private readonly Lazy<IDeleteMediaFiles> _deleteMediaFiles;
         private readonly IEventAggregator _eventAggregator;
         private readonly IBuildAuthorPaths _authorPathBuilder;
         private readonly IRootFolderService _rootFolderService;
@@ -102,9 +104,11 @@ namespace NzbDrone.Core.Books
 	                             IBookRepository bookRepository,
 	                             IMediaFileService mediaFileService,
 	                             Logger logger,
-	                             IProviderAliasService providerAliasService = null)
+	                             IProviderAliasService providerAliasService = null,
+                                 Lazy<IDeleteMediaFiles> deleteMediaFiles = null)
 	        {
 	            _authorRepository = authorRepository;
+                _deleteMediaFiles = deleteMediaFiles;
 	            _eventAggregator = eventAggregator;
 	            _authorPathBuilder = authorPathBuilder;
                 _rootFolderService = rootFolderService;
@@ -346,6 +350,14 @@ namespace NzbDrone.Core.Books
 	            var authors = _authorRepository.Get(distinctIds)
 	                .Where(author => author != null)
 	                .ToList();
+
+                // Delete against one complete selection while ownership still exists. A physical
+                // failure must not be swallowed by events and followed by database teardown.
+                if (deleteFiles)
+                {
+                    (_deleteMediaFiles?.Value ?? throw new InvalidOperationException("Author file deletion service is unavailable"))
+                        .DeleteAuthorFiles(authors);
+                }
 
 	            // Keep every parent row alive while synchronous handlers remove Books and Editions.
 	            // Besides satisfying the PostgreSQL FK, this lets the SQLite edition_fts delete trigger
@@ -620,7 +632,7 @@ namespace NzbDrone.Core.Books
             return _authorRepository.Get(authorIds).ToList();
         }
 
-	        public void RemoveAddOptions(Author author)
+	        public void SetAddOptions(Author author)
 	        {
 	            _authorRepository.SetFields(author, s => s.AddOptions);
 	            _cache.Clear();

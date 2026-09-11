@@ -39,6 +39,63 @@ namespace NzbDrone.Core.Books
 
     public static class BookIdentity
     {
+        internal static bool HasUserPreservationMarker(Book book)
+        {
+            return book == null ||
+                book.AddOptions?.AddType == BookAddType.Manual ||
+                !book.AnyEditionOk ||
+                book.Editions?.Any(edition => edition?.ManualAdd == true) == true;
+        }
+
+        internal static Book FindMatchingRemotePocket(IEnumerable<Book> candidates, Book local)
+        {
+            var matches = FindWorkFirstMatches(candidates?.Where(book => book.MediaType == local.MediaType), local);
+            return matches.Count > 1
+                ? matches.OrderByDescending(candidate => GetPocketMatchRank(candidate, local)).First()
+                : matches.FirstOrDefault();
+        }
+
+        // Fingerprint = media type, stable work IDs and the complete edition-ID set.
+        // Missing edition identity cannot establish an identical server pocket.
+        internal static string BuildIdenticalPocketFingerprint(Book book)
+        {
+            if (book?.Editions == null || book.Editions.Count == 0)
+            {
+                return null;
+            }
+
+            var editionIds = new List<string>(book.Editions.Count);
+            foreach (var edition in book.Editions)
+            {
+                if (edition == null || string.IsNullOrWhiteSpace(edition.ForeignEditionId))
+                {
+                    return null;
+                }
+
+                editionIds.Add(edition.ForeignEditionId.Trim().ToLowerInvariant());
+            }
+
+            editionIds.Sort(StringComparer.Ordinal);
+            var workTokens = GetStableWorkProviderIdentityTokens(book)
+                .Where(token => !string.IsNullOrWhiteSpace(token))
+                .Select(token => token.Trim().ToLowerInvariant())
+                .OrderBy(token => token, StringComparer.Ordinal);
+
+            return $"{book.MediaType}::W[{string.Join(",", workTokens)}]::E[{string.Join(",", editionIds)}]";
+        }
+
+        internal static int GetPocketMatchRank(Book candidate, Book book)
+        {
+            // Only disambiguate candidates already matched by provider identity. The server's
+            // pocket key survives edition updates; the existing fingerprint separates same-key pockets.
+            var sameKey = ProviderIdHelper.TryNormalize(candidate.BaseBookId, null, out var candidateId) &&
+                ProviderIdHelper.TryNormalize(book.BaseBookId, null, out var bookId) &&
+                string.Equals(candidateId, bookId, StringComparison.OrdinalIgnoreCase);
+            var fingerprint = BuildIdenticalPocketFingerprint(book);
+            var identical = fingerprint != null && fingerprint == BuildIdenticalPocketFingerprint(candidate);
+            return (sameKey ? 2 : 0) + (identical ? 1 : 0);
+        }
+
         public static bool MatchesByProviderIdIntersection(Book local, Book remote)
         {
             if (local == null || remote == null)

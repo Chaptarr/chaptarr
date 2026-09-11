@@ -44,22 +44,24 @@ namespace NzbDrone.Core.Extras.Others
             return Enumerable.Empty<ExtraFile>();
         }
 
-        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles)
+        public override IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<RenamedBookFile> bookFiles)
         {
             var extraFiles = _otherExtraFileService.GetFilesByAuthor(author.Id);
             var movedFiles = new List<OtherExtraFile>();
-
-            foreach (var bookFile in bookFiles)
+            foreach (var move in bookFiles)
             {
-                var extraFilesForTrackFile = extraFiles.Where(m => m.BookFileId == bookFile.Id).ToList();
-
-                foreach (var extraFile in extraFilesForTrackFile)
+                foreach (var extra in extraFiles.Where(extra => extra.BookFileId == move.BookFile.Id))
                 {
-                    movedFiles.AddIfNotNull(MoveFile(author, bookFile, extraFile));
+                    var source = ResolveRenameSource(extra, move);
+                    if (source == null)
+                    {
+                        continue;
+                    }
+
+                    var destination = System.IO.Path.ChangeExtension(move.BookFile.Path, extra.Extension);
+                    movedFiles.AddIfNotNull(RelocateFile(author, move, extra, source, destination, _otherExtraFileService.Upsert));
                 }
             }
-
-            _otherExtraFileService.Upsert(movedFiles);
 
             return movedFiles;
         }

@@ -54,6 +54,9 @@ namespace NzbDrone.Core.Books
                 var booksWithoutFilesIds = booksWithoutFiles.Select(e => e.Id).ToHashSet();
 
                 var monitoredBooks = monitoringOptions.BooksToMonitor;
+                var requestedBooks = author.AddOptions != null
+                    ? books.Where(book => book.AddOptions?.AddType == BookAddType.Manual && book.IsMonitored()).ToList()
+                    : new List<Book>();
 
                 // If specific books are passed use those instead of the monitoring options.
                 if (monitoredBooks.Any())
@@ -117,9 +120,24 @@ namespace NzbDrone.Core.Books
                     }
                 }
 
-                // Persist the monitoring decision as one batch while retaining each
-                // BookEditedEvent and the existing monitoring synchronization rules.
-                _bookService.UpdateManyWithLifecycle(books);
+                // Initial root defaults must not undo a book explicitly requested during import.
+                // Later monitoring edits have no Author.AddOptions and remain authoritative.
+                ToggleBooksMonitoredState(requestedBooks, true);
+
+                if (author.AddOptions != null && monitoringOptions.MediaType.HasValue)
+                {
+                    // Initial per-side defaults must not synchronize onto an already
+                    // configured opposite side. Reuse the explicitly scoped write path.
+                    var mediaType = monitoringOptions.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook";
+                    foreach (var group in books.GroupBy(book => book.IsMonitored()))
+                    {
+                        _bookService.SetMonitoredForMediaType(group.Select(book => book.Id), mediaType, group.Key);
+                    }
+                }
+                else
+                {
+                    _bookService.UpdateManyWithLifecycle(books);
+                }
             }
 
             _authorService.UpdateAuthor(author);

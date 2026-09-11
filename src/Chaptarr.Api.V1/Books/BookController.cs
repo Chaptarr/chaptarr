@@ -1378,6 +1378,18 @@ namespace Chaptarr.Api.V1.Books
 			                // Apply query override (if provided) so the model maps to the correct BookMediaType.
 			                bookResource.MediaType = requestedMediaType;
 
+                        if (facadeContext != null && bookResource.Author != null)
+                        {
+                            var existingAuthor = TryGetExistingAuthor(bookResource.Author);
+                            var requestedType = string.Equals(requestedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
+                                ? BookMediaType.Ebook : BookMediaType.Audiobook;
+                            var rootPath = requestedType == BookMediaType.Ebook
+                                ? bookResource.Author.EbookRootFolderPath
+                                : bookResource.Author.AudiobookRootFolderPath;
+                            var root = string.IsNullOrWhiteSpace(rootPath) ? null : _rootFolderService.GetBestRootFolder(rootPath);
+                            ApplyFacadeBookRequestDefaults(bookResource.Author, existingAuthor, GetMediaSettings(root, requestedType), requestedType);
+                        }
+
 			                var modelToAdd = bookResource.ToModel(facadeContext);
 			                if (IsMissingUpstreamProviderBookId(modelToAdd))
 			                {
@@ -1515,7 +1527,8 @@ namespace Chaptarr.Api.V1.Books
 		                }
 		            }
 
-		            var foreignAuthorId = authorResource.ForeignAuthorId?.Trim();
+                    var foreignAuthorId = ReadarrFacadeProviderIdTranslator.NormalizeBareProviderId(
+                        authorResource.ForeignAuthorId?.Trim(), HttpContext.GetReadarrFacadeContext());
 		            if (string.IsNullOrWhiteSpace(foreignAuthorId))
 		            {
 		                return null;
@@ -1555,7 +1568,44 @@ namespace Chaptarr.Api.V1.Books
 		            return matches.Count == 1 ? matches[0] : null;
 		        }
 
-		        private static bool HasConfiguredMediaSettings(NzbDrone.Core.Books.Author author, BookMediaType mediaType)
+        internal static void ApplyFacadeBookRequestDefaults(
+            global::Chaptarr.Api.V1.Author.AuthorResource requested,
+            NzbDrone.Core.Books.Author existing,
+            MediaTypeSettings rootSettings,
+            BookMediaType mediaType)
+        {
+            // Seerr calls its sides default/alternate; neither is privileged. First setup
+            // inherits the selected root, while later book requests preserve the saved side.
+            var configured = HasConfiguredMediaSettings(existing, mediaType);
+            var audiobook = mediaType == BookMediaType.Audiobook;
+            var monitored = configured
+                ? (audiobook ? existing.AudiobookMonitored : existing.EbookMonitored)
+                : rootSettings?.Monitored;
+            var newItems = configured
+                ? (audiobook ? existing.AudiobookMonitorNewItems : existing.EbookMonitorNewItems)
+                : rootSettings?.MonitorNewItems;
+            var initial = configured ? MonitorTypes.None : rootSettings?.MonitorExistingMode ?? MonitorTypes.None;
+
+            requested.Monitored = monitored == true;
+            requested.MonitorNewItems = newItems?.ToString().ToLowerInvariant();
+            requested.AddOptions ??= new AddAuthorOptions();
+            requested.AddOptions.Monitor = MonitorTypes.SpecificBook;
+            requested.AddOptions.SearchForMissingBooks = false;
+            if (audiobook)
+            {
+                requested.AudiobookMonitored = monitored;
+                requested.AudiobookMonitorNewItems = newItems;
+                requested.AddOptions.AudiobookMonitor = initial;
+            }
+            else
+            {
+                requested.EbookMonitored = monitored;
+                requested.EbookMonitorNewItems = newItems;
+                requested.AddOptions.EbookMonitor = initial;
+            }
+        }
+
+	        private static bool HasConfiguredMediaSettings(NzbDrone.Core.Books.Author author, BookMediaType mediaType)
 		        {
 		            if (author == null)
 		            {
@@ -1641,6 +1691,29 @@ namespace Chaptarr.Api.V1.Books
 	            return GetMediaSettings(requestedRootFolder, siblingMediaType)?.QualityProfileId.HasValue == true;
 	        }
 
+        private static void ValidateRequestedRootFolder(string path, RootFolder rootFolder, BookMediaType mediaType)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            // An explicit destination must not be silently replaced by a usable default elsewhere.
+            var type = mediaType == BookMediaType.Audiobook ? FolderType.Audiobook : FolderType.Ebook;
+            var label = mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
+            var error = rootFolder == null
+                ? $"Selected root folder '{path}' is not configured in Chaptarr"
+                : !RootFolderDefaultResolver.IsCompatibleRootFolder(rootFolder, type)
+                    ? $"Selected root folder '{path}' does not support {label} books"
+                    : !RootFolderSettingsResolver.HasRequiredProfiles(GetMediaSettings(rootFolder, mediaType))
+                        ? $"Selected root folder '{path}' requires both a {label} quality profile and metadata profile"
+                        : null;
+            if (error != null)
+            {
+                throw new ValidationException(new[] { new ValidationFailure($"author.{label}RootFolderPath", error) });
+            }
+        }
+
 	        private void NormalizeReadarrSingleFields(BookResource bookResource, bool wantAudiobook, bool wantEbook)
 	        {
 	            var author = bookResource?.Author;
@@ -1649,12 +1722,13 @@ namespace Chaptarr.Api.V1.Books
 		                return;
 		            }
 
+		            var requestedBothMediaTypes = wantAudiobook && wantEbook;
 		            var rootFolders = _rootFolderService.All() ?? new List<RootFolder>();
 
 		            RootFolder rootFolderByPath = null;
 		            if (!string.IsNullOrWhiteSpace(author.RootFolderPath))
 		            {
-		                rootFolderByPath = _rootFolderService.GetBestRootFolder(author.RootFolderPath, rootFolders);
+		                rootFolderByPath = rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.RootFolderPath));
 		            }
 
 		            // If a client sends a single qualityProfileId, map it to the correct media type by profile type.
@@ -1709,39 +1783,72 @@ namespace Chaptarr.Api.V1.Books
 		                }
 		            }
 
-		            RootFolder audiobookRootFolder = null;
-		            if (!string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath))
+		            // With no media type, a shared root can configure one format without implying the other.
+		            if (requestedBothMediaTypes && rootFolderByPath != null)
 		            {
-		                audiobookRootFolder = _rootFolderService.GetBestRootFolder(author.AudiobookRootFolderPath, rootFolders);
+		                wantAudiobook = HasAnyMediaSettings(author, BookMediaType.Audiobook) ||
+		                                RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath.GetAudiobookSettings());
+		                wantEbook = HasAnyMediaSettings(author, BookMediaType.Ebook) ||
+		                            RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath.GetEbookSettings());
 		            }
-		            if (audiobookRootFolder == null && rootFolderByPath?.GetAudiobookSettings() != null)
-		            {
-		                audiobookRootFolder = rootFolderByPath;
-		            }
-		            audiobookRootFolder ??= rootFolders.FirstOrDefault(rf => rf.GetAudiobookSettings()?.QualityProfileId.HasValue == true);
 
-		            RootFolder ebookRootFolder = null;
-		            if (!string.IsNullOrWhiteSpace(author.EbookRootFolderPath))
-		            {
-		                ebookRootFolder = _rootFolderService.GetBestRootFolder(author.EbookRootFolderPath, rootFolders);
-		            }
-		            if (ebookRootFolder == null && rootFolderByPath?.GetEbookSettings() != null)
-		            {
-		                ebookRootFolder = rootFolderByPath;
-	            }
-	            ebookRootFolder ??= rootFolders.FirstOrDefault(rf => rf.GetEbookSettings()?.QualityProfileId.HasValue == true);
+            RootFolder audiobookRootFolder = null;
+            if (!string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath))
+            {
+                audiobookRootFolder = rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.AudiobookRootFolderPath));
+            }
+
+            if (wantAudiobook)
+            {
+                ValidateRequestedRootFolder(
+                    string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath) ? author.RootFolderPath : author.AudiobookRootFolderPath,
+                    string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath) ? rootFolderByPath : audiobookRootFolder,
+                    BookMediaType.Audiobook);
+            }
+
+            if (audiobookRootFolder == null && RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath?.GetAudiobookSettings()))
+            {
+                audiobookRootFolder = rootFolderByPath;
+            }
+
+            audiobookRootFolder ??= rootFolders.FirstOrDefault(rf =>
+                RootFolderDefaultResolver.IsCompatibleRootFolder(rf, FolderType.Audiobook) &&
+                RootFolderSettingsResolver.HasRequiredProfiles(rf.GetAudiobookSettings()));
+
+            RootFolder ebookRootFolder = null;
+            if (!string.IsNullOrWhiteSpace(author.EbookRootFolderPath))
+            {
+                ebookRootFolder = rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.EbookRootFolderPath));
+            }
+
+            if (wantEbook)
+            {
+                ValidateRequestedRootFolder(
+                    string.IsNullOrWhiteSpace(author.EbookRootFolderPath) ? author.RootFolderPath : author.EbookRootFolderPath,
+                    string.IsNullOrWhiteSpace(author.EbookRootFolderPath) ? rootFolderByPath : ebookRootFolder,
+                    BookMediaType.Ebook);
+            }
+
+            if (ebookRootFolder == null && RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath?.GetEbookSettings()))
+            {
+                ebookRootFolder = rootFolderByPath;
+            }
+
+            ebookRootFolder ??= rootFolders.FirstOrDefault(rf =>
+                RootFolderDefaultResolver.IsCompatibleRootFolder(rf, FolderType.Ebook) &&
+                RootFolderSettingsResolver.HasRequiredProfiles(rf.GetEbookSettings()));
 
 	            var requestedAudiobookRootFolder = !string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath)
-	                ? _rootFolderService.GetBestRootFolder(author.AudiobookRootFolderPath, rootFolders)
+	                ? rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.AudiobookRootFolderPath))
 	                : rootFolderByPath;
 	            var requestedEbookRootFolder = !string.IsNullOrWhiteSpace(author.EbookRootFolderPath)
-	                ? _rootFolderService.GetBestRootFolder(author.EbookRootFolderPath, rootFolders)
+	                ? rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.EbookRootFolderPath))
 	                : rootFolderByPath;
 
 	            var fillAudiobookSettings = wantAudiobook;
 	            var fillEbookSettings = wantEbook;
 
-	            if (wantAudiobook &&
+	            if (!requestedBothMediaTypes && HttpContext.GetReadarrFacadeContext() == null && wantAudiobook &&
 	                !wantEbook &&
 	                ShouldFillSiblingFromMixedRoot(author, requestedAudiobookRootFolder, BookMediaType.Ebook))
 	            {
@@ -1749,7 +1856,7 @@ namespace Chaptarr.Api.V1.Books
 	                fillEbookSettings = true;
 	            }
 
-	            if (wantEbook &&
+	            if (!requestedBothMediaTypes && HttpContext.GetReadarrFacadeContext() == null && wantEbook &&
 	                !wantAudiobook &&
 	                ShouldFillSiblingFromMixedRoot(author, requestedEbookRootFolder, BookMediaType.Audiobook))
 	            {
@@ -1857,8 +1964,6 @@ namespace Chaptarr.Api.V1.Books
             }
 
             var book = _bookService.GetBook(bookResource.Id);
-            var wasMonitoredForFacadeMediaType = facadeContext != null &&
-                                                 book.IsMonitoredForMediaType(facadeContext.MediaType);
             var beforeMonitoredEditionId = book?.Editions?.SingleOrDefault(e => e != null && e.Monitored)?.Id;
 
             var model = bookResource.ToModel(book, facadeContext);
@@ -1882,12 +1987,16 @@ namespace Chaptarr.Api.V1.Books
             if (ShouldApplyFacadeSpecificBookMonitoring(
                     facadeContext,
                     model.MediaType,
-                    wasMonitoredForFacadeMediaType,
                     bookResource.Monitored))
             {
                 // A facade request changes only its media side. The generic update would overwrite
                 // the other side; submitted edition selection is persisted independently below.
+                // Explicit requests resume later acquisition even when the book was already selected.
+                // Searches and lookups alone never change these saved monitoring settings.
                 _authorService.EnsureMediaTypeMonitoring(model.AuthorId, facadeContext.MediaType);
+                model.AddOptions ??= new AddBookOptions();
+                model.AddOptions.AddType = BookAddType.Manual;
+                _bookService.SetAddOptions(new[] { model });
                 _bookService.SetMonitoredForMediaType(new[] { model.Id }, facadeContext.MediaType, true);
             }
             else
@@ -1910,10 +2019,9 @@ namespace Chaptarr.Api.V1.Books
         internal static bool ShouldApplyFacadeSpecificBookMonitoring(
             ReadarrFacadeContext facadeContext,
             BookMediaType bookMediaType,
-            bool wasMonitored,
             bool requestedMonitored)
         {
-            if (facadeContext == null || wasMonitored || !requestedMonitored)
+            if (facadeContext == null || !requestedMonitored)
             {
                 return false;
             }

@@ -457,7 +457,7 @@ namespace NzbDrone.Core.Books.Services
 
                 // Fire AuthorRefreshCompleteEvent directly to update GUI
                 // This bypasses the refresh command entirely, avoiding any scan loops
-                _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(addedAuthor));
+                _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(addedAuthor, author));
 
                 overallStopwatch.Stop();
                 _logger.Debug("[DB-TIMING] COMPLETE AddAuthorAsync for '{0}' took {1}ms total ({2} books, {3} editions)",
@@ -1055,6 +1055,11 @@ namespace NzbDrone.Core.Books.Services
 
         private async Task<Author> HandleExistingAuthorAsync(Author existingAuthor, Author remoteAuthor, MonitoringConfig config)
         {
+            var initializeAudiobook = config?.CreateAudiobook == true &&
+                (!existingAuthor.AudiobookQualityProfileId.HasValue || string.IsNullOrWhiteSpace(existingAuthor.AudiobookRootFolderPath));
+            var initializeEbook = config?.CreateEbook == true &&
+                (!existingAuthor.EbookQualityProfileId.HasValue || string.IsNullOrWhiteSpace(existingAuthor.EbookRootFolderPath));
+
             existingAuthor = MergeMissingProviderIds(existingAuthor, remoteAuthor);
             existingAuthor = ApplyAuthorMetadata(existingAuthor, remoteAuthor);
             SeedAuthorSyncMetadata(existingAuthor, remoteAuthor, null);
@@ -1067,32 +1072,22 @@ namespace NzbDrone.Core.Books.Services
             // Books must see the same fill-missing settings that will be persisted for this media side.
             existingAuthor = ApplyExistingAuthorProgressiveSettings(existingAuthor, config);
 
+            var audiobookInitialMode = initializeAudiobook ? remoteAuthor.AddOptions?.AudiobookMonitor : null;
+            var ebookInitialMode = initializeEbook ? remoteAuthor.AddOptions?.EbookMonitor : null;
+            if (audiobookInitialMode.HasValue || ebookInitialMode.HasValue)
+            {
+                // Initial policy belongs to first media-side setup, not to the presence
+                // of catalog rows. Retain it until the scan has attached existing files.
+                existingAuthor.AddOptions ??= new AddAuthorOptions();
+                existingAuthor.AddOptions.AudiobookMonitor ??= audiobookInitialMode;
+                existingAuthor.AddOptions.EbookMonitor ??= ebookInitialMode;
+                _authorService.SetAddOptions(existingAuthor);
+            }
+
             // Ensure locally missing media types are backfilled when an effective metadata profile exists.
             // CreateAudiobook/CreateEbook controls settings intent, not whether the server catalog may enter
             // the canonical profile/retention pipeline.
             var existingBooks = _bookService.GetBooksByAuthor(existingAuthor.Id) ?? new List<Book>();
-
-            var requestedProviderIds = GetRequestedBookProviderIdsByMediaType(config);
-            if (requestedProviderIds.Any(requested =>
-                    remoteAuthor?.Books?.Any(remoteBook =>
-                        remoteBook != null &&
-                        remoteBook.MediaType == requested.Key &&
-                        requested.Value.Any(providerId => BookMatchesProviderId(remoteBook, providerId))) == true) &&
-                _refreshAuthorService != null)
-            {
-                // The full author blob remains authoritative. A specific-work request may ask an
-                // existing author to reconcile a Book that is absent locally, but it never hydrates
-                // from a direct work/edition lookup or inserts a hand-built row.
-                _logger.Debug(
-                    "[HYDRATE] Reconciling authoritative author blob for existing author '{0}' before resolving requested work(s) [{1}]",
-                    existingAuthor.Name,
-                    string.Join(",", requestedProviderIds
-                        .SelectMany(requested => requested.Value.Select(providerId => $"{requested.Key}:{providerId}"))
-                        .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)));
-                _refreshAuthorService.ReconcileAuthorBlob(existingAuthor, remoteAuthor);
-                existingAuthor = _authorService.GetAuthor(existingAuthor.Id) ?? existingAuthor;
-                existingBooks = _bookService.GetBooksByAuthor(existingAuthor.Id) ?? new List<Book>();
-            }
 
             var hasAudiobook = existingBooks.Any(b => b.MediaType == BookMediaType.Audiobook);
             var hasEbook = existingBooks.Any(b => b.MediaType == BookMediaType.Ebook);
@@ -1126,13 +1121,28 @@ namespace NzbDrone.Core.Books.Services
                     await ProcessSeriesForAuthor(existingAuthor, seriesToBackfill, config);
                 }
 
-                _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(existingAuthor));
+                _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(existingAuthor, remoteAuthor));
                 _logger.Debug("[HYDRATE] Backfill complete for existing author '{0}'", existingAuthor.Name);
             }
             else
             {
                 _logger.Info("Author '{0}' already exists in database with {1} books (audiobook={2}, ebook={3})",
                     existingAuthor.Name, existingBooks.Count, hasAudiobook, hasEbook);
+            }
+
+            var requestedProviderIds = GetRequestedBookProviderIdsByMediaType(config);
+            if (requestedProviderIds.Any(requested =>
+                    remoteAuthor?.Books?.Any(remoteBook =>
+                        remoteBook != null &&
+                        remoteBook.MediaType == requested.Key &&
+                        requested.Value.Any(providerId => BookMatchesProviderId(remoteBook, providerId))) == true) &&
+                _refreshAuthorService != null)
+            {
+                // Initialize a missing media catalog with its one-time policy before refresh.
+                // Otherwise the first request for the second format uses the ongoing policy
+                // instead. Reconciliation still consumes only the authoritative author blob.
+                _refreshAuthorService.ReconcileAuthorBlob(existingAuthor, remoteAuthor);
+                existingAuthor = _authorService.GetAuthor(existingAuthor.Id) ?? existingAuthor;
             }
 
             return existingAuthor;

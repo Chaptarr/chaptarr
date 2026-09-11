@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO.Abstractions;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -7,6 +8,11 @@ using Chaptarr.Api.V1.RootFolders;
 using Chaptarr.Core.Test;
 using Chaptarr.Http.REST;
 using FluentValidation.Results;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
@@ -65,6 +71,23 @@ namespace Chaptarr.Core.Test.Api
             public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders) => throw new NotImplementedException();
         }
 
+        private class ValidationEnvironmentProxy<T> : DispatchProxy where T : class
+        {
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                return method.Name switch
+                {
+                    "get_RecycleBin" => string.Empty,
+                    "get_StartUpFolder" => @"C:\application".AsOsAgnostic(),
+                    "get_IsWindowsService" => false,
+                    nameof(IDiskProvider.FolderExists) => true,
+                    nameof(IDiskProvider.FolderWritable) => true,
+                    nameof(IDiskProvider.GetFileInfos) => new List<IFileInfo>(),
+                    _ => throw new NotImplementedException(method.Name)
+                };
+            }
+        }
+
         private sealed class StubAuthorService : IAuthorService
         {
             private readonly List<Author> _authors;
@@ -93,7 +116,7 @@ namespace Chaptarr.Core.Test.Api
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -137,29 +160,39 @@ namespace Chaptarr.Core.Test.Api
                     ConfigServiceTestProxy.Create(),
                     localizationService,
                     DispatchProxy.Create<IBroadcastSignalRMessage, ThrowingProxy<IBroadcastSignalRMessage>>(),
-                    new RecycleBinValidator(DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>()),
+                    new RecycleBinValidator(DispatchProxy.Create<IConfigService, ValidationEnvironmentProxy<IConfigService>>()),
                     new RootFolderValidator(rootFolderService),
-                    new PathExistsValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
+                    new PathExistsValidator(DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>()),
                     new MappedNetworkDriveValidator(
-                        DispatchProxy.Create<IRuntimeInfo, ThrowingProxy<IRuntimeInfo>>(),
-                        DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
-                    new StartupFolderValidator(DispatchProxy.Create<IAppFolderInfo, ThrowingProxy<IAppFolderInfo>>()),
+                        DispatchProxy.Create<IRuntimeInfo, ValidationEnvironmentProxy<IRuntimeInfo>>(),
+                        DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>()),
+                    new StartupFolderValidator(DispatchProxy.Create<IAppFolderInfo, ValidationEnvironmentProxy<IAppFolderInfo>>()),
                     new SystemFolderValidator(),
-                    new FolderWritableValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
-                    new FolderReadableValidator(DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>()),
+                    new FolderWritableValidator(DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>()),
+                    new FolderReadableValidator(DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>()),
                     new QualityProfileExistsValidator(new TestQualityProfileService()),
                     new MetadataProfileExistsValidator(new TestMetadataProfileService()))
             {
             }
 
-            public ValidationResult ValidatePost(RootFolderResource resource)
-            {
-                return PostValidator.Validate(resource);
-            }
-
             public ValidationResult ValidateShared(RootFolderResource resource)
             {
                 return SharedValidator.Validate(resource);
+            }
+
+            public void ValidateRequest(string verb, RootFolderResource resource)
+            {
+                var http = new DefaultHttpContext();
+                http.Request.Method = verb;
+                http.Request.Path = "/api/v1/rootfolder";
+                var descriptor = new ControllerActionDescriptor
+                {
+                    MethodInfo = typeof(RootFolderController).GetMethod(verb == "POST" ? nameof(CreateRootFolder) : nameof(UpdateRootFolder))
+                };
+                var action = new ActionContext(http, new RouteData(), descriptor);
+                ControllerContext = new ControllerContext(action);
+                OnActionExecuting(new ActionExecutingContext(action, new List<IFilterMetadata>(),
+                    new Dictionary<string, object> { ["rootFolderResource"] = resource }, this));
             }
         }
 
@@ -200,10 +233,10 @@ namespace Chaptarr.Core.Test.Api
         public void post_should_reject_a_single_type_root_without_profile_defaults(FolderType folderType)
         {
             var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
-            var result = controller.ValidatePost(new RootFolderResource
+            var result = controller.ValidateShared(new RootFolderResource
             {
                 Name = "Books",
-                Path = "/books".AsOsAgnostic(),
+                Path = @"C:\books".AsOsAgnostic(),
                 FolderType = (int)folderType
             });
 
@@ -216,41 +249,41 @@ namespace Chaptarr.Core.Test.Api
         public void post_should_reject_a_mixed_root_without_any_media_defaults()
         {
             var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
-            var result = controller.ValidatePost(new RootFolderResource
+            var result = controller.ValidateShared(new RootFolderResource
             {
                 Name = "Books",
-                Path = "/books".AsOsAgnostic(),
+                Path = @"C:\books".AsOsAgnostic(),
                 FolderType = (int)FolderType.Mixed
             });
 
             Assert.That(result.IsValid, Is.False);
-            Assert.That(result.Errors.Any(failure => failure.ErrorMessage.Contains("at least one media type")), Is.True);
+            Assert.That(result.Errors.Any(failure => failure.PropertyName == "audiobookQualityProfileId"), Is.True);
         }
 
         [Test]
-        public void post_should_allow_a_mixed_root_with_one_complete_media_side_and_no_monitoring_defaults()
+        public void post_should_reject_a_mixed_root_with_one_complete_media_side_and_no_monitoring_defaults()
         {
             var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
-            var result = controller.ValidatePost(new RootFolderResource
+            var result = controller.ValidateShared(new RootFolderResource
             {
                 Name = "Books",
-                Path = "/books".AsOsAgnostic(),
+                Path = @"C:\books".AsOsAgnostic(),
                 FolderType = (int)FolderType.Mixed,
                 AudiobookQualityProfileId = 10,
                 AudiobookMetadataProfileId = 20
             });
 
-            Assert.That(result.IsValid, Is.True, () => string.Join(Environment.NewLine, result.Errors));
+            Assert.That(result.Errors.Select(failure => failure.PropertyName), Is.EquivalentTo(new[] { "ebookQualityProfileId", "ebookMetadataProfileId" }));
         }
 
         [Test]
         public void post_should_reject_an_incomplete_second_side_on_a_mixed_root()
         {
             var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
-            var result = controller.ValidatePost(new RootFolderResource
+            var result = controller.ValidateShared(new RootFolderResource
             {
                 Name = "Books",
-                Path = "/books".AsOsAgnostic(),
+                Path = @"C:\books".AsOsAgnostic(),
                 FolderType = (int)FolderType.Mixed,
                 AudiobookQualityProfileId = 10,
                 AudiobookMetadataProfileId = 20,
@@ -259,6 +292,73 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.That(result.IsValid, Is.False);
             Assert.That(result.Errors.Any(failure => failure.PropertyName.StartsWith("ebook", StringComparison.OrdinalIgnoreCase)), Is.True);
+        }
+
+        [Test]
+        public void request_should_validate_profiles_for_each_supported_format(
+            [Values("POST", "PUT")] string verb, [Values] FolderType folderType,
+            [Values(false, true)] bool structured, [Values(false, true)] bool complete)
+        {
+            var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
+            var resource = new RootFolderResource
+            {
+                Id = verb == "PUT" ? 42 : 0,
+                Name = "Books",
+                Path = @"C:\books".AsOsAgnostic(),
+                FolderType = (int)folderType
+            };
+            foreach (var side in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            {
+                if (folderType == FolderType.Audiobook && side != BookMediaType.Audiobook ||
+                    folderType == FolderType.Ebook && side != BookMediaType.Ebook)
+                {
+                    continue;
+                }
+
+                var settings = new MediaTypeSettingsResource { QualityProfileId = 10, MetadataProfileId = complete ? 20 : null };
+                if (structured)
+                {
+                    if (side == BookMediaType.Audiobook) { resource.Audiobook = settings; }
+                    else { resource.Ebook = settings; }
+                }
+                else if (side == BookMediaType.Audiobook)
+                {
+                    resource.AudiobookQualityProfileId = settings.QualityProfileId;
+                    resource.AudiobookMetadataProfileId = settings.MetadataProfileId;
+                }
+                else
+                {
+                    resource.EbookQualityProfileId = settings.QualityProfileId;
+                    resource.EbookMetadataProfileId = settings.MetadataProfileId;
+                }
+            }
+
+            if (complete)
+            {
+                Assert.DoesNotThrow(() => controller.ValidateRequest(verb, resource));
+            }
+            else
+            {
+                var error = Assert.Throws<FluentValidation.ValidationException>(() => controller.ValidateRequest(verb, resource));
+                var expected = folderType == FolderType.Mixed
+                    ? new[] { "audiobookMetadataProfileId", "ebookMetadataProfileId" }
+                    : new[] { folderType == FolderType.Audiobook ? "audiobookMetadataProfileId" : "ebookMetadataProfileId" };
+                Assert.That(error.Errors.Select(failure => failure.PropertyName), Is.EquivalentTo(expected));
+            }
+        }
+
+        [Test]
+        public void request_should_reject_an_omitted_mixed_side([Values("POST", "PUT")] string verb)
+        {
+            var controller = BuildController(new StubRootFolderService(), new StubAuthorService(new List<Author>()));
+            var resource = JsonSerializer.Deserialize<RootFolderResource>(
+                "{\"id\":42,\"name\":\"Books\",\"folderType\":0,\"audiobookQualityProfileId\":10,\"audiobookMetadataProfileId\":20}",
+                STJson.GetSerializerSettings());
+            resource.Path = @"C:\books".AsOsAgnostic();
+
+            var error = Assert.Throws<FluentValidation.ValidationException>(() => controller.ValidateRequest(verb, resource));
+
+            Assert.That(error.Errors.Select(failure => failure.PropertyName), Is.EquivalentTo(new[] { "ebookQualityProfileId", "ebookMetadataProfileId" }));
         }
 
         [Test]

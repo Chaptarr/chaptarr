@@ -12671,6 +12671,9 @@
           },
           "deleteFiles": {
             "type": "boolean"
+          },
+          "addImportListExclusion": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -13952,6 +13955,10 @@
             "format": "int32"
           },
           "bookCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "availableBookCount": {
             "type": "integer",
             "format": "int32"
           },
@@ -17815,6 +17822,10 @@
           },
           "searchForMissingBooks": {
             "type": "boolean"
+          },
+          "lastSelectedMediaType": {
+            "type": "string",
+            "nullable": true
           },
           "createdAt": {
             "type": "string",

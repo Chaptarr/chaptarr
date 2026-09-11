@@ -416,7 +416,7 @@ class EditRootFolderModalContent extends Component {
                           type={inputTypes.SELECT}
                           name="audiobookMonitorExistingMode"
                           values={monitorOptions}
-                          {...(audiobookMonitorExistingMode || { value: 'all' })}
+                          {...(audiobookMonitorExistingMode || { value: 'none' })}
                           onChange={onInputChange}
                         />
                       </FormGroup>
@@ -561,7 +561,7 @@ class EditRootFolderModalContent extends Component {
                           type={inputTypes.SELECT}
                           name="ebookMonitorExistingMode"
                           values={monitorOptions}
-                          {...(ebookMonitorExistingMode || { value: 'all' })}
+                          {...(ebookMonitorExistingMode || { value: 'none' })}
                           onChange={onInputChange}
                         />
                       </FormGroup>

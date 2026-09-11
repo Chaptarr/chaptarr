@@ -313,7 +313,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new System.NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new System.NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new System.NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new System.NotImplementedException();
+            public void SetAddOptions(Author author) => throw new System.NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new System.NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new System.NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new System.NotImplementedException();

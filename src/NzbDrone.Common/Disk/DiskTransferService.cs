@@ -134,14 +134,9 @@ namespace NzbDrone.Common.Disk
 
             if (mode.HasFlag(TransferMode.Move))
             {
-                var totalSize = _diskProvider.GetFileInfos(sourcePath).Sum(v => v.Length);
-
-                if (totalSize > (100 * 1024L * 1024L))
-                {
-                    throw new IOException($"Large files still exist in {sourcePath} after folder move, not deleting source folder");
-                }
-
-                _diskProvider.DeleteFolder(sourcePath, true);
+                // A completed move only authorizes empty-folder cleanup. Skipped files or
+                // late arrivals must survive regardless of their size.
+                _diskProvider.DeleteFolder(sourcePath, false);
             }
 
             return result;

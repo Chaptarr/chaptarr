@@ -140,6 +140,17 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        private class EmptyDeletionContextProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo method, object[] args) => method.Name switch
+            {
+                "GetFilePathOwnership" or "GetFilesByAuthor" => new List<BookFile>(),
+                "All" => new List<Author>(),
+                "DeleteRecordsForAuthorDeletion" => null,
+                _ => throw new NotImplementedException(method.Name)
+            };
+        }
+
         private class RecordingMediaFileServiceProxy : DispatchProxy
         {
             public List<BookFile> Deleted { get; } = new();
@@ -172,6 +183,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 switch (targetMethod?.Name)
                 {
+                    case nameof(IDiskProvider.GetFileAttributes):
+                        return FileAttributes.Directory;
+
                     case nameof(IDiskProvider.FolderExists):
                         return ExistingFolders.Contains((string)args[0]);
 
@@ -185,6 +199,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                             : Array.Empty<string>();
 
                     case nameof(IDiskProvider.DeleteFolder):
+                        Assert.That(args[1], Is.False, "empty cleanup must never recursively delete contents");
                         DeletedFolders.Add((string)args[0]);
                         return null;
 
@@ -273,7 +288,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 diskProvider,
                 recycleBinProvider,
                 mediaFileService,
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 eventAggregator,
                 new StubRootFolderService(rootFolders),
@@ -304,10 +319,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                 diskProvider,
                 new RecordingRecycleBinProvider(),
                 DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, DeleteEmptyFoldersConfigProxy>(),
                 new RecordingEventAggregator(),
-                new StubRootFolderService(),
+                new StubRootFolderService(authorRoots.Select(path => new RootFolder { Path = path.GetParentPath() }).ToArray()),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
                 LogManager.GetCurrentClassLogger());
 
@@ -347,7 +362,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 // The row purge for this same event runs concurrently, so a query here can come back
                 // empty and silently leave the files on disk. The snapshot must be used instead.
                 DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, DeleteEmptyFoldersConfigProxy>(),
                 new RecordingEventAggregator(),
                 new StubRootFolderService(new RootFolder { Id = 1, Path = "/ebooks" }, new RootFolder { Id = 2, Path = "/audiobooks" }),
@@ -466,15 +481,15 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var rootFolderService = new StubRootFolderService(new RootFolder
             {
-                Path = "/data/media/books",
+                Path = @"C:\data\media\books".AsOsAgnostic(),
                 FolderType = FolderType.Mixed
             });
 
             var service = new MediaFileDeletionService(
                 DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>(),
                 recycleBinProvider,
-                DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IMediaFileService, EmptyDeletionContextProxy>(),
+                DispatchProxy.Create<IAuthorRepository, EmptyDeletionContextProxy>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 eventAggregator,
                 rootFolderService,
@@ -485,32 +500,33 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "Test Author",
-                Path = "/data/media/books"
+                Path = @"C:\data\media\books".AsOsAgnostic()
             };
 
-            service.HandleAsync(new AuthorDeletedEvent(author, deleteFiles: true, addImportListExclusion: false));
+            var error = Assert.Throws<NzbDroneClientException>(() => service.DeleteAuthorFiles(new List<Author> { author }));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
 
             Assert.That(recycleBinProvider.DeletedFolders, Is.Empty);
-            Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Not.Empty);
+            Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Empty);
         }
 
         [Test]
-        public void should_not_throw_and_should_refuse_deleting_parent_of_root_folder_on_author_delete()
+        public void should_report_conflict_when_deleting_parent_of_root_folder_on_author_delete()
         {
             var recycleBinProvider = new RecordingRecycleBinProvider();
             var eventAggregator = new RecordingEventAggregator();
 
             var rootFolderService = new StubRootFolderService(new RootFolder
             {
-                Path = "/data/media/books",
+                Path = @"C:\data\media\books".AsOsAgnostic(),
                 FolderType = FolderType.Mixed
             });
 
             var service = new MediaFileDeletionService(
                 DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>(),
                 recycleBinProvider,
-                DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IMediaFileService, EmptyDeletionContextProxy>(),
+                DispatchProxy.Create<IAuthorRepository, EmptyDeletionContextProxy>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 eventAggregator,
                 rootFolderService,
@@ -521,14 +537,14 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "Test Author",
-                Path = "/data/media"
+                Path = @"C:\data\media".AsOsAgnostic()
             };
 
-            Assert.DoesNotThrow(() =>
-                service.HandleAsync(new AuthorDeletedEvent(author, deleteFiles: true, addImportListExclusion: false)));
+            var error = Assert.Throws<NzbDroneClientException>(() => service.DeleteAuthorFiles(new List<Author> { author }));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
 
             Assert.That(recycleBinProvider.DeletedFolders, Is.Empty);
-            Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Not.Empty);
+            Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Empty);
         }
 
         [Test]
@@ -556,7 +572,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 diskProvider,
                 recycleBinProvider,
                 DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 eventAggregator,
                 rootFolderService,
@@ -584,7 +600,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 diskProvider,
                 recycleBinProvider,
                 DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 new RecordingEventAggregator(),
                 new StubRootFolderService(),
@@ -619,7 +635,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 diskProvider,
                 recycleBinProvider,
                 mediaFileService,
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 eventAggregator,
                 new StubRootFolderService(),

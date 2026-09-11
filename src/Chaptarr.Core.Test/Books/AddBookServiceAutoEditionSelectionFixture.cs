@@ -13,6 +13,8 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.IndexerSearch;
+using NzbDrone.Core.Messaging.Commands;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -55,6 +57,24 @@ namespace Chaptarr.Core.Test.Books
             public void SearchForRecentlyAdded(int authorId)
             {
                 AuthorIds.Add(authorId);
+            }
+        }
+
+        private class CommandRepositoryProxy : DispatchProxy
+        {
+            public List<Command> Commands { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name == nameof(ICommandRepository.Insert))
+                {
+                    var model = (CommandModel)args[0];
+                    model.Id = Commands.Count + 1;
+                    Commands.Add(model.Body);
+                    return model;
+                }
+
+                throw new NotImplementedException(targetMethod.Name);
             }
         }
 
@@ -133,7 +153,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
 
             public void EnsureMediaTypeMonitoring(int authorId, string mediaType)
@@ -170,6 +190,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> AddOptionsBooks { get; private set; }
             public Book AddedBook { get; private set; }
             public Book UpdatedBook { get; private set; }
+            public bool FindExistingBook { get; set; }
 
             public Book UpdateBook(Book book)
             {
@@ -177,7 +198,7 @@ namespace Chaptarr.Core.Test.Books
                 return book;
             }
 
-            public Book GetBook(int bookId) => throw new NotImplementedException();
+            public Book GetBook(int bookId) => AuthorBooks.Single(book => book.Id == bookId);
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
@@ -205,7 +226,8 @@ namespace Chaptarr.Core.Test.Books
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
-            public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => null;
+            public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => FindExistingBook
+                ? FindAllByWorkProviderId(provider, providerId, mediaType).FirstOrDefault() : null;
             public List<Book> FindAllByProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public List<Book> FindAllByWorkProviderId(string provider, string providerId, BookMediaType mediaType)
             {
@@ -223,7 +245,13 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAllBooks() => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
-            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored) => throw new NotImplementedException();
+            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored)
+            {
+                foreach (var book in AuthorBooks.Where(book => ids.Contains(book.Id)))
+                {
+                    book.SetMonitoredForMediaType(mediaType, monitored);
+                }
+            }
             public void UpdateLastSearchTime(List<Book> books) => throw new NotImplementedException();
             public NzbDrone.Core.Datastore.PagingSpec<Book> BooksWithoutFiles(NzbDrone.Core.Datastore.PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime start, DateTime end, bool includeUnmonitored) => throw new NotImplementedException();
@@ -316,7 +344,8 @@ namespace Chaptarr.Core.Test.Books
             IBookAddedService bookAddedService = null,
             IImportListExclusionService importListExclusionService = null,
             IProvideBookInfo bookInfo = null,
-            IBookMonitoredService bookMonitoredService = null)
+            IBookMonitoredService bookMonitoredService = null,
+            IManageCommandQueue commandQueue = null)
         {
             return new AddBookService(
                 authorService,
@@ -335,7 +364,111 @@ namespace Chaptarr.Core.Test.Books
                 new EditionSelector(LogManager.GetCurrentClassLogger()),
                 new EditionMetadataProfileFilter(new TestTermMatcherService()),
                 metadataProfileService,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(),
+                commandQueue);
+        }
+
+        [Test]
+        public async Task root_scoped_request_should_preserve_settings_and_search_only_its_target(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(false, true)] bool configured,
+            [Values(MonitorTypes.None, MonitorTypes.All)] MonitorTypes initial,
+            [Values(false, true)] bool searchNow)
+        {
+            var audio = mediaType == BookMediaType.Audiobook;
+            var author = new Author
+            {
+                Id = 42,
+                HardcoverAuthorId = "hc:777",
+                AudiobookQualityProfileId = !audio || configured ? 1 : null,
+                AudiobookRootFolderPath = !audio || configured ? @"C:\Audio" : null,
+                EbookQualityProfileId = audio || configured ? 2 : null,
+                EbookRootFolderPath = audio || configured ? @"C:\Books" : null,
+                AudiobookMonitored = false,
+                EbookMonitored = false,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.New,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
+                AddOptions = configured ? null : new AddAuthorOptions
+                {
+                    AudiobookMonitor = audio ? initial : null,
+                    EbookMonitor = audio ? null : initial
+                }
+            };
+            var target = new Book { Id = 101, AuthorId = author.Id, Author = author, HardcoverBookId = "hc:1001", MediaType = mediaType };
+            var sibling = new Book { Id = 102, AuthorId = author.Id, Author = author, HardcoverBookId = "hc:1002", MediaType = mediaType };
+            var selectedSibling = new Book { Id = 104, AuthorId = author.Id, Author = author, HardcoverBookId = "hc:1003", MediaType = mediaType };
+            selectedSibling.SetMonitored(true);
+            var opposite = new Book { Id = 103, AuthorId = author.Id, Author = author, HardcoverBookId = "hc:1001", MediaType = audio ? BookMediaType.Ebook : BookMediaType.Audiobook };
+            var books = new StubBookService { AuthorBooks = new List<Book> { target, sibling, selectedSibling, opposite }, FindExistingBook = true };
+            var library = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)library).AddedAuthor = author;
+            var commandRepository = DispatchProxy.Create<ICommandRepository, CommandRepositoryProxy>();
+            var queue = new CommandQueueManager(commandRepository, null, null, LogManager.GetCurrentClassLogger());
+            var bookAdded = new RecordingBookAddedService();
+            var service = BuildService(new StubAuthorService(author, (_, _) => author), books,
+                new StubEditionService(Array.Empty<Edition>()), new StubMetadataProfileService(), library, bookAdded,
+                DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>(), commandQueue: queue);
+            var result = await service.AddBook(new Book
+            {
+                HardcoverBookId = "hc:1001",
+                MediaType = mediaType,
+                Author = new Author
+                {
+                    HardcoverAuthorId = "hc:777",
+                    AudiobookMonitored = false,
+                    EbookMonitored = false,
+                    AudiobookMonitorNewItems = NewItemMonitorTypes.New,
+                    EbookMonitorNewItems = NewItemMonitorTypes.None,
+                    AddOptions = new AddAuthorOptions
+                    {
+                        Monitor = MonitorTypes.SpecificBook,
+                        AudiobookMonitor = audio ? initial : null,
+                        EbookMonitor = audio ? null : initial
+                    }
+                },
+                AddOptions = new AddBookOptions { SearchForNewBook = searchNow }
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.IsMonitored(), Is.True);
+                Assert.That(sibling.IsMonitored(), Is.False);
+                Assert.That(selectedSibling.IsMonitored(), Is.True);
+                Assert.That(opposite.IsMonitored(), Is.False);
+                Assert.That(author.AudiobookMonitored, Is.EqualTo(audio));
+                Assert.That(author.EbookMonitored, Is.EqualTo(!audio));
+                Assert.That(author.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+                Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+                Assert.That(bookAdded.AuthorIds, Is.Empty);
+                Assert.That(books.UpdatedBook, Is.Null);
+                Assert.That(target.AddOptions.AddType, Is.EqualTo(BookAddType.Manual));
+                var commands = ((CommandRepositoryProxy)commandRepository).Commands.OfType<BookSearchCommand>().ToList();
+                Assert.That(commands.Count, Is.EqualTo(searchNow ? 1 : 0));
+                if (searchNow)
+                {
+                    Assert.That(commands.Single().BookIds, Is.EqualTo(new[] { target.Id }));
+                    Assert.That(commands.Single().Trigger, Is.EqualTo(CommandTrigger.Manual));
+                    var repeated = queue.Push(new BookSearchCommand(new List<int> { target.Id })
+                    {
+                        Trigger = CommandTrigger.Manual
+                    }, trigger: CommandTrigger.Manual);
+                    Assert.That(repeated.Body, Is.SameAs(commands.Single()));
+                    Assert.That(repeated.Trigger, Is.EqualTo(CommandTrigger.Manual));
+                }
+                var config = ((AuthorLibraryProxy)library).Config;
+                if (configured)
+                {
+                    Assert.That(config, Is.Null);
+                }
+                else
+                {
+                    Assert.That(audio ? config.AudiobookMonitorExistingMode : config.EbookMonitorExistingMode, Is.EqualTo(initial));
+                    Assert.That(audio ? config.AudiobookMonitored : config.EbookMonitored, Is.False);
+                    Assert.That(audio ? config.AudiobookBooksToSearch : config.EbookBooksToSearch,
+                        Is.EqualTo(searchNow ? new[] { "hc:1001" } : null));
+                    Assert.That(target.AddOptions.AddType, Is.EqualTo(BookAddType.Manual));
+                }
+            });
         }
 
         private static void InvokeEnsureAutoSelectedEdition(AddBookService service, Book book)

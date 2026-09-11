@@ -91,14 +91,13 @@ export default {
       outputProfile: 'default',
       useSsl: false,
       // REMOVED: defaultQualityProfileId, defaultMetadataProfileId, defaultAudiobookMetadataProfileId, defaultEbookMetadataProfileId - no longer used
-      // Per-media-type monitoring defaults. The gate is independent from the
-      // one-time current-book seed and the ongoing catalog-relative policy.
+      // Enable author monitoring, but make selecting current and new books opt-in.
       audiobookMonitored: true,
-      audiobookMonitorExistingMode: 'all',
-      audiobookMonitorNewItems: 'all',
+      audiobookMonitorExistingMode: 'none',
+      audiobookMonitorNewItems: 'none',
       ebookMonitored: true,
-      ebookMonitorExistingMode: 'all',
-      ebookMonitorNewItems: 'all',
+      ebookMonitorExistingMode: 'none',
+      ebookMonitorNewItems: 'none',
       // Per-media-type profile settings (null means unconfigured; UI auto-selects defaults)
       audiobookQualityProfileId: null,
       audiobookMetadataProfileId: null,

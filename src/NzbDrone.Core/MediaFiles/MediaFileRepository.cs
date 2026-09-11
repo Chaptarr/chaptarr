@@ -13,6 +13,7 @@ namespace NzbDrone.Core.MediaFiles
     public interface IMediaFileRepository : IBasicRepository<BookFile>
     {
         List<BookFile> GetFilesByAuthor(int authorId);
+        List<BookFile> GetFilePathOwnership();
         List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType);
         List<BookFile> GetFilesByBook(int bookId);
         List<BookFile> GetFilesByBooks(List<int> bookIds);
@@ -75,6 +76,19 @@ namespace NzbDrone.Core.MediaFiles
         public List<BookFile> GetFilesByAuthor(int authorId)
         {
             return Query(Builder().Where<Book>(b => b.AuthorId == authorId));
+        }
+
+        public List<BookFile> GetFilePathOwnership()
+        {
+            // Physical replicas can be inside a deletion target even when their primary and
+            // author paths are elsewhere. Read only ownership/path fields, not the catalog graph.
+            using var connection = _database.OpenConnection();
+            return connection.Query<BookFile, Author, BookFile>(
+                @"SELECT bf.""Id"", bf.""Path"", bf.""ReplicaPaths"", b.""AuthorId"" AS ""Id""
+                  FROM ""BookFiles"" bf
+                  LEFT JOIN ""Editions"" e ON e.""Id"" = bf.""EditionId""
+                  LEFT JOIN ""Books"" b ON b.""Id"" = e.""BookId""",
+                (file, author) => { file.Author = author; return file; }, splitOn: "Id").ToList();
         }
 
         public List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)

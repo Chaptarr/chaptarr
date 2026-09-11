@@ -56,7 +56,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -153,6 +153,11 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IDiskProvider.GetFileAttributes))
+                {
+                    return FileAttributes.Directory;
+                }
+
                 if (targetMethod?.Name == nameof(IDiskProvider.FolderExists))
                 {
                     return ExistingFolders.Contains((string)args[0]);
@@ -171,6 +176,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 if (targetMethod?.Name == nameof(IDiskProvider.DeleteFolder))
                 {
+                    Assert.That(args[1], Is.False, "empty cleanup must never recursively delete contents");
                     var folder = (string)args[0];
                     DeletedFolders.Add(folder);
                     ExistingFolders.Remove(folder);

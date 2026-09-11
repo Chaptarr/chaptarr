@@ -61,7 +61,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
             public void UpdateMany(List<Author> authors) => throw new NotImplementedException();
             public bool AuthorPathIsValid(Author author) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
             public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();

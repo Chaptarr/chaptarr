@@ -135,13 +135,12 @@ namespace Chaptarr.Core.Test.Api
                 BookController.ShouldApplyFacadeSpecificBookMonitoring(
                     context,
                     bookMediaType,
-                    wasMonitored: false,
                     requestedMonitored: true),
                 Is.EqualTo(expected));
         }
 
         [Test]
-        public void should_not_use_specific_book_monitoring_outside_facade_or_without_false_to_true_change()
+        public void should_not_use_specific_book_monitoring_outside_facade_or_without_a_monitor_request()
         {
             Assert.Multiple(() =>
             {
@@ -149,21 +148,12 @@ namespace Chaptarr.Core.Test.Api
                     BookController.ShouldApplyFacadeSpecificBookMonitoring(
                         null,
                         BookMediaType.Audiobook,
-                        wasMonitored: false,
                         requestedMonitored: true),
                     Is.False);
                 Assert.That(
                     BookController.ShouldApplyFacadeSpecificBookMonitoring(
                         new ReadarrFacadeContext("hc", "audiobook", "/audiobook"),
                         BookMediaType.Audiobook,
-                        wasMonitored: true,
-                        requestedMonitored: true),
-                    Is.False);
-                Assert.That(
-                    BookController.ShouldApplyFacadeSpecificBookMonitoring(
-                        new ReadarrFacadeContext("hc", "audiobook", "/audiobook"),
-                        BookMediaType.Audiobook,
-                        wasMonitored: false,
                         requestedMonitored: false),
                     Is.False);
             });

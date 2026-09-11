@@ -173,11 +173,10 @@ namespace NzbDrone.Core.Extras
         {
             var author = message.Author;
             var bookFiles = message.RenamedFiles?
-                .Select(r => r.BookFile)
-                .Where(bf => bf != null)
-                .DistinctBy(bf => bf.Id)
+                .Where(r => r.BookFile != null)
+                .DistinctBy(r => r.BookFile.Id)
                 .ToList()
-                ?? new List<BookFile>();
+                ?? new List<RenamedBookFile>();
 
             if (bookFiles.Count == 0)
             {

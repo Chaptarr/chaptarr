@@ -145,7 +145,10 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public void facade_put_should_promote_only_requested_media_side_and_return_monitored_book()
+        public void facade_put_should_enable_requested_side_without_changing_other_selections(
+            [Values("audiobook", "ebook")] string mediaType,
+            [Values(false, true)] bool initialScan,
+            [Values(false, true)] bool alreadySelected)
         {
             var author = new Author
             {
@@ -155,7 +158,8 @@ namespace Chaptarr.Core.Test.Api
                 EbookMonitored = false,
                 SyncMonitoredAcrossFormats = true,
                 AudiobookRootFolderPath = "/audiobooks",
-                EbookRootFolderPath = "/ebooks"
+                EbookRootFolderPath = "/ebooks",
+                AddOptions = initialScan ? new AddAuthorOptions() : null
             };
             var book = new Book
             {
@@ -165,7 +169,7 @@ namespace Chaptarr.Core.Test.Api
                 Title = "Piranesi",
                 TitleSlug = "piranesi",
                 CleanTitle = "piranesi",
-                MediaType = BookMediaType.Audiobook,
+                MediaType = mediaType == "audiobook" ? BookMediaType.Audiobook : BookMediaType.Ebook,
                 AudiobookMonitored = false,
                 EbookMonitored = false,
                 AnyEditionOk = true,
@@ -183,18 +187,27 @@ namespace Chaptarr.Core.Test.Api
                 }
             };
 
+            book.SetMonitored(alreadySelected);
+
             var authorUpdateCount = 0;
             var scopedBookUpdateCount = 0;
             var genericBookUpdateCount = 0;
+            var addOptionsWriteCount = 0;
             var bookService = Proxy<IBookService>(new Dictionary<string, Func<MethodInfo, object[], object>>
             {
                 [nameof(IBookService.GetBook)] = (_, _) => book,
+                [nameof(IBookService.SetAddOptions)] = (_, args) =>
+                {
+                    Assert.That(((IEnumerable<Book>)args[0]).Single().AddOptions.AddType, Is.EqualTo(BookAddType.Manual));
+                    addOptionsWriteCount++;
+                    return null;
+                },
                 [nameof(IBookService.SetMonitoredForMediaType)] = (_, args) =>
                 {
                     Assert.That((IEnumerable<int>)args[0], Is.EquivalentTo(new[] { book.Id }));
-                    Assert.That(args[1], Is.EqualTo("audiobook"));
+                    Assert.That(args[1], Is.EqualTo(mediaType));
                     Assert.That(args[2], Is.True);
-                    book.SetMonitoredForMediaType("audiobook", true);
+                    book.SetMonitoredForMediaType(mediaType, true);
                     scopedBookUpdateCount++;
                     return null;
                 },
@@ -207,11 +220,19 @@ namespace Chaptarr.Core.Test.Api
             var controller = new BookController(
                 authorService: Proxy<IAuthorService>(new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
+                    [nameof(IAuthorService.GetAuthor)] = (_, _) => author,
                     [nameof(IAuthorService.EnsureMediaTypeMonitoring)] = (_, args) =>
                     {
                         Assert.That(args[0], Is.EqualTo(author.Id));
-                        Assert.That(args[1], Is.EqualTo("audiobook"));
-                        author.AudiobookMonitored = true;
+                        Assert.That(args[1], Is.EqualTo(mediaType));
+                        if (mediaType == "audiobook")
+                        {
+                            author.AudiobookMonitored = true;
+                        }
+                        else
+                        {
+                            author.EbookMonitored = true;
+                        }
                         author.Monitored = true;
                         authorUpdateCount++;
                         return null;
@@ -255,7 +276,7 @@ namespace Chaptarr.Core.Test.Api
                 logger: LogManager.GetCurrentClassLogger());
             var httpContext = new DefaultHttpContext();
             httpContext.Items[ReadarrFacadeContext.ItemKey] =
-                new ReadarrFacadeContext("hc", "audiobook", "/audiobook");
+                new ReadarrFacadeContext("hc", mediaType, "/" + mediaType);
             controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
 
             var result = controller.UpdateBookByBody(new BookResource
@@ -284,11 +305,12 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(authorUpdateCount, Is.EqualTo(1));
                 Assert.That(scopedBookUpdateCount, Is.EqualTo(1));
                 Assert.That(genericBookUpdateCount, Is.Zero);
-                Assert.That(author.AudiobookMonitored, Is.True);
-                Assert.That(author.EbookMonitored, Is.False);
+                Assert.That(author.AudiobookMonitored, Is.EqualTo(mediaType == "audiobook"));
+                Assert.That(author.EbookMonitored, Is.EqualTo(mediaType == "ebook"));
                 Assert.That(author.SyncMonitoredAcrossFormats, Is.True);
-                Assert.That(book.AudiobookMonitored, Is.True);
-                Assert.That(book.EbookMonitored, Is.False);
+                Assert.That(book.IsMonitoredForMediaType(mediaType), Is.True);
+                Assert.That(book.IsMonitoredForMediaType(mediaType == "audiobook" ? "ebook" : "audiobook"), Is.False);
+                Assert.That(addOptionsWriteCount, Is.EqualTo(1));
                 Assert.That(resource?.Monitored, Is.True);
             });
         }

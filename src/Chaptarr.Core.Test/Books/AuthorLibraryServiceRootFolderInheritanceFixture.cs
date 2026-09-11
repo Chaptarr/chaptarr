@@ -7,6 +7,7 @@ using Chaptarr.Core.Test;
 using FluentValidation;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Exceptions;
@@ -135,7 +136,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
             public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => false;
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) { }
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -470,6 +471,40 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public async Task new_author_should_inherit_opt_in_book_policies_without_configuring_the_other_side(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values] bool selectAll)
+        {
+            var initial = selectAll ? MonitorTypes.All : MonitorTypes.None;
+            var future = selectAll ? NewItemMonitorTypes.All : NewItemMonitorTypes.None;
+            var audiobook = mediaType == BookMediaType.Audiobook;
+            var root = audiobook
+                ? BuildAudiobookRoot(@"C:\Audiobooks".AsOsAgnostic(), initialBookMonitoring: initial, monitorNewItems: future)
+                : BuildEbookRoot(@"C:\Ebooks".AsOsAgnostic(), initialBookMonitoring: initial, monitorNewItems: future);
+            var authorService = new StubAuthorService();
+            var service = BuildService(authorService, new StubAuthorInfo(BuildRemoteAuthor()), new StubRootFolderService(root));
+
+            var author = await service.AddAuthorAsync("hc:123", new MonitoringConfig
+            {
+                AuthorName = "Test Author",
+                CreateAudiobook = audiobook,
+                CreateEbook = !audiobook,
+                AudiobookRootFolderPath = audiobook ? root.Path : null,
+                EbookRootFolderPath = audiobook ? null : root.Path
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(audiobook ? author.AudiobookMonitored : author.EbookMonitored, Is.True);
+                Assert.That(audiobook ? author.AudiobookMonitorNewItems : author.EbookMonitorNewItems, Is.EqualTo(future));
+                Assert.That(audiobook ? author.AddOptions.AudiobookMonitor : author.AddOptions.EbookMonitor, Is.EqualTo(initial));
+                Assert.That(audiobook ? author.EbookMonitored : author.AudiobookMonitored, Is.Null);
+                Assert.That(audiobook ? author.EbookMonitorNewItems : author.AudiobookMonitorNewItems, Is.Null);
+                Assert.That(audiobook ? author.AddOptions.EbookMonitor : author.AddOptions.AudiobookMonitor, Is.Null);
+            });
+        }
+
+        [Test]
         public async Task not_ready_author_should_queue_the_same_root_tags_as_an_immediate_add()
         {
             var root = BuildAudiobookRoot("/audiobooks", tags: new[] { 7, 8 });
@@ -600,6 +635,8 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(result.Status, Is.EqualTo(AuthorStatusType.Ended));
             Assert.That(result.AudiobookTags, Is.Empty, "an explicit empty set must not inherit root tags");
             Assert.That(result.EbookTags, Is.EquivalentTo(new[] { 20 }));
+            Assert.That(result.AddOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.All));
+            Assert.That(result.AddOptions.EbookMonitor, Is.Null);
             Assert.That(authorService.AddedAuthor, Is.Null);
         }
 

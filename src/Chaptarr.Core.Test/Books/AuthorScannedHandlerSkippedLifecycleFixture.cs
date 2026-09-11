@@ -121,7 +121,7 @@ namespace Chaptarr.Core.Test.Books
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IAuthorService.RemoveAddOptions))
+                if (targetMethod?.Name == nameof(IAuthorService.SetAddOptions))
                 {
                     RemovedAddOptionsFor = (Author)args[0];
                     return null;

@@ -5,6 +5,7 @@ using System.Reflection;
 using Chaptarr.Core.Test;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.Books;
+using FluentValidation;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Extensions;
@@ -204,6 +205,290 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(model.EbookQualityProfileId, Is.EqualTo(1));
                 Assert.That(model.EbookMetadataProfileId, Is.EqualTo(2));
             });
+        }
+
+        [Test]
+        public void omitted_media_type_should_allow_ebook_only_shared_root()
+        {
+            var ebookRoot = new RootFolder
+            {
+                Path = @"C:\Books".AsOsAgnostic(),
+                FolderType = FolderType.Ebook
+            };
+            ebookRoot.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { ebookRoot }));
+            var resource = new BookResource { Author = new AuthorResource { RootFolderPath = ebookRoot.Path } };
+
+            controller.Normalize(resource, wantAudiobook: true, wantEbook: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Author.AudiobookRootFolderPath, Is.Null);
+                Assert.That(resource.Author.AudiobookQualityProfileId, Is.Null);
+                Assert.That(resource.Author.EbookRootFolderPath, Is.EqualTo(ebookRoot.Path));
+                Assert.That(resource.Author.EbookQualityProfileId, Is.EqualTo(1));
+                Assert.That(resource.Author.EbookMetadataProfileId, Is.EqualTo(2));
+            });
+        }
+
+        [Test]
+        public void omitted_media_type_should_skip_incomplete_side_of_shared_mixed_root()
+        {
+            var mixedRoot = new RootFolder
+            {
+                Path = @"C:\Books".AsOsAgnostic(),
+                FolderType = FolderType.Mixed,
+                DefaultSyncMonitoredAcrossFormats = true
+            };
+            mixedRoot.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 10 });
+            mixedRoot.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 11, MetadataProfileId = 21 });
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { mixedRoot }));
+            var resource = new BookResource { Author = new AuthorResource { RootFolderPath = mixedRoot.Path } };
+
+            controller.Normalize(resource, wantAudiobook: true, wantEbook: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Author.AudiobookRootFolderPath, Is.Null);
+                Assert.That(resource.Author.AudiobookQualityProfileId, Is.Null);
+                Assert.That(resource.Author.EbookRootFolderPath, Is.EqualTo(mixedRoot.Path));
+                Assert.That(resource.Author.EbookQualityProfileId, Is.EqualTo(11));
+                Assert.That(resource.Author.EbookMetadataProfileId, Is.EqualTo(21));
+            });
+        }
+
+        [Test]
+        public void omitted_media_type_should_use_distinct_configured_media_roots()
+        {
+            var audiobookRoot = new RootFolder
+            {
+                Path = @"C:\Audio".AsOsAgnostic(),
+                FolderType = FolderType.Audiobook
+            };
+            audiobookRoot.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 10, MetadataProfileId = 20 });
+            var ebookRoot = new RootFolder
+            {
+                Path = @"C:\Books".AsOsAgnostic(),
+                FolderType = FolderType.Ebook
+            };
+            ebookRoot.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 11, MetadataProfileId = 21 });
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { audiobookRoot, ebookRoot }));
+            var resource = new BookResource
+            {
+                Author = new AuthorResource
+                {
+                    AudiobookRootFolderPath = audiobookRoot.Path,
+                    EbookRootFolderPath = ebookRoot.Path
+                }
+            };
+
+            controller.Normalize(resource, wantAudiobook: true, wantEbook: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Author.AudiobookRootFolderPath, Is.EqualTo(audiobookRoot.Path));
+                Assert.That(resource.Author.AudiobookQualityProfileId, Is.EqualTo(10));
+                Assert.That(resource.Author.EbookRootFolderPath, Is.EqualTo(ebookRoot.Path));
+                Assert.That(resource.Author.EbookQualityProfileId, Is.EqualTo(11));
+            });
+        }
+
+        [Test]
+        public void omitted_media_type_should_reject_invalid_explicit_side_root(
+            [Values] BookMediaType mediaType)
+        {
+            var sharedRoot = new RootFolder
+            {
+                Path = mediaType == BookMediaType.Audiobook
+                    ? @"C:\Books".AsOsAgnostic()
+                    : @"C:\Audio".AsOsAgnostic(),
+                FolderType = mediaType == BookMediaType.Audiobook ? FolderType.Ebook : FolderType.Audiobook
+            };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                sharedRoot.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 11, MetadataProfileId = 21 });
+            }
+            else
+            {
+                sharedRoot.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 10, MetadataProfileId = 20 });
+            }
+
+            var selectedRoot = new RootFolder
+            {
+                Path = mediaType == BookMediaType.Audiobook
+                    ? @"C:\Audio".AsOsAgnostic()
+                    : @"C:\Books".AsOsAgnostic(),
+                FolderType = mediaType == BookMediaType.Audiobook ? FolderType.Audiobook : FolderType.Ebook
+            };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                selectedRoot.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 10, MetadataProfileId = 20 });
+            }
+            else
+            {
+                selectedRoot.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 11, MetadataProfileId = 21 });
+            }
+
+            var explicitPath = System.IO.Path.Combine(selectedRoot.Path, "typo");
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { sharedRoot, selectedRoot }));
+            var resource = new BookResource { Author = new AuthorResource { RootFolderPath = sharedRoot.Path } };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                resource.Author.AudiobookRootFolderPath = explicitPath;
+            }
+            else
+            {
+                resource.Author.EbookRootFolderPath = explicitPath;
+            }
+
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                controller.Normalize(resource, wantAudiobook: true, wantEbook: true));
+
+            Assert.That(error.InnerException, Is.TypeOf<ValidationException>());
+            Assert.That(((ValidationException)error.InnerException).Errors.Single().ErrorMessage, Does.Contain(explicitPath));
+        }
+
+        [Test]
+        public void explicit_per_media_root_descendant_should_not_match_configured_root(
+            [Values] BookMediaType mediaType)
+        {
+            var rootPath = mediaType == BookMediaType.Audiobook
+                ? @"C:\Audio".AsOsAgnostic()
+                : @"C:\Books".AsOsAgnostic();
+            var root = new RootFolder
+            {
+                Path = rootPath,
+                FolderType = mediaType == BookMediaType.Audiobook ? FolderType.Audiobook : FolderType.Ebook
+            };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                root.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            }
+            else
+            {
+                root.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            }
+
+            var explicitPath = System.IO.Path.Combine(rootPath, "typo");
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { root }));
+            var resource = new BookResource { Author = new AuthorResource() };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                resource.Author.AudiobookRootFolderPath = explicitPath;
+            }
+            else
+            {
+                resource.Author.EbookRootFolderPath = explicitPath;
+            }
+
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                controller.Normalize(resource, mediaType == BookMediaType.Audiobook, mediaType == BookMediaType.Ebook));
+
+            Assert.That(error.InnerException, Is.TypeOf<ValidationException>());
+            Assert.That(((ValidationException)error.InnerException).Errors.Single().ErrorMessage, Does.Contain(explicitPath));
+        }
+
+        [Test]
+        public void explicit_exact_media_root_should_be_accepted([Values] BookMediaType mediaType)
+        {
+            var rootPath = mediaType == BookMediaType.Audiobook
+                ? @"C:\Audio".AsOsAgnostic()
+                : @"C:\Books".AsOsAgnostic();
+            var root = new RootFolder
+            {
+                Path = rootPath,
+                FolderType = mediaType == BookMediaType.Audiobook ? FolderType.Audiobook : FolderType.Ebook
+            };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                root.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            }
+            else
+            {
+                root.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            }
+
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { root }));
+            var resource = new BookResource { Author = new AuthorResource() };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                resource.Author.AudiobookRootFolderPath = rootPath;
+            }
+            else
+            {
+                resource.Author.EbookRootFolderPath = rootPath;
+            }
+
+            controller.Normalize(resource, mediaType == BookMediaType.Audiobook, mediaType == BookMediaType.Ebook);
+
+            Assert.That(mediaType == BookMediaType.Audiobook
+                    ? resource.Author.AudiobookRootFolderPath
+                    : resource.Author.EbookRootFolderPath,
+                Is.EqualTo(rootPath));
+        }
+
+        [Test]
+        public void explicitly_selected_root_should_not_be_replaced(
+            [Values] BookMediaType mediaType, [Values(false, true)] bool perSidePath,
+            [Values("missing", "quality", "metadata", "type")] string problem)
+        {
+            var selected = new RootFolder { Path = @"C:\selected".AsOsAgnostic(), FolderType = FolderType.Mixed };
+            var settings = new MediaTypeSettings { QualityProfileId = problem == "quality" ? null : 10, MetadataProfileId = problem == "metadata" ? null : 20 };
+            if (mediaType == BookMediaType.Audiobook) { selected.SetAudiobookSettings(settings); }
+            else { selected.SetEbookSettings(settings); }
+            if (problem == "type")
+            {
+                selected.FolderType = mediaType == BookMediaType.Audiobook ? FolderType.Ebook : FolderType.Audiobook;
+            }
+
+            var fallback = BuildMixedRoot(false);
+            fallback.Path = @"C:\fallback".AsOsAgnostic();
+            var roots = new List<RootFolder> { fallback };
+            if (problem != "missing") { roots.Add(selected); }
+            var controller = new TestableBookController(new StubRootFolderService(roots));
+            var resource = new BookResource { Author = new AuthorResource() };
+            if (!perSidePath) { resource.Author.RootFolderPath = selected.Path; }
+            else if (mediaType == BookMediaType.Audiobook) { resource.Author.AudiobookRootFolderPath = selected.Path; }
+            else { resource.Author.EbookRootFolderPath = selected.Path; }
+
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                controller.Normalize(resource, mediaType == BookMediaType.Audiobook, mediaType == BookMediaType.Ebook));
+
+            Assert.That(error.InnerException, Is.TypeOf<ValidationException>());
+            Assert.That(((ValidationException)error.InnerException).Errors.Single().ErrorMessage, Does.Contain(selected.Path));
+            Assert.That(resource.Author.RootFolderPath == selected.Path ||
+                resource.Author.AudiobookRootFolderPath == selected.Path || resource.Author.EbookRootFolderPath == selected.Path, Is.True);
+        }
+
+        [Test]
+        public void omitted_root_should_skip_profileless_or_incompatible_defaults([Values] BookMediaType mediaType)
+        {
+            var incomplete = new RootFolder { Path = @"C:\incomplete".AsOsAgnostic(), FolderType = FolderType.Mixed };
+            var wrongType = new RootFolder
+            {
+                Path = @"C:\wrong-type".AsOsAgnostic(),
+                FolderType = mediaType == BookMediaType.Audiobook ? FolderType.Ebook : FolderType.Audiobook
+            };
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                incomplete.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 1 });
+                wrongType.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            }
+            else
+            {
+                incomplete.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 1 });
+                wrongType.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            }
+
+            var usable = BuildMixedRoot(false);
+            usable.Path = @"C:\usable".AsOsAgnostic();
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { incomplete, wrongType, usable }));
+            var resource = new BookResource { Author = new AuthorResource() };
+
+            controller.Normalize(resource, mediaType == BookMediaType.Audiobook, mediaType == BookMediaType.Ebook);
+
+            Assert.That(mediaType == BookMediaType.Audiobook ? resource.Author.AudiobookRootFolderPath : resource.Author.EbookRootFolderPath, Is.EqualTo(usable.Path));
+            Assert.That(mediaType == BookMediaType.Audiobook ? resource.Author.AudiobookMetadataProfileId : resource.Author.EbookMetadataProfileId, Is.EqualTo(mediaType == BookMediaType.Audiobook ? 20 : 21));
         }
 
         private static RootFolder BuildMixedRoot(bool defaultSync)

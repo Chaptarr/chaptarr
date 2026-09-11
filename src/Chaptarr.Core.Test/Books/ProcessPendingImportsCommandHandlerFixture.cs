@@ -110,6 +110,8 @@ namespace Chaptarr.Core.Test.Books
             {
                 switch (targetMethod?.Name)
                 {
+                    case nameof(IBookService.SetAddOptions):
+                        return null;
                     case nameof(IBookService.GetBooksByAuthor):
                         return Books;
                     case nameof(IBookService.GetBooks):
@@ -212,37 +214,31 @@ namespace Chaptarr.Core.Test.Books
                 throw new NotImplementedException($"Test proxy does not implement IProvideBookInfo.{targetMethod?.Name}");
             }
         }
-        private sealed class RecordingCommandQueue : IManageCommandQueue
+        private sealed class RecordingCommandQueue : CommandQueueManager
         {
-            public List<Command> Pushed { get; } = new();
-
-            public List<CommandModel> PushMany<TCommand>(List<TCommand> commands) where TCommand : Command => throw new NotImplementedException();
-
-            public CommandModel Push<TCommand>(TCommand command, CommandPriority priority = CommandPriority.Normal, CommandTrigger trigger = CommandTrigger.Unspecified) where TCommand : Command
+            public RecordingCommandQueue()
+                : base(DispatchProxy.Create<ICommandRepository, RecordingCommandRepository>(), null, null, LogManager.GetCurrentClassLogger())
             {
-                Pushed.Add(command);
-                return new CommandModel { Name = command?.Name };
             }
 
-            public CommandModel Push(string commandName, DateTime? lastExecutionTime, DateTime? lastStartTime, CommandPriority priority = CommandPriority.Normal, CommandTrigger trigger = CommandTrigger.Unspecified) => throw new NotImplementedException();
-            public IEnumerable<CommandModel> Queue(CancellationToken cancellationToken) => throw new NotImplementedException();
-            public List<CommandModel> All() => throw new NotImplementedException();
-            public CommandModel Get(int id) => throw new NotImplementedException();
-            public List<CommandModel> GetStarted() => throw new NotImplementedException();
-            public void SetMessage(CommandModel command, string message) => throw new NotImplementedException();
-            public void TouchProgress(CommandModel command) => throw new NotImplementedException();
-            public void SetResult(CommandModel command, CommandResult result) => throw new NotImplementedException();
-            public void Start(CommandModel command) => throw new NotImplementedException();
-            public void Complete(CommandModel command, string message) => throw new NotImplementedException();
-            public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
-            public void Requeue() => throw new NotImplementedException();
-            public void Cancel(int id) => throw new NotImplementedException();
-            public void Pause(int id) => throw new NotImplementedException();
-            public void Resume(int id) => throw new NotImplementedException();
-            public void CleanCommands() => throw new NotImplementedException();
-            public CancellationToken GetCancellationToken(int commandId) => throw new NotImplementedException();
-            public void RegisterCancellationToken(int commandId, CancellationTokenSource cancellationTokenSource) => throw new NotImplementedException();
-            public void UnregisterCancellationToken(int commandId) => throw new NotImplementedException();
+            public List<Command> Pushed => All().Select(model => model.Body).ToList();
+        }
+
+        private class RecordingCommandRepository : DispatchProxy
+        {
+            private int _nextId;
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name == nameof(ICommandRepository.Insert))
+                {
+                    var model = (CommandModel)args[0];
+                    model.Id = ++_nextId;
+                    return model;
+                }
+
+                throw new NotImplementedException(method.Name);
+            }
         }
 
         private sealed class RecordingEventAggregator : IEventAggregator
@@ -734,6 +730,63 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void queued_root_scoped_request_should_enable_requested_side_and_search_only_requested_book(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values] MonitorTypes initial,
+            [Values(false, true)] bool searchNow)
+        {
+            var audio = mediaType == BookMediaType.Audiobook;
+            var pendingService = new StubPendingAuthorImportService();
+            var pending = Pending(154);
+            pending.AudiobookStatus = audio ? PendingImportStatus.Pending : PendingImportStatus.NotRequested;
+            pending.EbookStatus = audio ? PendingImportStatus.NotRequested : PendingImportStatus.Pending;
+            pending.AudiobookMonitored = false;
+            pending.EbookMonitored = false;
+            pending.AudiobookMonitorExistingMode = audio ? initial : null;
+            pending.EbookMonitorExistingMode = audio ? null : initial;
+            pending.AudiobookBooksToMonitor = audio ? @"[""gr:1001""]" : null;
+            pending.EbookBooksToMonitor = audio ? null : @"[""gr:1001""]";
+            pending.AudiobookBooksToSearch = audio && searchNow ? @"[""gr:1001""]" : null;
+            pending.EbookBooksToSearch = !audio && searchNow ? @"[""gr:1001""]" : null;
+            pendingService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+            var author = new Author
+            {
+                Id = 42, AudiobookMonitored = false, EbookMonitored = false,
+                AddOptions = new AddAuthorOptions
+                {
+                    AudiobookMonitor = audio ? initial : null,
+                    EbookMonitor = audio ? null : initial
+                }
+            };
+            var target = new Book { Id = 101, AuthorId = author.Id, Author = author, MediaType = mediaType, GoodreadsWorkId = "gr:1001" };
+            var sibling = new Book { Id = 102, AuthorId = author.Id, Author = author, MediaType = mediaType, GoodreadsWorkId = "gr:1002" };
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).Books = new List<Book> { target, sibling };
+            var queue = new RecordingCommandQueue();
+            var handler = BuildHandler(pendingService, queue, new RecordingEventAggregator(), author: author, bookService: bookService);
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.AudiobookMonitored, Is.EqualTo(audio));
+                Assert.That(author.EbookMonitored, Is.EqualTo(!audio));
+                Assert.That(target.IsMonitored(), Is.True);
+                Assert.That(sibling.IsMonitored(), Is.False);
+                Assert.That(target.AddOptions.AddType, Is.EqualTo(BookAddType.Manual));
+                var searches = queue.Pushed.OfType<BookSearchCommand>().ToList();
+                Assert.That(searches.Count, Is.EqualTo(searchNow ? 1 : 0));
+                if (searchNow)
+                {
+                    Assert.That(searches.Single().BookIds, Is.EqualTo(new[] { target.Id }));
+                    Assert.That(searches.Single().Trigger, Is.EqualTo(CommandTrigger.Manual));
+                }
+                Assert.That(queue.Pushed.OfType<MissingBookSearchCommand>(), Is.Empty);
+                Assert.That(pendingService.DeletedIds, Does.Contain(pending.Id));
+            });
+        }
+
+        [Test]
         public void should_repair_unmonitored_book_before_exact_search()
         {
             var pendingImportService = new StubPendingAuthorImportService();
@@ -865,14 +918,16 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(events.Events.OfType<PendingAuthorImportFailedEvent>().Count(), Is.EqualTo(1));
         }
 
-        [Test]
-        public void should_fail_terminally_when_requested_book_remains_unmonitored()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_fail_terminally_when_requested_book_remains_unmonitored(bool searchNow)
         {
             var pendingImportService = new StubPendingAuthorImportService();
             var pending = Pending(156);
             pending.AudiobookStatus = PendingImportStatus.Pending;
             pending.EbookStatus = PendingImportStatus.NotRequested;
-            pending.AudiobookBooksToSearch = @"[""gr:1001""]";
+            pending.AudiobookBooksToMonitor = @"[""gr:1001""]";
+            pending.AudiobookBooksToSearch = searchNow ? @"[""gr:1001""]" : null;
             pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
 
             var author = new Author
