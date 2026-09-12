@@ -10,7 +10,7 @@ function BookCover(props) {
       {...props}
       coverType="cover"
       placeholder={coverPlaceholder}
-      usePlaceholderOnError={true}
+      showPlaceholderWhileLoading={true}
     />
   );
 }

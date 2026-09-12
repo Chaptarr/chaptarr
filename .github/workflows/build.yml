@@ -151,7 +151,49 @@ jobs:
       run: dotnet build src/NzbDrone/Chaptarr.csproj --configuration Release
 
     - name: Test
+      env:
+        CHAPTARR_PHOTO_RESPONSE: ${{ runner.temp }}/author-photo-response.json
       run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore --verbosity normal
+
+    # Reuse the response emitted by the Core suite above. A correct API response
+    # alone cannot catch a carousel selecting the wrong photo after a reorder.
+    - name: Setup Node for browser check
+      if: runner.os == 'Linux'
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version-file: package.json
+
+    - name: Install browser check dependencies
+      if: runner.os == 'Linux'
+      run: |
+        npm install -g "yarn@$(node -p 'require("./package.json").volta.yarn')" --force
+        yarn install --frozen-lockfile
+        yarn playwright install --with-deps chromium
+
+    # `yarn lint` walks directories and only picks up .js, so the .cjs runners are
+    # invisible to it. Lint exactly these four files rather than the whole repo.
+    - name: Lint browser checks
+      if: runner.os == 'Linux'
+      run: yarn lint-browser-checks
+
+    - name: Check author photos
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        CHAPTARR_PHOTO_RESPONSE: ${{ runner.temp }}/author-photo-response.json
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-author-photo
+
+    - name: Upload author photo evidence
+      if: ${{ !cancelled() && runner.os == 'Linux' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: author-photo-evidence
+        path: |
+          ${{ runner.temp }}/author-photo-response.json
+          ${{ runner.temp }}/chaptarr-photo-*/*.png
+        retention-days: 7
+        if-no-files-found: warn
     
     - name: Publish
       run: |

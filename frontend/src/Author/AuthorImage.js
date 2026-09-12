@@ -3,79 +3,11 @@ import React, { Component } from 'react';
 import LazyLoad from 'react-lazyload';
 import getImageUrl, { getDevicePixelRatio } from 'Utilities/Image/getImageUrl';
 
-function selectOptimalImage(images, targetSize = 150) {
-  return images
-    .map((image) => {
-      // Try to parse dimensions from Extension metadata
-      let dimensions = null;
-      try {
-        if (image.Extension) {
-          const metadata = JSON.parse(image.Extension);
-          dimensions = metadata.dimensions;
-        }
-      } catch (e) {
-        // Ignore parsing errors
-      }
-
-      let score = 0;
-
-      // If we have dimensions, prefer images close to target size
-      if (dimensions && dimensions.width && dimensions.height) {
-        const avgSize = (dimensions.width + dimensions.height) / 2;
-        const sizeDiff = Math.abs(avgSize - targetSize);
-
-        // Penalize images much larger than target more heavily
-        if (avgSize > targetSize * 2) {
-          score = 500 - sizeDiff; // Lower base score for oversized images
-        } else {
-          score = 1000 - sizeDiff; // Higher score for closer to target
-        }
-
-        // Bonus for reasonable aspect ratios (not too wide/tall)
-        const aspectRatio = dimensions.width / dimensions.height;
-        if (aspectRatio >= 0.7 && aspectRatio <= 1.4) {
-          score += 100;
-        }
-      } else {
-        // No dimensions - give neutral score
-        score = 500;
-      }
-
-      // Prefer primary photos from server, but not if user has made a selection
-      try {
-        if (image.Extension) {
-          const metadata = JSON.parse(image.Extension);
-          if (metadata.isPrimary === true && !metadata.userSelected) {
-            score += 200;
-          }
-          // Strongly prefer user-selected photos
-          if (metadata.userSelected === true) {
-            score += 500;
-          }
-        }
-      } catch (e) {
-        // Ignore parsing errors
-      }
-
-      return { image, score };
-    })
-    .sort((a, b) => b.score - a.score) // Sort by score descending
-    .map((item) => item.image)[0]; // Return the highest scoring image
-}
-
-function findImage(images, coverType, targetSize = 150) {
-  const matchingImages = images.filter((image) => image.coverType === coverType);
-
-  if (matchingImages.length === 0) {
-    return null;
-  }
-
-  if (matchingImages.length === 1) {
-    return matchingImages[0];
-  }
-
-  // Choose the best quality image based on the target size
-  return selectOptimalImage(matchingImages, targetSize);
+export function findImage(images, coverType) {
+  const candidates = images.filter((image) => image.coverType === coverType);
+  // The backend exposes its chosen author rendition locally without changing carousel order.
+  // Book covers keep their existing first-cover behavior.
+  return (coverType !== 'cover' && candidates.find((image) => image.url?.includes('/MediaCover/'))) || candidates[0];
 }
 
 function getAvailableRenditionSizes(coverType) {
@@ -112,6 +44,8 @@ function getUrl(image, coverType, size) {
     });
 }
 
+export { getUrl as getCoverImageUrl };
+
 class AuthorImage extends Component {
 
   //
@@ -126,7 +60,7 @@ class AuthorImage extends Component {
       size
     } = props;
 
-    const image = findImage(images, coverType, size);
+    const image = findImage(images, coverType);
 
     this.state = {
       image,
@@ -159,7 +93,7 @@ class AuthorImage extends Component {
       hasError
     } = this.state;
 
-    const nextImage = findImage(images, coverType, size);
+    const nextImage = findImage(images, coverType);
     const nextUrl = nextImage ? getUrl(nextImage, coverType, size) : null;
 
     if (nextUrl !== url) {
@@ -242,7 +176,7 @@ class AuthorImage extends Component {
       });
 
       if (this.props.onError) {
-        this.props.onError();
+        this.props.onError(url);
       }
     }
   };
@@ -277,7 +211,7 @@ class AuthorImage extends Component {
       lazy,
       overflow,
       blurBackground,
-      usePlaceholderOnError
+      showPlaceholderWhileLoading
     } = this.props;
 
     const blurStyle = {
@@ -289,14 +223,14 @@ class AuthorImage extends Component {
 
     const {
       url,
-      hasError
+      hasError,
+      retryTimer
     } = this.state;
 
     if (hasError || !url) {
-      if (url && !usePlaceholderOnError) {
-        // A provider photo exists but is temporarily unavailable. The author
-        // placeholder represents "no provider photo", so do not flash it while
-        // retrying or after a transient image error.
+      if (url && retryTimer && !showPlaceholderWhileLoading) {
+        // Keep loading/retry states quiet, but show a placeholder after failure
+        // rather than leaving an author tile permanently blank.
         return (
           <span
             className={className}
@@ -322,7 +256,7 @@ class AuthorImage extends Component {
           offset={100}
           overflow={overflow}
           placeholder={
-            usePlaceholderOnError ?
+            showPlaceholderWhileLoading ?
               <img
                 className={className}
                 style={style}
@@ -382,7 +316,7 @@ AuthorImage.propTypes = {
   lazy: PropTypes.bool.isRequired,
   overflow: PropTypes.bool.isRequired,
   blurBackground: PropTypes.bool.isRequired,
-  usePlaceholderOnError: PropTypes.bool.isRequired,
+  showPlaceholderWhileLoading: PropTypes.bool.isRequired,
   onError: PropTypes.func,
   onLoad: PropTypes.func
 };
@@ -392,7 +326,7 @@ AuthorImage.defaultProps = {
   lazy: true,
   overflow: false,
   blurBackground: false,
-  usePlaceholderOnError: false
+  showPlaceholderWhileLoading: false
 };
 
 export default AuthorImage;

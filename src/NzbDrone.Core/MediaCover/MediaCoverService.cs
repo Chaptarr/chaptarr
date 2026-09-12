@@ -24,7 +24,7 @@ namespace NzbDrone.Core.MediaCover
 {
     public interface IMapCoversToLocal
     {
-        void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers, string selectedAuthorImageHash = null);
+        void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash = null);
         string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null);
         void EnsureAuthorCovers(Author author);
         void EnsureBookCovers(Book book);
@@ -398,7 +398,7 @@ namespace NzbDrone.Core.MediaCover
             return Path.Combine(GetAuthorCoverPath(entityId), coverType.ToString().ToLower() + heightSuffix + GetExtension(coverType, extension));
         }
 
-        public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers, string selectedAuthorImageHash = null)
+        public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash = null)
         {
             var coverList = covers?.Where(cover => cover != null).ToList() ?? new List<MediaCover>();
 
@@ -481,6 +481,9 @@ namespace NzbDrone.Core.MediaCover
                     _mediaCoverProxy.ProxyRemoteUrls(new[] { mediaCover });
                 }
             }
+
+            // Selecting a local rendition must not reorder the provider list: carousel
+            // positions and navigation must survive the resource update after each save.
         }
 
         private string GetDeterministicLocalCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCover mediaCover)

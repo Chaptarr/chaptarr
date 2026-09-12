@@ -113,7 +113,7 @@ namespace Chaptarr.Core.Test.Api.Wanted
 
         private sealed class StubCoverMapper : IMapCoversToLocal
         {
-            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCoverModel> covers, string selectedAuthorImageHash = null) { }
+            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCoverModel> covers, string selectedAuthorImageHash = null) { }
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null) => null;
             public void EnsureAuthorCovers(Author author) { }
             public void EnsureBookCovers(Book book) { }

@@ -480,7 +480,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string CoverPath { get; set; }
             public int EnsureBookCoversCalls { get; private set; }
 
-            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
+            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
             {
             }
 

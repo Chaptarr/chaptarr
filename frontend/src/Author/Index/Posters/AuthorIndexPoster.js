@@ -40,18 +40,6 @@ class AuthorIndexPoster extends Component {
     };
   }
 
-  componentDidUpdate(prevProps) {
-    const { images } = this.props;
-    const prevImages = prevProps.images;
-
-    // Reset poster error if images have changed
-    if (images && prevImages && images[0]?.url !== prevImages[0]?.url) {
-      if (this.state.hasPosterError) {
-        this.setState({ hasPosterError: false });
-      }
-    }
-  }
-
   //
   // Listeners
 
@@ -75,6 +63,8 @@ class AuthorIndexPoster extends Component {
   };
 
   onPosterLoad = () => {
+    // The rendered choice can change independently of the first API image.
+    // Its load/error callbacks, not array order, own the error title overlay.
     if (this.state.hasPosterError) {
       this.setState({ hasPosterError: false });
     }

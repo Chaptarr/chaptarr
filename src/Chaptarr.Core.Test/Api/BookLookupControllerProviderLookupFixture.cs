@@ -20,7 +20,7 @@ namespace Chaptarr.Core.Test.Api
     {
         private sealed class CoverMapperStub : IMapCoversToLocal
         {
-            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
+            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
             {
             }
 

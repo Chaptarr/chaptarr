@@ -1,6 +1,6 @@
 {
   "name": "chaptarr",
-  "version": "0.9.978",
+  "version": "0.9.980",
   "description": "Chaptarr",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
@@ -12,6 +12,8 @@
     "lint": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore frontend/",
     "lint-fix": "yarn lint --fix",
     "check-translations": "node frontend/build/check-missing-translation-keys.js",
+    "check-author-photo": "node frontend/build/check-author-photo.cjs",
+    "lint-browser-checks": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore frontend/build/check-author-photo.cjs frontend/build/author-photo-fixture.js",
     "stylelint-linux": "stylelint $(find frontend -name '*.css') --config frontend/.stylelintrc",
     "stylelint-windows": "stylelint \"frontend/**/*.css\" --config frontend/.stylelintrc"
   },
@@ -124,6 +126,7 @@
     "html-webpack-plugin": "5.6.0",
     "loader-utils": "^3.2.1",
     "mini-css-extract-plugin": "2.9.1",
+    "playwright": "1.63.0",
     "postcss": "8.4.47",
     "postcss-color-function": "4.1.0",
     "postcss-loader": "7.3.0",

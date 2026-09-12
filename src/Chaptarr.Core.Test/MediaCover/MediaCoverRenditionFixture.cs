@@ -6,12 +6,14 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using Chaptarr.Api.V1.Author;
 using NLog;
 using NUnit.Framework;
 using Chaptarr.Http.Frontend.Mappers;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Configuration;
@@ -266,7 +268,7 @@ namespace Chaptarr.Core.Test.MediaCover
         private sealed class CoverMapperStub : IMapCoversToLocal
         {
             public List<int> EnsuredAuthorIds { get; } = new();
-            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null) => throw new NotImplementedException();
+            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null) => throw new NotImplementedException();
 
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null)
             {
@@ -449,14 +451,119 @@ namespace Chaptarr.Core.Test.MediaCover
             var selectedCover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, remoteUrl);
             var otherCover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, "https://images.example/other-author.jpg");
 
-            subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, new[] { selectedCover, otherCover }, selectedHash);
+            var covers = new[] { otherCover, selectedCover };
+            subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, covers, selectedHash);
 
+            Assert.That(covers, Is.EqualTo(new[] { otherCover, selectedCover }));
             Assert.That(selectedCover.Url, Is.EqualTo($"/MediaCover/12/poster-{hash}.jpg?v={selectedHash}"));
             Assert.That(selectedCover.RemoteUrl, Is.EqualTo(remoteUrl));
             Assert.That(otherCover.Url, Is.EqualTo("/MediaCoverProxy/hash/cover.jpg"));
             Assert.That(otherCover.RemoteUrl, Is.EqualTo("https://images.example/other-author.jpg"));
             Assert.That(proxy.ProxyCalls, Is.EqualTo(1));
             Assert.That(disk.CallCounts, Is.Empty);
+        }
+
+        [TestCase(MediaCoverTypes.Poster)]
+        [TestCase(MediaCoverTypes.Banner)]
+        [TestCase(MediaCoverTypes.Fanart)]
+        public void canonical_author_fallback_should_keep_provider_order_in_serialized_list(MediaCoverTypes coverType)
+        {
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            var identityPath = Path.Combine(ConfigRoot, "MediaCover", "12", $"{coverType.ToString().ToLowerInvariant()}.url");
+            disk.ExistingPaths.Add(identityPath);
+            disk.TextByPath[identityPath] = MediaCoverRendition.BuildAuthorCoverIdentity(
+                "https://images.example/fallback.jpg", VerifiedRealImageHash);
+            var subject = new MediaCoverService(new MediaCoverProxyStub(), null, null, null,
+                diskProvider, appFolder, null, null, config, null, null, LogManager.GetCurrentClassLogger());
+            var failed = new NzbDrone.Core.MediaCover.MediaCover(coverType, "https://images.example/failed.jpg");
+            var fallback = new NzbDrone.Core.MediaCover.MediaCover(coverType, "https://images.example/fallback.jpg");
+            var alternate = new NzbDrone.Core.MediaCover.MediaCover(coverType, "https://images.example/alternate.jpg");
+            var covers = new List<NzbDrone.Core.MediaCover.MediaCover> { failed, fallback, alternate };
+
+            subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, covers);
+
+            Assert.That(fallback.Url, Does.StartWith($"/MediaCover/12/{coverType.ToString().ToLowerInvariant()}-"));
+            Assert.That(new[] { failed, alternate }.All(cover => cover.Url.StartsWith("/MediaCoverProxy/")), Is.True);
+            var calls = disk.CallCounts.ToDictionary(pair => pair.Key, pair => pair.Value);
+            subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, covers);
+            Assert.That(disk.CallCounts, Is.EquivalentTo(calls));
+
+            var author = new Author
+            {
+                Id = 12,
+                Name = "Example Author",
+                Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                {
+                    new(coverType, failed.RemoteUrl),
+                    new(coverType, fallback.RemoteUrl),
+                    new(coverType, alternate.RemoteUrl)
+                }
+            };
+            var resource = author.ToResource();
+            subject.ConvertToLocalUrls(resource.Id, MediaCoverEntity.Author, resource.Images);
+            var json = STJson.ToJson(resource);
+            using var parsed = System.Text.Json.JsonDocument.Parse(json);
+            Assert.That(author.Images[0].Url, Is.EqualTo(failed.RemoteUrl), "API ordering must not mutate stored/provider order");
+            if (coverType == MediaCoverTypes.Poster)
+            {
+                var responsePath = Environment.GetEnvironmentVariable("CHAPTARR_PHOTO_RESPONSE") ??
+                    Path.Combine(TestContext.CurrentContext.WorkDirectory, "author-photo-response.json");
+                File.WriteAllText(responsePath, json);
+                TestContext.AddTestAttachment(responsePath, "Serialized author API input for the browser regression fixture");
+
+                var selections = author.Images.Select(image =>
+                {
+                    author.SelectedPosterHash = MediaCoverRendition.ComputeStableAuthorImageHash(image.Url, coverType);
+                    var selectedResource = author.ToResource();
+                    subject.ConvertToLocalUrls(author.Id, MediaCoverEntity.Author, selectedResource.Images, author.SelectedPosterHash);
+                    return selectedResource;
+                }).ToArray();
+                File.WriteAllText(responsePath + ".selections.json", STJson.ToJson(selections));
+                TestContext.AddTestAttachment(responsePath + ".selections.json", "Author updates after each selected photo");
+                foreach (var selection in selections)
+                {
+                    Assert.That(selection.Images.Select(image => image.RemoteUrl), Is.EqualTo(author.Images.Select(image => image.Url)));
+                }
+            }
+
+            Assert.That(covers, Is.EqualTo(new[] { failed, fallback, alternate }));
+            Assert.That(parsed.RootElement.GetProperty("images")[1].GetProperty("url").GetString(), Is.EqualTo(fallback.Url));
+        }
+
+        [TestCase(MediaCoverEntity.Author, 0)]
+        [TestCase(MediaCoverEntity.Author, 12)]
+        [TestCase(MediaCoverEntity.Book, 12)]
+        public void photo_order_should_stay_unchanged_without_a_local_author_choice(MediaCoverEntity entity, int id)
+        {
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            var metadataPath = Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover-metadata.json");
+            disk.ExistingPaths.Add(metadataPath);
+            disk.TextByPath[metadataPath] = "{\"selectedEdition\":{\"coverUrl\":\"https://images.example/second.jpg\",\"downloadedAt\":\"2026-08-07T01:02:03Z\"}}";
+            var subject = new MediaCoverService(new MediaCoverProxyStub(), null, null, null,
+                diskProvider, appFolder, null, null, config, null, null, LogManager.GetCurrentClassLogger());
+            var type = entity == MediaCoverEntity.Book ? MediaCoverTypes.Cover : MediaCoverTypes.Poster;
+            var first = new NzbDrone.Core.MediaCover.MediaCover(type, "https://images.example/first.jpg");
+            var second = new NzbDrone.Core.MediaCover.MediaCover(type, "https://images.example/second.jpg");
+            var covers = new[] { first, second };
+
+            subject.ConvertToLocalUrls(id, entity, covers);
+
+            Assert.That(covers, Is.EqualTo(new[] { first, second }));
+            if (entity == MediaCoverEntity.Book)
+            {
+                Assert.That(second.Url, Does.StartWith("/MediaCover/Books/12/cover.jpg?v="));
+            }
+
+            subject.ConvertToLocalUrls(id, entity, Array.Empty<NzbDrone.Core.MediaCover.MediaCover>());
+            subject.ConvertToLocalUrls(id, entity, null);
         }
 
         [Test]

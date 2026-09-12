@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import TextTruncate from 'react-text-truncate';
+import { findImage, getCoverImageUrl } from 'Author/AuthorImage';
 import AuthorPoster from 'Author/AuthorPoster';
 import { getAuthorStatusDetails } from 'Author/AuthorStatus';
 import HeartRating from 'Components/HeartRating';
@@ -24,10 +25,6 @@ import styles from './AuthorDetailsHeader.css';
 
 const defaultFontSize = parseInt(fonts.defaultFontSize);
 const lineHeight = parseFloat(fonts.lineHeight);
-
-function getFanartUrl(images) {
-  return images.find((x) => x.coverType === 'fanart')?.url;
-}
 
 class AuthorDetailsHeader extends Component {
 
@@ -120,7 +117,7 @@ class AuthorDetailsHeader extends Component {
 
     const statusDetails = getAuthorStatusDetails(status);
 
-    const fanartUrl = getFanartUrl(images);
+    const fanartUrl = getCoverImageUrl(findImage(images, 'fanart'), 'fanart', width || window.innerWidth);
     const marqueeWidth = titleWidth - (isSmallScreen ? 85 : 160);
 
     let bookFilesCountMessage = translate('BookFilesCountMessage');
