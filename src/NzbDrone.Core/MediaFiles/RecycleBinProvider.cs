@@ -41,17 +41,17 @@ namespace NzbDrone.Core.MediaFiles
         {
             _logger.Info("Attempting to send '{0}' to recycling bin", path);
             var recyclingBin = _configService.RecycleBin;
+            string destination = null;
 
             if (string.IsNullOrWhiteSpace(recyclingBin))
             {
                 _logger.Info("Recycling Bin has not been configured, deleting permanently. {0}", path);
                 _diskProvider.DeleteFolder(path, true);
-                _logger.Debug("Folder has been permanently deleted: {0}", path);
             }
             else
             {
                 var folderName = new DirectoryInfo(path).Name;
-                var destination = Path.Combine(recyclingBin, folderName);
+                destination = Path.Combine(recyclingBin, folderName);
                 var index = 1;
                 // Separate format roots can have the same author folder name. Never merge
                 // recycled folders, since their covers and other filenames can collide.
@@ -61,9 +61,19 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 _logger.Debug("Moving '{0}' to '{1}'", path, destination);
-                _diskTransferService.TransferFolder(path, destination, TransferMode.Move);
+                _diskTransferService.TransferFolder(path, destination, TransferMode.Move, includeIgnored: true);
+            }
 
-                _logger.Debug("Setting last accessed: {0}", path);
+            // Both deletion modes promise removal before callers may discard inventory.
+            // A transfer's best-effort empty-folder cleanup does not provide that guarantee.
+            if (_diskProvider.FolderExists(path))
+            {
+                throw new IOException("Folder deletion did not complete; remaining contents were preserved: " + path);
+            }
+
+            if (destination != null)
+            {
+                _logger.Debug("Setting last accessed: {0}", destination);
                 _diskProvider.FolderSetLastWriteTime(destination, DateTime.UtcNow);
                 foreach (var file in _diskProvider.GetFiles(destination, true))
                 {
@@ -71,6 +81,10 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 _logger.Debug("Folder has been moved to the recycling bin: {0}", destination);
+            }
+            else
+            {
+                _logger.Debug("Folder has been permanently deleted: {0}", path);
             }
         }
 

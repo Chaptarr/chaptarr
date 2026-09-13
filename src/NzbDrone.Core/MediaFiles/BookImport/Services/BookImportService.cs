@@ -5,9 +5,11 @@ using System.Linq;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles.BookImport.Aggregation;
 using NzbDrone.Core.MediaFiles.Events;
@@ -24,6 +26,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
         private readonly IMediaFileService _mediaFileService;
+        private readonly ICached<CalibreBook> _calibreBookCache;
         private readonly IUpgradeMediaFiles _upgradeMediaFiles;
         private readonly NzbDrone.Core.Configuration.IConfigService _configService;
         private readonly IAugmentingService _augmentingService;
@@ -37,6 +40,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             IBookService bookService,
             IEditionService editionService,
             IMediaFileService mediaFileService,
+            ICacheManager cacheManager,
             IUpgradeMediaFiles upgradeMediaFiles,
             IAugmentingService augmentingService,
             IDiskProvider diskProvider,
@@ -49,6 +53,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             _bookService = bookService;
             _editionService = editionService;
             _mediaFileService = mediaFileService;
+            _calibreBookCache = cacheManager.GetCache<CalibreBook>(typeof(CalibreProxy));
             _upgradeMediaFiles = upgradeMediaFiles;
             _augmentingService = augmentingService;
             _diskProvider = diskProvider;
@@ -655,11 +660,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 var file = request.File;
                 var edition = resolvedFiles[i].Edition;
                 var assignment = partAssignments[file.Path];
+                var calibreId = _calibreBookCache.Find(file.Path)?.Id ?? 0;
 
                 // Check if this path already exists in DB
                 if (existingByPath.TryGetValue(file.Path, out var existingFile))
                 {
                     var previousEditionId = existingFile.EditionId;
+                    var calibreIdChanged = calibreId > 0 && existingFile.CalibreId != calibreId;
+                    if (calibreIdChanged)
+                    {
+                        existingFile.CalibreId = calibreId;
+                    }
 
                     // Identity is already satisfied. Refresh mutable metadata only when the shared
                     // file-freshness predicate (or deterministic grouping metadata) says it changed.
@@ -669,7 +680,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         var needsRefresh = fileChanged ||
                                            existingFile.PartCount != assignment.PartCount ||
                                            !string.Equals(existingFile.MediaType, GetMediaType(book), StringComparison.OrdinalIgnoreCase) ||
-                                           (file.Quality != null && existingFile.Quality != file.Quality);
+                                           (file.Quality != null && existingFile.Quality != file.Quality) ||
+                                           calibreIdChanged;
 
                         if (!needsRefresh)
                         {
@@ -715,6 +727,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         DateAdded = DateTime.UtcNow,
                         Quality = file.Quality ?? DetermineQualityByExtension(file.Path) ?? new QualityModel { Quality = Quality.Unknown },
                         MediaInfo = MediaDuration.CreateMediaInfo(detectedDuration),
+                        CalibreId = calibreId,
                         EditionId = edition.Id,
                         Part = assignment.Part,
                         PartCount = assignment.PartCount,

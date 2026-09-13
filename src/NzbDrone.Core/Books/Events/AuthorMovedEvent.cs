@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NzbDrone.Common.Messaging;
 
 namespace NzbDrone.Core.Books.Events
@@ -7,6 +8,7 @@ namespace NzbDrone.Core.Books.Events
         public Author Author { get; set; }
         public string SourcePath { get; set; }
         public string DestinationPath { get; set; }
+        public HashSet<string> MovedPaths { get; set; }
 
         public AuthorMovedEvent(Author author, string sourcePath, string destinationPath)
         {

@@ -175,6 +175,7 @@ namespace NzbDrone.Core.MediaFiles
                 return;
             }
 
+            var rootFolders = _rootFolderService.All();
             var selectedIds = authors.Select(author => author.Id).ToHashSet();
             var inventoryWatch = Stopwatch.StartNew();
             var ownership = _mediaFileService.GetFilePathOwnership();
@@ -221,24 +222,16 @@ namespace NzbDrone.Core.MediaFiles
             foreach (var folder in authors.SelectMany(ExtraFilePathHelper.GetAuthorBasePaths)
                 .Select(Path.GetFullPath).Distinct(PathEqualityComparer.Instance))
             {
-                if (IsPathUnsafeToDelete(folder))
+                if (IsPathUnsafeToDelete(folder, rootFolders))
                 {
                     throw RefuseAuthorDeletion(folder, "the folder is outside configured roots, or is a root or its ancestor");
                 }
 
-                var root = _rootFolderService.GetBestRootFolder(folder);
-                if (!_diskProvider.FolderExists(root.Path))
-                {
-                    throw RefuseAuthorDeletion(folder, "the containing root folder is unavailable");
-                }
+                var root = _rootFolderService.GetBestRootFolder(folder, rootFolders);
+                EnsureDeletionRootAvailable(root, folder);
 
                 if (root.IsCalibreLibrary)
                 {
-                    if (root.CalibreSettings == null)
-                    {
-                        throw RefuseAuthorDeletion(folder, "the containing Calibre library has no settings");
-                    }
-
                     continue;
                 }
 
@@ -295,18 +288,10 @@ namespace NzbDrone.Core.MediaFiles
             // Validate every standalone path before the first disk or Calibre operation. A later
             // configuration refusal must not leave an earlier target already deleted.
             var standalonePaths = exactPaths.Where(path => !folders.Any(folder => folder.IsParentPath(path)))
-                .Select(path => (Path: path, Root: _rootFolderService.GetBestRootFolder(path))).ToList();
+                .Select(path => (Path: path, Root: _rootFolderService.GetBestRootFolder(path, rootFolders))).ToList();
             foreach (var item in standalonePaths)
             {
-                if (item.Root == null || !_diskProvider.FolderExists(item.Root.Path))
-                {
-                    throw RefuseAuthorDeletion(item.Path, "no available configured root contains the file");
-                }
-
-                if (item.Root.IsCalibreLibrary && item.Root.CalibreSettings == null)
-                {
-                    throw RefuseAuthorDeletion(item.Path, "the containing Calibre library has no settings");
-                }
+                EnsureDeletionRootAvailable(item.Root, item.Path);
 
                 if (HasDirectoryLink(item.Path, item.Root.Path))
                 {
@@ -315,8 +300,14 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             // Calibre IDs are library-local; never send one library's IDs to another.
-            var calibreFiles = files.Select(file => (File: file, Root: _rootFolderService.GetBestRootFolder(file.Path)))
+            var calibreFiles = files.Select(file => (File: file, Root: _rootFolderService.GetBestRootFolder(file.Path, rootFolders)))
                 .Where(item => item.Root?.IsCalibreLibrary == true && !retainedPaths.Contains(Path.GetFullPath(item.File.Path))).ToList();
+            var unidentifiedCalibreFile = calibreFiles.Select(item => item.File).FirstOrDefault(file => file.CalibreId == 0);
+            if (unidentifiedCalibreFile != null)
+            {
+                throw RefuseAuthorDeletion(unidentifiedCalibreFile.Path, "the file has no Calibre book identity");
+            }
+
             foreach (var group in calibreFiles.GroupBy(item => item.Root.Path, PathEqualityComparer.Instance))
             {
                 _calibre.DeleteBooks(group.Select(item => item.File).DistinctBy(file => file.CalibreId).ToList(), group.First().Root.CalibreSettings);
@@ -335,10 +326,6 @@ namespace NzbDrone.Core.MediaFiles
                 if (_diskProvider.FolderExists(folder))
                 {
                     _recycleBinProvider.DeleteFolder(folder);
-                    if (_diskProvider.FolderExists(folder))
-                    {
-                        throw new IOException("Author folder deletion did not complete: " + folder);
-                    }
                 }
             }
 
@@ -349,9 +336,9 @@ namespace NzbDrone.Core.MediaFiles
                     .Where(path => path.IsNotNullOrWhiteSpace())
                     .Select(Path.GetDirectoryName).Distinct(PathEqualityComparer.Instance))
                 {
-                    if (_rootFolderService.GetBestRootFolder(folder)?.IsCalibreLibrary != true)
+                    if (_rootFolderService.GetBestRootFolder(folder, rootFolders)?.IsCalibreLibrary != true)
                     {
-                        CleanupEmptyFolders(author, folder);
+                        CleanupEmptyFolders(author, folder, rootFolders);
                     }
                 }
             }
@@ -362,6 +349,26 @@ namespace NzbDrone.Core.MediaFiles
                 folders.Any(folder => folder.IsParentPath(Path.GetFullPath(file.Path)))).ToList();
             _mediaFileService.DeleteRecordsForAuthorDeletion(files.Concat(unmappedFiles).DistinctBy(file => file.Id).ToList());
             _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+        }
+
+        private void EnsureDeletionRootAvailable(RootFolder root, string path)
+        {
+            if (root == null || !_diskProvider.FolderExists(root.Path))
+            {
+                throw RefuseAuthorDeletion(path, "no available configured root contains the path");
+            }
+
+            // A missing share can leave an empty mount directory. Check all entries so a
+            // populated flat root is not mistaken for an unavailable share and stripped of inventory.
+            if (_diskProvider.FolderEmpty(root.Path))
+            {
+                throw RefuseAuthorDeletion(path, "the containing root folder is empty and may be unavailable: " + root.Path);
+            }
+
+            if (root.IsCalibreLibrary && root.CalibreSettings == null)
+            {
+                throw RefuseAuthorDeletion(path, "the containing Calibre library has no settings");
+            }
         }
 
         private NzbDroneClientException RefuseAuthorDeletion(string path, string reason)
@@ -402,7 +409,7 @@ namespace NzbDrone.Core.MediaFiles
             return _diskProvider.GetDirectories(folder).Any(ContainsDirectoryLink);
         }
 
-        private bool IsPathUnsafeToDelete(string path)
+        private bool IsPathUnsafeToDelete(string path, List<RootFolder> rootFolders = null)
         {
             if (path.IsNullOrWhiteSpace())
             {
@@ -411,7 +418,7 @@ namespace NzbDrone.Core.MediaFiles
 
             try
             {
-                var rootFolders = _rootFolderService.All();
+                rootFolders ??= _rootFolderService.All();
                 path = Path.GetFullPath(path);
                 if (!rootFolders.Any(root => Path.GetFullPath(root.Path).IsParentPath(path)))
                 {
@@ -512,7 +519,7 @@ namespace NzbDrone.Core.MediaFiles
         /// author folder that physically contains it. A colocated ebook can live in the audio tree;
         /// neither its media type nor a stale author path authorizes cleanup elsewhere.
         /// </summary>
-        private void CleanupEmptyFolders(Author author, string startingFolder)
+        private void CleanupEmptyFolders(Author author, string startingFolder, List<RootFolder> rootFolders = null)
         {
             if (!_configService.DeleteEmptyFolders || author == null || startingFolder.IsNullOrWhiteSpace())
             {
@@ -524,7 +531,7 @@ namespace NzbDrone.Core.MediaFiles
                 .OrderByDescending(p => p.Length)
                 .FirstOrDefault();
 
-            if (basePath.IsNotNullOrWhiteSpace() && !IsPathUnsafeToDelete(basePath))
+            if (basePath.IsNotNullOrWhiteSpace() && !IsPathUnsafeToDelete(basePath, rootFolders))
             {
                 ExtraFilePathHelper.CleanupEmptySourceFolders(_diskProvider, _logger,
                     new[] { (startingFolder, basePath) });

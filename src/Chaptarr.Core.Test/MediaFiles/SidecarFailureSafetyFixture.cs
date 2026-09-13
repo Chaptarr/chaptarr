@@ -179,13 +179,71 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
 
             var transfer = new DiskTransferService(s.Disk, LogManager.GetCurrentClassLogger());
-            Assert.That(() => transfer.TransferFolder(Path.GetDirectoryName(source), target, TransferMode.Move),
-                Throws.InstanceOf<IOException>());
+            Assert.That(transfer.TransferFolder(Path.GetDirectoryName(source), target, TransferMode.Move), Is.EqualTo(TransferMode.Move));
             Assert.Multiple(() =>
             {
                 Assert.That(File.ReadAllText(remaining), Is.EqualTo("keep"));
                 Assert.That(File.ReadAllText(Path.Combine(target, "book.epub")), Is.EqualTo("book"));
             });
+        }
+
+        [TestCase("debug.log")]
+        [TestCase(".nfs123")]
+        [TestCase(".metadata.json")]
+        [TestCase("notes.socket")]
+        [TestCase(@".nfs-folder\notes.txt")]
+        public void recycling_preserves_ignored_contents_in_the_bin(string relative)
+        {
+            using var s = new Sandbox();
+            var book = s.Seed(@"source\Grave Peril.epub", "book bytes");
+            s.Seed(@"source\" + relative, "additional bytes");
+            s.Seed(@"source\cover.jpg", "cover bytes");
+            s.Seed(@"source\metadata.json", "metadata bytes");
+            var disk = Proxy<IDiskProvider>((method, args) =>
+            {
+                if (method.Name == nameof(IDiskProvider.GetMount)) return null;
+                if (method.Name == nameof(IDiskProvider.CopyPermissions)) return null;
+                try { return method.Invoke(s.Disk, args); }
+                catch (TargetInvocationException e) { throw e.InnerException; }
+            });
+            var config = Proxy<IConfigService>((method, args) => method.Name == "get_RecycleBin" ? s.P("recycle") : throw new NotImplementedException(method.Name));
+            Directory.CreateDirectory(s.P("recycle"));
+            var recycle = new RecycleBinProvider(new DiskTransferService(disk, LogManager.GetCurrentClassLogger()), disk, config, LogManager.GetCurrentClassLogger());
+
+            recycle.DeleteFolder(Path.GetDirectoryName(book));
+
+            Assert.That(Directory.Exists(Path.GetDirectoryName(book)), Is.False);
+            Assert.That(File.ReadAllText(s.P(@"recycle\source\" + relative)), Is.EqualTo("additional bytes"));
+            Assert.That(File.ReadAllText(s.P(@"recycle\source\Grave Peril.epub")), Is.EqualTo("book bytes"));
+            Assert.That(File.ReadAllText(s.P(@"recycle\source\cover.jpg")), Is.EqualTo("cover bytes"));
+            Assert.That(File.ReadAllText(s.P(@"recycle\source\metadata.json")), Is.EqualTo("metadata bytes"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void folder_deletion_provider_requires_removal_in_both_modes(bool recycling)
+        {
+            using var s = new Sandbox();
+            var sentinel = s.Seed(@"source\Keep.epub");
+            var finalizations = 0;
+            var disk = Proxy<IDiskProvider>((method, args) =>
+            {
+                if (method.Name == nameof(IDiskProvider.DeleteFolder)) return null;
+                if (method.Name == nameof(IDiskProvider.FolderSetLastWriteTime)) finalizations++;
+                try { return method.Invoke(s.Disk, args); }
+                catch (TargetInvocationException e) { throw e.InnerException; }
+            });
+            var transfer = Proxy<IDiskTransferService>((method, args) => method.Name == nameof(IDiskTransferService.TransferFolder)
+                ? TransferMode.Move : throw new NotImplementedException(method.Name));
+            var config = Proxy<IConfigService>((method, args) => method.Name == "get_RecycleBin"
+                ? recycling ? s.P("recycle") : string.Empty : throw new NotImplementedException(method.Name));
+
+            var provider = new RecycleBinProvider(transfer, disk, config, LogManager.GetCurrentClassLogger());
+            var error = Assert.Throws<IOException>(() => provider.DeleteFolder(Path.GetDirectoryName(sentinel)));
+
+            Assert.That(error.Message, Does.Contain(Path.GetDirectoryName(sentinel)));
+            Assert.That(File.ReadAllText(sentinel), Is.EqualTo("sentinel"));
+            Assert.That(finalizations, Is.Zero);
         }
 
         [TestCase(false, false, 0, 1)]

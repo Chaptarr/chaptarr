@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
@@ -67,11 +69,12 @@ namespace NzbDrone.Core.Books
             {
                 _rootFolderWatchingService.ReportFileSystemChangeBeginning(sourcePath, destinationPath);
 
-                _diskTransferService.TransferFolder(sourcePath, destinationPath, TransferMode.Move);
+                var movedPaths = new HashSet<string>(PathEqualityComparer.Instance);
+                _diskTransferService.TransferFolder(sourcePath, destinationPath, TransferMode.Move, false, path => movedPaths.Add(path));
 
                 _logger.ProgressInfo("{0} moved successfully to {1}", author.Name, destinationPath);
 
-                _eventAggregator.PublishEvent(new AuthorMovedEvent(author, sourcePath, destinationPath));
+                _eventAggregator.PublishEvent(new AuthorMovedEvent(author, sourcePath, destinationPath) { MovedPaths = movedPaths });
                 return true;
             }
             catch (IOException ex)

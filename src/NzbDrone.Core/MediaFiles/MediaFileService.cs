@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using NLog;
 using NzbDrone.Common;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Books;
@@ -101,14 +103,16 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IMediaFileRepository _mediaFileRepository;
         private readonly IIngestQueueRepository _ingestQueueRepository;
         private readonly IRootFolderService _rootFolderService;
+        private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
 
-        public MediaFileService(IMediaFileRepository mediaFileRepository, IEventAggregator eventAggregator, IIngestQueueRepository ingestQueueRepository, Logger logger, IRootFolderService rootFolderService = null)
+        public MediaFileService(IMediaFileRepository mediaFileRepository, IEventAggregator eventAggregator, IIngestQueueRepository ingestQueueRepository, IDiskProvider diskProvider, Logger logger, IRootFolderService rootFolderService = null)
         {
             _mediaFileRepository = mediaFileRepository;
             _eventAggregator = eventAggregator;
             _ingestQueueRepository = ingestQueueRepository;
             _rootFolderService = rootFolderService;
+            _diskProvider = diskProvider;
             _logger = logger;
         }
 
@@ -485,15 +489,52 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Handle(AuthorMovedEvent message)
         {
+            var stopwatch = Stopwatch.StartNew();
             var files = _mediaFileRepository.GetFilesWithBasePath(message.SourcePath);
+            var movedFiles = new List<BookFile>();
+            // A removed source folder needs one check, not path recovery through its root per file.
+            var sourceFolderExists = _diskProvider.FolderExists(message.SourcePath);
 
             foreach (var file in files)
             {
                 var newPath = message.DestinationPath + file.Path.Substring(message.SourcePath.Length);
+                // Keep paths for physically retained files. Missing rows must follow the completed
+                // move too, so the destination's normal rescan can reclaim their stale inventory.
+                var transferConfirmed = false;
+                for (var path = file.Path; path != null && message.MovedPaths != null; path = Path.GetDirectoryName(path))
+                {
+                    if (message.MovedPaths.Contains(path))
+                    {
+                        transferConfirmed = true;
+                        break;
+                    }
+                }
+
+                if (!transferConfirmed && sourceFolderExists && _diskProvider.FileExistsCanonical(file.Path))
+                {
+                    _logger.Debug("Author folder moved, but book file '{0}' was not moved to '{1}'; keeping its recorded path", file.Path, newPath);
+                    continue;
+                }
+
                 file.Path = newPath;
+                movedFiles.Add(file);
             }
 
-            Update(files);
+            var retainedCount = files.Count - movedFiles.Count;
+            if (retainedCount > 0)
+            {
+                // Keep partial moves visible without one warning per file; debug retains every path.
+                _logger.Warn("Author folder moved from '{0}' to '{1}', but {2} of {3} tracked book files were not moved; keeping their recorded paths. See debug log for individual paths.",
+                    message.SourcePath, message.DestinationPath, retainedCount, files.Count);
+            }
+
+            if (movedFiles.Count > 0)
+            {
+                Update(movedFiles);
+            }
+
+            _logger.Debug("[AUTHOR-MOVE-TIMING] Checked {0} tracked book files from '{1}' to '{2}': updated {3}, retained {4} in {5}ms",
+                files.Count, message.SourcePath, message.DestinationPath, movedFiles.Count, retainedCount, stopwatch.ElapsedMilliseconds);
         }
 
         public void HandleAsync(BookDeletedEvent message)

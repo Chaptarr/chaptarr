@@ -12,6 +12,7 @@ namespace NzbDrone.Common.Disk
     public interface IDiskTransferService
     {
         TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode);
+        TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode, bool includeIgnored, Action<string> onMoved = null);
         TransferMode TransferFile(string sourcePath, string targetPath, TransferMode mode, bool overwrite = false);
         int MirrorFolder(string sourcePath, string targetPath);
     }
@@ -54,6 +55,11 @@ namespace NzbDrone.Common.Disk
 
         public TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode)
         {
+            return TransferFolder(sourcePath, targetPath, mode, false);
+        }
+
+        public TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode, bool includeIgnored, Action<string> onMoved = null)
+        {
             Ensure.That(sourcePath, () => sourcePath).IsValidPath(PathValidationType.CurrentOs);
             Ensure.That(targetPath, () => targetPath).IsValidPath(PathValidationType.CurrentOs);
 
@@ -79,6 +85,7 @@ namespace NzbDrone.Common.Disk
                     _logger.Trace("Rename Intermediate Directory [{0}] > [{1}]", tempPath, targetPath);
                     _logger.Debug("Rename Directory [{0}] > [{1}]", sourcePath, targetPath);
                     _diskProvider.MoveFolder(tempPath, targetPath);
+                    onMoved?.Invoke(sourcePath);
                     return mode;
                 }
 
@@ -97,6 +104,7 @@ namespace NzbDrone.Common.Disk
                 {
                     _logger.Debug("Rename Directory [{0}] > [{1}]", sourcePath, targetPath);
                     _diskProvider.MoveFolder(sourcePath, targetPath);
+                    onMoved?.Invoke(sourcePath);
                     return mode;
                 }
             }
@@ -112,31 +120,47 @@ namespace NzbDrone.Common.Disk
 
             foreach (var subDir in _diskProvider.GetDirectoryInfos(sourcePath))
             {
-                if (ShouldIgnore(subDir))
+                if (!includeIgnored && ShouldIgnore(subDir))
                 {
                     continue;
                 }
 
-                result &= TransferFolder(subDir.FullName, Path.Combine(targetPath, subDir.Name), mode);
+                result &= TransferFolder(subDir.FullName, Path.Combine(targetPath, subDir.Name), mode, includeIgnored, onMoved);
             }
 
-            foreach (var sourceFile in _diskProvider.GetFileInfos(sourcePath))
+            var sourceFiles = includeIgnored
+                ? _diskProvider.GetDirectoryInfo(sourcePath).GetFiles().AsEnumerable()
+                : _diskProvider.GetFileInfos(sourcePath);
+            foreach (var sourceFile in sourceFiles)
             {
-                if (ShouldIgnore(sourceFile))
+                if (!includeIgnored && ShouldIgnore(sourceFile))
                 {
                     continue;
                 }
 
                 var destFile = Path.Combine(targetPath, sourceFile.Name);
 
-                result &= TransferFile(sourceFile.FullName, destFile, mode, true);
+                var fileResult = TransferFile(sourceFile.FullName, destFile, mode, true);
+                result &= fileResult;
+                if (fileResult.HasFlag(TransferMode.Move))
+                {
+                    onMoved?.Invoke(sourceFile.FullName);
+                }
             }
 
             if (mode.HasFlag(TransferMode.Move))
             {
-                // A completed move only authorizes empty-folder cleanup. Skipped files or
-                // late arrivals must survive regardless of their size.
-                _diskProvider.DeleteFolder(sourcePath, false);
+                // All selected transfers have completed. Cleanup cannot undo them or authorize
+                // deleting skipped files/late arrivals; callers requiring removal of the whole
+                // source folder must verify that separately.
+                try
+                {
+                    _diskProvider.DeleteFolder(sourcePath, false);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    _logger.Warn(ex, "Files transferred to '{0}', but source folder '{1}' could not be removed; any remaining contents were preserved", targetPath, sourcePath);
+                }
             }
 
             return result;
@@ -426,7 +450,8 @@ namespace NzbDrone.Common.Disk
 
         private void ClearTargetPath(string sourcePath, string targetPath, bool overwrite)
         {
-            if (_diskProvider.FileExists(targetPath))
+            // Loose read matches are not evidence that a destination may be overwritten.
+            if (_diskProvider.FileExistsCanonical(targetPath))
             {
                 if (overwrite)
                 {

@@ -139,7 +139,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var file = new BookFile
             {
@@ -178,7 +178,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var files = new List<BookFile>
             {
@@ -231,7 +231,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             sut.ReplaceMany(
                 new List<BookFile> { replacement },
@@ -264,6 +264,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 repo,
                 new RecordingEventAggregator(),
                 new RecordingIngestQueueRepository(),
+                null,
                 LogManager.GetLogger("test"));
 
             sut.Handle(new EditionDeletedEvent(new Edition { Id = 100 }));
@@ -281,7 +282,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var author = new Author
             {
@@ -307,7 +308,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var book = new Book
             {

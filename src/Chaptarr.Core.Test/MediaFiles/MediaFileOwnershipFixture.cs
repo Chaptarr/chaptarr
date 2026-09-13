@@ -86,7 +86,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
             var events = AuthorDeletionSafetyFixture.Proxy<IEventAggregator>((method, args) =>
                 throw new InvalidOperationException("Record-only cleanup must not publish physical deletion events"));
-            var service = new MediaFileService(repository, events, ingest, LogManager.GetCurrentClassLogger());
+            var service = new MediaFileService(repository, events, ingest, null, LogManager.GetCurrentClassLogger());
             service.DeleteRecordsForAuthorDeletion(files.Where(file => file.Author == null).ToList());
             Assert.That(connection.Query<int>(@"SELECT ""Id"" FROM ""BookFiles"" ORDER BY ""Id"""), Is.EqualTo(new[] { 1, 2, 3 }));
             Assert.That(purgedPaths, Is.EqualTo(new[] { "/audio/A/unmapped.m4b" }));
