@@ -1,4 +1,4 @@
-/* Run with an existing Playwright installation; no backend or library data is used. */
+/* Uses the repo-pinned Playwright; no backend or library data is used. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -7,7 +7,8 @@ const webpack = require('webpack');
 const darkTheme = require('../src/Styles/Themes/dark');
 const lightTheme = require('../src/Styles/Themes/light');
 
-const { chromium } = require(process.env.CHAPTARR_PLAYWRIGHT_MODULE || 'playwright');
+const { chromium } = require('playwright');
+
 const root = path.resolve(__dirname, '../..');
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'chaptarr-toolbar-'));
 const config = require('./webpack.config')({ production: true });

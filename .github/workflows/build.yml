@@ -170,8 +170,8 @@ jobs:
         yarn install --frozen-lockfile
         yarn playwright install --with-deps chromium
 
-    # `yarn lint` walks directories and only picks up .js, so the .cjs runners are
-    # invisible to it. Lint exactly these four files rather than the whole repo.
+    # Directory-based `yarn lint` does not discover these .cjs runners.
+    # Discover browser files by convention; new checks must use check-*.cjs / *-fixture.js.
     - name: Lint browser checks
       if: runner.os == 'Linux'
       run: yarn lint-browser-checks
@@ -194,7 +194,42 @@ jobs:
           ${{ runner.temp }}/chaptarr-photo-*/*.png
         retention-days: 7
         if-no-files-found: warn
+
+    # Covers the delete checkbox, the outgoing request body and the mobile layout.
+    # It does NOT prove filesystem deletion is safe -- the Core deletion fixtures do.
+    - name: Check author delete UI
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-author-delete
+
+    - name: Upload author delete evidence
+      if: ${{ !cancelled() && runner.os == 'Linux' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: author-delete-evidence
+        path: ${{ runner.temp }}/chaptarr-delete-ui-*/*.png
+        retention-days: 7
+        if-no-files-found: warn
     
+    - name: Check mobile toolbar
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+        CHAPTARR_LAYOUT_ARTIFACTS: ${{ runner.temp }}/chaptarr-toolbar-evidence
+      run: yarn check-mobile-toolbar
+
+    - name: Upload mobile toolbar evidence
+      if: ${{ !cancelled() && runner.os == 'Linux' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: mobile-toolbar-evidence
+        path: ${{ runner.temp }}/chaptarr-toolbar-evidence/*.png
+        retention-days: 7
+        if-no-files-found: warn
+
     - name: Publish
       run: |
         dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o ./publish/Chaptarr
@@ -254,6 +289,11 @@ jobs:
 
     - name: Build (migrations smoke)
       run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
+
+    - name: Test - PostgreSQL exclusion and deletion persistence
+      env:
+        CHAPTARR_TEST_POSTGRES_CONNECTION_STRING: "Host=localhost;Port=5432;Database=postgres;Username=chaptarr;Password=chaptarr;Pooling=false"
+      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --filter "FullyQualifiedName~ImportListExclusionServiceFixture|FullyQualifiedName~PendingAuthorImportRepositoryRetryFixture|FullyQualifiedName~MediaFileOwnershipFixture"
 
     - name: Smoke - migrate up on fresh PostgreSQL
       shell: bash
