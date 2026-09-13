@@ -211,6 +211,15 @@ namespace NzbDrone.Core.Blocklisting
 
         private bool SameNzb(Blocklist item, ReleaseInfo release)
         {
+            // Usenet indexers can report the same post again with a different published
+            // timestamp. The title match was already narrowed to this author by the
+            // repository, so treating that as a new release here causes a failed NZB to
+            // be grabbed repeatedly by the automatic failed-download search.
+            if (item.SourceTitle.Equals(release.Title, StringComparison.InvariantCultureIgnoreCase))
+            {
+                return true;
+            }
+
             if (item.PublishedDate == release.PublishDate)
             {
                 return true;
