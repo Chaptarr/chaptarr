@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using FluentValidation;
 using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Core.Books;
@@ -324,6 +325,14 @@ namespace NzbDrone.Core.Books.Commands
                 _logger.Debug("Pending book request for author {0} is not ready; scheduling retry", item.ProviderId);
                 _pendingImportService.ScheduleRetry(item, reason);
             }
+            catch (ValidationException ex) when (ex.Errors.Any(error => error.ErrorCode == AuthorLibraryService.ImportListAuthorExcludedErrorCode))
+            {
+                // A newer direct request must survive an older list request's exclusion failure.
+                if (_pendingImportService.UpdateStatus(item, PendingImportStatus.Failed, ex.Message, item.Version))
+                {
+                    _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(item));
+                }
+            }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Error processing pending import {0}", item.Id);
@@ -363,6 +372,7 @@ namespace NzbDrone.Core.Books.Commands
                 AudiobookRootFolderPath = item.AudiobookRootFolderPath,
                 EbookRootFolderPath = item.EbookRootFolderPath,
                 DiscoveredAuthorFolderPath = item.DiscoveredAuthorFolderPath,
+                RequestedBy = item.RequestedBy,
                 SearchForMissingBooks = item.SearchForMissingBooks,
                 LastSelectedMediaType = item.LastSelectedMediaType,
                 CreateAudiobook = item.HasAudiobook(),

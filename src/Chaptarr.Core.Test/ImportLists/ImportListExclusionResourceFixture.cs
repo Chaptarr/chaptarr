@@ -147,6 +147,8 @@ namespace Chaptarr.Core.Test.ImportLists
                 _existing = new List<ImportListExclusion>(existing ?? Array.Empty<ImportListExclusion>());
             }
 
+            public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => _existing;
             public void Delete(int id) => throw new NotImplementedException();

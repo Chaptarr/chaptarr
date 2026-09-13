@@ -508,7 +508,7 @@ namespace NzbDrone.Core.ImportLists
             return (providerId.Substring(0, idx).ToLowerInvariant(), providerId.Substring(idx + 1));
         }
 
-        private static bool MatchesExclusionId(string providerId, string exclusionId)
+        internal static bool MatchesExclusionId(string providerId, string exclusionId)
         {
             if (providerId.IsNullOrWhiteSpace() || exclusionId.IsNullOrWhiteSpace())
             {

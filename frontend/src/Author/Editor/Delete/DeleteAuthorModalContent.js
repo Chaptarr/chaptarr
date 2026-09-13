@@ -21,7 +21,8 @@ class DeleteAuthorModalContent extends Component {
     super(props, context);
 
     this.state = {
-      deleteFiles: false
+      deleteFiles: false,
+      addImportListExclusion: false
     };
   }
 
@@ -32,11 +33,15 @@ class DeleteAuthorModalContent extends Component {
     this.setState({ deleteFiles: value });
   };
 
-  onDeleteAuthorConfirmed = () => {
-    const deleteFiles = this.state.deleteFiles;
+  onAddImportListExclusionChange = ({ value }) => {
+    this.setState({ addImportListExclusion: value });
+  };
 
-    this.setState({ deleteFiles: false });
-    this.props.onDeleteSelectedPress(deleteFiles);
+  onDeleteAuthorConfirmed = () => {
+    const { deleteFiles, addImportListExclusion } = this.state;
+
+    this.setState({ deleteFiles: false, addImportListExclusion: false });
+    this.props.onDeleteSelectedPress(deleteFiles, addImportListExclusion);
   };
 
   //
@@ -57,6 +62,18 @@ class DeleteAuthorModalContent extends Component {
 
         <ModalBody>
           <div>
+            <FormGroup>
+              <FormLabel>{translate('AddListExclusion')}</FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.CHECK}
+                name="addImportListExclusion"
+                value={this.state.addImportListExclusion}
+                helpText={translate('AddListExclusionAuthorHelpText')}
+                onChange={this.onAddImportListExclusionChange}
+              />
+            </FormGroup>
+
             <FormGroup>
               <FormLabel>{`Delete Author Folder${author.length > 1 ? 's' : ''}`}</FormLabel>
 

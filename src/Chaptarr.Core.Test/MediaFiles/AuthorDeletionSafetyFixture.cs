@@ -20,6 +20,7 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.RootFolders;
 
@@ -57,10 +58,14 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<string> DeletedFolders { get; } = new();
             public List<(List<BookFile> Files, CalibreSettings Settings)> CalibreCalls { get; } = new();
             public bool FailCalibre { get; set; }
+            public bool FailExclusion { get; set; }
+            public bool FailExclusionValidation { get; set; }
+            public List<List<Author>> ExcludedAuthorBatches { get; } = new();
             public bool FailDisk { get; set; }
             public bool LeaveFolderBehind { get; set; }
             public string RecycleBin { get; set; } = string.Empty;
             public int FileQueries { get; private set; }
+            public int RootQueries { get; private set; }
             public Events Events { get; } = new();
             public AuthorService Service { get; }
 
@@ -69,13 +74,22 @@ namespace Chaptarr.Core.Test.MediaFiles
             public Sandbox()
             {
                 Directory.CreateDirectory(Temp);
-                var roots = Proxy<IRootFolderService>((m, a) => m.Name switch
+                var roots = Proxy<IRootFolderService>((m, a) =>
                 {
-                    nameof(IRootFolderService.All) => Roots,
-                    nameof(IRootFolderService.GetBestRootFolder) => Roots
-                        .Where(r => r.Path.PathEquals((string)a[0]) || r.Path.IsParentPath((string)a[0]))
-                        .OrderByDescending(r => r.Path.Length).FirstOrDefault(),
-                    _ => throw new NotImplementedException(m.Name)
+                    if (m.Name == nameof(IRootFolderService.All) ||
+                        (m.Name == nameof(IRootFolderService.GetBestRootFolder) && a.Length == 1))
+                    {
+                        RootQueries++;
+                    }
+
+                    return m.Name switch
+                    {
+                        nameof(IRootFolderService.All) => Roots,
+                        nameof(IRootFolderService.GetBestRootFolder) => (a.Length == 2 ? (List<RootFolder>)a[1] : Roots)
+                            .Where(r => r.Path.PathEquals((string)a[0]) || r.Path.IsParentPath((string)a[0]))
+                            .OrderByDescending(r => r.Path.Length).FirstOrDefault(),
+                        _ => throw new NotImplementedException(m.Name)
+                    };
                 });
                 var media = Proxy<IMediaFileService>((m, a) =>
                 {
@@ -128,7 +142,14 @@ namespace Chaptarr.Core.Test.MediaFiles
                     "get_DeleteEmptyFolders" => true,
                     _ => throw new NotImplementedException(m.Name)
                 });
-                var recycle = new RecycleBinProvider(new DiskTransferService(disk, LogManager.GetCurrentClassLogger()), disk, config, LogManager.GetCurrentClassLogger());
+                var realTransfer = new DiskTransferService(disk, LogManager.GetCurrentClassLogger());
+                var transfer = Proxy<IDiskTransferService>((method, args) =>
+                {
+                    if (LeaveFolderBehind && method.Name == nameof(IDiskTransferService.TransferFolder)) return TransferMode.Move;
+                    try { return method.Invoke(realTransfer, args); }
+                    catch (TargetInvocationException ex) { throw ex.InnerException; }
+                });
+                var recycle = new RecycleBinProvider(transfer, disk, config, LogManager.GetCurrentClassLogger());
                 var calibre = Proxy<ICalibreProxy>((m, a) =>
                 {
                     if (m.Name != nameof(ICalibreProxy.DeleteBooks)) throw new NotImplementedException(m.Name);
@@ -144,8 +165,28 @@ namespace Chaptarr.Core.Test.MediaFiles
                 });
                 var deletion = new MediaFileDeletionService(disk, recycle, media, repository, config, Events,
                     roots, calibre, LogManager.GetCurrentClassLogger(), extras);
+                var exclusions = AuthorDeletionSafetyFixture.Proxy<IImportListExclusionService>((method, args) =>
+                {
+                    if (method.Name == nameof(IImportListExclusionService.ValidateAuthorExclusions))
+                    {
+                        if (FailExclusionValidation) throw new IOException("Synthetic exclusion validation failure");
+                        Assert.That(Events.Published, Is.Empty);
+                        Assert.That(DeletedFolders, Is.Empty);
+                        return null;
+                    }
+
+                    if (method.Name == nameof(IImportListExclusionService.AddAuthorExclusions))
+                    {
+                        if (FailExclusion) throw new IOException("Synthetic exclusion persistence failure");
+                        Assert.That(Events.Published.OfType<AuthorDeletedEvent>(), Is.Empty);
+                        ExcludedAuthorBatches.Add(((IEnumerable<Author>)args[0]).ToList());
+                        return null;
+                    }
+                    if (method.Name == nameof(IImportListExclusionService.All)) return new List<ImportListExclusion>();
+                    throw new NotImplementedException(method.Name);
+                });
                 Service = new AuthorService(repository, Events, null, roots, null, new CacheManager(), null, media,
-                    LogManager.GetCurrentClassLogger(), deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => deletion));
+                    LogManager.GetCurrentClassLogger(), exclusions, deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => deletion));
             }
 
             public RootFolder Root(string relative, bool calibre = false)
@@ -202,6 +243,50 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void Dispose() => Directory.Delete(Temp, true);
         }
 
+        [TestCase(1)]
+        [TestCase(10)]
+        [TestCase(1000)]
+        public void author_deletion_uses_one_root_snapshot_for_all_files(int fileCount)
+        {
+            using var s = new Sandbox();
+            s.Root("ebooks");
+            var author = s.Author(@"ebooks\Jim Butcher");
+            for (var i = 0; i < fileCount; i++)
+            {
+                s.Track(author, $@"ebooks\Jim Butcher\Grave Peril-{i}.epub");
+            }
+
+            s.Service.DeleteAuthor(author.Id, true);
+
+            Assert.That(s.RootQueries, Is.EqualTo(1));
+            Assert.That(s.Files, Is.Empty);
+            Assert.That(Directory.Exists(author.Path), Is.False);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void unresolved_calibre_identity_refuses_the_whole_delete_before_any_physical_work(bool mixed)
+        {
+            using var s = new Sandbox();
+            s.Root("calibre", true);
+            s.Root("audio");
+            var author = s.Author(@"audio\Frank Herbert", @"audio\Frank Herbert", @"calibre\Frank Herbert");
+            s.Track(author, @"audio\Frank Herbert\Dune.m4b");
+            var unidentified = s.Track(author, @"calibre\Frank Herbert\Dune Messiah.epub");
+            if (mixed) s.Track(author, @"calibre\Frank Herbert\Dune.epub", 7);
+            var paths = s.Files.Select(file => file.Path).ToList();
+
+            var error = Assert.Throws<NzbDroneClientException>(() => s.Service.DeleteAuthor(author.Id, true));
+
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(error.Message, Does.Contain(unidentified.Path).And.Contain("Calibre"));
+            Assert.That(s.CalibreCalls, Is.Empty);
+            Assert.That(s.DeletedFolders, Is.Empty);
+            Assert.That(s.Authors, Has.Count.EqualTo(1));
+            Assert.That(s.Files, Has.Count.EqualTo(paths.Count));
+            Assert.That(paths.All(File.Exists), Is.True);
+        }
+
         [TestCase("true", true)]
         [TestCase("false", false)]
         [TestCase(null, false)]
@@ -223,6 +308,116 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(s.Authors, Is.Empty);
                 if (!deleteFiles) Assert.That(s.FileQueries, Is.Zero);
             });
+        }
+
+        [TestCase("true", true)]
+        [TestCase("false", false)]
+        [TestCase(null, false)]
+        public void bulk_delete_forwards_only_the_requested_import_list_exclusion(string flag, bool expected)
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var first = s.Author(@"media\A");
+            var second = s.Author(@"media\B");
+            first.GoodreadsAuthorId = "gr:author-1";
+            second.GoodreadsAuthorId = "gr:author-2";
+            var json = "{\"authorIds\":[1,2]" + (flag == null ? "" : ",\"addImportListExclusion\":" + flag) + "}";
+            var resource = JsonSerializer.Deserialize<AuthorEditorResource>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            new AuthorEditorController(s.Service, null, null, null, null).DeleteAuthor(resource);
+            var events = s.Events.Published.OfType<AuthorDeletedEvent>().ToList();
+            Assert.That(events, Has.Count.EqualTo(2));
+            Assert.That(events.All(e => e.AddImportListExclusion == expected && !e.DeleteFiles), Is.True);
+            Assert.That(s.ExcludedAuthorBatches, Has.Count.EqualTo(expected ? 1 : 0));
+            if (expected) Assert.That(s.ExcludedAuthorBatches.Single(), Is.EqualTo(new[] { first, second }));
+        }
+
+        [Test]
+        public void successful_checked_delete_persists_exclusion_before_author_teardown()
+        {
+            using var s = new Sandbox(); s.Root("media");
+            var author = s.Author(@"media\Frank Herbert", @"media\Frank Herbert");
+            author.Name = "Frank Herbert";
+            author.GoodreadsAuthorId = "gr:58";
+            var file = s.Track(author, @"media\Frank Herbert\Dune.m4b");
+
+            s.Service.DeleteAuthor(author.Id, deleteFiles: true, addImportListExclusion: true);
+
+            Assert.That(File.Exists(file.Path), Is.False);
+            Assert.That(s.Authors, Is.Empty);
+            Assert.That(s.ExcludedAuthorBatches.Single(), Is.EqualTo(new[] { author }));
+            Assert.That(s.Events.Published.OfType<AuthorDeletedEvent>().Count(), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void exclusion_persistence_failure_after_physical_delete_keeps_database_author_and_skips_teardown()
+        {
+            using var s = new Sandbox(); s.Root("media");
+            var author = s.Author(@"media\Frank Herbert", @"media\Frank Herbert");
+            author.Name = "Frank Herbert";
+            author.GoodreadsAuthorId = "gr:58";
+            var file = s.Track(author, @"media\Frank Herbert\Dune.m4b");
+            s.FailExclusion = true;
+
+            Assert.Throws<IOException>(() => s.Service.DeleteAuthor(author.Id, deleteFiles: true, addImportListExclusion: true));
+
+            Assert.That(File.Exists(file.Path), Is.False);
+            Assert.That(s.Authors, Does.Contain(author));
+            Assert.That(s.Events.Published.OfType<AuthorDeletedEvent>(), Is.Empty);
+        }
+
+        [Test]
+        public void exclusion_identity_validation_failure_precedes_physical_delete()
+        {
+            using var s = new Sandbox(); s.Root("media");
+            var author = s.Author(@"media\Frank Herbert", @"media\Frank Herbert");
+            var file = s.Track(author, @"media\Frank Herbert\Dune.m4b");
+            s.FailExclusionValidation = true;
+
+            Assert.Throws<IOException>(() => s.Service.DeleteAuthor(author.Id, deleteFiles: true, addImportListExclusion: true));
+
+            Assert.That(File.Exists(file.Path), Is.True);
+            Assert.That(s.Authors, Does.Contain(author));
+            Assert.That(s.Events.Published.OfType<AuthorDeletedEvent>(), Is.Empty);
+        }
+
+        [TestCase("audio", false)]
+        [TestCase("ebooks", false)]
+        [TestCase("audio", true)]
+        [TestCase("ebooks", true)]
+        public void empty_root_refuses_deletion_before_removing_any_files_or_inventory(string media, bool standalone)
+        {
+            using var s = new Sandbox();
+            s.Root("available");
+            var missing = s.Root(media);
+            var author = s.Author(@"available\A", @"available\A", standalone ? null : media + @"\A");
+            var kept = s.Track(author, @"available\A\Keep.m4b");
+            s.Track(author, media + @"\A\Offline.epub");
+            var offline = s.P("offline");
+            Directory.Move(missing.Path, offline);
+            Directory.CreateDirectory(missing.Path);
+            var error = Assert.Throws<NzbDroneClientException>(() => s.Service.DeleteAuthor(author.Id, true, addImportListExclusion: true));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(error.Message, Does.Contain(missing.Path).And.Contain("empty"));
+            Assert.That(File.Exists(kept.Path), Is.True);
+            Assert.That(s.Authors, Has.Count.EqualTo(1));
+            Assert.That(s.Files, Has.Count.EqualTo(2));
+            Assert.That(s.DeletedFolders, Is.Empty);
+            Assert.That(s.ExcludedAuthorBatches, Is.Empty);
+            Assert.That(Directory.GetFiles(offline, "*", SearchOption.AllDirectories), Has.Length.EqualTo(1));
+        }
+
+        [Test]
+        public void populated_flat_root_is_not_mistaken_for_an_unavailable_share()
+        {
+            using var s = new Sandbox();
+            var root = s.Root("ebooks");
+            var author = s.Author(@"ebooks\A");
+            var file = s.Track(author, @"ebooks\Book.epub");
+            Assert.That(Directory.GetDirectories(root.Path), Is.Empty);
+            s.Service.DeleteAuthor(author.Id, true);
+            Assert.That(File.Exists(file.Path), Is.False);
+            Assert.That(s.Authors, Is.Empty);
+            Assert.That(s.Files, Is.Empty);
         }
 
         [TestCase(false)]
@@ -404,6 +599,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             using var s = new Sandbox(); s.Root("audio"); s.Root("ebooks");
             var author = s.Author(@"audio\A");
+            Directory.CreateDirectory(author.Path);
             var file = s.Track(author, @"ebooks\Title First\Book.epub");
             var replica = s.Seed(@"ebooks\Copy\Book.epub");
             file.ReplicaPaths = new List<string> { replica };
@@ -472,10 +668,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(s.Events.Published, Is.Empty);
         }
 
-        [Test]
-        public void incomplete_folder_recycle_does_not_report_success_or_delete_inventory()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void incomplete_folder_deletion_does_not_report_success_or_delete_inventory(bool recycling)
         {
             using var s = new Sandbox(); s.Root("media");
+            if (recycling) s.RecycleBin = s.P("recycle");
             var author = s.Author(@"media\A");
             var file = new BookFile { Id = 1, Path = s.Seed(@"media\A\Unmapped.epub") };
             s.Files.Add(file);

@@ -57,6 +57,8 @@ namespace Chaptarr.Core.Test.Books
                 _exclusions = exclusions?.ToList() ?? new List<ImportListExclusion>();
             }
 
+            public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();

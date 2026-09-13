@@ -8,6 +8,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.MediaCover.Commands;
+using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
@@ -89,6 +90,7 @@ namespace NzbDrone.Core.Books
 	        private readonly IBookRepository _bookRepository;
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IProviderAliasService _providerAliasService;
+        private readonly IImportListExclusionService _importListExclusionService;
 
         // Single-author cache fields
         private volatile int _currentAuthorId = -1;
@@ -104,8 +106,9 @@ namespace NzbDrone.Core.Books
 	                             IBookRepository bookRepository,
 	                             IMediaFileService mediaFileService,
 	                             Logger logger,
-	                             IProviderAliasService providerAliasService = null,
-                                 Lazy<IDeleteMediaFiles> deleteMediaFiles = null)
+                             IImportListExclusionService importListExclusionService,
+                             IProviderAliasService providerAliasService = null,
+                             Lazy<IDeleteMediaFiles> deleteMediaFiles = null)
 	        {
 	            _authorRepository = authorRepository;
                 _deleteMediaFiles = deleteMediaFiles;
@@ -120,6 +123,7 @@ namespace NzbDrone.Core.Books
 	            _bookRepository = bookRepository;
 	            _mediaFileService = mediaFileService;
 	            _providerAliasService = providerAliasService;
+                _importListExclusionService = importListExclusionService;
 	        }
 
         private void EnsureAuthorDbFields(Author author, bool ensurePaths, bool requirePath)
@@ -351,12 +355,23 @@ namespace NzbDrone.Core.Books
 	                .Where(author => author != null)
 	                .ToList();
 
+                if (addImportListExclusion)
+                {
+                    // Validate identity before physical work; persistence waits until deletion succeeds.
+                    _importListExclusionService.ValidateAuthorExclusions(authors);
+                }
+
                 // Delete against one complete selection while ownership still exists. A physical
                 // failure must not be swallowed by events and followed by database teardown.
                 if (deleteFiles)
                 {
                     (_deleteMediaFiles?.Value ?? throw new InvalidOperationException("Author file deletion service is unavailable"))
                         .DeleteAuthorFiles(authors);
+                }
+
+                if (addImportListExclusion)
+                {
+                    _importListExclusionService.AddAuthorExclusions(authors);
                 }
 
 	            // Keep every parent row alive while synchronous handlers remove Books and Editions.

@@ -31,7 +31,10 @@ namespace Chaptarr.Core.Test.Books
                     case nameof(IPendingAuthorImportRepository.Find):
                         return Active?.Id == (int)args[0] ? Active : null;
                     case nameof(IPendingAuthorImportRepository.GetActiveByProviderId):
-                        return Active?.IsActive() == true ? Active : null;
+                        return Active?.IsActive() == true &&
+                               string.Equals(Active.ProviderId, (string)args[0], StringComparison.OrdinalIgnoreCase)
+                            ? Active
+                            : null;
                     case nameof(IPendingAuthorImportRepository.Insert):
                         Inserted = (PendingAuthorImport)args[0];
                         Inserted.Id = 123;
@@ -126,6 +129,185 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void expected_version_status_update_should_leave_a_newer_merged_request_unchanged()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AuthorName = "Frank Herbert",
+                RequestedBy = "UserInterface",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                LastError = "current merged request",
+                Version = 6
+            };
+            var staleItem = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                Version = 5
+            };
+            var subject = new PendingAuthorImportService(
+                repository,
+                null,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var updated = subject.UpdateStatus(staleItem, PendingImportStatus.Failed, "excluded", expectedVersion: 5);
+
+            Assert.That(updated, Is.False);
+            Assert.That(repositoryProxy.Active.AudiobookStatus, Is.EqualTo(PendingImportStatus.Pending));
+            Assert.That(repositoryProxy.Active.OverallStatus, Is.EqualTo(PendingImportStatus.Pending));
+            Assert.That(repositoryProxy.Active.LastError, Is.EqualTo("current merged request"));
+            Assert.That(repositoryProxy.Active.Version, Is.EqualTo(6));
+            Assert.That(repositoryProxy.FencedUpdateCount, Is.Zero);
+            Assert.That(staleItem.OverallStatus, Is.EqualTo(PendingImportStatus.Pending));
+        }
+
+        [Test]
+        public void expected_version_status_update_should_fail_if_the_same_provider_request_was_replaced()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 59,
+                ProviderId = "gr:58",
+                AuthorName = "Frank Herbert",
+                RequestedBy = "UserInterface",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                LastError = "replacement request",
+                Version = 5
+            };
+            var staleItem = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                Version = 5
+            };
+            var subject = new PendingAuthorImportService(
+                repository,
+                null,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var updated = subject.UpdateStatus(staleItem, PendingImportStatus.Failed, "excluded", expectedVersion: 5);
+
+            Assert.That(updated, Is.False);
+            Assert.That(repositoryProxy.Active.Id, Is.EqualTo(59));
+            Assert.That(repositoryProxy.Active.AudiobookStatus, Is.EqualTo(PendingImportStatus.Pending));
+            Assert.That(repositoryProxy.Active.LastError, Is.EqualTo("replacement request"));
+            Assert.That(repositoryProxy.Active.Version, Is.EqualTo(5));
+            Assert.That(repositoryProxy.FencedUpdateCount, Is.Zero);
+        }
+
+        [TestCase(PendingImportStatus.Failed, PendingImportStatus.NotRequested, PendingImportStatus.Failed)]
+        [TestCase(PendingImportStatus.NotRequested, PendingImportStatus.Failed, PendingImportStatus.Failed)]
+        [TestCase(PendingImportStatus.Failed, PendingImportStatus.Failed, PendingImportStatus.Failed)]
+        [TestCase(PendingImportStatus.Succeeded, PendingImportStatus.NotRequested, PendingImportStatus.Succeeded)]
+        [TestCase(PendingImportStatus.NotRequested, PendingImportStatus.Succeeded, PendingImportStatus.Succeeded)]
+        [TestCase(PendingImportStatus.Succeeded, PendingImportStatus.Failed, PendingImportStatus.PartialSuccess)]
+        [TestCase(PendingImportStatus.Failed, PendingImportStatus.Succeeded, PendingImportStatus.PartialSuccess)]
+        public void overall_status_only_counts_a_requested_format_as_successful(
+            PendingImportStatus audio, PendingImportStatus ebook, PendingImportStatus expected)
+        {
+            var item = new PendingAuthorImport { AudiobookStatus = audio, EbookStatus = ebook };
+            item.UpdateOverallStatus();
+            Assert.That(item.OverallStatus, Is.EqualTo(expected));
+            Assert.That(item.IsActive(), Is.False);
+            if (expected == PendingImportStatus.Failed) Assert.That(item.IsComplete(), Is.True);
+        }
+
+        [Test]
+        public void expected_version_failure_does_not_retry_against_a_request_merged_during_the_write()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var proxy = (RepositoryProxy)repository;
+            var item = new PendingAuthorImport
+            {
+                Id = 58, ProviderId = "gr:58", AuthorName = "Frank Herbert", RequestedBy = "ImportList:Favorites",
+                AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending, Version = 5
+            };
+            proxy.Active = new PendingAuthorImport
+            {
+                Id = item.Id, ProviderId = item.ProviderId, RequestedBy = item.RequestedBy,
+                AudiobookStatus = item.AudiobookStatus, EbookStatus = item.EbookStatus,
+                OverallStatus = item.OverallStatus, Version = item.Version
+            };
+            proxy.TryUpdate = (_, _) =>
+            {
+                proxy.Active = new PendingAuthorImport
+                {
+                    Id = item.Id, ProviderId = item.ProviderId, RequestedBy = "UserInterface",
+                    AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                    OverallStatus = PendingImportStatus.Pending, Version = 6
+                };
+                return false;
+            };
+            var subject = new PendingAuthorImportService(repository, null, new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+
+            Assert.That(subject.UpdateStatus(item, PendingImportStatus.Failed, "excluded", item.Version), Is.False);
+            Assert.That(proxy.FencedUpdateCount, Is.EqualTo(1));
+            Assert.That(proxy.Active.RequestedBy, Is.EqualTo("UserInterface"));
+            Assert.That(proxy.Active.OverallStatus, Is.EqualTo(PendingImportStatus.Pending));
+            Assert.That(item.OverallStatus, Is.EqualTo(PendingImportStatus.Pending));
+        }
+
+        [Test]
+        public void expected_version_status_update_should_update_the_matching_request()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                Version = 5
+            };
+            var item = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                Version = 5
+            };
+            var subject = new PendingAuthorImportService(
+                repository,
+                null,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var updated = subject.UpdateStatus(item, PendingImportStatus.Failed, "author excluded", expectedVersion: 5);
+
+            Assert.That(updated, Is.True);
+            Assert.That(repositoryProxy.Active.AudiobookStatus, Is.EqualTo(PendingImportStatus.Failed));
+            Assert.That(repositoryProxy.Active.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
+            Assert.That(repositoryProxy.Active.LastError, Is.EqualTo("author excluded"));
+            Assert.That(repositoryProxy.Active.Version, Is.EqualTo(6));
+            Assert.That(item.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
+            Assert.That(item.Version, Is.EqualTo(6));
+            Assert.That(repositoryProxy.FencedUpdateCount, Is.EqualTo(1));
+        }
+
+        [Test]
         public async Task new_pending_import_should_persist_zero_as_the_unbounded_retry_marker()
         {
             var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
@@ -181,6 +363,112 @@ namespace Chaptarr.Core.Test.Books
                 "test");
 
             Assert.That(repositoryProxy.Updated.LastSelectedMediaType, Is.EqualTo("ebook"));
+        }
+
+        [Test]
+        public async Task direct_request_should_upgrade_import_list_origin_on_the_same_provider_author()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AuthorName = "Frank Herbert",
+                RequestedBy = "ImportList:Favorites",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                Version = 1
+            };
+            var subject = new PendingAuthorImportService(
+                repository,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var id = await subject.EnqueueAsync(
+                "gr:58",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true
+                },
+                "UserInterface");
+
+            Assert.That(id, Is.EqualTo(58));
+            Assert.That(repositoryProxy.Active.RequestedBy, Is.EqualTo("UserInterface"));
+            Assert.That(repositoryProxy.Active.AuthorName, Is.EqualTo("Frank Herbert"));
+        }
+
+        [Test]
+        public async Task later_import_list_request_should_not_downgrade_direct_demand()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AuthorName = "Frank Herbert",
+                RequestedBy = "UserInterface",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                Version = 1
+            };
+            var subject = new PendingAuthorImportService(
+                repository,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var id = await subject.EnqueueAsync(
+                "gr:58",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    RequestedBy = "ImportList:Favorites"
+                },
+                "ImportList");
+
+            Assert.That(id, Is.EqualTo(58));
+            Assert.That(repositoryProxy.Active.RequestedBy, Is.EqualTo("UserInterface"));
+        }
+
+        [Test]
+        public async Task pending_imports_should_remain_scoped_to_the_exact_goodreads_author_id()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 58,
+                ProviderId = "gr:58",
+                AuthorName = "Frank Herbert",
+                RequestedBy = "ImportList:Favorites",
+                AudiobookStatus = PendingImportStatus.Pending,
+                EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending,
+                Version = 1
+            };
+            var subject = new PendingAuthorImportService(
+                repository,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            await subject.EnqueueAsync(
+                "gr:580",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    RequestedBy = "UserInterface"
+                },
+                "UserInterface");
+
+            Assert.That(repositoryProxy.Active.ProviderId, Is.EqualTo("gr:58"));
+            Assert.That(repositoryProxy.Active.RequestedBy, Is.EqualTo("ImportList:Favorites"));
+            Assert.That(repositoryProxy.Inserted.ProviderId, Is.EqualTo("gr:580"));
         }
 
         [Test]

@@ -186,7 +186,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
             public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
-            public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error) => throw new NotImplementedException();
+            public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null) => throw new NotImplementedException();
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();

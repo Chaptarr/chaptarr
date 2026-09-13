@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using Dapper;
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
@@ -61,6 +62,7 @@ namespace Chaptarr.Core.Test.Books
                     EbookTags = "[]",
                     Tags = "[1]",
                     LastSelectedMediaType = "ebook",
+                    RequestedBy = "UserInterface",
                     NextAttemptAt = DateTime.UtcNow
                 };
 
@@ -72,13 +74,14 @@ namespace Chaptarr.Core.Test.Books
                 {
                     verifyUpdate.Open();
                     var tags = verifyUpdate.QuerySingle<TagProjection>(@"
-                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags"", ""LastSelectedMediaType""
+                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags"", ""LastSelectedMediaType"", ""RequestedBy""
                         FROM ""PendingAuthorImport""
                         WHERE ""Id"" = 1;");
                     Assert.That(tags.AudiobookTags, Is.EqualTo("[1]"));
                     Assert.That(tags.EbookTags, Is.EqualTo("[]"));
                     Assert.That(tags.Tags, Is.EqualTo("[1]"));
                     Assert.That(tags.LastSelectedMediaType, Is.EqualTo("ebook"));
+                    Assert.That(tags.RequestedBy, Is.EqualTo("UserInterface"));
                 }
 
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
@@ -88,6 +91,123 @@ namespace Chaptarr.Core.Test.Books
                 connection.Open();
                 Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM \"PendingAuthorImport\""), Is.Zero);
             });
+        }
+
+        [Test]
+        public void requested_by_should_survive_postgres_cas_update_and_connection_reopen()
+        {
+            var adminConnectionString = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
+            if (string.IsNullOrWhiteSpace(adminConnectionString))
+            {
+                Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING to exercise PostgreSQL pending-import persistence");
+            }
+
+            var schema = "pending_author_cas_" + Guid.NewGuid().ToString("N");
+            using (var adminConnection = new NpgsqlConnection(adminConnectionString))
+            {
+                adminConnection.Open();
+                adminConnection.Execute($"CREATE SCHEMA \"{schema}\"");
+            }
+
+            try
+            {
+                var postgresConnectionString = new NpgsqlConnectionStringBuilder(adminConnectionString)
+                {
+                    SearchPath = schema,
+                    Pooling = false
+                }.ConnectionString;
+
+                using (var connection = new NpgsqlConnection(postgresConnectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"
+                        CREATE TABLE ""PendingAuthorImport"" (
+                            ""Id"" INTEGER PRIMARY KEY,
+                            ""ProviderId"" TEXT,
+                            ""DiscoveredAuthorFolderPath"" TEXT,
+                            ""AudiobookStatus"" INTEGER,
+                            ""EbookStatus"" INTEGER,
+                            ""OverallStatus"" INTEGER,
+                            ""AudiobookMonitored"" BOOLEAN,
+                            ""AudiobookMonitorNewItems"" INTEGER,
+                            ""AudiobookMonitorExistingMode"" INTEGER,
+                            ""AudiobookQualityProfileId"" INTEGER,
+                            ""AudiobookMetadataProfileId"" INTEGER,
+                            ""AudiobookRootFolderPath"" TEXT,
+                            ""AudiobookBooksToMonitor"" TEXT,
+                            ""AudiobookBooksToSearch"" TEXT,
+                            ""AudiobookTags"" TEXT,
+                            ""EbookMonitored"" BOOLEAN,
+                            ""EbookMonitorNewItems"" INTEGER,
+                            ""EbookMonitorExistingMode"" INTEGER,
+                            ""EbookQualityProfileId"" INTEGER,
+                            ""EbookMetadataProfileId"" INTEGER,
+                            ""EbookRootFolderPath"" TEXT,
+                            ""EbookBooksToMonitor"" TEXT,
+                            ""EbookBooksToSearch"" TEXT,
+                            ""EbookTags"" TEXT,
+                            ""Tags"" TEXT,
+                            ""SearchForMissingBooks"" BOOLEAN,
+                            ""LastSelectedMediaType"" TEXT,
+                            ""RequestedBy"" TEXT,
+                            ""AttemptCount"" INTEGER,
+                            ""MaxAttempts"" INTEGER,
+                            ""LastAttemptAt"" TIMESTAMPTZ,
+                            ""LastError"" TEXT,
+                            ""UpdatedAt"" TIMESTAMPTZ,
+                            ""NextAttemptAt"" TIMESTAMPTZ,
+                            ""Version"" BIGINT,
+                            ""CreatedAt"" TIMESTAMPTZ
+                        );
+                        INSERT INTO ""PendingAuthorImport""
+                            (""Id"", ""ProviderId"", ""AudiobookStatus"", ""EbookStatus"", ""OverallStatus"", ""SearchForMissingBooks"", ""RequestedBy"", ""AttemptCount"", ""MaxAttempts"", ""NextAttemptAt"", ""Version"", ""CreatedAt"")
+                        VALUES
+                            (1, 'gr:58', @Pending, @NotRequested, @Pending, FALSE, 'ImportList:Favorites', 0, 0, @Now, 4, @Now);",
+                        new
+                        {
+                            Pending = PendingImportStatus.Pending,
+                            NotRequested = PendingImportStatus.NotRequested,
+                            Now = DateTime.UtcNow
+                        });
+                }
+
+                var database = new Database("pending-import-postgres-cas", () =>
+                {
+                    var connection = new NpgsqlConnection(postgresConnectionString);
+                    connection.Open();
+                    return connection;
+                });
+                var repository = new PendingAuthorImportRepository(new MainDatabase(database), new StubEventAggregator());
+                var item = new PendingAuthorImport
+                {
+                    Id = 1,
+                    ProviderId = "gr:58",
+                    Version = 4,
+                    AudiobookStatus = PendingImportStatus.Pending,
+                    EbookStatus = PendingImportStatus.NotRequested,
+                    OverallStatus = PendingImportStatus.Pending,
+                    RequestedBy = "UserInterface",
+                    NextAttemptAt = DateTime.UtcNow
+                };
+
+                Assert.That(repository.TryUpdateRequest(item, expectedVersion: 3), Is.False);
+                Assert.That(repository.TryUpdateRequest(item, expectedVersion: 4), Is.True);
+                Assert.That(item.Version, Is.EqualTo(5));
+
+                using var verifyConnection = new NpgsqlConnection(postgresConnectionString);
+                verifyConnection.Open();
+                Assert.That(
+                    verifyConnection.ExecuteScalar<string>(@"SELECT ""RequestedBy"" FROM ""PendingAuthorImport"" WHERE ""Id"" = 1;"),
+                    Is.EqualTo("UserInterface"));
+                Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
+                Assert.That(repository.TryDelete(item.Id, expectedVersion: 5), Is.True);
+            }
+            finally
+            {
+                using var adminConnection = new NpgsqlConnection(adminConnectionString);
+                adminConnection.Open();
+                adminConnection.Execute($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+            }
         }
 
         private static void WithCasRepository(Action<PendingAuthorImportRepository, string> action)
@@ -134,6 +254,7 @@ namespace Chaptarr.Core.Test.Books
                             ""Tags"" TEXT,
                             ""SearchForMissingBooks"" INTEGER,
                             ""LastSelectedMediaType"" TEXT,
+                            ""RequestedBy"" TEXT,
                             ""AttemptCount"" INTEGER,
                             ""MaxAttempts"" INTEGER,
                             ""LastAttemptAt"" DATETIME,
@@ -144,9 +265,9 @@ namespace Chaptarr.Core.Test.Books
                             ""CreatedAt"" DATETIME
                         );
                         INSERT INTO ""PendingAuthorImport""
-                            (""Id"", ""ProviderId"", ""AudiobookStatus"", ""EbookStatus"", ""OverallStatus"", ""SearchForMissingBooks"", ""AttemptCount"", ""MaxAttempts"", ""NextAttemptAt"", ""Version"", ""CreatedAt"")
+                            (""Id"", ""ProviderId"", ""AudiobookStatus"", ""EbookStatus"", ""OverallStatus"", ""SearchForMissingBooks"", ""RequestedBy"", ""AttemptCount"", ""MaxAttempts"", ""NextAttemptAt"", ""Version"", ""CreatedAt"")
                         VALUES
-                            (1, 'gr:1', @Pending, @NotRequested, @Pending, 0, 0, 0, @Now, 4, @Now);",
+                            (1, 'gr:1', @Pending, @NotRequested, @Pending, 0, 'ImportList:Favorites', 0, 0, @Now, 4, @Now);",
                         new
                         {
                             Pending = PendingImportStatus.Pending,
@@ -241,6 +362,7 @@ namespace Chaptarr.Core.Test.Books
             public string EbookTags { get; set; }
             public string Tags { get; set; }
             public string LastSelectedMediaType { get; set; }
+            public string RequestedBy { get; set; }
         }
     }
 }

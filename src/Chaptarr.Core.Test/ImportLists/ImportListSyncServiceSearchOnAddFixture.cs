@@ -36,6 +36,8 @@ namespace Chaptarr.Core.Test.ImportLists
         {
             public List<ImportListExclusion> Exclusions { get; set; } = new();
 
+            public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => Exclusions;
             public void Delete(int id) => throw new NotImplementedException();
@@ -118,7 +120,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public List<PendingAuthorImport> GetAll() => new();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
             public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
-            public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error) => throw new NotImplementedException();
+            public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null) => throw new NotImplementedException();
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();

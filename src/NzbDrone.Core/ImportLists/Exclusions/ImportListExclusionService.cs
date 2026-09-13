@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
@@ -12,6 +14,8 @@ namespace NzbDrone.Core.ImportLists.Exclusions
     {
         ImportListExclusion Add(ImportListExclusion importListExclusion);
         List<ImportListExclusion> All();
+        void ValidateAuthorExclusions(IEnumerable<Author> authors);
+        void AddAuthorExclusions(IEnumerable<Author> authors);
         void Delete(int id);
         void Delete(List<int> ids);
         void Delete(string foreignId);
@@ -22,7 +26,6 @@ namespace NzbDrone.Core.ImportLists.Exclusions
     }
 
     public class ImportListExclusionService : IImportListExclusionService,
-                                              IHandleAsync<AuthorDeletedEvent>,
                                               IHandleAsync<BookDeletedEvent>
     {
         private readonly IImportListExclusionRepository _repo;
@@ -83,36 +86,45 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             return _repo.All().ToList();
         }
 
-        public void HandleAsync(AuthorDeletedEvent message)
+        public void ValidateAuthorExclusions(IEnumerable<Author> authors)
         {
-            if (!message.AddImportListExclusion)
+            if (authors?.Any(author => author != null && !AuthorIdentity.GetProviderIdentityTokenList(author).Any()) == true)
             {
-                return;
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure("ProviderId", "Cannot create import-list exclusions for authors without provider IDs.")
+                    {
+                        ErrorCode = "AUTHOR_PROVIDER_ID_REQUIRED"
+                    }
+                });
             }
+        }
 
-            var author = message.Author;
-            var providerIds = AuthorIdentity.GetProviderIdentityTokenList(author);
-            if (!providerIds.Any() && author?.Id > 0)
-            {
-                providerIds.Add(author.Id.ToString());
-            }
-
-            if (!providerIds.Any())
-            {
-                _logger.Warn("Cannot create import exclusion for author without any provider ID: {0}", author?.Name ?? "Unknown");
-                return;
-            }
+        public void AddAuthorExclusions(IEnumerable<Author> authors)
+        {
+            var selectedAuthors = (authors ?? Enumerable.Empty<Author>())
+                .Where(author => author != null)
+                .ToList();
+            ValidateAuthorExclusions(selectedAuthors);
+            var providerIdsByAuthor = selectedAuthors
+                .Select(author => new { Author = author, ProviderIds = AuthorIdentity.GetProviderIdentityTokenList(author) })
+                .ToList();
 
             var existingIds = _repo.All()
-                .Select(e => e.ForeignId)
+                .Select(exclusion => exclusion.ForeignId)
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var additions = providerIds
-                .Where(providerId => !string.IsNullOrWhiteSpace(providerId) && existingIds.Add(providerId))
-                .Select(providerId => new ImportListExclusion
+            var additions = providerIdsByAuthor
+                .SelectMany(entry => entry.ProviderIds.Select(providerId => new
                 {
-                    ForeignId = providerId,
-                    Name = author.Name
+                    entry.Author,
+                    ProviderId = providerId
+                }))
+                .Where(entry => existingIds.Add(entry.ProviderId))
+                .Select(entry => new ImportListExclusion
+                {
+                    ForeignId = entry.ProviderId,
+                    Name = entry.Author.Name
                 })
                 .ToList();
 

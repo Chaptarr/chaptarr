@@ -23,7 +23,7 @@ namespace NzbDrone.Core.Books.Services
         List<PendingAuthorImport> GetAll();
         List<PendingAuthorImport> GetDueForProcessing(int limit = 10);
         PendingAuthorImport GetByProviderId(string providerId);
-        void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error);
+        bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null);
         void ScheduleRetry(PendingAuthorImport item, string error);
         void Cancel(int id);
         void RetryNow(int id);
@@ -65,6 +65,7 @@ namespace NzbDrone.Core.Books.Services
             }
 
             config ??= new MonitoringConfig();
+            config.RequestedBy ??= sourceApplication;
             var incomingAudiobookTags = ResolveMediaTags(config.CreateAudiobook, config.AudiobookTags, config.Tags);
             var incomingEbookTags = ResolveMediaTags(config.CreateEbook, config.EbookTags, config.Tags);
 
@@ -99,6 +100,15 @@ namespace NzbDrone.Core.Books.Services
 
                     // Merge compatible settings (widen scope if needed)
                     bool updated = false;
+
+                    // Explicit requests take precedence over automatic list demand when they share a queue row.
+                    if (existing.RequestedBy?.StartsWith("ImportList:", StringComparison.OrdinalIgnoreCase) == true &&
+                        !string.IsNullOrWhiteSpace(config.RequestedBy) &&
+                        !config.RequestedBy.StartsWith("ImportList:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        existing.RequestedBy = config.RequestedBy;
+                        updated = true;
+                    }
 
                     // Enable audiobook if requested and not already
                     if (config.CreateAudiobook && !existing.HasAudiobook())
@@ -568,11 +578,16 @@ namespace NzbDrone.Core.Books.Services
                 : JsonConvert.SerializeObject(tags.Distinct().OrderBy(tag => tag));
         }
 
-        public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error)
+        public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null)
         {
             while (true)
             {
                 var current = _repository.GetActiveByProviderId(item.ProviderId) ?? item;
+                if (expectedVersion.HasValue && (current.Id != item.Id || current.Version != expectedVersion.Value))
+                {
+                    return false;
+                }
+
                 current.LastError = error;
                 current.LastAttemptAt = DateTime.UtcNow;
 
@@ -589,13 +604,12 @@ namespace NzbDrone.Core.Books.Services
 
                 current.UpdateOverallStatus();
                 current.UpdatedAt = DateTime.UtcNow;
-                var expectedVersion = current.Version;
-                if (!_repository.TryUpdateRequest(current, expectedVersion))
+                if (!_repository.TryUpdateRequest(current, current.Version))
                 {
-                    if (_repository.GetActiveByProviderId(item.ProviderId) == null)
+                    if (expectedVersion.HasValue || _repository.GetActiveByProviderId(item.ProviderId) == null)
                     {
-                        _logger.Debug("Pending import {0} became inactive while its status was being updated", item.Id);
-                        return;
+                        _logger.Debug("Pending import {0} changed or became inactive while its status was being updated", item.Id);
+                        return false;
                     }
 
                     continue;
@@ -603,7 +617,7 @@ namespace NzbDrone.Core.Books.Services
 
                 CopyMutableState(current, item);
                 _logger.Info("Updated pending import {0} status to {1}", current.Id, status);
-                return;
+                return true;
             }
         }
 
@@ -655,6 +669,7 @@ namespace NzbDrone.Core.Books.Services
             target.NextAttemptAt = source.NextAttemptAt;
             target.UpdatedAt = source.UpdatedAt;
             target.Version = source.Version;
+            target.RequestedBy = source.RequestedBy;
         }
 
         public List<PendingAuthorImport> GetAll()

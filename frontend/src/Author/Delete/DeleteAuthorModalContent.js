@@ -124,7 +124,7 @@ class DeleteAuthorModalContent extends Component {
               type={inputTypes.CHECK}
               name="addImportListExclusion"
               value={addImportListExclusion}
-              helpText={translate('AddImportListExclusionHelpText')}
+              helpText={translate('AddListExclusionAuthorHelpText')}
               kind={kinds.DANGER}
               onChange={this.onAddImportListExclusionChange}
             />

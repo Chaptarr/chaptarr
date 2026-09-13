@@ -4,6 +4,8 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
@@ -31,16 +33,21 @@ namespace Chaptarr.Core.Test.Books
             public List<string> RetryReasons { get; } = new();
             public bool DeleteIfUnchangedResult { get; set; } = true;
             public PendingAuthorImport CurrentByProviderId { get; set; }
+            public bool UpdateStatusResult { get; set; } = true;
+            public long? StatusExpectedVersion { get; private set; }
 
             public Task<int> EnqueueAsync(string providerId, MonitoringConfig config, string sourceApplication) => throw new NotImplementedException();
             public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => DueResponses.Count > 0 ? DueResponses.Dequeue() : new List<PendingAuthorImport>();
             public PendingAuthorImport GetByProviderId(string providerId) => CurrentByProviderId;
 
-            public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error)
+            public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null)
             {
+                StatusExpectedVersion = expectedVersion;
+                if (!UpdateStatusResult) return false;
                 item.OverallStatus = status;
                 item.LastError = error;
+                return true;
             }
 
             public void ScheduleRetry(PendingAuthorImport item, string error)
@@ -175,12 +182,14 @@ namespace Chaptarr.Core.Test.Books
             public AuthorTerminalException Terminal { get; set; }
             public Author AddedAuthor { get; set; }
             public MonitoringConfig LastConfig { get; private set; }
+            public Action<MonitoringConfig> OnAdd { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IAuthorLibraryService.AddAuthorAsync))
                 {
                     LastConfig = (MonitoringConfig)args[1];
+                    OnAdd?.Invoke(LastConfig);
                     if (Terminal != null)
                     {
                         return Task.FromException<Author>(Terminal);
@@ -272,7 +281,8 @@ namespace Chaptarr.Core.Test.Books
             AuthorTerminalException terminal = null,
             Author author = null,
             IBookService bookService = null,
-            IProvideBookInfo bookInfo = null)
+            IProvideBookInfo bookInfo = null,
+            Action<MonitoringConfig> configCaptured = null)
         {
             author ??= new Author { Id = 42, Name = "Existing Author" };
 
@@ -282,6 +292,7 @@ namespace Chaptarr.Core.Test.Books
             var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
             ((AuthorLibraryProxy)authorLibraryService).Terminal = terminal;
             ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = author;
+            ((AuthorLibraryProxy)authorLibraryService).OnAdd = configCaptured;
 
             if (bookService == null)
             {
@@ -299,6 +310,45 @@ namespace Chaptarr.Core.Test.Books
                 commandQueue,
                 eventAggregator,
                 LogManager.GetCurrentClassLogger());
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void excluded_list_request_only_fails_the_version_that_was_processed(bool unchanged)
+        {
+            var pendingImportService = new StubPendingAuthorImportService { UpdateStatusResult = unchanged };
+            var events = new RecordingEventAggregator();
+            var pending = Pending(158);
+            pending.ProviderId = "gr:58";
+            pending.AuthorName = "Frank Herbert";
+            pending.Version = 3;
+            pending.RequestedBy = "ImportList:Favorites";
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
+
+            MonitoringConfig observedConfig = null;
+            var handler = BuildHandler(
+                pendingImportService,
+                new RecordingCommandQueue(),
+                events,
+                configCaptured: config =>
+                {
+                    observedConfig = config;
+                    throw new ValidationException(new[]
+                    {
+                        new ValidationFailure("ProviderId", "Author is excluded.")
+                        {
+                            ErrorCode = AuthorLibraryService.ImportListAuthorExcludedErrorCode
+                        }
+                    });
+                });
+
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(observedConfig?.RequestedBy, Is.EqualTo("ImportList:Favorites"));
+            Assert.That(pendingImportService.StatusExpectedVersion, Is.EqualTo(3));
+            Assert.That(pending.OverallStatus, Is.EqualTo(unchanged ? PendingImportStatus.Failed : PendingImportStatus.Pending));
+            Assert.That(events.Events.OfType<PendingAuthorImportFailedEvent>().Count(), Is.EqualTo(unchanged ? 1 : 0));
+            Assert.That(pendingImportService.RetryReasons, Is.Empty);
         }
 
         [Test]

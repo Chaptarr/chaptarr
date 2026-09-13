@@ -31,10 +31,11 @@ function createMapStateToProps() {
 
 function createMapDispatchToProps(dispatch, props) {
   return {
-    onDeleteSelectedPress(deleteFiles) {
+    onDeleteSelectedPress(deleteFiles, addImportListExclusion) {
       dispatch(bulkDeleteAuthor({
         authorIds: props.authorIds,
-        deleteFiles
+        deleteFiles,
+        addImportListExclusion
       }));
 
       props.onModalClose();

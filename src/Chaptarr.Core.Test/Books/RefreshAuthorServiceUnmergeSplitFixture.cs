@@ -178,6 +178,8 @@ namespace Chaptarr.Core.Test.Books
         {
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => new();
 
+            public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();

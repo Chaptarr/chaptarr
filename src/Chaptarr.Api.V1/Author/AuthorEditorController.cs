@@ -340,7 +340,7 @@ namespace Chaptarr.Api.V1.Author
         [HttpDelete]
         public object DeleteAuthor([FromBody] AuthorEditorResource resource)
         {
-            _authorService.DeleteAuthors(resource.AuthorIds, resource.DeleteFiles);
+            _authorService.DeleteAuthors(resource.AuthorIds, resource.DeleteFiles, resource.AddImportListExclusion);
 
             return new { };
         }

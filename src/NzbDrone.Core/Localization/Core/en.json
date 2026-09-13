@@ -51,6 +51,7 @@
   "AddListAudiobooksAndEbooks": "Add List (Audiobooks + eBooks)",
   "AddListEbooks": "Add List (eBooks)",
   "AddListExclusion": "Add List Exclusion",
+  "AddListExclusionAuthorHelpText": "Prevent deleted authors from being added again by Import Lists",
   "AddMetadataProfile": "Add Metadata Profile",
   "AddMissing": "Server Match",
   "AddName": "Add {name}",

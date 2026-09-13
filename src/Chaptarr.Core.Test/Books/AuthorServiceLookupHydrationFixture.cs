@@ -89,7 +89,8 @@ namespace Chaptarr.Core.Test.Books
                 cacheManager: new CacheManager(),
                 bookRepository: null,
                 mediaFileService: null,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: LogManager.GetCurrentClassLogger(),
+                importListExclusionService: null);
         }
 
         [Test]

@@ -132,7 +132,8 @@ namespace NzbDrone.Core.Books
                 {
                     OverallStatus = PendingImportStatus.Succeeded;
                 }
-                else if (!audiobookSuccess && !ebookSuccess)
+                else if (AudiobookStatus != PendingImportStatus.Succeeded &&
+                         EbookStatus != PendingImportStatus.Succeeded)
                 {
                     OverallStatus = PendingImportStatus.Failed;
                 }

@@ -16,6 +16,7 @@ using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Messaging.Commands;
@@ -132,6 +133,7 @@ namespace NzbDrone.Core.Books.Services
 
     public class AuthorLibraryService : IAuthorLibraryService
     {
+        public const string ImportListAuthorExcludedErrorCode = "IMPORT_LIST_AUTHOR_EXCLUDED";
         // Network fetch can be parallel; SQLite writes cannot. Split the two.
         private static readonly SemaphoreSlim AuthorFetchGate = new SemaphoreSlim(12, 12);
         private static readonly SemaphoreSlim SqliteWriteGate = new SemaphoreSlim(1, 1);
@@ -233,6 +235,7 @@ namespace NzbDrone.Core.Books.Services
                 NormalizeMonitoringConfigFromExplicitRootFolders(config);
             }
 
+            ThrowIfImportListAuthorExcluded(providerId, author: null, config);
             Author author;
 
             try
@@ -349,6 +352,7 @@ namespace NzbDrone.Core.Books.Services
             {
                 // Provider IDs are identity. Display names are not: distinct authors can share one.
                 var existingAuthor = FindExistingAuthor(providerId, author);
+                ThrowIfImportListAuthorExcluded(providerId, author, config);
                 if (existingAuthor != null)
                 {
                     var handledAuthor = await HandleExistingAuthorAsync(existingAuthor, author, config);
@@ -479,6 +483,35 @@ namespace NzbDrone.Core.Books.Services
             finally
             {
                 writeGate?.Release();
+            }
+        }
+
+        private void ThrowIfImportListAuthorExcluded(string providerId, Author author, MonitoringConfig config)
+        {
+            if (config?.RequestedBy?.StartsWith("ImportList:", StringComparison.OrdinalIgnoreCase) != true)
+            {
+                return;
+            }
+
+            var providerIds = author == null
+                ? new List<string>()
+                : AuthorIdentity.GetProviderIdentityTokenList(author);
+            var requestedProviderId = ProviderIdHelper.Normalize(providerId, defaultPrefix: null);
+            if (!string.IsNullOrWhiteSpace(requestedProviderId))
+            {
+                providerIds.Add(requestedProviderId);
+            }
+
+            var exclusions = _importListExclusionService.All();
+
+            if (providerIds.Distinct(StringComparer.OrdinalIgnoreCase)
+                .Any(providerIdToken => exclusions.Any(exclusion => ImportListSyncService.MatchesExclusionId(providerIdToken, exclusion.ForeignId))))
+            {
+                var failure = new ValidationFailure(nameof(providerId), $"Author {providerId} is excluded from import lists.")
+                {
+                    ErrorCode = ImportListAuthorExcludedErrorCode
+                };
+                throw new ValidationException(new[] { failure });
             }
         }
 
