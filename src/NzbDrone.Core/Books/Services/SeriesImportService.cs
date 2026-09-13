@@ -192,7 +192,9 @@ namespace NzbDrone.Core.Books
 
             _logger.Debug("[SERIES-IMPORT] AuthorRefreshCompleteEvent received for author {0}", message.Author.Name);
 
-            ScheduleSeriesImport(message.Author.Id, message.Author.Name, nameof(AuthorRefreshCompleteEvent), message.Author);
+            // Local series rows cannot restore missing links; only an explicit server snapshot
+            // contains incoming memberships.
+            ScheduleSeriesImport(message.Author.Id, message.Author.Name, nameof(AuthorRefreshCompleteEvent), message.RemoteAuthor);
         }
     }
 }

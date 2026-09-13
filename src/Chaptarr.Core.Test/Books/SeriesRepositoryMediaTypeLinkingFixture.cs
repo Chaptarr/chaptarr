@@ -1,6 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
+using System.Reflection;
+using Chaptarr.Api.V1.Books;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using NLog;
@@ -15,6 +18,21 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class SeriesRepositoryMediaTypeLinkingFixture
     {
+        private class BookServiceProxy : DispatchProxy
+        {
+            public List<Book> Books { get; set; }
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name == nameof(IBookService.GetBooksByAuthor))
+                {
+                    return Books.Where(b => b.AuthorId == (int)args[0]).ToList();
+                }
+
+                throw new NotImplementedException(method.Name);
+            }
+        }
+
         private sealed class StubEventAggregator : IEventAggregator
         {
             public void PublishEvent<TEvent>(TEvent @event)
@@ -39,7 +57,8 @@ namespace Chaptarr.Core.Test.Books
             var connectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false
             }.ToString();
 
             try
@@ -147,18 +166,49 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(sut.FindById("gr:12345", BookMediaType.Ebook).Id, Is.EqualTo(2));
                 Assert.That(sut.FindById(new[] { "gr:12345" }.ToList(), BookMediaType.Audiobook).Single().Id, Is.EqualTo(1));
                 Assert.That(sut.FindById(new[] { "gr:12345" }.ToList(), BookMediaType.Ebook).Single().Id, Is.EqualTo(2));
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var books = new List<Book>
+                {
+                    new Book { Id = 101, AuthorId = 34, Title = "Shared Series Audio", GoodreadsWorkId = "gr:101", MediaType = BookMediaType.Audiobook },
+                    new Book { Id = 202, AuthorId = 34, Title = "Shared Series Ebook", GoodreadsWorkId = "gr:202", MediaType = BookMediaType.Ebook },
+                    new Book { Id = 303, AuthorId = 999, Title = "Other Author Audio", GoodreadsWorkId = "gr:303", MediaType = BookMediaType.Audiobook }
+                };
+                ((BookServiceProxy)(object)bookService).Books = books;
+                var links = new SeriesBookLinkService(linkRepository);
+                links.AddLink(new SeriesBookLink { SeriesId = 1, BookId = 303, Position = "3" });
+                var refresh = new RefreshSeriesService(bookService, new SeriesService(sut, LogManager.GetCurrentClassLogger()), links,
+                    new RefreshSeriesBookLinkService(links, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger());
+                var snapshot = new List<Series>
+                {
+                    new Series { Title = "Shared Series", GoodreadsSeriesId = "gr:12345", MediaType = BookMediaType.Audiobook,
+                        SeriesBooks = new List<SeriesBook> { new SeriesBook { BookId = "gr:101", Position = "1-3" } } },
+                    new Series { Title = "Shared Series", GoodreadsSeriesId = "gr:12345", MediaType = BookMediaType.Ebook,
+                        SeriesBooks = new List<SeriesBook> { new SeriesBook { BookId = "gr:202", Position = "3.5,4.5,6.7" } } }
+                };
+
+                refresh.RefreshSeriesInfo(34, snapshot, new Author { Id = 34 }, false, false, null);
+                Assert.That(links.GetLinksBySeries(1).Select(l => l.BookId), Is.EquivalentTo(new[] { 101, 303 }));
+                Assert.That(links.GetLinksBySeries(2).Select(l => l.BookId), Is.EqualTo(new[] { 202 }));
+
+                links.DeleteMany(links.GetLinksByBook(new List<int> { 101, 202 }));
+                refresh.RefreshSeriesInfo(34, snapshot, new Author { Id = 34 }, false, false, null);
+                Assert.That(refresh.RefreshSeriesInfo(34, snapshot, new Author { Id = 34 }, false, false, null), Is.False,
+                    "The persisted series and links must converge after restoration.");
+                Assert.That(links.GetLinksBySeries(1).Select(l => l.BookId), Is.EquivalentTo(new[] { 101, 303 }));
+                Assert.That(links.GetLinksBySeries(2).Select(l => l.BookId), Is.EqualTo(new[] { 202 }));
+                foreach (var book in books.Where(b => b.AuthorId == 34))
+                {
+                    book.SeriesLinks = links.GetLinksByBook(new List<int> { book.Id });
+                    Assert.That(book.ToResource().SeriesTitle, Is.EqualTo(book.MediaType == BookMediaType.Audiobook
+                        ? "Shared Series #1-3" : "Shared Series #3.5,4.5,6.7"));
+                }
             }
             finally
             {
-                try
+                if (File.Exists(databasePath))
                 {
-                    if (File.Exists(databasePath))
-                    {
-                        File.Delete(databasePath);
-                    }
-                }
-                catch
-                {
+                    File.Delete(databasePath);
                 }
             }
         }

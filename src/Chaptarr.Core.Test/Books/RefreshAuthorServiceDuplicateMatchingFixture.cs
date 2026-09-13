@@ -145,6 +145,8 @@ namespace Chaptarr.Core.Test.Books
 
             public Tuple<Book, List<Book>> MatchExisting(List<Book> existingChildren, Book remote)
             {
+                // This fixture bypasses GetLocalChildren; the getter requires its complete snapshot.
+                InitializeBookRefreshMatchingIndex(existingChildren, new List<Book> { remote });
                 return GetMatchingExistingChildren(existingChildren, remote);
             }
 

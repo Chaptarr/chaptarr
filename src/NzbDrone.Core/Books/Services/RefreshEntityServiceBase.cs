@@ -116,7 +116,7 @@ namespace NzbDrone.Core.Books
         {
         }
 
-        protected virtual void PublishRefreshCompleteEvent(TEntity entity)
+        protected virtual void PublishRefreshCompleteEvent(TEntity entity, Author remoteData)
         {
         }
 
@@ -202,7 +202,7 @@ namespace NzbDrone.Core.Books
                 PublishEntityUpdatedEvent(local);
             }
 
-            PublishRefreshCompleteEvent(local);
+            PublishRefreshCompleteEvent(local, remoteData);
 
             _logger.Debug($"Finished {typeof(TEntity).Name} refresh for {local}");
 

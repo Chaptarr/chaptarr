@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
 
@@ -19,6 +22,7 @@ namespace Chaptarr.Core.Test.Books
     {
         private AuthorInfoProxy _authorInfo;
         private Author _author;
+        private RefreshSeriesProxy _refreshSeries;
 
         [SetUp]
         public void SetUp()
@@ -65,12 +69,14 @@ namespace Chaptarr.Core.Test.Books
 
             var authorInfo = DispatchProxy.Create<IProvideAuthorInfo, AuthorInfoProxy>();
             _authorInfo = (AuthorInfoProxy)(object)authorInfo;
+            var refreshSeries = DispatchProxy.Create<IRefreshSeriesService, RefreshSeriesProxy>();
+            _refreshSeries = (RefreshSeriesProxy)(object)refreshSeries;
 
             return new SeriesImportService(
                 authorService,
                 DispatchProxy.Create<ISeriesService, SeriesServiceProxy>(),
                 bookService,
-                DispatchProxy.Create<IRefreshSeriesService, ThrowingProxy<IRefreshSeriesService>>(),
+                refreshSeries,
                 authorInfo,
                 DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                 LogManager.GetLogger("SeriesImportProviderIdentityFixture"));
@@ -122,16 +128,50 @@ namespace Chaptarr.Core.Test.Books
         public class AuthorInfoProxy : DispatchProxy
         {
             public List<string> RequestedIds { get; } = new();
+            public Author Response { get; set; } = new Author { Series = new List<Series>() };
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IProvideAuthorInfo.GetAuthorInfo))
                 {
                     RequestedIds.Add((string)args[0]);
-                    return new Author { Series = new List<Series>() };
+                    return Response;
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IProvideAuthorInfo.{targetMethod?.Name}");
+            }
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public async Task event_must_use_only_an_explicit_remote_snapshot(bool includeSnapshot)
+        {
+            _author.GoodreadsAuthorId = "gr:2514";
+            _author.Series = new List<Series> { new Series { Id = 99, Title = "Local series" } };
+            var subject = BuildSubject();
+            var remote = new Author { Series = new List<Series> { new Series { Title = "Authoritative series", GoodreadsSeriesId = "gr:1",
+                SeriesBooks = new List<SeriesBook> { new SeriesBook { BookId = "hc:1", Position = "1" } } } } };
+            _authorInfo.Response = remote;
+
+            subject.Handle(new AuthorRefreshCompleteEvent(_author, includeSnapshot ? remote : null));
+
+            var received = await _refreshSeries.Received.Task.WaitAsync(System.TimeSpan.FromSeconds(5));
+            Assert.That(received, Is.SameAs(remote));
+            Assert.That(_authorInfo.RequestedIds.Count, Is.EqualTo(includeSnapshot ? 0 : 1));
+        }
+
+        public class RefreshSeriesProxy : DispatchProxy
+        {
+            public TaskCompletionSource<Author> Received { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IRefreshSeriesService.RefreshSeriesInfo))
+                {
+                    Received.TrySetResult((Author)args[2]);
+                    return false;
+                }
+
+                throw new NotImplementedException(targetMethod?.Name);
             }
         }
 

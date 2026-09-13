@@ -22,6 +22,16 @@ namespace NzbDrone.Core.Books
         private readonly IRefreshSeriesBookLinkService _refreshLinkService;
         private readonly Logger _logger;
 
+        private sealed class AuthorScopedSeries : Series
+        {
+            public AuthorScopedSeries(Series source, List<SeriesBookLink> links)
+            {
+                UseMetadataFrom(source);
+                UseDbFieldsFrom(source);
+                LinkItems = links;
+            }
+        }
+
         public RefreshSeriesService(IBookService bookService,
                                     ISeriesService seriesService,
                                     ISeriesBookLinkService linkService,
@@ -93,10 +103,9 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private Dictionary<string, List<Book>> BuildLocalBookProviderLookup(int authorId)
+        private Dictionary<string, List<Book>> BuildLocalBookProviderLookup(int authorId, List<Book> localBooks)
         {
             var lookup = new Dictionary<string, List<Book>>(StringComparer.OrdinalIgnoreCase);
-            var localBooks = _bookService.GetBooksByAuthor(authorId) ?? new List<Book>();
 
             foreach (var book in localBooks.Where(b => b != null))
             {
@@ -169,9 +178,9 @@ namespace NzbDrone.Core.Books
             return result;
         }
 
-        private List<Series> FilterRemoteSeriesToLocalBooks(int authorId, List<Series> remoteSeries)
+        private List<Series> FilterRemoteSeriesToLocalBooks(int authorId, List<Series> remoteSeries, List<Book> localBooks)
         {
-            var localBookLookup = BuildLocalBookProviderLookup(authorId);
+            var localBookLookup = BuildLocalBookProviderLookup(authorId, localBooks);
             if (localBookLookup.Count == 0)
             {
                 _logger.Debug("[SERIES] No local provider IDs available for authorId {0}; no remote series can be linked", authorId);
@@ -183,7 +192,7 @@ namespace NzbDrone.Core.Books
 
             foreach (var remote in remoteSeries)
             {
-                if (remote?.LinkItems?.Any() == true)
+                if (remote?.SeriesBooks?.Any() != true && remote?.LinkItems?.Any() == true)
                 {
                     filtered.Add(remote);
                     linkedBookCount += remote.LinkItems.Count;
@@ -245,7 +254,11 @@ namespace NzbDrone.Core.Books
 
         protected override UpdateResult UpdateEntity(Series local, Series remote)
         {
-            var remoteForUpdate = RefreshEntityCopy.CloneSeries(remote);
+            // Compare what the metadata writer will store, including retained optional fields,
+            // so an unchanged snapshot does not report another update on every refresh.
+            var remoteForUpdate = new Series();
+            remoteForUpdate.UseMetadataFrom(local);
+            remoteForUpdate.UseMetadataFrom(remote);
             remoteForUpdate.UseDbFieldsFrom(local);
 
             if (local.Equals(remoteForUpdate))
@@ -406,10 +419,10 @@ namespace NzbDrone.Core.Books
                     })
                     .Select(g =>
                     {
-                        // Prefer links with a real parsed series position, then lowest position.
+                        // Keep provider positions intact; integer parsing loses decimal/range ordering.
                         return g
-                            .OrderByDescending(l => l.SeriesPosition > 0)
-                            .ThenBy(l => l.SeriesPosition <= 0 ? int.MaxValue : l.SeriesPosition)
+                            .OrderBy(l => BookSeries.PositionOrder(l.Position))
+                            .ThenBy(l => l.Position, StringComparer.Ordinal)
                             .First();
                     })
                     .ToList();
@@ -431,8 +444,9 @@ namespace NzbDrone.Core.Books
 
         protected override List<SeriesBookLink> GetLocalChildren(Series entity, List<SeriesBookLink> remoteChildren)
         {
-            // Get all links for this series
-            return _linkService.GetLinksBySeries(entity.Id);
+            return entity is AuthorScopedSeries
+                ? entity.LinkItems
+                : throw new InvalidOperationException("Series reconciliation requires an author-scoped link snapshot.");
         }
 
         protected override Tuple<SeriesBookLink, List<SeriesBookLink>> GetMatchingExistingChildren(List<SeriesBookLink> existingChildren, SeriesBookLink remote)
@@ -538,7 +552,7 @@ namespace NzbDrone.Core.Books
             var providerBackedRemoteSeries = goodreadsBackedRemoteSeries
                 .GroupBy(s => $"{(int)s.MediaType}|{s.GoodreadsSeriesId?.Trim()}",
                     StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.First())
+                .Select(g => RefreshEntityCopy.CloneSeries(g.First()))
                 .ToList();
 
             if (providerBackedRemoteSeries.Count != goodreadsBackedRemoteSeries.Count)
@@ -547,7 +561,9 @@ namespace NzbDrone.Core.Books
                     goodreadsBackedRemoteSeries.Count - providerBackedRemoteSeries.Count, authorId);
             }
 
-            providerBackedRemoteSeries = FilterRemoteSeriesToLocalBooks(authorId, providerBackedRemoteSeries);
+            var localBooks = _bookService.GetBooksByAuthor(authorId) ?? new List<Book>();
+            var localBookIds = localBooks.Select(b => b.Id).ToHashSet();
+            providerBackedRemoteSeries = FilterRemoteSeriesToLocalBooks(authorId, providerBackedRemoteSeries, localBooks);
             if (providerBackedRemoteSeries.Count == 0)
             {
                 _logger.Debug("[SERIES] No Goodreads-backed series could be linked to local books for authorId {0}; skipping refresh", authorId);
@@ -600,7 +616,11 @@ namespace NzbDrone.Core.Books
 
             foreach (var item in all)
             {
-                updated |= RefreshEntityInfo(item, providerBackedRemoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+                // Scope reconciliation to the refreshing author so shared series retain other authors' links.
+                // A per-call copy also scopes removal when this author leaves a shared series.
+                var scoped = new AuthorScopedSeries(item, _linkService.GetLinksBySeries(item.Id)
+                    .Where(link => localBookIds.Contains(link.BookId)).ToList());
+                updated |= RefreshEntityInfo(scoped, providerBackedRemoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
             }
 
             return updated;

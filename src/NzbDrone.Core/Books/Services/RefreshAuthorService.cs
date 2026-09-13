@@ -121,18 +121,21 @@ namespace NzbDrone.Core.Books
 
         private IDisposable EnterAuthorMetadataRefreshGate(string context, CancellationToken cancellationToken)
         {
+            // Non-reentrant: direct reconciliation must never run on the holder's call stack.
+            // Keep rescan/import outside the command metadata phase so their adds can enter normally.
             var stopwatch = Stopwatch.StartNew();
-            if (AuthorMetadataRefreshGate.CurrentCount == 0)
+            var waiting = AuthorMetadataRefreshGate.CurrentCount == 0;
+            if (waiting)
             {
-                _logger.Debug("[AUTHOR-REFRESH-GATE] Waiting for active author metadata refresh to finish before starting {0}", context);
+                _logger.Info("[AUTHOR-REFRESH-GATE] Waiting for active author metadata refresh to finish before starting {0}", context);
             }
 
             AuthorMetadataRefreshGate.Wait(cancellationToken);
             stopwatch.Stop();
 
-            if (stopwatch.ElapsedMilliseconds > 0)
+            if (waiting)
             {
-                _logger.Debug("[AUTHOR-REFRESH-GATE] Acquired author metadata refresh gate for {0} after {1}ms", context, stopwatch.ElapsedMilliseconds);
+                _logger.Info("[AUTHOR-REFRESH-GATE] Acquired author metadata refresh gate for {0} after {1}ms", context, stopwatch.ElapsedMilliseconds);
             }
 
             return new GateReleaser(() =>
@@ -328,6 +331,10 @@ namespace NzbDrone.Core.Books
             {
                 return false;
             }
+
+            // Direct adds share the matching index and rehome blueprint with command refreshes.
+            using var refreshGate = EnterAuthorMetadataRefreshGate(
+                $"direct reconciliation for author '{localAuthor.Name}'", CancellationToken.None);
 
             return RefreshEntityInfoIfRemoteDataAvailable(
                 localAuthor,
@@ -788,7 +795,7 @@ namespace NzbDrone.Core.Books
                             continue;
                         }
 
-                        var fingerprint = BuildIdenticalPocketFingerprint(book);
+                        var fingerprint = BookIdentity.BuildIdenticalPocketFingerprint(book);
 
                         // null fingerprint = not provably identical to anything (no clean identity, or an edition
                         // without a foreign id) -> always keep. "When in doubt, keep both."
@@ -810,38 +817,6 @@ namespace NzbDrone.Core.Books
                     }
 
                     return result;
-                }
-
-                // Fingerprint = media type + the full set of stable work tokens + the full set of edition
-                // identities (ForeignEditionId). Two pockets collapse ONLY when both are equal — i.e. the server
-                // literally returned the same work with the same editions twice. Returns null (-> keep) for any
-                // pocket we cannot fully fingerprint, so non-identical pockets are never merged or dropped.
-                private static string BuildIdenticalPocketFingerprint(Book book)
-                {
-                    if (book?.Editions == null || book.Editions.Count == 0)
-                    {
-                        return null;
-                    }
-
-                    var editionIds = new List<string>(book.Editions.Count);
-                    foreach (var edition in book.Editions)
-                    {
-                        if (edition == null || string.IsNullOrWhiteSpace(edition.ForeignEditionId))
-                        {
-                            return null;
-                        }
-
-                        editionIds.Add(edition.ForeignEditionId.Trim().ToLowerInvariant());
-                    }
-
-                    editionIds.Sort(StringComparer.Ordinal);
-
-                    var workTokens = BookIdentity.GetStableWorkProviderIdentityTokens(book)
-                        .Where(token => !string.IsNullOrWhiteSpace(token))
-                        .Select(token => token.Trim().ToLowerInvariant())
-                        .OrderBy(token => token, StringComparer.Ordinal);
-
-                    return $"{book.MediaType}::W[{string.Join(",", workTokens)}]::E[{string.Join(",", editionIds)}]";
                 }
 
                 internal List<int> RepairOverMergedBookEditions(int authorId, List<Book> remoteBlueprint)
@@ -1417,7 +1392,13 @@ namespace NzbDrone.Core.Books
             {
                 var books = _bookService.GetBooksForRefresh(entity.Id, foreignIds: null);
                 HydrateLocalChildrenForRefresh(entity, books);
+                InitializeBookRefreshMatchingIndex(books, remoteChildren);
                 return books;
+            }
+
+            protected void InitializeBookRefreshMatchingIndex(List<Book> localChildren, List<Book> remoteChildren)
+            {
+                _bookRefreshMatchingIndex = BookRefreshMatchingIndex.Build(localChildren, _logger, remoteChildren);
             }
 
             private void HydrateLocalChildrenForRefresh(Author entity, List<Book> books)
@@ -1532,29 +1513,9 @@ namespace NzbDrone.Core.Books
 
         private bool HasLocalBookInstancePreservationMarker(Book book)
         {
-            if (book == null)
-            {
-                return true;
-            }
-
-            if (book.AddOptions?.AddType == BookAddType.Manual)
-            {
-                return true;
-            }
-
-            if (!string.IsNullOrWhiteSpace(book.UnitKeyHash))
-            {
-                // UnitKeyHash is the durable identity of an intentional multi-copy row. Refresh
-                // may update it from the server pocket, but must never merge it away as a duplicate.
-                return true;
-            }
-
-            if (!book.AnyEditionOk)
-            {
-                return true;
-            }
-
-            return book.Editions?.Any(edition => edition?.ManualAdd == true) == true;
+            // Automatic copies must not collapse during matching, but their marker alone
+            // does not preserve an empty row after its server pocket disappears.
+            return BookIdentity.HasUserPreservationMarker(book) || !string.IsNullOrWhiteSpace(book.UnitKeyHash);
         }
 
         private bool ShouldPreserveLocalBookInstance(Book book)
@@ -1569,8 +1530,7 @@ namespace NzbDrone.Core.Books
                 return _bookRefreshMatchingIndex;
             }
 
-            _bookRefreshMatchingIndex = BookRefreshMatchingIndex.Build(existingChildren, _logger);
-            return _bookRefreshMatchingIndex;
+            throw new InvalidOperationException("Book refresh matching requires the complete local and remote snapshots from GetLocalChildren.");
         }
 
         private sealed class BookRefreshMatchingIndex
@@ -1578,6 +1538,8 @@ namespace NzbDrone.Core.Books
             private readonly Dictionary<string, List<Book>> _booksByProviderToken;
             private readonly Dictionary<int, int> _sourceOrderByBookId;
             private readonly HashSet<int> _activeBookIds;
+            private readonly Dictionary<int, (int Count, int BestRank)> _remotePocketMatches = new();
+            private readonly Dictionary<int, Book> _matchedRemotePockets = new Dictionary<int, Book>();
 
             private BookRefreshMatchingIndex(
                 List<Book> source,
@@ -1593,8 +1555,11 @@ namespace NzbDrone.Core.Books
 
             public List<Book> Source { get; }
 
-            public static BookRefreshMatchingIndex Build(List<Book> existingChildren, Logger logger)
+            public static BookRefreshMatchingIndex Build(List<Book> existingChildren, Logger logger, List<Book> remoteChildren)
             {
+                ArgumentNullException.ThrowIfNull(remoteChildren);
+                var stopwatch = Stopwatch.StartNew();
+                long matchedPairs = 0;
                 var source = existingChildren ?? new List<Book>();
                 var booksByProviderToken = new Dictionary<string, List<Book>>(StringComparer.OrdinalIgnoreCase);
                 var sourceOrderByBookId = new Dictionary<int, int>();
@@ -1623,12 +1588,37 @@ namespace NzbDrone.Core.Books
                     }
                 }
 
-                logger?.Debug("[AUTHOR-REFRESH-TIMING] Built book provider lookup for {0} local books with {1} provider tokens",
-                    source.Count,
-                    booksByProviderToken.Count);
+                var index = new BookRefreshMatchingIndex(source, booksByProviderToken, sourceOrderByBookId, activeBookIds);
+                // Count against the complete filtered snapshot before the sorter consumes any rows.
+                // Keep ambiguous edition matches in this conservative superset: consumption can
+                // make them unique for a later pocket. Overlap alone does not prove a duplicate.
+                foreach (var remote in remoteChildren)
+                {
+                    var matches = index.GetMatches(remote);
+                    foreach (var book in matches.Matches)
+                    {
+                        var previous = index._remotePocketMatches.GetValueOrDefault(book.Id);
+                        index._remotePocketMatches[book.Id] = (previous.Count + 1,
+                            Math.Max(previous.BestRank, BookIdentity.GetPocketMatchRank(book, remote)));
+                        matchedPairs++;
+                    }
+                }
 
-                return new BookRefreshMatchingIndex(source, booksByProviderToken, sourceOrderByBookId, activeBookIds);
+                logger?.Debug("[AUTHOR-REFRESH-TIMING] Built book provider lookup for {0} local books, {1} remote pockets, {2} provider tokens and {3} matched pairs in {4}ms",
+                    source.Count, remoteChildren.Count, booksByProviderToken.Count, matchedPairs, stopwatch.ElapsedMilliseconds);
+                return index;
             }
+
+            public bool MatchesMultipleRemotePockets(Book book) => _remotePocketMatches.GetValueOrDefault(book.Id).Count > 1;
+
+            public int GetRelativePocketMatchRank(Book book, Book remote) => MatchesMultipleRemotePockets(book)
+                ? BookIdentity.GetPocketMatchRank(book, remote) - _remotePocketMatches[book.Id].BestRank
+                : 0;
+
+            public Book GetMatchedRemotePocket(Book book) => _matchedRemotePockets.GetValueOrDefault(book.Id);
+
+            public WorkFirstMatchResult GetMatches(Book remote) => BookIdentity.FindWorkFirstMatchResult(
+                GetCandidates(remote).Where(book => book.MediaType == remote.MediaType), remote);
 
             public List<Book> GetCandidates(Book remote)
             {
@@ -1662,11 +1652,12 @@ namespace NzbDrone.Core.Books
                     .ToList();
             }
 
-            public void Consume(Book existingChild, IEnumerable<Book> mergedChildren)
+            public void Consume(Book existingChild, IEnumerable<Book> mergedChildren, Book remote)
             {
                 if (existingChild?.Id > 0)
                 {
                     _activeBookIds.Remove(existingChild.Id);
+                    _matchedRemotePockets[existingChild.Id] = remote;
                 }
 
                 foreach (var child in mergedChildren ?? Enumerable.Empty<Book>())
@@ -1684,12 +1675,7 @@ namespace NzbDrone.Core.Books
             // Match work-first. Shared edition aliases (ASIN, GB, providerIdsAll, etc.) are not enough to merge
             // distinct remote works; edition fallback is only used when there is no stable work identity.
             var matchingIndex = GetBookRefreshMatchingIndex(existingChildren);
-            var candidates = matchingIndex
-                .GetCandidates(remote)
-                .Where(x => x.MediaType == remote.MediaType)
-                .ToList();
-
-            var matchResult = BookIdentity.FindWorkFirstMatchResult(candidates, remote);
+            var matchResult = matchingIndex.GetMatches(remote);
             var matchingBooks = matchResult.Matches.ToList();
             if (matchResult.Disposition == WorkFirstMatchDisposition.EditionAmbiguous &&
                 !IsSameRemotePocketCopySet(matchingBooks, remote))
@@ -1713,13 +1699,18 @@ namespace NzbDrone.Core.Books
             var mergeChildren = new List<Book>();
             Book existingChild = null;
 
-            // Multiple local matches for a single remote book can happen due to legacy imports and/or upstream ID changes.
-            // Prefer the canonical (non-wanted-narrator) copy and the pinned copy (has files / manual) so that the
-            // remote refresh updates the intended in-library book, and mark only truly-unwanted duplicates for deletion.
+            // Use uncontested rows first; only competing pockets need affinity ordering.
+            // For a consolidated pocket, files outrank a fileless duplicate's old pocket key.
+            // Reserve stronger evidence for the other pocket; without pocket evidence, a contested
+            // fileless row must be used before taking an owned row solely because it has files.
             if (matchingBooks.Any())
             {
                 existingChild = matchingBooks
-                    .OrderByDescending(HasKnownFiles)
+                    .OrderBy(matchingIndex.MatchesMultipleRemotePockets)
+                    .ThenByDescending(book => matchingIndex.GetRelativePocketMatchRank(book, remote))
+                    .ThenBy(book => matchingIndex.MatchesMultipleRemotePockets(book) &&
+                        BookIdentity.GetPocketMatchRank(book, remote) == 0 && HasKnownFiles(book))
+                    .ThenByDescending(HasKnownFiles)
                     .ThenBy(b => b.AddOptions?.AddType == BookAddType.Manual)
                     .ThenByDescending(ProviderScore)
                     .ThenBy(b => b.Id)
@@ -1727,7 +1718,7 @@ namespace NzbDrone.Core.Books
 
                 foreach (var dup in matchingBooks.Where(b => b.Id != existingChild.Id))
                 {
-                    if (ShouldPreserveLocalBookInstance(dup))
+                    if (matchingIndex.MatchesMultipleRemotePockets(dup) || ShouldPreserveLocalBookInstance(dup))
                     {
                         continue;
                     }
@@ -1735,7 +1726,7 @@ namespace NzbDrone.Core.Books
                     mergeChildren.Add(dup);
                 }
 
-                matchingIndex.Consume(existingChild, mergeChildren);
+                matchingIndex.Consume(existingChild, mergeChildren, remote);
                 return Tuple.Create(existingChild, mergeChildren);
             }
 
@@ -2055,7 +2046,16 @@ namespace NzbDrone.Core.Books
                     .Select(g => g.First())
                     .ToList();
 
-                return _refreshBookService.RefreshBookInfo(booksToRefresh, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+                // Reuse the reconciliation decision: a damaged row can still carry identities
+                // from another pocket, so independently matching it again can undo that decision.
+                var updated = false;
+                foreach (var group in booksToRefresh.GroupBy(book => _bookRefreshMatchingIndex?.GetMatchedRemotePocket(book), BookReferenceComparer.Instance))
+                {
+                    var snapshot = group.Key == null ? remoteChildren : new List<Book> { group.Key };
+                    updated |= _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+                }
+
+                return updated;
             }
 
         protected override void PublishEntityUpdatedEvent(Author entity)
@@ -2063,7 +2063,7 @@ namespace NzbDrone.Core.Books
             _eventAggregator.PublishEvent(new AuthorUpdatedEvent(entity));
         }
 
-        protected override void PublishRefreshCompleteEvent(Author entity)
+        protected override void PublishRefreshCompleteEvent(Author entity, Author remoteData)
         {
             _logger.Debug("[SERIES-DEBUG] PublishRefreshCompleteEvent called for author '{0}' (ID: {1})",
                 entity.Name, entity.Id);
@@ -2072,7 +2072,7 @@ namespace NzbDrone.Core.Books
                 // IMPORTANT: We don't process series here anymore because books might not be committed to DB yet
                 // Series processing is now handled in a separate event handler after books are guaranteed to be in the database
 
-            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity));
+            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity, remoteData));
         }
 
         protected override void PublishChildrenUpdatedEvent(Author entity, List<Book> newChildren, List<Book> updateChildren, List<Book> deleteChildren)

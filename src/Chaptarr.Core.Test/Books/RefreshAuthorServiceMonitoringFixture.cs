@@ -5,6 +5,7 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 
@@ -121,15 +122,30 @@ namespace Chaptarr.Core.Test.Books
             {
             }
 
-            public void PublishRefreshComplete(Author author)
+            public void PublishRefreshComplete(Author author, Author remoteAuthor = null)
             {
-                base.PublishRefreshCompleteEvent(author);
+                base.PublishRefreshCompleteEvent(author, remoteAuthor);
             }
 
             public void ProcessAddedBooks(Author author, SortedChildren children)
             {
                 base.ProcessChildren(author, children);
             }
+        }
+
+        [Test]
+        public void refresh_complete_must_publish_the_actual_remote_snapshot_separately_from_the_local_author()
+        {
+            var events = new StubEventAggregator();
+            var service = new TestableRefreshAuthorService(new StubBookService(new List<Book>()), events, LogManager.GetCurrentClassLogger());
+            var local = new Author { Id = 10 };
+            var remote = new Author { Series = new List<Series> { new Series { GoodreadsSeriesId = "gr:40346" } } };
+
+            service.PublishRefreshComplete(local, remote);
+
+            var published = events.PublishedEvents.OfType<AuthorRefreshCompleteEvent>().Single();
+            Assert.That(published.Author, Is.SameAs(local));
+            Assert.That(published.RemoteAuthor, Is.SameAs(remote));
         }
 
         [Test]

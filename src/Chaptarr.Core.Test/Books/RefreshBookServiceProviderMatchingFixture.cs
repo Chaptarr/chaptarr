@@ -141,6 +141,40 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(match, Is.SameAs(remote));
         }
 
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        public void overlapping_pockets_should_keep_their_own_remote_editions(BookMediaType mediaType, bool editionsChanged)
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var format = mediaType == BookMediaType.Audiobook ? 2 : 1;
+            Book Pocket(string key) => new Book
+            {
+                Title = "Dead or Alive",
+                BaseBookId = key,
+                MediaType = mediaType,
+                RemoteProviderIds = new HashSet<string> { "gr:12502746", "hc:578022" },
+                Editions = new List<Edition>
+                {
+                    new Edition { ForeignEditionId = "gr:19053463", Title = "Dead or Alive", ReadingFormatId = format }
+                }
+            };
+            var local = Pocket("gr:12502746");
+            var sibling = Pocket("hc:578022");
+            var expected = Pocket("gr:12502746");
+            local.Editions.Add(new Edition { ForeignEditionId = "fixture-extra-edition", ReadingFormatId = format });
+            expected.Editions.Add(new Edition { ForeignEditionId = "fixture-extra-edition", ReadingFormatId = format });
+            if (editionsChanged)
+            {
+                sibling.Editions.Add(new Edition { ForeignEditionId = "fixture-extra-edition", ReadingFormatId = format });
+                expected.Editions.Add(new Edition { ForeignEditionId = "fixture-new-edition", ReadingFormatId = format });
+            }
+
+            Assert.That(service.MatchRemote(local, new List<Book> { sibling, expected }), Is.SameAs(expected));
+            Assert.That(service.MatchRemote(local, new List<Book> { expected, sibling }), Is.SameAs(expected));
+        }
+
         [Test]
         public void should_prefer_matching_media_type_when_multiple_remote_books_share_work_provider_id()
         {
@@ -272,6 +306,30 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(match, Is.Null);
             Assert.That(service.ShouldDeletePublic(local), Is.True);
+        }
+
+        [Test]
+        public void copy_marker_alone_should_not_prevent_normal_pruning(
+            [Values(BookMediaType.Ebook, BookMediaType.Audiobook)] BookMediaType mediaType,
+            [Values("none", "files", "manual", "strict", "edition")] string protection)
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var local = new Book
+            {
+                Id = 1, MediaType = mediaType, UnitKeyHash = "fixture-copy", AnyEditionOk = true,
+                AddOptions = new AddBookOptions { AddType = BookAddType.Automatic },
+                BookFiles = new List<BookFile>(), Editions = new List<Edition>()
+            };
+            switch (protection)
+            {
+                case "files": local.BookFiles.Add(new BookFile { Id = 10 }); break;
+                case "manual": local.AddOptions.AddType = BookAddType.Manual; break;
+                case "strict": local.AnyEditionOk = false; break;
+                case "edition": local.Editions.Add(new Edition { ManualAdd = true }); break;
+            }
+
+            Assert.That(service.MatchRemote(local, new List<Book>()), Is.Null);
+            Assert.That(service.ShouldDeletePublic(local), Is.EqualTo(protection == "none"));
         }
 
         [Test]

@@ -305,6 +305,8 @@ namespace Chaptarr.Core.Test.Books
         {
             public int DeleteCalls { get; private set; }
 
+            public List<SeriesBookLink> ReadLocalChildren(Series series) => GetLocalChildren(series, null);
+
             public TestableRefreshSeriesService(IBookService bookService, ISeriesService seriesService, ISeriesBookLinkService linkService, IRefreshSeriesBookLinkService refreshLinkService, Logger logger)
                 : base(bookService, seriesService, linkService, refreshLinkService, logger)
             {
@@ -315,6 +317,71 @@ namespace Chaptarr.Core.Test.Books
                 DeleteCalls++;
                 base.DeleteEntity(local, deleteFiles);
             }
+        }
+
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Ebook, true)]
+        public void shared_series_refresh_should_only_reconcile_the_requested_author(BookMediaType mediaType, bool removeMembership)
+        {
+            var jimBook = new Book { Id = 1, AuthorId = 10, Title = "White Night", GoodreadsWorkId = "gr:1254936", MediaType = mediaType };
+            var kevinBook = new Book { Id = 2, AuthorId = 20, Title = "Blood Lite", HardcoverBookId = "hc:2", MediaType = mediaType };
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Books = new List<Book> { jimBook, kevinBook };
+            var seriesService = new StubSeriesService();
+            var series = new Series { Id = 100, Title = "The Dresden Files", GoodreadsSeriesId = "gr:40346", MediaType = mediaType };
+            series.LazyLinkItems = new FailOnLoad<List<SeriesBookLink>>();
+            series.LazyBooks = new FailOnLoad<List<Book>>();
+            seriesService.SeriesByAuthor.Add(series);
+            var linkService = new StubSeriesBookLinkService();
+            linkService.SetLinks(series.Id,
+                new SeriesBookLink { Id = 1, BookId = jimBook.Id, Book = jimBook, SeriesId = series.Id, Position = "9", SeriesPosition = 9 },
+                new SeriesBookLink { Id = 2, BookId = kevinBook.Id, Book = kevinBook, SeriesId = series.Id, Position = "10.1" });
+            var subject = new TestableRefreshSeriesService(bookService, seriesService, linkService,
+                new RefreshSeriesBookLinkService(linkService, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger());
+            var remote = new Series
+            {
+                Title = removeMembership ? "Other anthology series" : series.Title,
+                GoodreadsSeriesId = removeMembership ? "gr:999" : series.GoodreadsSeriesId,
+                MediaType = mediaType,
+                SeriesBooks = new List<SeriesBook> { new SeriesBook { BookId = kevinBook.HardcoverBookId, Position = "10.1" } }
+            };
+
+            subject.RefreshSeriesInfo(20, new List<Series> { remote }, new Author { Id = 20 }, false, false, null);
+
+            Assert.That(linkService.GetLinksBySeries(series.Id).Select(l => l.BookId),
+                Is.EquivalentTo(removeMembership ? new[] { jimBook.Id } : new[] { jimBook.Id, kevinBook.Id }));
+            Assert.That(seriesService.DeletedIds, Does.Not.Contain(series.Id));
+            Assert.That(linkService.Deleted.Select(l => l.BookId), Does.Not.Contain(jimBook.Id));
+            Assert.That(remote.LinkItems, Is.Null, "Reconciliation must not attach local row IDs to the reusable server snapshot.");
+
+            // A later authoritative pass must restore the missing author's membership without clobbering its neighbour.
+            linkService.SetLinks(series.Id, linkService.GetLinksBySeries(series.Id).Where(l => l.BookId != jimBook.Id).ToArray());
+            remote = new Series { Title = series.Title, GoodreadsSeriesId = series.GoodreadsSeriesId, MediaType = mediaType,
+                SeriesBooks = new List<SeriesBook> { new SeriesBook { BookId = jimBook.GoodreadsWorkId, Position = "9" } } };
+            subject.RefreshSeriesInfo(10, new List<Series> { remote }, new Author { Id = 10 }, false, false, null);
+            Assert.That(linkService.GetLinksBySeries(series.Id).Select(l => l.BookId),
+                Is.EquivalentTo(removeMembership ? new[] { jimBook.Id } : new[] { jimBook.Id, kevinBook.Id }));
+            var inserted = linkService.Inserted.Count;
+            subject.RefreshSeriesInfo(10, new List<Series> { remote }, new Author { Id = 10 }, false, false, null);
+            Assert.That(linkService.Inserted.Count, Is.EqualTo(inserted), "Replaying the snapshot must not insert another membership.");
+        }
+
+        private sealed class FailOnLoad<T> : LazyLoaded<T>
+        {
+            public override void LazyLoad() => throw new InvalidOperationException("Unexpected lazy load while scoping series.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void unscoped_series_must_fail_even_when_links_are_loaded(bool loaded)
+        {
+            var subject = new TestableRefreshSeriesService(null, null, null, null, LogManager.GetCurrentClassLogger());
+            var series = new Series { Id = 1 };
+            series.LazyLinkItems = loaded ? new LazyLoaded<List<SeriesBookLink>>(new List<SeriesBookLink>()) : new FailOnLoad<List<SeriesBookLink>>();
+            var error = Assert.Throws<InvalidOperationException>(() => subject.ReadLocalChildren(series));
+            Assert.That(error.Message, Does.Contain("author-scoped"));
         }
 
         [Test]
@@ -528,6 +595,69 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(links.Single(x => x.BookId == unflaggedBook.Id).IsPrimary, Is.True,
                     "an unflagged book should default to primary so not-yet-refreshed series keep their membership");
             });
+        }
+
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(true, false, true)]
+        [TestCase(false, true, true)]
+        [TestCase(true, true, false)]
+        [TestCase(false, false, false)]
+        public void should_refresh_primary_metadata_for_both_media_copies(bool storedPrimary, bool incomingPrimary, bool forceRefresh)
+        {
+            var books = new[] { BookMediaType.Audiobook, BookMediaType.Ebook }
+                .Select((mediaType, index) => new Book
+                {
+                    Id = index + 1,
+                    AuthorId = 29,
+                    Title = "Paranormal Payback",
+                    GoodreadsWorkId = "gr:254958892",
+                    MediaType = mediaType
+                }).ToList();
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Books = books;
+            var seriesService = new StubSeriesService();
+            var linkService = new StubSeriesBookLinkService();
+            var remoteSeries = new List<Series>();
+            foreach (var book in books)
+            {
+                var series = new Series
+                {
+                    Id = 1000 + book.Id,
+                    Title = "Henry Fitzroy",
+                    GoodreadsSeriesId = "gr:84745",
+                    MediaType = book.MediaType
+                };
+                seriesService.SeriesByAuthor.Add(series);
+                linkService.SetLinks(series.Id, new SeriesBookLink
+                {
+                    Id = 2000 + book.Id,
+                    BookId = book.Id,
+                    Book = book,
+                    SeriesId = series.Id,
+                    Series = series,
+                    Position = "10.5",
+                    IsPrimary = storedPrimary
+                });
+                remoteSeries.Add(CreateRemoteSeriesWithSeriesBooks(series.Title, series.GoodreadsSeriesId, book.MediaType,
+                    new[] { new SeriesBook { BookId = book.GoodreadsWorkId, Title = book.Title, Position = "10.5", IsPrimary = incomingPrimary } }));
+            }
+
+            var sut = new TestableRefreshSeriesService(bookService, seriesService, linkService,
+                new RefreshSeriesBookLinkService(linkService, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger());
+            sut.RefreshSeriesInfo(29, remoteSeries, new Author { Id = 29 }, forceRefresh, false, null);
+
+            Assert.That(linkService.Inserted, Is.Empty);
+            Assert.That(linkService.Deleted, Is.Empty);
+            Assert.That(linkService.Updated, Has.Count.EqualTo(storedPrimary == incomingPrimary ? 0 : 2));
+            foreach (var link in linkService.Updated)
+            {
+                Assert.That(link.IsPrimary, Is.EqualTo(incomingPrimary));
+                Assert.That(link.Position, Is.EqualTo("10.5"));
+                Assert.That(link.Id, Is.EqualTo(2000 + link.BookId));
+                Assert.That(link.SeriesId, Is.EqualTo(1000 + link.BookId));
+                Assert.That(link.Series.Value.MediaType, Is.EqualTo(books.Single(book => book.Id == link.BookId).MediaType));
+            }
         }
 
         [Test]

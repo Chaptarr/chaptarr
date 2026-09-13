@@ -34,7 +34,6 @@ namespace NzbDrone.Core.Books
             Id = other.Id;
             SeriesId = other.SeriesId;
             BookId = other.BookId;
-            IsPrimary = other.IsPrimary;
             IsInheritedLink = other.IsInheritedLink;
         }
     }
