@@ -341,6 +341,7 @@ namespace NzbDrone.Core.Books
             return (editions ?? Enumerable.Empty<Edition>())
                 .Where(e => IsRepresentativeFallback(e, mediaType))
                 .OrderByDescending(e => GetRepresentativeFallbackRank(e, mediaType))
+                .ThenByDescending(e => GetLanguagePreferenceRank(e))
                 .ThenByDescending(e => e.Ratings?.Votes ?? 0)
                 .ThenByDescending(e => e.Ratings?.Value ?? 0m)
                 .ThenBy(e => e.Id)
@@ -351,10 +352,34 @@ namespace NzbDrone.Core.Books
         {
             return (editions ?? Enumerable.Empty<Edition>())
                 .Where(e => e != null)
-                .OrderByDescending(e => e.Ratings?.Votes ?? 0)
+                .OrderByDescending(e => GetLanguagePreferenceRank(e))
+                .ThenByDescending(e => e.Ratings?.Votes ?? 0)
                 .ThenByDescending(e => e.Ratings?.Value ?? 0m)
                 .ThenBy(e => e.Id)
                 .FirstOrDefault();
+        }
+
+        // Candidate pools reaching here have already passed MetadataProfile.AllowedLanguages
+        // filtering upstream (EditionMetadataProfileFilter.Apply), when that setting is configured.
+        // When it is NOT configured (the common/default case), every language passes through
+        // unfiltered and this tiebreak is the only thing standing between "most-voted edition wins"
+        // and "most-voted English edition wins" — without it, a translated edition can outrank the
+        // original-language one on a per-edition vote count alone (e.g. a Spanish audiobook edition
+        // consolidating all Spanish-reader votes onto one row, while English votes split across
+        // several English edition rows for the same work). Rank explicit English highest, unknown/
+        // unset language next (don't punish editions that are simply missing a language tag), and
+        // every other explicit language last — a soft default, not an exclusionary filter, so a
+        // foreign-only candidate pool still picks sensibly among itself via votes as before.
+        private static int GetLanguagePreferenceRank(Edition edition)
+        {
+            var canonical = edition?.Language?.CanonicalizeLanguage();
+
+            if (canonical == null)
+            {
+                return 1;
+            }
+
+            return canonical == "eng" ? 2 : 0;
         }
 
     }
