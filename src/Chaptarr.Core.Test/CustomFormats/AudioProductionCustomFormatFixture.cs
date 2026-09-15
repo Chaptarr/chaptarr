@@ -420,6 +420,7 @@ namespace Chaptarr.Core.Test.CustomFormats
                     {
                         Monitored = true,
                         IsEbook = false,
+                        ReadingFormatId = 2,
                         NarratorNames = new List<string> { "Annie Ellicott", "Jeff Hays", "Patrick Warburton" },
                         Narrator = "Annie Ellicott + 2 more narrators"
                     }
@@ -434,6 +435,7 @@ namespace Chaptarr.Core.Test.CustomFormats
                     {
                         Monitored = true,
                         IsEbook = false,
+                        ReadingFormatId = 2,
                         NarratorNames = new List<string> { "Annie Ellicott" },
                         Narrator = "Annie Ellicott + 2 more narrators"
                     }
@@ -442,6 +444,58 @@ namespace Chaptarr.Core.Test.CustomFormats
 
             Assert.That(completeTarget.HasUnresolvedNames, Is.False);
             Assert.That(unresolvedTarget.HasUnresolvedNames, Is.True);
+        }
+
+        [Test]
+        public void manually_added_print_edition_should_not_displace_this_much_is_true_audio_narrator_target()
+        {
+            var target = PreferredNarratorMatcher.BuildTarget(new Book
+            {
+                Title = "This Much Is True",
+                AnyEditionOk = false,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        ForeignEditionId = "hc:edition:31200048-audiobook",
+                        ReadingFormatId = 1,
+                        IsEbook = false,
+                        ManualAdd = true,
+                        NarratorNames = new List<string>()
+                    },
+                    new Edition
+                    {
+                        ForeignEditionId = "gr:216738140-audiobook",
+                        ReadingFormatId = 2,
+                        IsEbook = false,
+                        Monitored = true,
+                        NarratorNames = new List<string> { "Lance  Greenfield", "Shiloh James" }
+                    }
+                }
+            });
+
+            Assert.That(target?.Names, Is.EqualTo(new[] { "Lance  Greenfield", "Shiloh James" }));
+        }
+
+        [Test]
+        public void print_only_audiobook_book_should_not_produce_a_preferred_narrator_target()
+        {
+            var target = PreferredNarratorMatcher.BuildTarget(new Book
+            {
+                AnyEditionOk = false,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        ReadingFormatId = 1,
+                        IsEbook = false,
+                        Monitored = true,
+                        NarratorNames = new List<string> { "Samuel Roukin" }
+                    }
+                }
+            });
+
+            Assert.That(target, Is.Null);
         }
 
         [Test]

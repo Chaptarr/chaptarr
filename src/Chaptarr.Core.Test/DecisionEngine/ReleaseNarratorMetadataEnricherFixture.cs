@@ -326,7 +326,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                         AnyEditionOk = anyEditionOk,
                         Editions = new List<Edition>
                         {
-                            new Edition { Id = 1, Monitored = true, IsEbook = false, Narrator = "Jim Dale" }
+                            new Edition { Id = 1, Monitored = true, IsEbook = false, ReadingFormatId = 2, Narrator = "Jim Dale" }
                         }
                     }
                 }

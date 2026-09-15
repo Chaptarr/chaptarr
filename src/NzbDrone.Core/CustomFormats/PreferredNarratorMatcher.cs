@@ -105,7 +105,7 @@ namespace NzbDrone.Core.CustomFormats
 
         public static bool IsAudiobookEdition(Edition edition)
         {
-            return edition != null && (!edition.IsEbook || edition.ReadingFormatId == 2);
+            return edition != null && edition.ReadingFormatId == 2;
         }
 
         public static string ExtractNarratorFromFields(IEnumerable<string> fields)
