@@ -76,6 +76,7 @@ import {
   faListCheck as fasListCheck,
   faLongArrowAltRight as fasLongArrowAltRight,
   faMedkit as fasMedkit,
+  faMicrophone as fasMicrophone,
   faMinus as fasMinus,
   faPause as fasPause,
   faPlay as fasPlay,
@@ -237,5 +238,6 @@ export const HIDE = fasEyeSlash;
 export const WARNING = fasExclamationTriangle;
 export const WIKI = fasBookReader;
 export const NARRATOR_PLACEHOLDER = fasUser;
+export const NARRATOR_SEARCH = fasMicrophone;
 export const QUICK_IMPORT = fasFileImport;
 export const UNCHECK = fasTimesCircle;

@@ -1,10 +1,10 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import NarratorSearchModal from 'Book/Narrator/NarratorSearchModal';
-import MetadataSearchIcon from 'Components/Icon/Icons/MetadataSearchIcon';
+import Icon from 'Components/Icon';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import Tooltip from 'Components/Tooltip/Tooltip';
-import { tooltipPositions } from 'Helpers/Props';
+import { icons, tooltipPositions } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import styles from './NarratorCell.css';
 
@@ -191,7 +191,7 @@ class NarratorCell extends Component {
             isSpinning={false}
             onPress={this.onNarratorSearchPress}
           >
-            <MetadataSearchIcon size={12} />
+            <Icon name={icons.NARRATOR_SEARCH} size={12} />
           </SpinnerButton>
         </div>
 
