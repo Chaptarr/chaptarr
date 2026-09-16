@@ -63,6 +63,25 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(BookSeries.GetLinks(book).Count(), Is.EqualTo(2));
         }
 
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void unknown_primary_should_keep_membership_without_outranking_explicit_primary(BookMediaType mediaType)
+        {
+            var smoke = Link("Smoke Trilogy", "gr:43854", "4.5", mediaType);
+            smoke.IsPrimary = null;
+            var henry = Link("Henry Fitzroy", "gr:84745", "10.5", mediaType);
+            henry.IsPrimary = false;
+            var book = new Book { Title = "Paranormal Payback", GoodreadsWorkId = "gr:254958892", MediaType = mediaType,
+                SeriesLinks = new List<SeriesBookLink> { henry, smoke } };
+
+            Assert.That(BookSeries.Select(book), Is.SameAs(smoke), "unknown and secondary retain the existing position order");
+            Assert.That(book.ToResource().SeriesTitle, Is.EqualTo("Smoke Trilogy #4.5; Henry Fitzroy #10.5"));
+            henry.IsPrimary = true;
+            Assert.That(BookSeries.Select(book), Is.SameAs(henry));
+            Assert.That(BookSeries.GetLinks(book).Count(), Is.EqualTo(2));
+            Assert.That(smoke.IsPrimary, Is.Null);
+        }
+
         [Test]
         public void api_title_cleanup_must_compare_individual_memberships_not_the_joined_label()
         {

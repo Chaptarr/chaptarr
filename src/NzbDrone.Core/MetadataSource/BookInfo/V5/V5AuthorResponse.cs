@@ -418,9 +418,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5
         public string CoverUrl { get; set; }
 
         // Authoritative primary-slot flag from Goodreads' getWorksForSeries endpoint.
-        // Nullable: null when the V5 API didn't include the field for this book (e.g. pre-2026-06-02
-        // stale rows or non-Goodreads-sourced series). Consumers should default null to true to
-        // preserve current behavior for not-yet-refreshed data.
+        // Null or omitted means unknown; preserve it independently of membership.
         [JsonProperty("isPrimary")]
         public bool? IsPrimary { get; set; }
     }

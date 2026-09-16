@@ -26,7 +26,7 @@ namespace NzbDrone.Core.Books
 
         public static SeriesBookLink Select(Book book)
         {
-            return GetLinks(book).OrderByDescending(link => link.IsPrimary).FirstOrDefault();
+            return GetLinks(book).OrderByDescending(link => link.IsPrimary == true).FirstOrDefault();
         }
 
         public static string Label(SeriesBookLink link)

@@ -235,7 +235,7 @@ namespace NzbDrone.Core.Profiles.Metadata
                 FilterByPredicate(hash, GetBookKey, localHash, profile, BookAllowedByRating, "rating criteria not met");
                 FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipMissingDate || x.ReleaseDate.HasValue, "release date is missing");
                 FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipPartsAndSets || !IsPartOrSet(x, seriesLinks.GetValueOrDefault(x), titles), "book is part of set");
-                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipSeriesSecondary || !seriesLinks.ContainsKey(x) || seriesLinks[x].Any(y => y.IsPrimary), "book is a secondary series item");
+                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipSeriesSecondary || !seriesLinks.ContainsKey(x) || seriesLinks[x].Any(y => y.IsPrimary != false), "book is a secondary series item");
                 FilterByPredicate(hash, GetBookKey, localHash, profile, OmnibusAllowedByProfile, "book is an omnibus/collection");
                 FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.Ignored.Any(i => MatchesTerms(x.Title, i)), "contains ignored terms");
 

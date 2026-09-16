@@ -1173,7 +1173,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                             Series = new LazyLoaded<Series>(series),
                             Position = seriesBook.Position,
                             SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
-                            IsPrimary = seriesBook.IsPrimary ?? true
+                            IsPrimary = seriesBook.IsPrimary
                         });
                     }
                 }

@@ -592,18 +592,24 @@ namespace Chaptarr.Core.Test.Books
                     "a book the metadata API flags as primary should be linked as primary");
                 Assert.That(links.Single(x => x.BookId == secondaryBook.Id).IsPrimary, Is.False,
                     "a book the metadata API flags as secondary should be linked as secondary");
-                Assert.That(links.Single(x => x.BookId == unflaggedBook.Id).IsPrimary, Is.True,
-                    "an unflagged book should default to primary so not-yet-refreshed series keep their membership");
+                Assert.That(links.Single(x => x.BookId == unflaggedBook.Id).IsPrimary, Is.Null,
+                    "unknown primary status must retain the membership without asserting that it is primary");
             });
         }
 
+        [TestCase(null, null, false)]
+        [TestCase(null, true, false)]
+        [TestCase(null, false, false)]
+        [TestCase(true, null, false)]
+        [TestCase(false, null, false)]
+        [TestCase(true, null, true)]
         [TestCase(true, false, false)]
         [TestCase(false, true, false)]
         [TestCase(true, false, true)]
         [TestCase(false, true, true)]
         [TestCase(true, true, false)]
         [TestCase(false, false, false)]
-        public void should_refresh_primary_metadata_for_both_media_copies(bool storedPrimary, bool incomingPrimary, bool forceRefresh)
+        public void should_refresh_primary_metadata_for_both_media_copies(bool? storedPrimary, bool? incomingPrimary, bool forceRefresh)
         {
             var books = new[] { BookMediaType.Audiobook, BookMediaType.Ebook }
                 .Select((mediaType, index) => new Book
@@ -657,6 +663,41 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(link.Id, Is.EqualTo(2000 + link.BookId));
                 Assert.That(link.SeriesId, Is.EqualTo(1000 + link.BookId));
                 Assert.That(link.Series.Value.MediaType, Is.EqualTo(books.Single(book => book.Id == link.BookId).MediaType));
+            }
+        }
+
+        [TestCase(null, "Mister Petty")]
+        [TestCase("", "Mister Petty")]
+        [TestCase(" ", "Mister Petty")]
+        [TestCase(null, "序章")]
+        [TestCase(null, "10.5")]
+        [TestCase(null, null)]
+        public void duplicate_memberships_should_preserve_a_nonblank_provider_position(string blank, string position)
+        {
+            foreach (var mediaType in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            foreach (var reverse in new[] { false, true })
+            {
+                var book = new Book { Id = 1, AuthorId = 29, Title = "Paranormal Payback", GoodreadsWorkId = "gr:254958892", MediaType = mediaType };
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                ((BookServiceProxy)(object)bookService).Books = new List<Book> { book };
+                var series = new Series { Id = 100, Title = "The Dresden Files", GoodreadsSeriesId = "gr:40346", MediaType = mediaType };
+                var seriesService = new StubSeriesService();
+                seriesService.SeriesByAuthor.Add(series);
+                var linkService = new StubSeriesBookLinkService();
+                linkService.SetLinks(series.Id);
+                var positions = reverse ? new[] { position, blank } : new[] { blank, position };
+                var remote = CreateRemoteSeriesWithSeriesBooks(series.Title, series.GoodreadsSeriesId, mediaType,
+                    positions.Select(p => new SeriesBook { BookId = book.GoodreadsWorkId, Title = book.Title, Position = p, IsPrimary = false }).ToArray());
+                var subject = new TestableRefreshSeriesService(bookService, seriesService, linkService,
+                    new RefreshSeriesBookLinkService(linkService, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger());
+
+                subject.RefreshSeriesInfo(29, new List<Series> { remote }, new Author { Id = 29 }, false, false, null);
+
+                var saved = linkService.GetLinksBySeries(series.Id).Single();
+                Assert.That(saved.Position, Is.EqualTo(position));
+                Assert.That(saved.IsPrimary, Is.False);
+                Assert.That(saved.BookId, Is.EqualTo(book.Id));
+                Assert.That(saved.Series.Value.MediaType, Is.EqualTo(mediaType));
             }
         }
 

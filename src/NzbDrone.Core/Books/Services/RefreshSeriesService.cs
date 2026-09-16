@@ -167,9 +167,8 @@ namespace NzbDrone.Core.Books
                         Book = matchingBook,
                         BookId = matchingBook.Id,
 
-                        // Null means the metadata API didn't surface a primary flag for this slot;
-                        // default to true so not-yet-refreshed series keep their existing membership.
-                        IsPrimary = seriesBook.IsPrimary ?? true,
+                        // Primary status is metadata; an unknown flag does not remove the membership.
+                        IsPrimary = seriesBook.IsPrimary,
                         SeriesInstanceType = seriesInstanceType
                     });
                 }
@@ -372,9 +371,8 @@ namespace NzbDrone.Core.Books
                             Book = matchingBook,
                             BookId = matchingBook.Id,
 
-                            // Null means the metadata API didn't surface a primary flag for this slot;
-                            // default to true so not-yet-refreshed series keep their existing membership.
-                            IsPrimary = seriesBook.IsPrimary ?? true,
+                            // Primary status is metadata; an unknown flag does not remove the membership.
+                            IsPrimary = seriesBook.IsPrimary,
                             SeriesInstanceType = seriesInstanceType
                         };
 
@@ -421,7 +419,8 @@ namespace NzbDrone.Core.Books
                     {
                         // Keep provider positions intact; integer parsing loses decimal/range ordering.
                         return g
-                            .OrderBy(l => BookSeries.PositionOrder(l.Position))
+                            .OrderBy(l => string.IsNullOrWhiteSpace(l.Position))
+                            .ThenBy(l => BookSeries.PositionOrder(l.Position))
                             .ThenBy(l => l.Position, StringComparer.Ordinal)
                             .First();
                     })

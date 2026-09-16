@@ -65,6 +65,45 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             return new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger);
         }
 
+        [TestCase("true", true)]
+        [TestCase("false", false)]
+        [TestCase("null", null)]
+        [TestCase("omitted", null)]
+        public void author_blob_should_preserve_primary_status_on_both_media_memberships(string primaryJson, bool? expected)
+        {
+            var payload = """
+                {
+                  "author": { "id": "gr:10746", "name": "Jim Butcher", "slug": "jim-butcher" },
+                  "books": [{ "id": "gr:254958892", "goodreadsWorkId": "gr:254958892", "title": "Paranormal Payback", "slug": "paranormal-payback",
+                    "editions": [{ "id": "gr:238766995", "readingFormatId": 3, "title": "Paranormal Payback", "languageCode": "en" }] }],
+                  "series": [{ "id": "gr:43854", "goodreadsSeriesId": "gr:43854", "name": "Smoke Trilogy",
+                    "books": [{ "bookId": "gr:254958892", "title": "Paranormal Payback", "isPrimary": PRIMARY_VALUE, "position": "4.5" }] }]
+                }
+                """;
+            payload = primaryJson == "omitted"
+                ? payload.Replace("\"isPrimary\": PRIMARY_VALUE, ", "")
+                : payload.Replace("PRIMARY_VALUE", primaryJson);
+            var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            var proxy = new BookInfoProxy(new StubHttpClient(payload), cachedHttpClient: null,
+                goodreadsSearchProxy: null, hardcoverSearchClient: null, audibleCatalogProxy: null,
+                authorService: null, bookService: null, editionService: null, configService: configService,
+                requestBuilder: null, logger: LogManager.GetCurrentClassLogger(), cacheManager: new CacheManager(),
+                metadataServerHealthGate: CreateHealthGate(configService));
+
+            var author = proxy.GetAuthorInfo("gr:10746", useCache: false);
+
+            Assert.That(author.Books.Select(b => b.MediaType), Is.EquivalentTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+            foreach (var book in author.Books)
+            {
+                var link = book.SeriesLinks.Single();
+                Assert.That(link.IsPrimary, Is.EqualTo(expected));
+                Assert.That(link.Position, Is.EqualTo("4.5"));
+                Assert.That(link.Series.Value.GoodreadsSeriesId, Is.EqualTo("gr:43854"));
+                Assert.That(link.Series.Value.MediaType, Is.EqualTo(book.MediaType));
+                Assert.That(BookSeries.GetLinks(book).Count(), Is.EqualTo(1));
+            }
+        }
+
         [Test]
         public void should_create_media_instances_with_full_candidate_editions_before_profile_filtering()
         {
