@@ -61,13 +61,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> GetCandidates(string title) => throw new System.NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new System.NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new System.NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new System.NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new System.NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new System.NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new System.NotImplementedException();
             public Author UpdateAuthor(Author author) => throw new System.NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new System.NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new System.NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new System.NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new System.NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new System.NotImplementedException();
             public void SetAddOptions(Author author) => throw new System.NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new System.NotImplementedException();

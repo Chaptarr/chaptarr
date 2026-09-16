@@ -2,6 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO.Abstractions;
+using System.Net;
+using Chaptarr.Http.Middleware;
+using Microsoft.AspNetCore.Http;
+using NzbDrone.Core.Exceptions;
 using Chaptarr.Core.Test;
 using Chaptarr.Api.V1.Books;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +24,7 @@ namespace Chaptarr.Core.Test.Api
     {
         private sealed class StubBookService : IBookService
         {
+            public List<(int Id, bool DeleteFiles, bool Exclusion, bool Both)> Deletes { get; } = new();
             private readonly Func<int, Book> _getBook;
             private readonly Func<int, List<Book>> _getBooksByAuthor;
 
@@ -32,7 +37,7 @@ namespace Chaptarr.Core.Test.Api
             public Book GetBook(int bookId) => _getBook?.Invoke(bookId);
             public List<Book> GetBooksByAuthor(int authorId) => _getBooksByAuthor?.Invoke(authorId) ?? new List<Book>();
 
-            public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
+            public List<Book> GetBooks(IEnumerable<int> bookIds) => bookIds.Select(GetBook).ToList();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
@@ -49,7 +54,7 @@ namespace Chaptarr.Core.Test.Api
             public Book FindByISBN(string isbn) => throw new NotImplementedException();
             public Book FindByASIN(string asin) => throw new NotImplementedException();
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
-            public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => Deletes.Add((bookId, deleteFiles, addImportListExclusion, applyToBothFormats));
             public List<Book> GetAllBooks() => throw new NotImplementedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
@@ -152,6 +157,73 @@ namespace Chaptarr.Core.Test.Api
                     logger: logger)
             {
             }
+        }
+
+        [TestCase("ebook", BookMediaType.Ebook, true, false)]
+        [TestCase("ebook", BookMediaType.Ebook, true, true)]
+        [TestCase("audiobook", BookMediaType.Audiobook, true, true)]
+        [TestCase("ebook", BookMediaType.Audiobook, false, true)]
+        [TestCase("audiobook", BookMediaType.Ebook, false, false)]
+        public void compatibility_delete_refuses_widening_or_a_row_of_the_other_media_type(string mediaType, BookMediaType rowMediaType, bool both, bool deleteFiles)
+        {
+            var book = new Book { Id = 1, Title = "Ready Player Two", HardcoverBookId = "hc:427565", MediaType = rowMediaType };
+            var service = new StubBookService(_ => book, _ => new List<Book> { book });
+            var controller = new TestableBookController(service, new StubAuthorStatisticsService(null), LogManager.GetCurrentClassLogger())
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
+            controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", mediaType, "/readarr/hc/" + mediaType);
+
+            var error = Assert.Throws<NzbDroneClientException>(() => controller.DeleteBook(book.Id, deleteFiles, true, both));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(service.Deletes, Is.Empty);
+        }
+
+        [TestCase(null, true)]
+        [TestCase(null, false)]
+        [TestCase("ebook", false)]
+        public void native_both_and_matching_scoped_book_deletes_keep_their_existing_flags(string mediaType, bool both)
+        {
+            var book = new Book { Id = 1, Title = "Ready Player Two", HardcoverBookId = "hc:427565", MediaType = BookMediaType.Ebook };
+            var service = new StubBookService(_ => book, _ => new List<Book> { book });
+            var controller = new TestableBookController(service, new StubAuthorStatisticsService(null), LogManager.GetCurrentClassLogger())
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
+            if (mediaType != null)
+            {
+                controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", mediaType, "/ebook");
+            }
+
+            controller.DeleteBook(book.Id, true, true, both);
+            Assert.That(service.Deletes, Is.EqualTo(new[] { (book.Id, true, true, both) }));
+        }
+
+        [TestCase("ebook")]
+        [TestCase("audiobook")]
+        public void scoped_bulk_book_delete_refuses_the_complete_mixed_selection(string mediaType)
+        {
+            var selected = mediaType == "ebook" ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            var books = new List<Book>
+            {
+                new Book { Id = 1, Title = "Ready Player Two", HardcoverBookId = "hc:427565", MediaType = selected },
+                new Book { Id = 2, Title = "Ready Player Two", HardcoverBookId = "hc:427565", MediaType = selected == BookMediaType.Ebook ? BookMediaType.Audiobook : BookMediaType.Ebook }
+            };
+            var service = new StubBookService(id => books.Single(b => b.Id == id), _ => books);
+            var controller = new BookEditorController(service, null)
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
+            controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", mediaType, "/" + mediaType);
+            var resource = new BookEditorResource { BookIds = new List<int> { 1, 2 }, DeleteFiles = true, AddImportListExclusion = true };
+
+            var error = Assert.Throws<NzbDroneClientException>(() => controller.DeleteBook(resource));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(service.Deletes, Is.Empty);
+
+            resource.BookIds.Remove(2);
+            controller.DeleteBook(resource);
+            Assert.That(service.Deletes, Is.EqualTo(new[] { (1, true, true, false) }));
         }
 
         private static BookFile BuildFile(int bookId, string path, long size)

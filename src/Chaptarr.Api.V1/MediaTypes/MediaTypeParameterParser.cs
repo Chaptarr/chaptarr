@@ -1,6 +1,9 @@
 using System;
+using System.Linq;
+using System.Net;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Books;
+using NzbDroneClientException = NzbDrone.Core.Exceptions.NzbDroneClientException;
 
 namespace Chaptarr.Api.V1.MediaTypes
 {
@@ -26,6 +29,24 @@ namespace Chaptarr.Api.V1.MediaTypes
                         ? "mediaType must be 'all', 'audiobook', or 'ebook'"
                         : "mediaType must be either 'audiobook' or 'ebook'");
             }
+        }
+
+        public static BookMediaType? ParseDeletionScope(bool applyToBothFormats, string facadeMediaType, params string[] mediaTypes)
+        {
+            if (ParseOptional(facadeMediaType, allowAll: false).HasValue && applyToBothFormats)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict,
+                    "A media-scoped base URL cannot delete both formats. Use the unscoped API with applyToBothFormats=true. Nothing was changed.");
+            }
+
+            var scopes = mediaTypes.Append(facadeMediaType).Select(value => ParseOptional(value, allowAll: false))
+                .Where(value => value.HasValue).Distinct().ToList();
+            if (scopes.Count > 1)
+            {
+                throw new BadRequestException("Conflicting deletion media types. The route, query, and body must agree.");
+            }
+
+            return scopes.SingleOrDefault();
         }
 
         public static BookMediaType ParseRequired(string mediaType)

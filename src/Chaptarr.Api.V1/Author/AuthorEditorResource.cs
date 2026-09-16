@@ -24,6 +24,8 @@ namespace Chaptarr.Api.V1.Author
         public ApplyTags ApplyTags { get; set; }
         public bool MoveFiles { get; set; }
         public bool DeleteFiles { get; set; }
+        public string MediaType { get; set; }
+        public bool ApplyToBothFormats { get; set; }
         public bool AddImportListExclusion { get; set; }
     }
 }

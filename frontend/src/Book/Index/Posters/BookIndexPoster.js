@@ -341,6 +341,7 @@ class BookIndexPoster extends Component {
           />
 
           <DeleteAuthorModal
+            selectedMediaType={this.props.mediaType}
             isOpen={isDeleteAuthorModalOpen}
             authorId={authorId}
             onModalClose={this.onDeleteAuthorModalClose}
@@ -359,6 +360,7 @@ class BookIndexPoster extends Component {
 }
 
 BookIndexPoster.propTypes = {
+  mediaType: PropTypes.string,
   id: PropTypes.number.isRequired,
   title: PropTypes.string.isRequired,
   authorId: PropTypes.number.isRequired,

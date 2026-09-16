@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using NzbDrone.Core.Exceptions;
 using FluentValidation;
 using FluentValidation.Results;
 using NLog;
@@ -9,6 +11,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.ImportLists.Exclusions;
+using NzbDrone.Core.Extras;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
@@ -37,13 +40,7 @@ namespace NzbDrone.Core.Books
             {
                 throw new NotSupportedException();
             }
-	        void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
-	        {
-	            foreach (var authorId in authorIds ?? new List<int>())
-	            {
-	                DeleteAuthor(authorId, deleteFiles, addImportListExclusion);
-	            }
-	        }
+        void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false);
         List<Author> GetAllAuthors(bool bypassCache = false);
         Dictionary<int, List<int>> GetAllAuthorTags();
         List<Author> AllForTag(int tagId);
@@ -57,7 +54,7 @@ namespace NzbDrone.Core.Books
             throw new NotSupportedException();
         }
         List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder);
-        Dictionary<int, string> AllAuthorPaths();
+        List<KeyValuePair<int, string>> AllAuthorPaths();
         bool AuthorPathExists(string folder);
         void SetAddOptions(Author author);
         void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored);
@@ -91,6 +88,7 @@ namespace NzbDrone.Core.Books
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IProviderAliasService _providerAliasService;
         private readonly IImportListExclusionService _importListExclusionService;
+        private readonly Lazy<IBookService> _bookService;
 
         // Single-author cache fields
         private volatile int _currentAuthorId = -1;
@@ -107,8 +105,9 @@ namespace NzbDrone.Core.Books
 	                             IMediaFileService mediaFileService,
 	                             Logger logger,
                              IImportListExclusionService importListExclusionService,
-                             IProviderAliasService providerAliasService = null,
-                             Lazy<IDeleteMediaFiles> deleteMediaFiles = null)
+                             Lazy<IDeleteMediaFiles> deleteMediaFiles,
+                             Lazy<IBookService> bookService,
+                             IProviderAliasService providerAliasService = null)
 	        {
 	            _authorRepository = authorRepository;
                 _deleteMediaFiles = deleteMediaFiles;
@@ -124,6 +123,7 @@ namespace NzbDrone.Core.Books
 	            _mediaFileService = mediaFileService;
 	            _providerAliasService = providerAliasService;
                 _importListExclusionService = importListExclusionService;
+                _bookService = bookService;
 	        }
 
         private void EnsureAuthorDbFields(Author author, bool ensurePaths, bool requirePath)
@@ -315,24 +315,26 @@ namespace NzbDrone.Core.Books
 
 	        public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false)
 	        {
-	            DeleteAuthorsInternal(new List<int> { authorId }, deleteFiles, addImportListExclusion, false);
+	            DeleteAuthorsInternal(new List<int> { authorId }, deleteFiles, addImportListExclusion, false, null, true);
 	        }
 
 	        public List<int> DeleteAuthorForReadd(int authorId)
 	        {
-	            return DeleteAuthorsInternal(new List<int> { authorId }, false, false, true);
+	            return DeleteAuthorsInternal(new List<int> { authorId }, false, false, true, null, true);
 	        }
 
-	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
+	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false)
 	        {
-	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false);
+	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false, mediaType, applyToBothFormats);
 	        }
 
 	        private List<int> DeleteAuthorsInternal(
 	            List<int> authorIds,
 	            bool deleteFiles,
 	            bool addImportListExclusion,
-	            bool preserveRetainedFileHistory)
+	            bool preserveRetainedFileHistory,
+                BookMediaType? mediaType,
+                bool applyToBothFormats)
 	        {
 	            var retainedBookFileIds = new List<int>();
 	            var distinctIds = (authorIds ?? new List<int>())
@@ -355,6 +357,32 @@ namespace NzbDrone.Core.Books
 	                .Where(author => author != null)
 	                .ToList();
 
+                if (mediaType.HasValue && !Enum.IsDefined(mediaType.Value))
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Media type must be audiobook or ebook.");
+                }
+
+                mediaType = applyToBothFormats ? null : mediaType;
+                var booksByAuthor = authors.ToDictionary(author => author.Id, author =>
+                    mediaType.HasValue || (deleteFiles && !applyToBothFormats)
+                        ? _bookRepository.GetBooksByAuthorId(author.Id)
+                        : new List<Book>());
+                if (deleteFiles && !mediaType.HasValue && !applyToBothFormats)
+                {
+                    var ambiguous = authors.Where(author =>
+                        (author.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() || author.AudiobookPath.IsNotNullOrWhiteSpace() || booksByAuthor[author.Id].Any(book => book.MediaType == BookMediaType.Audiobook)) &&
+                        (author.EbookRootFolderPath.IsNotNullOrWhiteSpace() || author.EbookPath.IsNotNullOrWhiteSpace() || booksByAuthor[author.Id].Any(book => book.MediaType == BookMediaType.Ebook))).ToList();
+                    if (ambiguous.Any())
+                    {
+                        throw new NzbDroneClientException(HttpStatusCode.Conflict,
+                            "Specify mediaType=audiobook or ebook, use a scoped base URL, or explicitly set applyToBothFormats=true. Ambiguous authors: {0}. Nothing was changed.",
+                            string.Join("; ", ambiguous.Select(author => author.Name + " [" + string.Join(", ", ExtraFilePathHelper.GetAuthorBasePaths(author)) + "]")));
+                    }
+                }
+
+                var bookService = mediaType.HasValue
+                    ? _bookService?.Value ?? throw new InvalidOperationException("Book deletion service is unavailable")
+                    : null;
                 if (addImportListExclusion)
                 {
                     // Validate identity before physical work; persistence waits until deletion succeeds.
@@ -366,12 +394,38 @@ namespace NzbDrone.Core.Books
                 if (deleteFiles)
                 {
                     (_deleteMediaFiles?.Value ?? throw new InvalidOperationException("Author file deletion service is unavailable"))
-                        .DeleteAuthorFiles(authors);
+                        .DeleteAuthorFiles(authors, mediaType);
                 }
 
                 if (addImportListExclusion)
                 {
-                    _importListExclusionService.AddAuthorExclusions(authors);
+                    _importListExclusionService.AddAuthorExclusions(authors, mediaType);
+                }
+
+                if (mediaType.HasValue)
+                {
+                    ClearAuthorCache();
+                    bookService.DeleteMany(booksByAuthor.Values.SelectMany(books => books)
+                        .Where(book => book.MediaType == mediaType.Value).ToList());
+                    var removedAuthors = new List<Author>();
+                    foreach (var author in authors)
+                    {
+                        ClearMediaTypeSettings(author, mediaType.Value);
+                        var otherRoot = mediaType == BookMediaType.Audiobook ? author.EbookRootFolderPath : author.AudiobookRootFolderPath;
+                        if (otherRoot.IsNotNullOrWhiteSpace() || booksByAuthor[author.Id].Any(book => book.MediaType != mediaType.Value))
+                        {
+                            author.Path = (mediaType == BookMediaType.Audiobook ? author.EbookPath : author.AudiobookPath) ?? author.Path;
+                            author.LastSelectedMediaType = mediaType == BookMediaType.Audiobook ? "ebook" : "audiobook";
+                            UpdateAuthor(author);
+                        }
+                        else
+                        {
+                            removedAuthors.Add(author);
+                        }
+                    }
+
+                    // Removing the final side may remove the author record, but never widens file permission.
+                    authors = removedAuthors;
                 }
 
 	            // Keep every parent row alive while synchronous handlers remove Books and Editions.
@@ -601,6 +655,37 @@ namespace NzbDrone.Core.Books
                 .ToList();
         }
 
+        private static void ClearMediaTypeSettings(Author author, BookMediaType mediaType)
+        {
+            author.SyncMonitoredAcrossFormats = false;
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                // NOTE: AudiobookMetadataProfileId is the refresh gate for remote audiobook children.
+                // RefreshAuthorService.GetRemoteChildren() treats "no audiobook metadata profile" as "audiobooks disabled"
+                // and will otherwise include remote audiobooks again on refresh.
+                author.AudiobookMetadataProfileId = null;
+                author.AudiobookRootFolderPath = null;
+                author.AudiobookPath = null;
+                author.AudiobookQualityProfileId = null;
+                author.AudiobookMonitored = null;
+                author.AudiobookMonitorNewItems = null;
+                author.AudiobookSettingsManuallyOverridden = false;
+                author.AudiobookTags = new HashSet<int>();
+            }
+            else
+            {
+                // NOTE: EbookMetadataProfileId is the refresh gate for remote ebook children.
+                author.EbookMetadataProfileId = null;
+                author.EbookRootFolderPath = null;
+                author.EbookPath = null;
+                author.EbookQualityProfileId = null;
+                author.EbookMonitored = null;
+                author.EbookMonitorNewItems = null;
+                author.EbookSettingsManuallyOverridden = false;
+                author.EbookTags = new HashSet<int>();
+            }
+        }
+
         public List<Author> GetAllAuthors(bool bypassCache = false)
         {
             if (bypassCache)
@@ -616,9 +701,12 @@ namespace NzbDrone.Core.Books
             return _authorRepository.AllAuthorTags();
         }
 
-        public Dictionary<int, string> AllAuthorPaths()
+        public List<KeyValuePair<int, string>> AllAuthorPaths()
         {
-            return _authorRepository.AllAuthorPaths();
+            return _authorRepository.AllAuthorPaths()
+                .SelectMany(author => ExtraFilePathHelper.GetAuthorBasePaths(author)
+                    .Select(path => new KeyValuePair<int, string>(author.Id, path)))
+                .ToList();
         }
 
         public List<Author> AllForTag(int tagId)

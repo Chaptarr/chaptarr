@@ -49,7 +49,7 @@ namespace Chaptarr.Core.Test.Books
             public List<ImportListExclusion> Exclusions { get; } = new List<ImportListExclusion>();
             public int AllCalls { get; private set; }
             public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
-            public void AddAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion exclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() { AllCalls++; return Exclusions.ToList(); }
             public void Delete(int id) => throw new NotImplementedException();
@@ -76,13 +76,14 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
             public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
@@ -151,6 +152,51 @@ namespace Chaptarr.Core.Test.Books
             var author = await svc.AddAuthorAsync(providerId, config);
 
             Assert.That(author.Id, Is.EqualTo(-pending.Id));
+        }
+
+        [Test]
+        public async Task mixed_list_request_keeps_audio_and_removes_excluded_ebook_queue_targets()
+        {
+            var exclusions = new StubImportListExclusionService();
+            exclusions.Exclusions.Add(new ImportListExclusion { ForeignId = "gr:58", Name = "Frank Herbert", MediaType = BookMediaType.Ebook });
+            var pending = new StubPendingAuthorImportService(1, null);
+            var info = new StubAuthorInfoNotFound();
+            var service = BuildSubject(info, pending, exclusions);
+            var config = new MonitoringConfig
+            {
+                QueueIfUnavailable = true,
+                RequestedBy = "ImportList:Dune",
+                CreateAudiobook = true,
+                CreateEbook = true,
+                EbookBooksToMonitor = new List<string> { "gr:3634639" },
+                EbookBooksToSearch = new List<string> { "gr:3634639" }
+            };
+            var result = await service.AddAuthorAsync("gr:58", config);
+            Assert.That(result.Id, Is.EqualTo(-1));
+            Assert.That(config.CreateAudiobook, Is.True);
+            Assert.That(config.CreateEbook, Is.False);
+            Assert.That(config.EbookBooksToMonitor, Is.Null);
+            Assert.That(config.EbookBooksToSearch, Is.Null);
+            Assert.That(pending.EnqueueCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ebook_only_list_request_is_blocked_before_fetch_or_queue()
+        {
+            var exclusions = new StubImportListExclusionService();
+            exclusions.Exclusions.Add(new ImportListExclusion { ForeignId = "gr:58", Name = "Frank Herbert", MediaType = BookMediaType.Ebook });
+            var pending = new StubPendingAuthorImportService(1, null);
+            var info = new StubAuthorInfoNotFound();
+            var service = BuildSubject(info, pending, exclusions);
+            Assert.ThrowsAsync<ValidationException>(async () => await service.AddAuthorAsync("gr:58", new MonitoringConfig
+            {
+                QueueIfUnavailable = true,
+                RequestedBy = "ImportList:Dune",
+                CreateAudiobook = false,
+                CreateEbook = true
+            }));
+            Assert.That(info.Calls, Is.Zero);
+            Assert.That(pending.EnqueueCalls, Is.Zero);
         }
 
         private static AuthorLibraryService BuildSubject(

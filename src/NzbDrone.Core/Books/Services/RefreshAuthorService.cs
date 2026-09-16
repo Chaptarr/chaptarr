@@ -417,30 +417,7 @@ namespace NzbDrone.Core.Books
             // Update local author with remote metadata
             local.UseMetadataFrom(remote);
 
-            // Update list exclusions for all provider IDs
-            var localProviderIds = new List<string>();
-            if (!string.IsNullOrEmpty(local.HardcoverAuthorId)) localProviderIds.Add(local.HardcoverAuthorId);
-            if (!string.IsNullOrEmpty(local.GoodreadsAuthorId)) localProviderIds.Add(local.GoodreadsAuthorId);
-            if (!string.IsNullOrEmpty(local.OpenLibraryAuthorId)) localProviderIds.Add(local.OpenLibraryAuthorId);
-            if (!string.IsNullOrEmpty(local.GoogleBooksAuthorId)) localProviderIds.Add(local.GoogleBooksAuthorId);
-
-            foreach (var providerId in localProviderIds)
-            {
-                var importExclusion = _importListExclusionService.FindByForeignId(providerId);
-                if (importExclusion != null)
-                {
-                    // Update to the new primary provider ID
-                    var newProviderId = remote.HardcoverAuthorId ??
-                                       remote.GoodreadsAuthorId?.ToString() ??
-                                       remote.OpenLibraryAuthorId ??
-                                       remote.GoogleBooksAuthorId;
-                    if (!string.IsNullOrEmpty(newProviderId))
-                    {
-                        importExclusion.ForeignId = newProviderId;
-                        _importListExclusionService.Update(importExclusion);
-                    }
-                }
-            }
+            MoveAuthorImportExclusions(local, remote);
 
             // Do the standard update
             UpdateEntity(local, remote);
@@ -453,50 +430,7 @@ namespace NzbDrone.Core.Books
         {
             _logger.Warn($"Author {local} was replaced with {remote} because the original was a duplicate.");
 
-            // Update list exclusions when merging authors
-            var localProviderIds = new List<string>();
-            if (!string.IsNullOrEmpty(local.HardcoverAuthorId)) localProviderIds.Add(local.HardcoverAuthorId);
-            if (!string.IsNullOrEmpty(local.GoodreadsAuthorId)) localProviderIds.Add(local.GoodreadsAuthorId);
-            if (!string.IsNullOrEmpty(local.OpenLibraryAuthorId)) localProviderIds.Add(local.OpenLibraryAuthorId);
-            if (!string.IsNullOrEmpty(local.GoogleBooksAuthorId)) localProviderIds.Add(local.GoogleBooksAuthorId);
-
-            foreach (var providerId in localProviderIds)
-            {
-                var importExclusionLocal = _importListExclusionService.FindByForeignId(providerId);
-                if (importExclusionLocal != null)
-                {
-                    // Check if target already has an exclusion
-                    var targetProviderIds = new List<string>();
-                    if (!string.IsNullOrEmpty(target.HardcoverAuthorId)) targetProviderIds.Add(target.HardcoverAuthorId);
-                    if (!string.IsNullOrEmpty(target.GoodreadsAuthorId)) targetProviderIds.Add(target.GoodreadsAuthorId);
-                    if (!string.IsNullOrEmpty(target.OpenLibraryAuthorId)) targetProviderIds.Add(target.OpenLibraryAuthorId);
-                    if (!string.IsNullOrEmpty(target.GoogleBooksAuthorId)) targetProviderIds.Add(target.GoogleBooksAuthorId);
-
-                    var hasTargetExclusion = false;
-                    foreach (var targetId in targetProviderIds)
-                    {
-                        if (_importListExclusionService.FindByForeignId(targetId) != null)
-                        {
-                            hasTargetExclusion = true;
-                            break;
-                        }
-                    }
-
-                    if (!hasTargetExclusion)
-                    {
-                        // Update to the remote's primary provider ID
-                        var newProviderId = remote.HardcoverAuthorId ??
-                                           remote.GoodreadsAuthorId?.ToString() ??
-                                           remote.OpenLibraryAuthorId ??
-                                           remote.GoogleBooksAuthorId;
-                        if (!string.IsNullOrEmpty(newProviderId))
-                        {
-                            importExclusionLocal.ForeignId = newProviderId;
-                            _importListExclusionService.Update(importExclusionLocal);
-                        }
-                    }
-                }
-            }
+            MoveAuthorImportExclusions(local, target);
 
             // move any books over to the new author and remove the local author
             var books = _bookService.GetBooksByAuthor(local.Id);
@@ -3124,36 +3058,15 @@ namespace NzbDrone.Core.Books
 
             survivor.LastSelectedMediaType ??= source.LastSelectedMediaType;
 
-            MoveAuthorImportExclusions(source, target: survivor, canonicalId);
+            MoveAuthorImportExclusions(source, survivor);
         }
 
-        private void MoveAuthorImportExclusions(Author source, Author target, string canonicalId)
+        private void MoveAuthorImportExclusions(Author source, Author target)
         {
-            var sourceProviderIds = EnumerateAuthorProviderIds(source).ToList();
-            var targetProviderIds = new HashSet<string>(EnumerateAuthorProviderIds(target), StringComparer.OrdinalIgnoreCase);
-            var destinationId = canonicalId ?? GetPreferredAuthorIdentifier(target);
-
-            if (destinationId.IsNullOrWhiteSpace())
+            foreach (var scope in _importListExclusionService.FindByForeignId(AuthorIdentity.GetProviderIdentityTokenList(source))
+                .Select(exclusion => exclusion.MediaType).Distinct())
             {
-                return;
-            }
-
-            foreach (var providerId in sourceProviderIds)
-            {
-                var exclusion = _importListExclusionService.FindByForeignId(providerId);
-                if (exclusion == null)
-                {
-                    continue;
-                }
-
-                if (targetProviderIds.Any(targetId => _importListExclusionService.FindByForeignId(targetId) != null))
-                {
-                    _importListExclusionService.Delete(exclusion.Id);
-                    continue;
-                }
-
-                exclusion.ForeignId = destinationId;
-                _importListExclusionService.Update(exclusion);
+                _importListExclusionService.AddAuthorExclusions(new[] { target }, scope);
             }
         }
 

@@ -13,7 +13,6 @@ import { showMessage } from './appActions';
 import { set, update, updateItem } from './baseActions';
 import { fetchBooks } from './bookActions';
 import createHandleActions from './Creators/createHandleActions';
-import createRemoveItemHandler from './Creators/createRemoveItemHandler';
 import createSaveProviderHandler from './Creators/createSaveProviderHandler';
 import createSetSettingValueReducer from './Creators/Reducers/createSetSettingValueReducer';
 
@@ -262,16 +261,7 @@ export const saveAuthor = createThunk(SAVE_AUTHOR, (payload) => {
   return newPayload;
 });
 
-export const deleteAuthor = createThunk(DELETE_AUTHOR, (payload) => {
-  return {
-    ...payload,
-    queryParams: {
-      deleteFiles: payload.deleteFiles,
-      addImportListExclusion: payload.addImportListExclusion,
-      readdAuthor: payload.readdAuthor
-    }
-  };
-});
+export const deleteAuthor = createThunk(DELETE_AUTHOR);
 
 export const toggleAuthorMonitored = createThunk(TOGGLE_AUTHOR_MONITORED);
 export const toggleBookMonitored = createThunk(TOGGLE_BOOK_MONITORED);
@@ -341,7 +331,18 @@ export const actionHandlers = handleThunks({
     return abortRequest;
   },
   [SAVE_AUTHOR]: createSaveProviderHandler(section, '/author', { getAjaxOptions: getSaveAjaxOptions }),
-  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author'),
+  [DELETE_AUTHOR]: (getState, { id, ...options }, dispatch) => {
+    dispatch(set({ section, isDeleting: true, deleteError: null }));
+    const query = new URLSearchParams(Object.entries(options).filter(([, value]) => value != null));
+    const promise = createAjaxRequest({ url: `/author/${id}?${query}`, method: 'DELETE' }).request;
+    promise.done(() => {
+      dispatch(set({ section, isDeleting: false, deleteError: null }));
+      dispatch(fetchAuthor());
+      dispatch(fetchBooks({ authorId: id }));
+    });
+    promise.fail((xhr) => dispatch(set({ section, isDeleting: false, deleteError: xhr })));
+    return promise;
+  },
 
   [TOGGLE_AUTHOR_MONITORED]: (getState, payload, dispatch) => {
     const {

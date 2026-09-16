@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.MediaTypes;
@@ -2080,8 +2081,17 @@ namespace Chaptarr.Api.V1.Books
         }
 
         [RestDeleteById]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(typeof(ApiErrorResource), 409)]
         public void DeleteBook(int id, bool deleteFiles = false, bool addImportListExclusion = false, bool applyToBothFormats = false)
         {
+            var scope = MediaTypeParameterParser.ParseDeletionScope(applyToBothFormats, HttpContext.GetReadarrFacadeContext()?.MediaType);
+            if (scope.HasValue && _bookService.GetBook(id).MediaType != scope.Value)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict,
+                    "The book belongs to a different media type than this base URL. Nothing was changed.");
+            }
+
             _bookService.DeleteBook(id, deleteFiles, addImportListExclusion, applyToBothFormats);
         }
 

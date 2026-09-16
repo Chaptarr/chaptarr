@@ -504,8 +504,26 @@ namespace NzbDrone.Core.Books.Services
 
             var exclusions = _importListExclusionService.All();
 
-            if (providerIds.Distinct(StringComparer.OrdinalIgnoreCase)
-                .Any(providerIdToken => exclusions.Any(exclusion => ImportListSyncService.MatchesExclusionId(providerIdToken, exclusion.ForeignId))))
+            var matching = exclusions.Where(exclusion => providerIds.Any(id => ImportListSyncService.MatchesExclusionId(id, exclusion.ForeignId))).ToList();
+            var excludeAudio = matching.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, BookMediaType.Audiobook));
+            var excludeEbook = matching.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, BookMediaType.Ebook));
+            if (excludeAudio)
+            {
+                config.CreateAudiobook = false;
+                config.AudiobookBooksToMonitor = null;
+                config.AudiobookBooksToSearch = null;
+            }
+
+            if (excludeEbook)
+            {
+                config.CreateEbook = false;
+                config.EbookBooksToMonitor = null;
+                config.EbookBooksToSearch = null;
+            }
+
+            if (((excludeAudio || excludeEbook) && !config.CreateAudiobook && !config.CreateEbook) ||
+                (config.SpecificBookMediaType == BookMediaType.Audiobook && excludeAudio) ||
+                (config.SpecificBookMediaType == BookMediaType.Ebook && excludeEbook))
             {
                 var failure = new ValidationFailure(nameof(providerId), $"Author {providerId} is excluded from import lists.")
                 {

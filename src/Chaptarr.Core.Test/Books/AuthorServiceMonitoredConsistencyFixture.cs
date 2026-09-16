@@ -88,7 +88,7 @@ namespace Chaptarr.Core.Test.Books
             public Author FindByOpenLibraryId(string openLibraryId) => throw new NotImplementedException();
             public Author FindByGoogleBooksId(string googleBooksAuthorId) => throw new NotImplementedException();
             public List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId) => new List<int>();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<Author> AllAuthorPaths() => throw new NotImplementedException();
             public Dictionary<int, List<int>> AllAuthorTags() => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public bool TryClaimAuthorImport(string providerId, int leaseSec = 300) => throw new NotImplementedException();
@@ -149,7 +149,9 @@ namespace Chaptarr.Core.Test.Books
                 bookRepository: null,
                 mediaFileService: mediaFileService,
                 logger: LogManager.GetCurrentClassLogger(),
-                importListExclusionService: null);
+                importListExclusionService: null,
+                deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => null),
+                bookService: new Lazy<IBookService>(() => null));
         }
 
         [Test]

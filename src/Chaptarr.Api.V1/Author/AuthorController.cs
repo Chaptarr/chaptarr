@@ -1132,11 +1132,20 @@ namespace Chaptarr.Api.V1.Author
         }
 
         [RestDeleteById]
-        public async Task<ActionResult> DeleteAuthor(int id, bool deleteFiles = false, bool addImportListExclusion = false, bool readdAuthor = false)
+        [ProducesResponseType(200)]
+        [ProducesResponseType(typeof(ApiErrorResource), 400)]
+        [ProducesResponseType(typeof(ApiErrorResource), 409)]
+        public async Task<ActionResult> DeleteAuthor(int id, bool deleteFiles = false, bool addImportListExclusion = false, bool readdAuthor = false, string mediaType = null, bool applyToBothFormats = false)
         {
+            var scope = MediaTypeParameterParser.ParseDeletionScope(applyToBothFormats, HttpContext.GetReadarrFacadeContext()?.MediaType, mediaType);
             if (readdAuthor && deleteFiles)
             {
                 return BadRequest(new ApiErrorResource { Message = "Cannot combine file deletion with re-add." });
+            }
+
+            if (readdAuthor && (addImportListExclusion || (scope.HasValue && !applyToBothFormats)))
+            {
+                return Conflict(new ApiErrorResource { Message = "Purge and re-add rebuilds the whole author. Set applyToBothFormats=true and do not request an import-list exclusion. Nothing was changed." });
             }
 
             if (readdAuthor)
@@ -1235,7 +1244,7 @@ namespace Chaptarr.Api.V1.Author
                 return Ok();
             }
 
-            _authorService.DeleteAuthor(id, deleteFiles, addImportListExclusion);
+            _authorService.DeleteAuthors(new List<int> { id }, deleteFiles, addImportListExclusion, scope, applyToBothFormats);
             return Ok();
         }
 

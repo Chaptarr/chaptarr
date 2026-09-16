@@ -583,6 +583,7 @@ class AuthorEditorFooter extends Component {
         />
 
         <DeleteAuthorModal
+          selectedMediaType={this.props.selectedMediaType}
           isOpen={isDeleteAuthorModalOpen}
           authorIds={authorIds}
           onModalClose={this.onDeleteAuthorModalClose}

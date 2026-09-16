@@ -15,7 +15,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
         ImportListExclusion Add(ImportListExclusion importListExclusion);
         List<ImportListExclusion> All();
         void ValidateAuthorExclusions(IEnumerable<Author> authors);
-        void AddAuthorExclusions(IEnumerable<Author> authors);
+        void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null);
         void Delete(int id);
         void Delete(List<int> ids);
         void Delete(string foreignId);
@@ -100,38 +100,19 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             }
         }
 
-        public void AddAuthorExclusions(IEnumerable<Author> authors)
+        public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null)
         {
             var selectedAuthors = (authors ?? Enumerable.Empty<Author>())
                 .Where(author => author != null)
                 .ToList();
             ValidateAuthorExclusions(selectedAuthors);
-            var providerIdsByAuthor = selectedAuthors
-                .Select(author => new { Author = author, ProviderIds = AuthorIdentity.GetProviderIdentityTokenList(author) })
-                .ToList();
-
-            var existingIds = _repo.All()
-                .Select(exclusion => exclusion.ForeignId)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var additions = providerIdsByAuthor
-                .SelectMany(entry => entry.ProviderIds.Select(providerId => new
+            AddScopedExclusions(selectedAuthors.SelectMany(author => AuthorIdentity.GetProviderIdentityTokenList(author)
+                .Select(providerId => new ImportListExclusion
                 {
-                    entry.Author,
-                    ProviderId = providerId
-                }))
-                .Where(entry => existingIds.Add(entry.ProviderId))
-                .Select(entry => new ImportListExclusion
-                {
-                    ForeignId = entry.ProviderId,
-                    Name = entry.Author.Name
-                })
-                .ToList();
-
-            if (additions.Any())
-            {
-                _repo.InsertMany(additions);
-            }
+                    ForeignId = providerId,
+                    Name = author.Name,
+                    MediaType = mediaType
+                })));
         }
 
         public void HandleAsync(BookDeletedEvent message)
@@ -147,76 +128,48 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                 .Where(book => book != null)
                 .ToList();
 
-            var exclusionScope = message.ApplyToBothFormats ? (BookMediaType?)null : message.Book?.MediaType;
-            var allExclusions = _repo.All().ToList();
-            var exclusionsToDelete = new List<int>();
-            var exclusionsToInsert = new List<ImportListExclusion>();
-            var candidateRows = deletedBooks
-                .SelectMany(book => ImportListExclusionBookMatcher.GetCanonicalProviderIds(book)
-                    .Select(providerId => new
-                    {
-                        ProviderId = providerId,
-                        Name = $"{book.Author?.Name ?? message.Book?.Author?.Name ?? "Unknown"} - {book.Title}",
-                        MediaType = exclusionScope ?? book.MediaType
-                    }))
-                .Distinct()
-                .ToList();
+            var candidates = deletedBooks.SelectMany(book => ImportListExclusionBookMatcher.GetCanonicalProviderIds(book)
+                .Select(providerId => new ImportListExclusion
+                {
+                    ForeignId = providerId,
+                    Name = $"{book.Author?.Name ?? message.Book?.Author?.Name ?? "Unknown"} - {book.Title}",
+                    MediaType = message.ApplyToBothFormats ? null : message.Book?.MediaType ?? book.MediaType
+                })).ToList();
 
-            if (!candidateRows.Any())
+            if (!candidates.Any())
             {
                 _logger.Warn("Cannot create import exclusion for book without any provider ID: {0}", message.Book.Title);
                 return;
             }
 
-            foreach (var row in candidateRows)
+            AddScopedExclusions(candidates);
+        }
+
+        private void AddScopedExclusions(IEnumerable<ImportListExclusion> candidates)
+        {
+            var existing = _repo.All().ToList();
+            var additions = new List<ImportListExclusion>();
+            var removals = new HashSet<int>();
+            foreach (var candidate in candidates)
             {
-                var existing = allExclusions
-                    .Where(e => string.Equals(e.ForeignId, row.ProviderId, System.StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                if (message.ApplyToBothFormats)
+                var matches = existing.Where(row => string.Equals(row.ForeignId, candidate.ForeignId, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (!candidate.MediaType.HasValue)
                 {
-                    foreach (var exclusion in existing.Where(e => e.MediaType.HasValue))
-                    {
-                        exclusionsToDelete.Add(exclusion.Id);
-                        allExclusions.Remove(exclusion);
-                    }
-
-                    if (existing.Any(e => !e.MediaType.HasValue) ||
-                        exclusionsToInsert.Any(e => string.Equals(e.ForeignId, row.ProviderId, StringComparison.OrdinalIgnoreCase) && !e.MediaType.HasValue))
-                    {
-                        continue;
-                    }
-                }
-                else
-                {
-                    if (existing.Any(e => !e.MediaType.HasValue || e.MediaType == row.MediaType) ||
-                        exclusionsToInsert.Any(e => string.Equals(e.ForeignId, row.ProviderId, StringComparison.OrdinalIgnoreCase) && (!e.MediaType.HasValue || e.MediaType == row.MediaType)))
-                    {
-                        continue;
-                    }
+                    removals.UnionWith(matches.Where(row => row.Id > 0 && row.MediaType.HasValue).Select(row => row.Id));
                 }
 
-                var importExclusion = new ImportListExclusion
+                if (matches.Any(row => !row.MediaType.HasValue || row.MediaType == candidate.MediaType))
                 {
-                    ForeignId = row.ProviderId,
-                    Name = row.Name,
-                    MediaType = message.ApplyToBothFormats ? null : row.MediaType
-                };
+                    continue;
+                }
 
-                exclusionsToInsert.Add(importExclusion);
-                allExclusions.Add(importExclusion);
+                additions.Add(candidate);
+                existing.Add(candidate);
             }
 
-            if (exclusionsToDelete.Any())
-            {
-                _repo.DeleteMany(exclusionsToDelete.Distinct().ToList());
-            }
-
-            if (exclusionsToInsert.Any())
-            {
-                _repo.InsertMany(exclusionsToInsert);
-            }
+            // Persist the broader replacement before discarding narrower exclusions.
+            if (additions.Any()) _repo.InsertMany(additions);
+            if (removals.Any()) _repo.DeleteMany(removals.ToList());
         }
     }
 }

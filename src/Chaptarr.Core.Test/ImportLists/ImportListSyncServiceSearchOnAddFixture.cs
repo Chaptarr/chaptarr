@@ -37,7 +37,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public List<ImportListExclusion> Exclusions { get; set; } = new();
 
             public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
-            public void AddAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => Exclusions;
             public void Delete(int id) => throw new NotImplementedException();
@@ -45,7 +45,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public void Delete(string foreignId) => throw new NotImplementedException();
             public ImportListExclusion Get(int id) => throw new NotImplementedException();
             public ImportListExclusion FindByForeignId(string foreignId) => throw new NotImplementedException();
-            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => throw new NotImplementedException();
+            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => Exclusions.Where(exclusion => foreignIds.Contains(exclusion.ForeignId)).ToList();
             public ImportListExclusion Update(ImportListExclusion importListExclusion) => throw new NotImplementedException();
         }
 

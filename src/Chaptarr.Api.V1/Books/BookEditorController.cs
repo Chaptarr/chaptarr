@@ -1,4 +1,9 @@
+using System.Linq;
+using System.Net;
 using Chaptarr.Api.V1.MediaTypes;
+using Chaptarr.Http.Middleware;
+using Chaptarr.Http.REST;
+using NzbDrone.Core.Exceptions;
 using Chaptarr.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Books;
@@ -51,8 +56,18 @@ namespace Chaptarr.Api.V1.Books
         }
 
         [HttpDelete]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(typeof(ApiErrorResource), 400)]
+        [ProducesResponseType(typeof(ApiErrorResource), 409)]
         public void DeleteBook([FromBody] BookEditorResource resource)
         {
+            var scope = MediaTypeParameterParser.ParseDeletionScope(false, HttpContext.GetReadarrFacadeContext()?.MediaType, resource.MediaType);
+            if (scope.HasValue && _bookService.GetBooks(resource.BookIds).Any(book => book.MediaType != scope.Value))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict,
+                    "The selection contains books of a different media type than the requested scope. Nothing was changed.");
+            }
+
             foreach (var bookId in resource.BookIds)
             {
                 _bookService.DeleteBook(bookId, resource.DeleteFiles ?? false, resource.AddImportListExclusion ?? false);

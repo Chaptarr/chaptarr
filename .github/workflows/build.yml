@@ -290,10 +290,10 @@ jobs:
     - name: Build (migrations smoke)
       run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
 
-    - name: Test - PostgreSQL exclusion and deletion persistence
+    - name: Test - PostgreSQL persistence
       env:
         CHAPTARR_TEST_POSTGRES_CONNECTION_STRING: "Host=localhost;Port=5432;Database=postgres;Username=chaptarr;Password=chaptarr;Pooling=false"
-      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --filter "FullyQualifiedName~ImportListExclusionServiceFixture|FullyQualifiedName~PendingAuthorImportRepositoryRetryFixture|FullyQualifiedName~MediaFileOwnershipFixture"
+      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --filter "FullyQualifiedName~ImportListExclusionServiceFixture|FullyQualifiedName~PendingAuthorImportRepositoryRetryFixture|FullyQualifiedName~MediaFileOwnershipFixture|FullyQualifiedName~SeriesRepositoryMediaTypeLinkingFixture|FullyQualifiedName~AuthorRepositoryAllAuthorPathsFixture|FullyQualifiedName~LibrarySearchServiceFixture|FullyQualifiedName~EditionFtsDeletionMigrationFixture"
 
     - name: Smoke - migrate up on fresh PostgreSQL
       shell: bash

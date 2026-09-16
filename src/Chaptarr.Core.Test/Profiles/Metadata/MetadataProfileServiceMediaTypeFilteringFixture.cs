@@ -91,13 +91,14 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
             public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
@@ -302,12 +303,11 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 "gr:1466917",
                 BookMediaType.Ebook,
                 new SeriesBookLink { IsPrimary = false, Position = "0.5" });
-            // BookInfoProxy normalizes a missing V5 isPrimary flag to true before this filter.
             var unflaggedBook = CreateSeriesBook(
                 "The World of Ice & Fire",
                 "gr:22083575",
                 BookMediaType.Ebook,
-                new SeriesBookLink { IsPrimary = true, Position = "0.4" });
+                new SeriesBookLink { IsPrimary = null, Position = "0.4" });
             var noSeriesBook = CreateSeriesBook(
                 "Fevre Dream",
                 "gr:382450",

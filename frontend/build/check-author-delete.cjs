@@ -44,6 +44,7 @@ const baseline = process.argv.includes('--baseline');
       for (const width of baseline ? [390, 1440] : [320, 412, 1440]) {
         const page = await browser.newPage({ viewport: { width, height: 850 } });
         const errors = [];
+        let refuseDelete = false;
         page.on('pageerror', (e) => errors.push(e.message));
         await page.route('**/*', (route) => {
           const request = route.request();
@@ -51,8 +52,16 @@ const baseline = process.argv.includes('--baseline');
           if (pathname.endsWith('/localization')) {
             return route.fulfill({ json: { Strings: strings } });
           }
-          if (pathname.endsWith('/author/editor') && request.method() === 'DELETE') {
-            return route.fulfill({ json: {} });
+          if (request.method() === 'DELETE' && (/\/author\/(editor|1)$/).test(pathname)) {
+            return refuseDelete ?
+              route.fulfill({ status: 409, json: { message: 'Frank Herbert: choose a format or explicitly select both. Nothing was changed.' } }) :
+              route.fulfill({ json: {} });
+          }
+          if (pathname.endsWith('/author') && request.method() === 'GET') {
+            return route.fulfill({ json: [{ id: 1, authorName: 'Frank Herbert', sortName: 'herbert frank', path: '/library/Dune/Frank Herbert' }] });
+          }
+          if (pathname.endsWith('/book') && request.method() === 'GET') {
+            return route.fulfill({ json: [] });
           }
           if (pathname === '/fixture.js') {
             return route.fulfill({ path: path.join(output, 'fixture.js'), contentType: 'text/javascript' });
@@ -69,47 +78,79 @@ const baseline = process.argv.includes('--baseline');
         await page.goto('http://delete-fixture.test/');
         await page.evaluate(() => window.renderDeleteFixture());
         await page.getByText('Delete Selected Author', { exact: true }).waitFor();
-        if (!baseline) {
-          assert.equal(await page.getByText(strings.AddListExclusionAuthorHelpText, { exact: true }).isVisible(), true);
-          const exclusion = page.locator('input[name="addImportListExclusion"]');
-          assert.equal(await exclusion.isChecked(), false);
-          assert.equal(await page.locator('input[name="deleteFiles"]').isChecked(), false);
-          await exclusion.focus();
-          await page.keyboard.press('Space');
-          assert.equal(await exclusion.isChecked(), true);
-          const excludedRequest = page.waitForRequest((request) => request.url().endsWith('/author/editor') && request.method() === 'DELETE');
-          await page.getByRole('button', { name: 'Delete', exact: true }).click();
-          assert.deepEqual((await excludedRequest).postDataJSON(), { authorIds: [1, 2], deleteFiles: false, addImportListExclusion: true });
-          await page.evaluate(() => window.renderDeleteFixture());
-          assert.equal(await exclusion.isChecked(), false);
-          const deleteFiles = page.locator('input[name="deleteFiles"]');
-          await deleteFiles.focus();
-          await page.keyboard.press('Space');
-          assert.equal(await deleteFiles.isChecked(), true);
-          await deleteFiles.locator('..').click();
-          assert.equal(await deleteFiles.isChecked(), false);
-          const uncheckedRequest = page.waitForRequest((request) => request.url().endsWith('/author/editor') && request.method() === 'DELETE');
-          await page.getByRole('button', { name: 'Delete', exact: true }).click();
-          assert.deepEqual((await uncheckedRequest).postDataJSON(), { authorIds: [1, 2], deleteFiles: false, addImportListExclusion: false });
-          await page.evaluate(() => window.renderDeleteFixture());
-          await deleteFiles.focus();
-          await page.keyboard.press('Space');
-          const checkedRequest = page.waitForRequest((request) => request.url().endsWith('/author/editor') && request.method() === 'DELETE');
-          await page.getByRole('button', { name: 'Delete', exact: true }).click();
-          assert.deepEqual((await checkedRequest).postDataJSON(), { authorIds: [1, 2], deleteFiles: true, addImportListExclusion: false });
-          await page.evaluate(() => window.renderDeleteFixture());
+        const deleteButton = page.getByRole('button', { name: 'Delete', exact: true });
+        const both = page.getByRole('button', { name: strings.AuthorDeleteBothFormats, exact: true });
+        const files = page.locator('input[name="deleteFiles"]');
+        const exclusion = page.locator('input[name="addImportListExclusion"]');
+        const media = page.getByRole('button', { name: strings.Ebooks, exact: true });
+        assert.equal(await deleteButton.isDisabled(), true, 'All-format view must require an explicit choice');
+        assert.equal(await both.count(), 0);
+        await page.getByRole('button', { name: strings.AuthorDeleteSelectFormat, exact: true }).click();
+        await page.getByText(strings.Ebooks, { exact: true }).click();
+        await exclusion.focus();
+        await page.keyboard.press('Space');
+        assert.equal(await exclusion.isChecked(), true);
+        const scopedRequest = page.waitForRequest((request) => request.url().endsWith('/author/editor') && request.method() === 'DELETE');
+        await deleteButton.click();
+        assert.deepEqual((await scopedRequest).postDataJSON(), { authorIds: [1, 2], mediaType: 'ebook', applyToBothFormats: false, deleteFiles: false, addImportListExclusion: true });
+
+        await deleteButton.waitFor({ state: 'hidden' });
+        await page.evaluate(() => window.renderDeleteFixture(false, 'ebook'));
+        assert.equal(await exclusion.isChecked(), false);
+        await files.focus();
+        await page.keyboard.press('Space');
+        assert.equal(await files.isChecked(), true);
+        assert.equal(await page.getByText(strings.AuthorDeleteFormatFilesHelpText, { exact: true }).isVisible(), true);
+        refuseDelete = true;
+        await deleteButton.click();
+        await page.getByText('Frank Herbert: choose a format or explicitly select both. Nothing was changed.').waitFor();
+        assert.equal(await media.isVisible(), true, 'Refusal must preserve the requested scope');
+        assert.equal(await files.isChecked(), true, 'Refusal must preserve the checkbox');
+        assert.equal(await deleteButton.isEnabled(), true, 'Refusal must leave a working retry');
+        await media.click();
+        await page.getByText(strings.AuthorDeleteBothFormats, { exact: true }).click();
+        const selectedPaths = ['/library/Dune/Frank Herbert', '/audiobooks/Dune/Frank Herbert', '/ebooks/Dune/Frank Herbert', '/library/Dune/Brian Herbert'];
+        for (const selectedPath of selectedPaths) {
+          assert.equal(await page.getByText(selectedPath, { exact: true }).count(), 1, `${selectedPath} must be disclosed once`);
         }
-        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: horizontal overflow`);
-        await page.screenshot({ path: path.join(output, `${theme}-${width}.png`) });
-        if (!baseline) {
-          await page.evaluate(() => window.renderDeleteFixture(true));
-          assert.equal(await page.getByText(strings.AddListExclusionAuthorHelpText, { exact: true }).isVisible(), true, 'Single and bulk deletion must describe author exclusion consistently');
-          assert.equal(await page.getByText(strings.DeleteAuthorHeader.replace('{authorName}', 'Example Author'), { exact: true }).isVisible(), true);
-          assert.equal(await page.getByText('/books/Example Author', { exact: true }).isVisible(), true);
-          assert.equal(await page.locator('input[name="addImportListExclusion"]').isChecked(), false);
-          assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: single-modal horizontal overflow`);
-          await page.screenshot({ path: path.join(output, `${theme}-${width}-single.png`) });
-        }
+        assert.equal(await page.getByText(strings.AuthorDeleteFoldersHelpText, { exact: true }).isVisible(), true);
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: bulk overflow`);
+        await page.screenshot({ path: path.join(output, `${theme}-${width}-paths.png`) });
+        refuseDelete = false;
+        const wholeRequest = page.waitForRequest((request) => request.url().endsWith('/author/editor') && request.method() === 'DELETE');
+        await deleteButton.click();
+        assert.deepEqual((await wholeRequest).postDataJSON(), { authorIds: [1, 2], applyToBothFormats: true, deleteFiles: true, addImportListExclusion: false });
+
+        await deleteButton.waitFor({ state: 'hidden' });
+        await page.evaluate(() => window.renderDeleteFixture(true, 'ebook'));
+        assert.equal(await media.isVisible(), true);
+        assert.equal(await both.count(), 0);
+        await files.focus();
+        await page.keyboard.press('Space');
+        assert.equal(await page.getByText(strings.AuthorDeleteFormatFilesHelpText, { exact: true }).isVisible(), true);
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: single overflow`);
+        await page.screenshot({ path: path.join(output, `${theme}-${width}-single.png`) });
+        const singleRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/author/1') && request.method() === 'DELETE');
+        await deleteButton.click();
+        const singleQuery = new URL((await singleRequest).url()).searchParams;
+        assert.equal(singleQuery.get('mediaType'), 'ebook');
+        assert.equal(singleQuery.get('applyToBothFormats'), 'false');
+        assert.equal(singleQuery.get('deleteFiles'), 'true');
+        await page.waitForFunction(() => !window.getDeleteFixtureState().authors.isDeleting);
+        assert.equal(await page.evaluate(() => window.getDeleteFixtureState().authors.items.some((author) => author.id === 1)), true, 'Scoped success must not remove the surviving author from state');
+
+        await deleteButton.waitFor({ state: 'hidden' });
+        await page.evaluate(() => window.renderDeleteFixture(true, 'audiobook'));
+        await page.locator('input[name="readdAuthor"]').focus();
+        await page.keyboard.press('Space');
+        assert.equal(await both.isVisible(), true, 'Purge and re-add must visibly apply to the whole author');
+        assert.equal(await files.isDisabled(), true);
+        assert.equal(await exclusion.isDisabled(), true);
+        const readdRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/author/1') && request.method() === 'DELETE');
+        await page.getByRole('button', { name: strings.PurgeAndReaddAuthor, exact: true }).click();
+        const readdQuery = new URL((await readdRequest).url()).searchParams;
+        assert.equal(readdQuery.get('readdAuthor'), 'true');
+        assert.equal(readdQuery.get('applyToBothFormats'), 'true');
         assert.deepEqual(errors, []);
         await page.close();
         cases++;

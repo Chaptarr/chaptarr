@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
+using Chaptarr.Http.REST;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -338,9 +341,13 @@ namespace Chaptarr.Api.V1.Author
         }
 
         [HttpDelete]
-        public object DeleteAuthor([FromBody] AuthorEditorResource resource)
+        [ProducesResponseType(200)]
+        [ProducesResponseType(typeof(ApiErrorResource), 400)]
+        [ProducesResponseType(typeof(ApiErrorResource), 409)]
+        public object DeleteAuthor([FromBody] AuthorEditorResource resource, string mediaType = null)
         {
-            _authorService.DeleteAuthors(resource.AuthorIds, resource.DeleteFiles, resource.AddImportListExclusion);
+            var scope = MediaTypeParameterParser.ParseDeletionScope(resource.ApplyToBothFormats, HttpContext.GetReadarrFacadeContext()?.MediaType, resource.MediaType, mediaType);
+            _authorService.DeleteAuthors(resource.AuthorIds, resource.DeleteFiles, resource.AddImportListExclusion, scope, resource.ApplyToBothFormats);
 
             return new { };
         }

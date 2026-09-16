@@ -19,7 +19,7 @@ namespace NzbDrone.Core.Books
         Author FindByOpenLibraryId(string openLibraryId);
         Author FindByGoogleBooksId(string googleBooksAuthorId);
         List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId);
-        Dictionary<int, string> AllAuthorPaths();
+        List<Author> AllAuthorPaths();
         Dictionary<int, List<int>> AllAuthorTags();
         void UpdateLastSelectedMediaType(int authorId, string mediaType);
         
@@ -101,12 +101,12 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        public Dictionary<int, string> AllAuthorPaths()
+        public List<Author> AllAuthorPaths()
         {
             using (var conn = _database.OpenConnection())
             {
-                var strSql = "SELECT \"Id\" AS \"Key\", \"Path\" AS \"Value\" FROM \"Authors\"";
-                return conn.Query<KeyValuePair<int, string>>(strSql).ToDictionary(x => x.Key, x => x.Value);
+                var strSql = "SELECT \"Id\", \"Path\", \"AudiobookPath\", \"EbookPath\" FROM \"Authors\"";
+                return conn.Query<Author>(strSql).ToList();
             }
         }
 

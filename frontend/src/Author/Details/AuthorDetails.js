@@ -651,11 +651,12 @@ class AuthorDetails extends Component {
 	            onModalClose={this.onSelectRootFolderModalClose}
 	          />
 
-	          <DeleteAuthorModal
-	            isOpen={isDeleteAuthorModalOpen}
-	            authorId={id}
-	            onModalClose={this.onDeleteAuthorModalClose}
-	          />
+          <DeleteAuthorModal
+            selectedMediaType={selectedMediaType}
+            isOpen={isDeleteAuthorModalOpen}
+            authorId={id}
+            onModalClose={this.onDeleteAuthorModalClose}
+          />
 
           <InteractiveImportModal
             isOpen={isInteractiveImportModalOpen}

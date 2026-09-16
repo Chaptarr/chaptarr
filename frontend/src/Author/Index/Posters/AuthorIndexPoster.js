@@ -423,6 +423,7 @@ class AuthorIndexPoster extends Component {
           />
 
           <DeleteAuthorModal
+            selectedMediaType={this.props.selectedMediaType}
             isOpen={isDeleteAuthorModalOpen}
             authorId={id}
             onModalClose={this.onDeleteAuthorModalClose}

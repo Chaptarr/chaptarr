@@ -220,3 +220,26 @@ Goodreads work IDs and edition IDs live in separate namespaces and can collide n
 - edition/book IDs with `/api/v5/edition/{providerId}` or the `/api/v5/book/{providerId}` compatibility alias
 
 The split route contract prevents wrong-book cache poisoning and is deliberately stricter than a generic lookup endpoint.
+
+## Author deletion scope
+
+Both `DELETE /api/v1/author/{id}` and `DELETE /api/v1/author/editor` accept explicit deletion scope. The single endpoint takes `mediaType` and `applyToBothFormats` as query parameters; the bulk resource includes both fields and also accepts a `mediaType` query parameter. Existing `/audiobook/`, `/ebook/`, and provider-specific Readarr facade prefixes supply scope. Supplied route, query, and body media types must agree; conflicts return 400 before mutation.
+
+| Request | Behavior |
+| --- | --- |
+| `mediaType=audiobook` or `ebook`, `applyToBothFormats=false` (default) | Remove that side's book/edition rows and author settings. Preserve the other side. |
+| Scoped request with `deleteFiles=true` | Delete tracked files of that format, authorized replicas and exclusively owned extras; clean up empty folders using the existing setting. Shared/untracked contents remain. Removing the final side never widens this permission. |
+| Unprefixed API with `applyToBothFormats=true` | Explicit whole-author permission, including when a query/body media scope is also supplied. With `deleteFiles=true`, the existing folder-and-contents contract applies. |
+| Media-prefixed compatibility API with `applyToBothFormats=true` | 409 before any mutation. The prefix is a firm media boundary; use the unprefixed API for an explicit whole-author action. |
+| No scope, `deleteFiles=true`, dual-format author | 409 identifying the ambiguous authors and folders. The whole batch refuses before changes. Supply a concrete scope or explicit both-format permission. |
+| No scope, `deleteFiles=false` | Historical whole-author metadata removal; files remain. Re-adding does not automatically restore edition selections or monitoring choices. |
+
+`addImportListExclusion=true` uses provider-owned author IDs with the same media scope. Exclusions are validated before physical work and persisted synchronously after successful physical deletion, before metadata teardown. A physical failure keeps author metadata; an exclusion persistence failure after successful physical deletion also retains the author and reports failure. Files already moved/deleted cannot be rolled back by a later I/O failure.
+
+For Freida McFadden's *The Boyfriend* (`hc:1325795`), an ebook-scoped request removes the EPUB and ebook records while retaining the M4B and shared `metadata.json`, even when both files occupy one folder. Calibre libraries use the existing format-removal operation for scoped requests; absent library-local identity or a retained owner of the same format causes a preflight 409.
+
+`readdAuthor=true` remains whole-author Purge & Re-add. It cannot combine with file deletion or an import-list exclusion; a caller with a query/body media scope must explicitly opt into both formats through the unprefixed API. A media-prefixed compatibility caller cannot purge and re-add the whole author. The GUI uses one shared single/bulk dialog with Audiobooks, eBooks, and Both formats in one selector, preserves failed requests for correction, and refreshes surviving author state after scoped success.
+
+The same prefix boundary applies to book deletion. `DELETE /api/v1/book/{id}` rejects both-format permission or a book row of another media type on a prefixed route. `DELETE /api/v1/book/editor` checks the entire selection against the route/body scope before deleting its first book; a mixed selection returns 409. Unprefixed native requests retain their existing explicit selections and both-format option.
+
+Deletion scopes catalog rows by `Book.MediaType` and physical media by quality-derived `BookFile.MediaType`. These are separate classifications, independent of edition reading format. A read-only review found no disagreement across 1,507 joined files; that observation is not a database constraint.

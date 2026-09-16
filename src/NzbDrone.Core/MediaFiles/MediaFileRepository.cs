@@ -84,7 +84,7 @@ namespace NzbDrone.Core.MediaFiles
             // author paths are elsewhere. Read only ownership/path fields, not the catalog graph.
             using var connection = _database.OpenConnection();
             return connection.Query<BookFile, Author, BookFile>(
-                @"SELECT bf.""Id"", bf.""Path"", bf.""ReplicaPaths"", b.""AuthorId"" AS ""Id""
+                @"SELECT bf.""Id"", bf.""Path"", bf.""ReplicaPaths"", bf.""CalibreId"", b.""AuthorId"" AS ""Id""
                   FROM ""BookFiles"" bf
                   LEFT JOIN ""Editions"" e ON e.""Id"" = bf.""EditionId""
                   LEFT JOIN ""Books"" b ON b.""Id"" = e.""BookId""",

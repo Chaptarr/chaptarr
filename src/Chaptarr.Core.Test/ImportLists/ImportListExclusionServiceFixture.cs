@@ -4,6 +4,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Dapper;
 using FluentValidation;
 using Microsoft.Data.Sqlite;
@@ -151,6 +152,44 @@ namespace Chaptarr.Core.Test.ImportLists
                         throw new NotImplementedException($"Test proxy does not implement IImportListExclusionRepository.{targetMethod?.Name}");
                 }
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void author_scopes_survive_reopen_and_explicit_both_replaces_only_narrower_scopes(bool postgres)
+        {
+            using var db = new DatabaseHarness(postgres);
+            var author = new Author { Name = "Frank Herbert", GoodreadsAuthorId = "gr:58" };
+            var service = db.CreateService();
+            service.AddAuthorExclusions(new[] { author }, BookMediaType.Ebook);
+            service.AddAuthorExclusions(new[] { author }, BookMediaType.Ebook);
+            var reopened = db.CreateService();
+            Assert.That(reopened.All().Select(row => row.MediaType), Is.EqualTo(new[] { (BookMediaType?)BookMediaType.Ebook }));
+            Assert.That(ImportListExclusionBookMatcher.AppliesToMediaType(reopened.All().Single(), BookMediaType.Audiobook), Is.False);
+            reopened.AddAuthorExclusions(new[] { author }, BookMediaType.Audiobook);
+            Assert.That(service.All().Select(row => row.MediaType), Is.EquivalentTo(new BookMediaType?[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+            reopened.AddAuthorExclusions(new[] { author });
+            Assert.That(service.All(), Has.Count.EqualTo(1));
+            Assert.That(service.All().Single().ForeignId, Is.EqualTo("gr:58"));
+            Assert.That(service.All().Single().MediaType, Is.Null);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void author_merge_preserves_both_scoped_exclusions_for_the_same_provider_identity(bool postgres)
+        {
+            using var db = new DatabaseHarness(postgres);
+            var source = new Author { Id = 1, Name = "Frank Herbert", GoodreadsAuthorId = "gr:58" };
+            var target = new Author { Id = 2, Name = "Frank Herbert", GoodreadsAuthorId = "gr:58" };
+            var exclusions = db.CreateService();
+            exclusions.AddAuthorExclusions(new[] { source }, BookMediaType.Audiobook);
+            exclusions.AddAuthorExclusions(new[] { source }, BookMediaType.Ebook);
+            var refresh = (RefreshAuthorService)RuntimeHelpers.GetUninitializedObject(typeof(RefreshAuthorService));
+            typeof(RefreshAuthorService).GetField("_importListExclusionService", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(refresh, exclusions);
+            typeof(RefreshAuthorService).GetMethod("MoveAuthorImportExclusions", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(refresh, new object[] { source, target });
+            Assert.That(db.CreateService().All().Select(row => row.MediaType),
+                Is.EquivalentTo(new BookMediaType?[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
         }
 
         [Test]

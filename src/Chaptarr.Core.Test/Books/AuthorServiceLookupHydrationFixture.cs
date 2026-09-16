@@ -1,14 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
+using DryIoc;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
+using NzbDrone.Common.Composition.Extensions;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.ImportLists.Exclusions;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Messaging.Commands;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -70,12 +79,27 @@ namespace Chaptarr.Core.Test.Books
             public PagingSpec<Author> GetPaged(PagingSpec<Author> pagingSpec) => throw new NotImplementedException();
             public bool AuthorPathExists(string path) => throw new NotImplementedException();
             public List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<Author> AllAuthorPaths() => new List<Author> { _lookupAuthor };
             public Dictionary<int, List<int>> AllAuthorTags() => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public bool TryClaimAuthorImport(string providerId, int leaseSec = 300) => throw new NotImplementedException();
             public void ReleaseAuthorImportClaim(string providerId) => throw new NotImplementedException();
             public int DeleteExpiredClaims() => throw new NotImplementedException();
+        }
+
+        private class NoOpProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                throw new NotSupportedException(targetMethod.Name);
+            }
+        }
+
+        private sealed class NoOpDeleteMediaFiles : IDeleteMediaFiles
+        {
+            public void DeleteTrackFile(Author author, BookFile bookFile) { }
+            public void DeleteTrackFile(BookFile bookFile, string subfolder = "") { }
+            public void DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null) { }
         }
 
         private static AuthorService CreateSubject(IAuthorRepository repository)
@@ -90,7 +114,62 @@ namespace Chaptarr.Core.Test.Books
                 bookRepository: null,
                 mediaFileService: null,
                 logger: LogManager.GetCurrentClassLogger(),
-                importListExclusionService: null);
+                importListExclusionService: null,
+                deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => null),
+                bookService: new Lazy<IBookService>(() => null));
+        }
+
+        [Test]
+        public void dry_ioc_should_resolve_lazy_media_file_deletion()
+        {
+            using var container = new Container(rules => rules.WithNzbDroneRules());
+            container.RegisterInstance<IAuthorRepository>(new StubAuthorRepository(new Author { Id = 1189, Path = @"C:\authors\Pascale Lacelle".AsOsAgnostic() }));
+            container.RegisterInstance<IEventAggregator>(new StubEventAggregator());
+            container.RegisterInstance<IBuildAuthorPaths>(DispatchProxy.Create<IBuildAuthorPaths, NoOpProxy>());
+            container.RegisterInstance<IRootFolderService>(DispatchProxy.Create<IRootFolderService, NoOpProxy>());
+            container.RegisterInstance<IManageCommandQueue>(DispatchProxy.Create<IManageCommandQueue, NoOpProxy>());
+            container.RegisterInstance<ICacheManager>(new CacheManager());
+            container.RegisterInstance<IBookRepository>(DispatchProxy.Create<IBookRepository, NoOpProxy>());
+            container.RegisterInstance<IMediaFileService>(DispatchProxy.Create<IMediaFileService, NoOpProxy>());
+            container.RegisterInstance<IImportListExclusionService>(DispatchProxy.Create<IImportListExclusionService, NoOpProxy>());
+            container.RegisterInstance<IDeleteMediaFiles>(new NoOpDeleteMediaFiles());
+            container.RegisterInstance<IBookService>(DispatchProxy.Create<IBookService, NoOpProxy>());
+            container.Register<AuthorService>();
+
+            var deletion = container.Resolve<Lazy<IDeleteMediaFiles>>();
+            var service = container.Resolve<AuthorService>();
+
+            Assert.That(deletion, Is.Not.Null);
+            Assert.That(deletion.IsValueCreated, Is.False);
+            var books = (Lazy<IBookService>)typeof(AuthorService).GetField("_bookService", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(service);
+            Assert.That(books, Is.Not.Null);
+            Assert.That(books.IsValueCreated, Is.False);
+            Assert.That(books.Value, Is.Not.Null);
+            Assert.That(service.AllAuthorPaths(), Has.Count.EqualTo(1));
+            Assert.That(deletion.Value, Is.TypeOf<NoOpDeleteMediaFiles>());
+            Assert.That(deletion.IsValueCreated, Is.True);
+        }
+
+        [Test]
+        public void all_author_paths_should_include_each_distinct_media_path()
+        {
+            var lookup = new Author
+            {
+                Id = 1189,
+                Path = @"C:\legacy\Pascale Lacelle".AsOsAgnostic(),
+                AudiobookPath = @"C:\audio\Pascale Lacelle".AsOsAgnostic(),
+                EbookPath = @"C:\ebooks\Pascale Lacelle".AsOsAgnostic()
+            };
+
+            var result = CreateSubject(new StubAuthorRepository(lookup)).AllAuthorPaths();
+
+            Assert.That(result.Select(path => path.Value), Is.EqualTo(new[]
+            {
+                @"C:\audio\Pascale Lacelle".AsOsAgnostic(),
+                @"C:\ebooks\Pascale Lacelle".AsOsAgnostic(),
+                @"C:\legacy\Pascale Lacelle".AsOsAgnostic()
+            }));
+            Assert.That(result.All(path => path.Key == lookup.Id), Is.True);
         }
 
         [Test]

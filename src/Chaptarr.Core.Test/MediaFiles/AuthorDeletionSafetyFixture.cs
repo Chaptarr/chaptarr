@@ -5,6 +5,12 @@ using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Chaptarr.Http.Middleware;
+using Chaptarr.Http.REST;
 using Chaptarr.Api.V1.Author;
 using NLog;
 using NUnit.Framework;
@@ -54,6 +60,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Author> Authors { get; } = new();
             public List<RootFolder> Roots { get; } = new();
             public List<BookFile> Files { get; } = new();
+            public List<Book> Books { get; } = new();
+            public List<(int Id, List<string> Formats)> RemovedFormats { get; } = new();
             public List<MetadataFile> Extras { get; } = new();
             public List<string> DeletedFolders { get; } = new();
             public List<(List<BookFile> Files, CalibreSettings Settings)> CalibreCalls { get; } = new();
@@ -66,6 +74,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string RecycleBin { get; set; } = string.Empty;
             public int FileQueries { get; private set; }
             public int RootQueries { get; private set; }
+            public List<string> FileExistenceChecks { get; } = new();
             public Events Events { get; } = new();
             public AuthorService Service { get; }
 
@@ -110,8 +119,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                     switch (m.Name)
                     {
                         case nameof(IAuthorRepository.Get):
+                            if (a[0] is int id) return Authors.Single(x => x.Id == id);
                             return Authors.Where(x => ((IEnumerable<int>)a[0]).Contains(x.Id)).ToList();
                         case nameof(IAuthorRepository.All): return Authors.ToList();
+                        case nameof(IAuthorRepository.Update): return (Author)a[0];
                         case nameof(IAuthorRepository.DeleteMany):
                             Authors.RemoveAll(x => ((IEnumerable<int>)a[0]).Contains(x.Id));
                             return null;
@@ -124,6 +135,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     foreach (var path in a.OfType<string>())
                     {
                         if (!Temp.IsParentPath(path)) throw new InvalidOperationException("Sandbox boundary violation");
+                    }
+
+                    if (m.Name == nameof(IDiskProvider.FileExistsCanonical))
+                    {
+                        FileExistenceChecks.Add((string)a[0]);
                     }
 
                     if (m.Name == nameof(IDiskProvider.DeleteFolder) || m.Name == nameof(IDiskProvider.DeleteFile))
@@ -152,6 +168,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var recycle = new RecycleBinProvider(transfer, disk, config, LogManager.GetCurrentClassLogger());
                 var calibre = Proxy<ICalibreProxy>((m, a) =>
                 {
+                    if (m.Name == nameof(ICalibreProxy.RemoveFormats))
+                    {
+                        if (FailCalibre) throw new IOException("Synthetic Calibre failure");
+                        RemovedFormats.Add(((int)a[0], ((IEnumerable<string>)a[1]).ToList()));
+                        return null;
+                    }
                     if (m.Name != nameof(ICalibreProxy.DeleteBooks)) throw new NotImplementedException(m.Name);
                     CalibreCalls.Add((((List<BookFile>)a[0]).ToList(), (CalibreSettings)a[1]));
                     if (FailCalibre) throw new IOException("Synthetic Calibre failure");
@@ -185,8 +207,20 @@ namespace Chaptarr.Core.Test.MediaFiles
                     if (method.Name == nameof(IImportListExclusionService.All)) return new List<ImportListExclusion>();
                     throw new NotImplementedException(method.Name);
                 });
-                Service = new AuthorService(repository, Events, null, roots, null, new CacheManager(), null, media,
-                    LogManager.GetCurrentClassLogger(), exclusions, deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => deletion));
+                var bookRepository = Proxy<IBookRepository>((m, a) => m.Name switch
+                {
+                    nameof(IBookRepository.GetBooksByAuthorId) => Books.Where(book => book.AuthorId == (int)a[0]).ToList(),
+                    _ => throw new NotImplementedException(m.Name)
+                });
+                var books = Proxy<IBookService>((m, a) =>
+                {
+                    if (m.Name != nameof(IBookService.DeleteMany)) throw new NotImplementedException(m.Name);
+                    foreach (var book in (List<Book>)a[0]) Books.Remove(book);
+                    return null;
+                });
+                Service = new AuthorService(repository, Events, null, roots, null, new CacheManager(), bookRepository, media,
+                    LogManager.GetCurrentClassLogger(), exclusions, deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => deletion),
+                    bookService: new Lazy<IBookService>(() => books));
             }
 
             public RootFolder Root(string relative, bool calibre = false)
@@ -227,20 +261,251 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public BookFile Track(Author author, string relative, int calibreId = 0)
             {
+                var mediaType = Path.GetExtension(relative).Equals(".epub", StringComparison.OrdinalIgnoreCase) ? BookMediaType.Ebook : BookMediaType.Audiobook;
+                var book = Books.FirstOrDefault(item => item.AuthorId == author.Id && item.MediaType == mediaType);
+                if (book == null)
+                {
+                    book = new Book { Id = Books.Count + 1, AuthorId = author.Id, MediaType = mediaType, Title = "The Boyfriend" };
+                    Books.Add(book);
+                }
                 var file = new BookFile
                 {
                     Id = Files.Count + 1,
+                    MediaType = mediaType.ToString().ToLowerInvariant(),
                     Author = author,
                     Path = Seed(relative),
                     CalibreId = calibreId,
                     EditionId = 1,
-                    Edition = new Edition { Id = 1, BookId = author.Id }
+                    Edition = new Edition { Id = 1, BookId = book.Id }
                 };
                 Files.Add(file);
                 return file;
             }
 
             public void Dispose() => Directory.Delete(Temp, true);
+        }
+
+        private static AuthorController SingleController(Sandbox sandbox, string routeMediaType = null)
+        {
+            var controller = (AuthorController)RuntimeHelpers.GetUninitializedObject(typeof(AuthorController));
+            typeof(AuthorController).GetField("_authorService", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(controller, sandbox.Service);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            if (routeMediaType != null)
+            {
+                controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("gr", routeMediaType, "/readarr/gr/" + routeMediaType);
+            }
+            return controller;
+        }
+
+        [TestCase("ebook", null)]
+        [TestCase(null, "ebook")]
+        [TestCase("ebook", "ebook")]
+        public async Task single_api_honors_native_and_compatibility_media_scope(string queryMediaType, string routeMediaType)
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var author = s.Author(@"media\Frank Herbert", @"media\Frank Herbert", @"media\Frank Herbert");
+            author.GoodreadsAuthorId = "gr:58";
+            var ebook = s.Track(author, @"media\Frank Herbert\Dune.epub");
+            var audio = s.Track(author, @"media\Frank Herbert\Dune.m4b");
+            var result = await SingleController(s, routeMediaType).DeleteAuthor(author.Id, true, mediaType: queryMediaType);
+            Assert.That(result, Is.TypeOf<OkResult>());
+            Assert.That(File.Exists(ebook.Path), Is.False);
+            Assert.That(File.Exists(audio.Path), Is.True);
+            Assert.That(s.Authors, Does.Contain(author));
+        }
+
+        [Test]
+        public void single_api_refuses_unscoped_dual_format_file_deletion_without_mutation()
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var author = s.Author(@"media\Frank Herbert", @"media\Frank Herbert", @"media\Frank Herbert");
+            var ebook = s.Track(author, @"media\Frank Herbert\Dune.epub");
+            var error = Assert.ThrowsAsync<NzbDroneClientException>(async () => await SingleController(s).DeleteAuthor(author.Id, true, true));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(File.Exists(ebook.Path), Is.True);
+            Assert.That(s.ExcludedAuthorBatches, Is.Empty);
+            Assert.That(s.Events.Published, Is.Empty);
+        }
+
+        [Test]
+        public async Task explicit_both_is_a_working_escape_from_the_ambiguous_single_request()
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var author = s.Author(@"media\Frank Herbert", @"media\Frank Herbert", @"media\Frank Herbert");
+            var ebook = s.Track(author, @"media\Frank Herbert\Dune.epub");
+            var audio = s.Track(author, @"media\Frank Herbert\Dune.m4b");
+            var result = await SingleController(s).DeleteAuthor(author.Id, true, mediaType: "ebook", applyToBothFormats: true);
+            Assert.That(result, Is.TypeOf<OkResult>());
+            Assert.That(File.Exists(ebook.Path) || File.Exists(audio.Path), Is.False);
+            Assert.That(s.Authors, Is.Empty);
+        }
+
+        [Test]
+        public void conflicting_route_and_query_refuses_before_mutation()
+        {
+            using var s = new Sandbox();
+            Assert.ThrowsAsync<Chaptarr.Http.REST.BadRequestException>(async () => await SingleController(s, "ebook").DeleteAuthor(1, true, mediaType: "audiobook"));
+            Assert.That(s.Events.Published, Is.Empty);
+        }
+
+        [TestCase("ebook", false, false)]
+        [TestCase("ebook", true, false)]
+        [TestCase("audiobook", false, false)]
+        [TestCase("audiobook", true, false)]
+        [TestCase("ebook", false, true)]
+        public void compatibility_route_refuses_both_formats_before_single_or_bulk_mutation(string mediaType, bool deleteFiles, bool readdAuthor)
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var author = s.Author(@"media\Frank Herbert", @"media\Frank Herbert", @"media\Frank Herbert");
+            author.GoodreadsAuthorId = "gr:58";
+            var ebook = s.Track(author, @"media\Frank Herbert\Dune.epub");
+            var audio = s.Track(author, @"media\Frank Herbert\Dune.m4b");
+            var single = SingleController(s, mediaType);
+            var error = Assert.ThrowsAsync<NzbDroneClientException>(async () =>
+                await single.DeleteAuthor(author.Id, deleteFiles, addImportListExclusion: !readdAuthor, readdAuthor: readdAuthor, applyToBothFormats: true));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+
+            var bulk = new AuthorEditorController(s.Service, null, null, null, null) { ControllerContext = single.ControllerContext };
+            error = Assert.Throws<NzbDroneClientException>(() => bulk.DeleteAuthor(new AuthorEditorResource
+            {
+                AuthorIds = new List<int> { author.Id }, DeleteFiles = deleteFiles,
+                AddImportListExclusion = true, ApplyToBothFormats = true
+            }));
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(File.Exists(ebook.Path) && File.Exists(audio.Path), Is.True);
+                Assert.That(s.Authors, Does.Contain(author));
+                Assert.That(s.Books, Has.Count.EqualTo(2));
+                Assert.That(s.CalibreCalls, Is.Empty);
+                Assert.That(s.DeletedFolders, Is.Empty);
+                Assert.That(s.ExcludedAuthorBatches, Is.Empty);
+                Assert.That(s.Events.Published, Is.Empty);
+            });
+        }
+
+        [Test]
+        public async Task scoped_purge_and_readd_requires_explicit_whole_author_permission()
+        {
+            using var s = new Sandbox();
+            var result = await SingleController(s, "ebook").DeleteAuthor(1, readdAuthor: true);
+            Assert.That(result, Is.TypeOf<ConflictObjectResult>());
+            Assert.That(s.Events.Published, Is.Empty);
+        }
+
+        [Test]
+        public void scoped_ebook_delete_preserves_audio_and_shared_contents()
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var author = s.Author(@"media\Freida McFadden", @"media\Freida McFadden", @"media\Freida McFadden");
+            author.Name = "Freida McFadden";
+            author.GoodreadsAuthorId = "gr:7244758";
+            var ebook = s.Track(author, @"media\Freida McFadden\The Boyfriend.epub");
+            var audio = s.Track(author, @"media\Freida McFadden\The Boyfriend.m4b");
+            var shared = s.Seed(@"media\Freida McFadden\metadata.json");
+            s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: BookMediaType.Ebook);
+            Assert.Multiple(() =>
+            {
+                Assert.That(File.Exists(ebook.Path), Is.False);
+                Assert.That(File.Exists(audio.Path), Is.True);
+                Assert.That(File.Exists(shared), Is.True);
+                Assert.That(s.Files, Is.EqualTo(new[] { audio }));
+                Assert.That(s.Books.Select(book => book.MediaType), Is.EqualTo(new[] { BookMediaType.Audiobook }));
+                Assert.That(s.Authors, Does.Contain(author));
+                Assert.That(author.EbookPath, Is.Null);
+                Assert.That(s.DeletedFolders, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void scoped_last_side_never_escalates_to_folder_deletion()
+        {
+            using var s = new Sandbox();
+            s.Root("ebooks");
+            var author = s.Author(@"ebooks\Frank Herbert", ebook: @"ebooks\Frank Herbert");
+            var ebook = s.Track(author, @"ebooks\Frank Herbert\Dune.epub");
+            var notes = s.Seed(@"ebooks\Frank Herbert\metadata.json");
+            s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: BookMediaType.Ebook);
+            Assert.That(File.Exists(ebook.Path), Is.False);
+            Assert.That(File.Exists(notes), Is.True);
+            Assert.That(s.DeletedFolders, Is.Empty);
+            Assert.That(s.Authors, Is.Empty);
+        }
+
+        [Test]
+        public void ambiguous_author_refuses_the_complete_bulk_request_before_changes()
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var first = s.Author(@"media\Ernest Cline");
+            var file = s.Track(first, @"media\Ernest Cline\Ready Player Two.epub");
+            var second = s.Author(@"media\Frank Herbert", @"media\Frank Herbert", @"media\Frank Herbert");
+            second.Name = "Frank Herbert";
+            var error = Assert.Throws<NzbDroneClientException>(() => s.Service.DeleteAuthors(new List<int> { first.Id, second.Id }, true, true));
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(error.Message, Does.Contain(second.Name).And.Contain(second.Path));
+                Assert.That(File.Exists(file.Path), Is.True);
+                Assert.That(s.Authors, Has.Count.EqualTo(2));
+                Assert.That(s.Events.Published, Is.Empty);
+                Assert.That(s.ExcludedAuthorBatches, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void scoped_calibre_delete_removes_only_the_selected_format()
+        {
+            using var s = new Sandbox();
+            s.Root("calibre", true);
+            var author = s.Author(@"calibre\Frank Herbert");
+            author.GoodreadsAuthorId = "gr:58";
+            s.Track(author, @"calibre\Frank Herbert\Dune.epub", 7);
+            var audio = s.Track(author, @"calibre\Frank Herbert\Dune.m4b", 7);
+            s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: BookMediaType.Ebook);
+            Assert.That(s.CalibreCalls, Is.Empty);
+            Assert.That(s.RemovedFormats, Has.Count.EqualTo(1));
+            Assert.That(s.RemovedFormats[0].Id, Is.EqualTo(7));
+            Assert.That(s.RemovedFormats[0].Formats, Is.EqualTo(new[] { "EPUB" }));
+            Assert.That(s.Files, Is.EqualTo(new[] { audio }));
+        }
+
+        [Test]
+        public void calibre_replica_without_library_local_identity_refuses_before_other_files_move()
+        {
+            using var s = new Sandbox();
+            s.Root("ebooks");
+            s.Root("calibre", true);
+            var author = s.Author(@"ebooks\Frank Herbert");
+            var file = s.Track(author, @"ebooks\Frank Herbert\Dune.epub");
+            var replica = s.Seed(@"calibre\Frank Herbert\Dune.epub");
+            file.ReplicaPaths.Add(replica);
+            var error = Assert.Throws<NzbDroneClientException>(() => s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: BookMediaType.Ebook));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(File.Exists(file.Path) && File.Exists(replica), Is.True);
+            Assert.That(s.Files, Does.Contain(file));
+            Assert.That(s.RemovedFormats, Is.Empty);
+            Assert.That(s.CalibreCalls, Is.Empty);
+        }
+
+        [Test]
+        public void retained_calibre_format_refuses_before_any_selected_format_is_removed()
+        {
+            using var s = new Sandbox();
+            s.Root("calibre", true);
+            var selected = s.Author(@"calibre\Frank Herbert");
+            var retained = s.Author(@"calibre\Brian Herbert");
+            var file = s.Track(selected, @"calibre\Frank Herbert\Dune.epub", 7);
+            s.Track(retained, @"calibre\Brian Herbert\Dune.epub", 7);
+            Assert.Throws<NzbDroneClientException>(() => s.Service.DeleteAuthors(new List<int> { selected.Id }, true, mediaType: BookMediaType.Ebook));
+            Assert.That(File.Exists(file.Path), Is.True);
+            Assert.That(s.Files, Has.Count.EqualTo(2));
+            Assert.That(s.RemovedFormats, Is.Empty);
         }
 
         [TestCase(1)]
@@ -299,6 +564,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var ebook = s.Track(author, @"ebooks\A\Book.epub").Path;
             var json = "{\"authorIds\":[1]" + (flag == null ? "" : ",\"deleteFiles\":" + flag) + "}";
             var resource = JsonSerializer.Deserialize<AuthorEditorResource>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            resource.ApplyToBothFormats = true;
             new AuthorEditorController(s.Service, null, null, null, null).DeleteAuthor(resource);
             Assert.Multiple(() =>
             {
@@ -543,6 +809,47 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(error.Message, Does.Contain(keep));
             Assert.That(File.Exists(keep), Is.True);
             Assert.That(s.Authors, Does.Contain(selected));
+        }
+
+        [TestCase(1)]
+        [TestCase(1000)]
+        public void deletion_should_not_probe_unrelated_retained_authors_sidecars(int sidecarCount)
+        {
+            using var s = new Sandbox(); s.Root("media");
+            var selected = s.Author(@"media\Frank Herbert");
+            var retained = s.Author(@"media\Stephen King");
+            var remove = s.Track(selected, @"media\Frank Herbert\Dune\Dune.m4b").Path;
+            for (var i = 0; i < sidecarCount; i++)
+            {
+                s.Extras.Add(new MetadataFile { Id = i + 1, AuthorId = retained.Id,
+                    RelativePath = $@"The Stand\cover-{i}.jpg".AsOsAgnostic() });
+            }
+
+            s.Service.DeleteAuthor(selected.Id, true);
+
+            Assert.That(s.FileExistenceChecks.Any(path => retained.Path.IsParentPath(path)), Is.False);
+            Assert.That(File.Exists(remove), Is.False);
+            Assert.That(s.Authors, Does.Contain(retained));
+        }
+
+        [Test]
+        public void retained_sidecar_should_protect_an_escaped_selected_sidecar_in_an_out_of_base_book_folder()
+        {
+            using var s = new Sandbox(); s.Root("media");
+            var selected = s.Author(@"media\Jim Butcher");
+            var retained = s.Author(@"media\Shared Collection");
+            var remove = s.Track(selected, @"media\Shared\Grave Peril\Grave Peril.epub").Path;
+            var keep = s.Seed(@"media\Shared\Grave Peril\cover.jpg");
+            var relative = @"..\Shared\Grave Peril\cover.jpg".AsOsAgnostic();
+            s.Extras.Add(new MetadataFile { Id = 1, AuthorId = selected.Id, RelativePath = relative });
+            s.Extras.Add(new MetadataFile { Id = 2, AuthorId = retained.Id, RelativePath = relative });
+
+            s.Service.DeleteAuthor(selected.Id, true);
+
+            Assert.That(s.FileExistenceChecks, Does.Contain(keep));
+            Assert.That(File.Exists(keep), Is.True);
+            Assert.That(File.Exists(remove), Is.False);
+            Assert.That(s.Authors, Does.Contain(retained));
         }
 
         [Test]

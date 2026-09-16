@@ -453,6 +453,9 @@ namespace NzbDrone.Core.ImportLists
             var goodreadsSettings = GetGoodreadsSettings(importList);
             var monitorAudiobooks = hardcoverSettings?.MonitorAudiobooks ?? goodreadsSettings?.MonitorAudiobooks ?? true;
             var monitorEbooks = hardcoverSettings?.MonitorEbooks ?? goodreadsSettings?.MonitorEbooks ?? true;
+            var exclusions = _importListExclusionService.FindByForeignId(AuthorIdentity.GetProviderIdentityTokenList(author));
+            monitorAudiobooks &= !IsAuthorExcludedByAnyProviderId(exclusions, author, BookMediaType.Audiobook);
+            monitorEbooks &= !IsAuthorExcludedByAnyProviderId(exclusions, author, BookMediaType.Ebook);
             var changed = false;
 
             if (importList.ShouldMonitor == ImportListMonitorType.EntireAuthor)
@@ -1323,14 +1326,14 @@ namespace NzbDrone.Core.ImportLists
             // Check if author is excluded
             if (existingBook != null && existingBook.Author != null)
             {
-                if (IsAuthorExcludedByAnyProviderId(listExclusions, existingBook.Author))
+                if (IsAuthorExcludedByAnyProviderId(listExclusions, existingBook.Author, reportMediaType))
                 {
                     _logger.Debug("{0} [{1}] Rejected due to list exclusion for parent author", report.EditionProviderId, report.Book);
                     stats?.MarkExcluded();
                     return false;
                 }
             }
-            else if (authorProviderId.IsNotNullOrWhiteSpace() && listExclusions.Any(s => MatchesExclusionId(authorProviderId, s.ForeignId)))
+            else if (authorProviderId.IsNotNullOrWhiteSpace() && listExclusions.Any(s => ImportListExclusionBookMatcher.AppliesToMediaType(s, GetReportMediaTypeForExclusion(report)) && MatchesExclusionId(authorProviderId, s.ForeignId)))
             {
                 _logger.Debug("{0} [{1}] Rejected due to list exclusion for parent author", report.EditionProviderId, report.Book);
                 stats?.MarkExcluded();
@@ -1352,7 +1355,7 @@ namespace NzbDrone.Core.ImportLists
             var existingAuthor = FindExistingAuthor(authorProviderId, localLookup, liveAuthorLookupHitCache);
 
             // Check if author excluded by any provider ID
-            if (existingAuthor != null && IsAuthorExcludedByAnyProviderId(listExclusions, existingAuthor))
+            if (existingAuthor != null && IsAuthorExcludedByAnyProviderId(listExclusions, existingAuthor, GetReportMediaTypeForExclusion(report)))
             {
                 _logger.Debug("{0} [{1}] Rejected due to list exclusion (matched by provider ID)", report.AuthorProviderId, report.Author);
                 stats?.MarkExcluded();
@@ -1360,7 +1363,7 @@ namespace NzbDrone.Core.ImportLists
             }
 
             // For new authors, check if the provider ID from the report is excluded
-            if (existingAuthor == null && listExclusions.Any(s => MatchesExclusionId(authorProviderId, s.ForeignId)))
+            if (existingAuthor == null && listExclusions.Any(s => ImportListExclusionBookMatcher.AppliesToMediaType(s, GetReportMediaTypeForExclusion(report)) && MatchesExclusionId(authorProviderId, s.ForeignId)))
             {
                 _logger.Debug("{0} [{1}] Rejected due to list exclusion", report.AuthorProviderId, report.Author);
                 stats?.MarkExcluded();
@@ -1391,12 +1394,12 @@ namespace NzbDrone.Core.ImportLists
                     : null;
         }
 
-        private bool IsAuthorExcludedByAnyProviderId(List<ImportListExclusion> listExclusions, Author author)
+        private bool IsAuthorExcludedByAnyProviderId(List<ImportListExclusion> listExclusions, Author author, BookMediaType? mediaType)
         {
             if (author == null) return false;
 
             var providerIds = AuthorIdentity.GetProviderIdentityTokenList(author);
-            return listExclusions.Any(exclusion => providerIds.Any(pid => MatchesExclusionId(pid, exclusion.ForeignId)));
+            return listExclusions.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, mediaType) && providerIds.Any(pid => MatchesExclusionId(pid, exclusion.ForeignId)));
         }
 
         private List<Book> SyncAll()
@@ -1936,15 +1939,16 @@ namespace NzbDrone.Core.ImportLists
             var totalBooksToProcess = booksToMonitor.Count;
             var authorBooksCache = new Dictionary<int, List<Book>>();
 
-            List<Book> GetCachedBooksByAuthor(int authorId)
+            List<Book> GetCachedBooksByAuthor(Author author)
             {
-                if (!authorBooksCache.TryGetValue(authorId, out var authorBooks))
+                if (!authorBooksCache.TryGetValue(author.Id, out var authorBooks))
                 {
-                    authorBooks = _bookService.GetBooksByAuthor(authorId);
-                    authorBooksCache[authorId] = authorBooks;
+                    authorBooks = _bookService.GetBooksByAuthor(author.Id);
+                    authorBooksCache[author.Id] = authorBooks;
                 }
 
-                return authorBooks;
+                var exclusions = _importListExclusionService.FindByForeignId(AuthorIdentity.GetProviderIdentityTokenList(author));
+                return authorBooks.Where(book => !IsAuthorExcludedByAnyProviderId(exclusions, author, book.MediaType)).ToList();
             }
 
             // Monitor specific books if needed
@@ -1985,7 +1989,7 @@ namespace NzbDrone.Core.ImportLists
                                 continue;
                             }
 
-                            var authorBooks = GetCachedBooksByAuthor(author.Id);
+                            var authorBooks = GetCachedBooksByAuthor(author);
 
                             // Hardcover library import list stores the Hardcover edition ID (when selected) in EditionGoodreadsId as hc-ed:<id>.
                             var editionProviderId = report.EditionProviderId?.Trim();
@@ -2431,7 +2435,7 @@ namespace NzbDrone.Core.ImportLists
                             }
 
                             var (bookPrefix, bookRawId) = SplitProviderId(bookProviderId);
-                            var targetBooks = GetCachedBooksByAuthor(author.Id)
+                            var targetBooks = GetCachedBooksByAuthor(author)
                                 .Where(b => BookMatchesProviderId(b, bookPrefix, bookProviderId, bookRawId))
                                 .ToList();
 
