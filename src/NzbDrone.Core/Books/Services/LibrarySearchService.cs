@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Linq;
 using Dapper;
 using NLog;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Utilities;
 using MediaCoverModel = NzbDrone.Core.MediaCover.MediaCover;
 
 namespace NzbDrone.Core.Books.Services
@@ -89,6 +92,8 @@ namespace NzbDrone.Core.Books.Services
         public string AudnexusAuthorId { get; set; }
         public string Narrator { get; set; }
         public double Score { get; set; }
+        public int MatchedTerms { get; set; }
+        public long MatchedEditions { get; set; }
     }
 
     public interface ILibrarySearchService
@@ -139,7 +144,7 @@ namespace NzbDrone.Core.Books.Services
             using (var conn = _database.OpenConnection())
             {
                 var authors = SearchAuthorsSqlite(conn, term, limit);
-                var books = SearchBooksSqlite(conn, term, limit);
+                var books = SearchBooks(conn, term, limit);
 
                 return new LibrarySearchResult
                 {
@@ -172,112 +177,65 @@ LIMIT @limit";
             return conn.Query<LibrarySearchAuthor>(sql, new { ftsQuery, limit }).ToList();
         }
 
-        private List<LibrarySearchBook> SearchBooksSqlite(IDbConnection conn, string term, int limit)
+        private List<LibrarySearchBook> SearchBooks(IDbConnection conn, string term, int limit)
         {
-            var innerQuery = BuildColumnFtsPrefixQuery("MatchingTitle", term);
-            if (string.IsNullOrWhiteSpace(innerQuery))
+            var terms = UnicodeComparisonNormalizer.WordSpans(StringSuperNormalizer.NormalizeForFts(term), preserveFtsConnectors: true)
+                .Select(span => span.Value).Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxTokens).ToArray();
+            if (terms.Length == 0)
             {
                 return new List<LibrarySearchBook>();
             }
 
-            const string sql = @"
-WITH matches AS (
-    SELECT
-        b.Id AS Id,
-        b.Title AS Title,
-        b.TitleSlug AS TitleSlug,
-        b.MediaType AS MediaTypeInt,
-        b.AuthorId AS AuthorId,
-        a.Name AS AuthorName,
-        CASE WHEN b.MediaType = 0 THEN b.AudiobookMonitored ELSE b.EbookMonitored END AS Monitored,
-        CASE WHEN EXISTS (
-            SELECT 1
-            FROM Editions ef
-            JOIN BookFiles bf ON bf.EditionId = ef.Id
-            WHERE ef.BookId = b.Id
-        ) THEN 1 ELSE 0 END AS HasFiles,
-        b.Images AS Images,
-        b.BaseBookId AS BaseBookId,
-        b.HardcoverBookId AS HardcoverBookId,
-        b.GoodreadsBookId AS GoodreadsBookId,
-        b.GoodreadsWorkId AS GoodreadsWorkId,
-        b.OpenLibraryWorkId AS OpenLibraryWorkId,
-        b.GoogleBooksId AS GoogleBooksId,
-        b.ASIN AS ASIN,
-        b.AudibleASIN AS AudibleASIN,
-        a.HardcoverAuthorId AS HardcoverAuthorId,
-        a.GoodreadsAuthorId AS GoodreadsAuthorId,
-        a.OpenLibraryAuthorId AS OpenLibraryAuthorId,
-        a.GoogleBooksAuthorId AS GoogleBooksAuthorId,
-        a.AudnexusAuthorId AS AudnexusAuthorId,
-        b.Narrator AS Narrator,
-        bm25(edition_fts) AS Score
+            var stopwatch = Stopwatch.StartNew();
+            var parameters = new DynamicParameters(new { terms, rowLimit = limit * 4 });
+            string scoresSql;
+            if (_database.DatabaseType == DatabaseType.SQLite)
+            {
+                var queries = terms.Select(value => $"MatchingTitle:(\"{value.Replace("\"", "\"\"")}\"*)").ToArray();
+                var termMatches = queries.Select((query, index) =>
+                {
+                    parameters.Add($"term{index}", query);
+                    return $"SELECT rowid FROM edition_fts WHERE edition_fts MATCH @term{index}";
+                });
+                parameters.Add("ftsQuery", string.Join(" OR ", queries));
+                scoresSql = $@"
+WITH term_matches AS ({string.Join(" UNION ALL ", termMatches)}),
+term_counts AS (SELECT rowid, COUNT(*) AS MatchedTerms FROM term_matches GROUP BY rowid),
+scores AS MATERIALIZED (
+    SELECT e.BookId, t.MatchedTerms, bm25(edition_fts) AS Score
     FROM edition_fts
     JOIN Editions e ON e.Id = edition_fts.rowid
-    JOIN Books b ON b.Id = e.BookId
-    JOIN Authors a ON a.Id = b.AuthorId
+    JOIN term_counts t ON t.rowid = edition_fts.rowid
     WHERE edition_fts MATCH @ftsQuery
-),
-ranked AS (
-    SELECT
-        *,
-        ROW_NUMBER() OVER (PARTITION BY Id ORDER BY Score) AS rn
-    FROM matches
-)
-SELECT
-    Id,
-    Title,
-    TitleSlug,
-    MediaTypeInt,
-    AuthorId,
-    AuthorName,
-    Monitored,
-    HasFiles,
-    Images,
-    BaseBookId,
-    HardcoverBookId,
-    GoodreadsBookId,
-    GoodreadsWorkId,
-    OpenLibraryWorkId,
-    GoogleBooksId,
-    ASIN,
-    AudibleASIN,
-    HardcoverAuthorId,
-    GoodreadsAuthorId,
-    OpenLibraryAuthorId,
-    GoogleBooksAuthorId,
-    AudnexusAuthorId,
-    Narrator,
-    Score
-FROM ranked
-WHERE rn = 1
-ORDER BY Score
-LIMIT @rowLimit";
-
-            var rows = conn.Query<LibrarySearchBookRow>(sql, new { ftsQuery = innerQuery, rowLimit = limit * 4 }).ToList();
-            return BuildGroupedBooks(rows, limit);
-        }
-
-        private LibrarySearchResult SearchPostgres(string term, int limit)
-        {
-            using (var conn = _database.OpenConnection())
+)";
+            }
+            else
             {
-                var pattern = $"%{EscapeLikePattern(term)}%";
+                // Use the index's parser, including its treatment of compound words and signed numbers.
+                scoresSql = @"
+WITH terms AS MATERIALIZED (
+    SELECT (SELECT string_agg(quote_literal(lexeme) || ':*', ' & ')::tsquery
+            FROM unnest(to_tsvector('simple', term))) AS query
+    FROM unnest(@terms::text[]) AS term
+), query AS (
+    SELECT string_agg('(' || query::text || ')', ' | ')::tsquery AS value FROM terms
+), matches AS MATERIALIZED (
+    SELECT e.""BookId"", to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) AS vector
+    FROM ""Editions"" e CROSS JOIN query
+    WHERE to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ query.value
+), scores AS (
+    SELECT ""BookId"", (SELECT COUNT(*) FROM terms WHERE vector @@ terms.query) AS MatchedTerms,
+           -ts_rank(vector, query.value) AS Score
+    FROM matches CROSS JOIN query
+)";
+            }
 
-                const string authorsSql = @"
-SELECT
-    ""Id"" AS Id,
-    ""Name"" AS Name,
-    ""Images"" AS Images,
-    ""SelectedPosterHash"" AS SelectedPosterHash
-FROM ""Authors""
-WHERE ""Name"" ILIKE @pattern ESCAPE '\'
-   OR ""SortName"" ILIKE @pattern ESCAPE '\'
-   OR ""TitleSlug"" ILIKE @pattern ESCAPE '\'
-ORDER BY ""Name""
-LIMIT @limit";
-
-                const string booksSql = @"
+            var sql = scoresSql + @",
+ranked AS (
+    SELECT *, COUNT(*) OVER () AS MatchedEditions,
+           ROW_NUMBER() OVER (PARTITION BY ""BookId"" ORDER BY MatchedTerms DESC, Score) AS rn
+    FROM scores
+)
 SELECT
     b.""Id"" AS Id,
     b.""Title"" AS Title,
@@ -307,19 +265,44 @@ SELECT
     a.""GoogleBooksAuthorId"" AS GoogleBooksAuthorId,
     a.""AudnexusAuthorId"" AS AudnexusAuthorId,
     b.""Narrator"" AS Narrator,
-    0 AS Score
-FROM ""Books"" b
+    r.Score,
+    r.MatchedTerms,
+    r.MatchedEditions
+FROM ranked r
+JOIN ""Books"" b ON b.""Id"" = r.""BookId""
 JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
-WHERE b.""Title"" ILIKE @pattern ESCAPE '\'
-ORDER BY b.""Title""
+WHERE r.rn = 1
+ORDER BY r.MatchedTerms DESC, r.Score, b.""Title"", b.""Id""
 LIMIT @rowLimit";
+            var rows = conn.Query<LibrarySearchBookRow>(sql, parameters).ToList();
+            var books = BuildGroupedBooks(rows, limit);
+            _logger.Debug("[LIBRARY-SEARCH] {0}: {1} matching editions, {2} returned books in {3} ms",
+                _database.DatabaseType, rows.FirstOrDefault()?.MatchedEditions ?? 0, books.Count, stopwatch.ElapsedMilliseconds);
+            return books;
+        }
 
-                var bookRows = conn.Query<LibrarySearchBookRow>(booksSql, new { pattern, rowLimit = limit * 4 }).ToList();
+        private LibrarySearchResult SearchPostgres(string term, int limit)
+        {
+            using (var conn = _database.OpenConnection())
+            {
+                var pattern = $"%{EscapeLikePattern(term)}%";
+                const string authorsSql = @"
+SELECT
+    ""Id"" AS Id,
+    ""Name"" AS Name,
+    ""Images"" AS Images,
+    ""SelectedPosterHash"" AS SelectedPosterHash
+FROM ""Authors""
+WHERE ""Name"" ILIKE @pattern ESCAPE '\'
+   OR ""SortName"" ILIKE @pattern ESCAPE '\'
+   OR ""TitleSlug"" ILIKE @pattern ESCAPE '\'
+ORDER BY ""Name""
+LIMIT @limit";
 
                 return new LibrarySearchResult
                 {
                     Authors = conn.Query<LibrarySearchAuthor>(authorsSql, new { pattern, limit }).ToList(),
-                    Books = BuildGroupedBooks(bookRows, limit)
+                    Books = SearchBooks(conn, term, limit)
                 };
             }
         }
@@ -333,7 +316,8 @@ LIMIT @rowLimit";
 
             var orderedRows = rows
                 .Where(r => r != null)
-                .OrderBy(r => r.Score)
+                .OrderByDescending(r => r.MatchedTerms)
+                .ThenBy(r => r.Score)
                 .ThenBy(r => r.Title)
                 .ThenBy(r => r.Id)
                 .ToList();
@@ -343,7 +327,8 @@ LIMIT @rowLimit";
                 .Select(group =>
                 {
                     var groupRows = group
-                        .OrderBy(r => r.Score)
+                        .OrderByDescending(r => r.MatchedTerms)
+                        .ThenBy(r => r.Score)
                         .ThenBy(r => r.MediaTypeInt)
                         .ThenBy(r => r.Id)
                         .ToList();
@@ -469,17 +454,6 @@ LIMIT @rowLimit";
                 .Replace("\\", "\\\\")
                 .Replace("%", "\\%")
                 .Replace("_", "\\_");
-        }
-
-        private static string BuildColumnFtsPrefixQuery(string column, string term)
-        {
-            var inner = BuildFtsPrefixQuery(term);
-            if (string.IsNullOrWhiteSpace(inner))
-            {
-                return string.Empty;
-            }
-
-            return $"{column}:({inner})";
         }
 
         private static string BuildFtsPrefixQuery(string term)

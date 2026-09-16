@@ -253,7 +253,7 @@ namespace Chaptarr.Core.Test.Books
         [TestCase("Astorias𠀀Smut", "astorias𠀀smut")]
         [TestCase("𠀀", "𠀀")]
         [TestCase("𠀀 | ! ' book:* 🌶️", "𠀀 | book")]
-        [TestCase("Two", "2")]
+        [TestCase("Two", "two")]
         [TestCase("②", "2")]
         [TestCase("ⅩⅣ", "14")]
         [TestCase("1Q84", "1q84")]
@@ -286,8 +286,8 @@ namespace Chaptarr.Core.Test.Books
                             new { bookId, editionId, title, matchingTitle });
                     }
 
-                    SetTitle(1, 11, "Ready Player One");
-                    SetTitle(2, 22, "Ready Player Two");
+                    SetTitle(1, 11, "Ready Player 1");
+                    SetTitle(2, 22, "Ready Player 2");
                     SetTitle(3, 33, "1Q84");
                 }
 
@@ -379,6 +379,16 @@ namespace Chaptarr.Core.Test.Books
                     Pooling = false
                 }.ConnectionString;
                 SeedPostgresDatabase(postgresConnectionString);
+                using (var connection = new NpgsqlConnection(postgresConnectionString))
+                {
+                    connection.Open();
+                    foreach (var (id, title) in new[] { (11, "Ready Player 1"), (22, "Ready Player 2") })
+                    {
+                        connection.Execute("UPDATE \"Editions\" SET \"Title\" = @title, \"MatchingTitle\" = @key WHERE \"Id\" = @id",
+                            new { id, title, key = StringSuperNormalizer.ComputeMatchingTitle(title) });
+                    }
+                }
+
 
                 var database = new Database("postgres-numeric-fts", () =>
                 {
@@ -484,8 +494,8 @@ namespace Chaptarr.Core.Test.Books
                     ""Id"", ""ForeignEditionId"", ""BookId"", ""Language"", ""Title"", ""MatchingTitle"",
                     ""NarratorNames"", ""Narrator"", ""Publisher"", ""Images"", ""DurationSeconds"", ""ReleaseDate"", ""ReadingFormatId"")
                 VALUES
-                    (11, 'hc:edition:ready-player-one', 1, 'eng', 'Ready Player One', 'ready player 1', '[]', '', '', '[]', 0, '2011-08-16', 3),
-                    (22, 'hc:edition:ready-player-two', 2, 'eng', 'Ready Player Two', 'ready player 2', '[]', '', '', '[]', 0, '2020-11-24', 3);
+                    (11, 'hc:edition:ready-player-one', 1, 'eng', 'Ready Player One', 'ready player one', '[]', '', '', '[]', 0, '2011-08-16', 3),
+                    (22, 'hc:edition:ready-player-two', 2, 'eng', 'Ready Player Two', 'ready player two', '[]', '', '', '[]', 0, '2020-11-24', 3);
             ");
         }
 

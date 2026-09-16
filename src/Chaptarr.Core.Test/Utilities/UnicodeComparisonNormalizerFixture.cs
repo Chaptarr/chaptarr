@@ -152,8 +152,10 @@ namespace Chaptarr.Core.Test.Utilities
         [TestCase("Ready Player ②", "ready player 2")]
         [TestCase("Ready Player ²", "ready player 2")]
         [TestCase("Ready Player Ⅱ", "ready player 2")]
-        [TestCase("Ready Player Two", "ready player 2")]
-        [TestCase("The Thirty-Nine Steps", "the 39 steps")]
+        [TestCase("Ready Player Two", "ready player two")]
+        [TestCase("The Thirty-Nine Steps", "the thirty nine steps")]
+        [TestCase("One Flew Over the Cuckoo’s Nest", "one flew over the cuckoo s nest")]
+        [TestCase("Un mundo feliz", "un mundo feliz")]
         [TestCase("A Memory of Light ⅩⅣ", "a memory of light 14")]
         [TestCase("I, Robot", "i robot")]
         [TestCase("1Q84", "1q84")]
@@ -194,11 +196,11 @@ namespace Chaptarr.Core.Test.Utilities
 
         [TestCase("Ready Player Twó")]
         [TestCase("Óne Flew Over the Cuckoo's Nest")]
-        public void numeric_word_folding_should_be_idempotent_with_diacritics(string input)
+        public void word_normalization_should_be_idempotent_with_diacritics(string input)
         {
             var once = UnicodeComparisonNormalizer.NormalizeText(input);
             Assert.That(UnicodeComparisonNormalizer.NormalizeText(once), Is.EqualTo(once));
-            Assert.That(once, Does.Not.Contain("two").And.Not.Contain("one"));
+            Assert.That(once, Does.Contain(input.StartsWith("Ready") ? "two" : "one"));
         }
 
         [TestCase("The 7 ½ Deaths of Evelyn Hardcastle", "the 7.5 deaths of evelyn hardcastle")]
@@ -210,7 +212,7 @@ namespace Chaptarr.Core.Test.Utilities
         [TestCase("Dune 3 3/4", "dune 3.75")]
         [TestCase("Dune 3 1/3", "dune 3.333333333333333")]
         [TestCase("Dune 3 ⅓", "dune 3.333333333333333")]
-        [TestCase("Dune twenty one ½", "dune 21.5")]
+        [TestCase("Dune twenty one ½", "dune twenty one 0.5")]
         [TestCase("Dune Ⅳ ½", "dune 4.5")]
         [TestCase("Dune 3½", "dune 3.5")]
         [TestCase("Dune 13½", "dune 13.5")]

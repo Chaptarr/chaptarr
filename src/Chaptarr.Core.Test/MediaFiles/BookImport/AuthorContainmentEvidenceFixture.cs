@@ -106,10 +106,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(CreateValidator().ValidateAuthorInTags("Isaac Asimov", tags), Is.False);
         }
 
-        [TestCase("Ready Player Two", "Ready Player 𝟚", true)]
-        [TestCase("Ready Player Two", "Ready Player ٢", true)]
-        [TestCase("Ready Player Two", "Ready Player ②", true)]
-        [TestCase("Ready Player Two", "Ready Player Ⅱ", true)]
+        [TestCase("Ready Player Two", "Ready Player 𝟚", false)]
+        [TestCase("Ready Player 2", "Ready Player 𝟚", true)]
+        [TestCase("Ready Player Two", "Ready Player ٢", false)]
+        [TestCase("Ready Player 2", "Ready Player ٢", true)]
+        [TestCase("Ready Player Two", "Ready Player ②", false)]
+        [TestCase("Ready Player 2", "Ready Player ②", true)]
+        [TestCase("Ready Player Two", "Ready Player Ⅱ", false)]
+        [TestCase("Ready Player 2", "Ready Player Ⅱ", true)]
         [TestCase("Ready Player One", "Ready Player ②", false)]
         [TestCase("The 13½ Lives of Captain Bluebear", "The 13.5 Lives of Captain Bluebear", true)]
         [TestCase("The 13½ Lives of Captain Bluebear", "The 13 5 Lives of Captain Bluebear", false)]

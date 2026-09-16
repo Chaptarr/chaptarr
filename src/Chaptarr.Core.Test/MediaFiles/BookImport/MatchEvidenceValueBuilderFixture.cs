@@ -22,8 +22,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(other.Build().SelectMany(v => v.Ranges), Is.Empty);
         }
 
-        [TestCase("Ready Player 𝟚", "Ready Player Two")]
-        [TestCase("Ready Player ②", "Ready Player Two")]
+        [TestCase("Ready Player 𝟚", "Ready Player 2")]
+        [TestCase("Ready Player ②", "Ready Player 2")]
         [TestCase("23 1/2 Lies", "23 ½ Lies")]
         [TestCase("The 7 ½ Deaths of Evelyn Hardcastle", "The 7½ Deaths of Evelyn Hardcastle")]
         public void numeric_title_proof_should_highlight_the_original_spelling(string raw, string title)

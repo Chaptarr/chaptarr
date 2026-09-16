@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
-using NzbDrone.Core.MediaFiles.BookImport;
 
 namespace NzbDrone.Core.Utilities
 {
@@ -91,39 +90,11 @@ namespace NzbDrone.Core.Utilities
                         nextWordEnd += next.Utf16SequenceLength;
                     }
 
-                    if (SeriesPositionTokenHelper.TryParseCardinal(text.AsSpan(index, nextWordEnd - index), out var cardinal))
-                    {
-                        length = nextWordEnd - index;
-                        var secondStart = nextWordEnd;
-                        while (secondStart < text.Length && (char.IsWhiteSpace(text[secondStart]) || text[secondStart] == '-'))
-                        {
-                            secondStart++;
-                        }
-
-                        var secondEnd = secondStart;
-                        while (secondEnd < text.Length && Rune.TryGetRuneAt(text, secondEnd, out var nextPart) &&
-                               (IsWordCharacter(nextPart) || IsCombiningMark(nextPart)))
-                        {
-                            secondEnd += nextPart.Utf16SequenceLength;
-                        }
-
-                        var joiner = text.AsSpan(nextWordEnd, secondStart - nextWordEnd).Trim();
-                        if (secondEnd > secondStart && (joiner.IsEmpty || joiner.SequenceEqual("-")) &&
-                            SeriesPositionTokenHelper.TryParseCardinal(text.AsSpan(secondStart, secondEnd - secondStart), out var units) &&
-                            cardinal >= 20 && cardinal % 10 == 0 && units < 10)
-                        {
-                            cardinal += units;
-                            length = secondEnd - index;
-                        }
-
-                        folded = cardinal.ToString(CultureInfo.InvariantCulture);
-                    }
-
-                    var wholeEnd = folded == null ? nextWordEnd : index + length;
-                    if ((folded != null || Rune.IsNumber(rune)) && wholeEnd + 1 < text.Length &&
+                    var wholeEnd = nextWordEnd;
+                    if (Rune.IsNumber(rune) && wholeEnd + 1 < text.Length &&
                         char.IsWhiteSpace(text[wholeEnd]) && (index == 0 || (text[index - 1] != '.' && text[index - 1] != '/')) &&
                         TryReadFraction(text, wholeEnd + 1, out var fraction, out var fractionEnd) &&
-                        decimal.TryParse(folded ?? NormalizeText(text.Substring(index, wholeEnd - index)),
+                        decimal.TryParse(NormalizeText(text.Substring(index, wholeEnd - index)),
                             NumberStyles.None, CultureInfo.InvariantCulture, out var whole) && whole < decimal.MaxValue)
                     {
                         folded = (whole + fraction).ToString(CultureInfo.InvariantCulture);

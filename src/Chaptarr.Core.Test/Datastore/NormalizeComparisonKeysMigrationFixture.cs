@@ -42,8 +42,8 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM EditionUpdates WHERE Id = 1;"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM EditionUpdates WHERE Id = 4;"), Is.Zero,
                     "an already-correct edition key should not be rewritten");
-                Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH '\"ready player 2\"' AND rowid IN (1, 2);"), Is.EqualTo(2),
-                    "the edition update trigger should replace old tokens for both written and supplementary numerals");
+                Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH '\"ready player 2\"' AND rowid IN (1, 2);"), Is.EqualTo(1),
+                    "the edition update trigger should distinguish words from normalized numerals");
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH '1q84' AND rowid = 3;"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH 'dune' AND rowid = 4;"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH 'robot' AND rowid = 5;"), Is.EqualTo(1));
@@ -97,13 +97,13 @@ namespace Chaptarr.Core.Test.Datastore
                 AssertPersistedValues(connection);
                 Assert.That(connection.QuerySingle<int>(@"
                     SELECT COUNT(*) FROM ""Books""
-                    WHERE to_tsvector('simple', COALESCE(""CleanTitle"", '')) @@ plainto_tsquery('simple', 'readyplayer2');"), Is.EqualTo(2));
+                    WHERE to_tsvector('simple', COALESCE(""CleanTitle"", '')) @@ plainto_tsquery('simple', 'readyplayer2');"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>(@"
                     SELECT COUNT(*) FROM ""Authors""
-                    WHERE to_tsvector('simple', COALESCE(""CleanName"", '')) @@ plainto_tsquery('simple', 'jane1');"), Is.EqualTo(2));
+                    WHERE to_tsvector('simple', COALESCE(""CleanName"", '')) @@ plainto_tsquery('simple', 'jane1');"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>(@"
                     SELECT COUNT(*) FROM ""Editions""
-                    WHERE to_tsvector('simple', COALESCE(""MatchingTitle"", '')) @@ plainto_tsquery('simple', 'ready player 2');"), Is.EqualTo(2));
+                    WHERE to_tsvector('simple', COALESCE(""MatchingTitle"", '')) @@ plainto_tsquery('simple', 'ready player 2');"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>(@"
                     SELECT COUNT(*) FROM ""Editions""
                     WHERE to_tsvector('simple', COALESCE(""MatchingTitle"", '')) @@ plainto_tsquery('simple', '1q84');"), Is.EqualTo(1));
@@ -162,16 +162,16 @@ namespace Chaptarr.Core.Test.Datastore
         {
             connection.Execute(@"
                 INSERT INTO ""Books"" (""Id"", ""Title"", ""CleanTitle"") VALUES
-                    (1, 'Ready Player Two', 'readyplayertwo'),
+                    (1, 'Ready Player Two', 'readyplayer2'),
                     (2, 'Ready Player 𝟚', 'readyplayer𝟚'),
                     (3, 'Dune 1', 'dune1'),
                     (4, '23 ½ Lies', '23lies'),
                     (5, '23 1/2 Lies', '2312lies');
-                INSERT INTO ""Authors"" (""Id"", ""Name"", ""CleanName"") VALUES (1, 'Jane One', 'janeone'), (2, 'Jane 𝟙', 'jane𝟙');
+                INSERT INTO ""Authors"" (""Id"", ""Name"", ""CleanName"") VALUES (1, 'Jane One', 'jane1'), (2, 'Jane 𝟙', 'jane𝟙');
                 INSERT INTO ""NarratorMetadata"" (""Id"", ""Name"") VALUES (1, 'Mary Three'), (2, 'Mary 𝟛');
-                INSERT INTO ""Narrators"" (""Id"", ""NarratorMetadataId"", ""CleanName"") VALUES (1, 1, 'marythree'), (2, 2, 'mary𝟛'), (3, 99, 'orphanpreserved');
+                INSERT INTO ""Narrators"" (""Id"", ""NarratorMetadataId"", ""CleanName"") VALUES (1, 1, 'mary3'), (2, 2, 'mary𝟛'), (3, 99, 'orphanpreserved');
                 INSERT INTO ""Editions"" (""Id"", ""Title"", ""MatchingTitle"") VALUES
-                    (1, 'Ready Player Two', 'ready player two'),
+                    (1, 'Ready Player Two', 'ready player 2'),
                     (2, 'Ready Player 𝟚', 'ready player 𝟚'),
                     (3, '１Q84', '１q84'),
                     (4, 'Dune 1', 'dune 1'),
@@ -182,7 +182,7 @@ namespace Chaptarr.Core.Test.Datastore
             if (connection is SqliteConnection)
             {
                 connection.Execute(@"
-                    INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (1, 'ready player two');
+                    INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (1, 'ready player 2');
                     INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (2, 'ready player 𝟚');
                     INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (3, '１q84');
                     INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (4, 'dune 1');
@@ -194,17 +194,17 @@ namespace Chaptarr.Core.Test.Datastore
 
         private static void AssertPersistedValues(IDbConnection connection)
         {
-            Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\" = 1;"), Is.EqualTo("readyplayer2"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\" = 1;"), Is.EqualTo("readyplayertwo"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\" = 2;"), Is.EqualTo("readyplayer2"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\" = 3;"), Is.EqualTo("dune1"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\" = 4;"), Is.EqualTo("235lies"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\" = 5;"), Is.EqualTo("235lies"));
-            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Authors\" WHERE \"Id\" = 1;"), Is.EqualTo("jane1"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Authors\" WHERE \"Id\" = 1;"), Is.EqualTo("janeone"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Authors\" WHERE \"Id\" = 2;"), Is.EqualTo("jane1"));
-            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Narrators\" WHERE \"Id\" = 1;"), Is.EqualTo("mary3"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Narrators\" WHERE \"Id\" = 1;"), Is.EqualTo("marythree"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Narrators\" WHERE \"Id\" = 2;"), Is.EqualTo("mary3"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Narrators\" WHERE \"Id\" = 3;"), Is.EqualTo("orphanpreserved"));
-            Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\" = 1;"), Is.EqualTo("ready player 2"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\" = 1;"), Is.EqualTo("ready player two"));
             Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\" = 2;"), Is.EqualTo("ready player 2"));
             Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\" = 3;"), Is.EqualTo("1q84"));
             Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\" = 4;"), Is.EqualTo("dune 1"));

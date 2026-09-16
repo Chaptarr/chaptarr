@@ -303,17 +303,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return one == 0 ? TensOrdinals[ten] : $"{TensCardinals[ten]} {Ordinals[one]}";
         }
 
-        internal static bool TryParseCardinal(ReadOnlySpan<char> raw, out int value)
-        {
-            if (raw.ContainsAnyExceptInRange('\0', '\u007f'))
-            {
-                raw = raw.ToString().RemoveAccent().AsSpan();
-            }
-
-            return WordToNumber.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(raw, out value) &&
-                   raw.Equals(ToCardinalWords(value), StringComparison.OrdinalIgnoreCase);
-        }
-
         internal static bool TryParseNumber(string raw, out decimal value, bool allowRoman = true)
         {
             raw = UnicodeComparisonNormalizer.NormalizeText(raw).Trim();
