@@ -271,8 +271,8 @@ namespace NzbDrone.Core.Books
 
                     // Clear existing index
                     var deleteStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    // edition_fts is an FTS5 contentless table (content=''), so direct DELETE is not allowed.
-                    // Use the special FTS5 command instead.
+                    // This clear operation supports both historical contentless indexes
+                    // and indexes that allow deletion by row ID.
                     Exec("INSERT INTO edition_fts(edition_fts) VALUES('delete-all');");
                     deleteStopwatch.Stop();
                     _logger.Debug("[DB-TIMING][FTS-INDEX] Cleared existing FTS index in {0}ms", deleteStopwatch.ElapsedMilliseconds);
