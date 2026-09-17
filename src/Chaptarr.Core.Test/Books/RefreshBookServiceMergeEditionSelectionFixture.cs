@@ -75,7 +75,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();

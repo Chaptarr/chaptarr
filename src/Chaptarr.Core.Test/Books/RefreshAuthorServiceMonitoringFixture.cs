@@ -38,7 +38,7 @@ namespace Chaptarr.Core.Test.Books
                 return _books.Where(b => idSet.Contains(b.Id)).ToList();
             }
 
-            public List<Book> GetBooksByAuthor(int authorId) => _books;
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => _books;
 
             public void UpdateMany(List<Book> books)
             {

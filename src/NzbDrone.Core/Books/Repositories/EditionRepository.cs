@@ -24,7 +24,7 @@ namespace NzbDrone.Core.Books
         Edition FindByGoogleBooksEditionId(string googleBooksEditionId);
         List<Edition> FindAllByGoogleBooksEditionId(string googleBooksEditionId);
         List<Edition> FindByBook(IEnumerable<int> ids);
-        List<Edition> FindByAuthor(int id);
+        List<Edition> FindByAuthor(int id, bool onlyMonitored = false);
         List<Edition> FindByAuthorId(int id, bool onlyMonitored);
         Edition FindByTitle(int authorId, string title);
         List<Edition> GetEditionsForRefresh(int bookId);
@@ -214,11 +214,20 @@ namespace NzbDrone.Core.Books
             return QueryForBookIds(bookIds);
         }
 
-        public List<Edition> FindByAuthor(int id)
+        public List<Edition> FindByAuthor(int id, bool onlyMonitored = false)
         {
-            return Query(Builder().Join<Edition, Book>((e, b) => e.BookId == b.Id)
-                         .Join<Book, Author>((b, a) => b.AuthorId == a.Id)
-                         .Where<Author>(a => a.Id == id));
+            var builder = Builder().Join<Edition, Book>((e, b) => e.BookId == b.Id)
+                .Join<Book, Author>((b, a) => b.AuthorId == a.Id)
+                .Where<Author>(a => a.Id == id);
+            if (onlyMonitored)
+            {
+                // Keep the ownership join and author predicate while giving the monitored lookup the indexed book-id set first.
+                builder.Where("\"Editions\".\"BookId\" IN (SELECT \"Id\" FROM \"Books\" WHERE \"AuthorId\" = @authorId)", new { authorId = id });
+                var monitored = true;
+                builder.Where<Edition>(e => e.Monitored == monitored);
+            }
+
+            return Query(builder);
         }
 
         public List<Edition> FindByAuthorId(int authorId, bool onlyMonitored)

@@ -198,7 +198,7 @@ namespace NzbDrone.Core.IndexerSearch
                     continue;
                 }
 
-                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key);
+                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key, onlyMonitoredEditions: true);
                 if (authorBooks == null || authorBooks.Count == 0)
                 {
                     continue;
@@ -236,7 +236,7 @@ namespace NzbDrone.Core.IndexerSearch
                     continue;
                 }
 
-                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key);
+                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key, onlyMonitoredEditions: true);
                 if (authorBooks == null || authorBooks.Count == 0)
                 {
                     continue;

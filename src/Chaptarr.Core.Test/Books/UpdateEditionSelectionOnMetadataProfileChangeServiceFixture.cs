@@ -63,7 +63,7 @@ namespace Chaptarr.Core.Test.Books
                     .ToDictionary(g => g.Key, g => g.ToList());
             }
 
-            public List<Book> GetBooksByAuthor(int authorId) =>
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) =>
                 _booksByAuthorId.TryGetValue(authorId, out var books) ? books : new List<Book>();
 
             public Book UpdateBook(Book book)
@@ -147,7 +147,7 @@ namespace Chaptarr.Core.Test.Books
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();

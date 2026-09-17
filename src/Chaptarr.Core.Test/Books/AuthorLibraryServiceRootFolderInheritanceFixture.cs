@@ -155,7 +155,7 @@ namespace Chaptarr.Core.Test.Books
                 _getBooksByAuthor = getBooksByAuthor ?? (_ => new List<Book>());
             }
 
-            public List<Book> GetBooksByAuthor(int authorId) => _getBooksByAuthor(authorId);
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => _getBooksByAuthor(authorId);
             public void UpdateMany(List<Book> books) { }
             public Book GetBook(int bookId) => throw new NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();

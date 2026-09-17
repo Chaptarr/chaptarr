@@ -35,7 +35,7 @@ namespace Chaptarr.Core.Test.Api
             }
 
             public Book GetBook(int bookId) => _getBook?.Invoke(bookId);
-            public List<Book> GetBooksByAuthor(int authorId) => _getBooksByAuthor?.Invoke(authorId) ?? new List<Book>();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => _getBooksByAuthor?.Invoke(authorId) ?? new List<Book>();
 
             public List<Book> GetBooks(IEnumerable<int> bookIds) => bookIds.Select(GetBook).ToList();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();

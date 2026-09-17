@@ -212,7 +212,7 @@ namespace Chaptarr.Core.Test.Books
                 _booksByAuthorId[authorId] = new List<Book>(books ?? Array.Empty<Book>());
             }
 
-            public List<Book> GetBooksByAuthor(int authorId) => _booksByAuthorId.TryGetValue(authorId, out var v) ? v : new List<Book>();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => _booksByAuthorId.TryGetValue(authorId, out var v) ? v : new List<Book>();
 
             public Book GetBook(int bookId) => throw new NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();

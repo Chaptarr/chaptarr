@@ -114,7 +114,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Book GetBook(int bookId) => _book;
 
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new System.NotImplementedException();
-            public List<Book> GetBooksByAuthor(int authorId) => throw new System.NotImplementedException();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new System.NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new System.NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new System.NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new System.NotImplementedException();

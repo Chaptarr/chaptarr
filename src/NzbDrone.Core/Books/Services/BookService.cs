@@ -25,7 +25,7 @@ namespace NzbDrone.Core.Books
         Book GetBook(int bookId);
         List<Book> GetBooks(IEnumerable<int> bookIds);
         List<Book> GetExistingBooks(IEnumerable<int> bookIds) => GetBooks(bookIds);
-        List<Book> GetBooksByAuthor(int authorId);
+        List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false);
         List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds);
         List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds);
         List<Book> GetBooksByAuthorId(int authorId);
@@ -1020,7 +1020,7 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        public List<Book> GetBooksByAuthor(int authorId)
+        public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false)
         {
             var books = _bookRepository.GetBooks(authorId).ToList();
 
@@ -1050,15 +1050,15 @@ namespace NzbDrone.Core.Books
             if (books.Any())
             {
                 var bookIds = books.Select(b => b.Id).ToList();
-                var allEditions = _editionService.GetEditionsByBook(bookIds);
+                var allEditions = onlyMonitoredEditions
+                    ? _editionService.GetEditionsByAuthor(authorId, onlyMonitored: true)
+                    : _editionService.GetEditionsByBook(bookIds);
                 var editionsByBook = allEditions.GroupBy(e => e.BookId).ToDictionary(g => g.Key, g => g.ToList());
 
                 foreach (var book in books)
                 {
-                    if (editionsByBook.TryGetValue(book.Id, out var bookEditions))
-                    {
-                        book.Editions = bookEditions;
-                    }
+                    book.Editions = editionsByBook.TryGetValue(book.Id, out var bookEditions)
+                        ? bookEditions : new List<Edition>();
                 }
             }
 

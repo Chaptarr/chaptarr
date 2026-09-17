@@ -20,7 +20,7 @@ namespace Chaptarr.Core.Test.Books
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IBookService.GetBooksByAuthor) &&
-                    args?.Length == 1 &&
+                    args?.Length == 2 &&
                     args[0] is int authorId)
                 {
                     return Books.Where(b => b.AuthorId == authorId).ToList();

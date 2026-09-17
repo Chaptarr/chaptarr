@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
 using NUnit.Framework;
+using Npgsql;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
@@ -82,7 +84,7 @@ namespace Chaptarr.Core.Test.Books
                 FindByBookCallCount++;
                 return new List<Edition>();
             }
-            public List<Edition> FindByAuthor(int id) => throw new NotImplementedException();
+            public List<Edition> FindByAuthor(int id, bool onlyMonitored = false) => throw new NotImplementedException();
             public List<Edition> FindByAuthorId(int id, bool onlyMonitored) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -216,56 +218,181 @@ namespace Chaptarr.Core.Test.Books
             return memoryTarget;
         }
 
-        private static void WithRepository(Action<EditionRepository> action)
+        [TestCase(false)]
+        [TestCase(true)]
+        public void displayed_edition_query_should_scope_by_author_book_ids_and_keep_monitored_semantics(bool postgres)
+        {
+            string capturedCommand = null;
+            List<SqliteQueryPlanRow> plan = null;
+
+            WithRepository(repository =>
+            {
+                var editions = repository.FindByAuthor(1).ToDictionary(edition => edition.BookId);
+                editions[1].Title = "Dune";
+                editions[1].Monitored = true;
+                editions[2].Title = "Der Wüstenplanet";
+                editions[2].Monitored = false;
+                repository.SetFields(editions.Values.ToList(), edition => edition.Title, edition => edition.Monitored);
+
+                Assert.That(repository.FindByAuthor(1, onlyMonitored: true).Select(edition => edition.BookId), Is.EquivalentTo(new[] { 1 }));
+                Assert.That(repository.FindByAuthor(1).Select(edition => edition.BookId), Is.EquivalentTo(new[] { 1, 2 }));
+                Assert.That(repository.FindByAuthor(2, onlyMonitored: true).Select(edition => edition.BookId), Is.EquivalentTo(new[] { 3 }));
+                Assert.That(repository.FindByAuthor(999, onlyMonitored: true), Is.Empty, "A missing author row remains excluded");
+                Assert.That(repository.FindByAuthor(1, onlyMonitored: true).Select(edition => edition.Id), Does.Not.Contain(4), "A book whose author row is missing remains excluded");
+                Assert.That(repository.FindByAuthor(1, onlyMonitored: true).Select(edition => edition.Id), Does.Not.Contain(5), "An edition whose book row is missing remains excluded");
+            }, postgres, (connection, commandTextValue) =>
+            {
+                if (capturedCommand != null ||
+                    !commandTextValue.Contains("\"Editions\".\"Monitored\"", StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                capturedCommand = commandTextValue;
+                if (!postgres)
+                {
+                    var explainSql = Regex.Replace(commandTextValue, "@[A-Za-z0-9_]+", "1");
+                    plan = connection.Query<SqliteQueryPlanRow>("EXPLAIN QUERY PLAN " + explainSql).ToList();
+                }
+            });
+
+            Assert.That(capturedCommand, Is.Not.Null);
+            if (!postgres)
+            {
+                var details = string.Join(Environment.NewLine, plan.Select(row => row.Detail));
+                Assert.That(details, Does.Contain("IX_Books_AuthorId_Id"), details);
+                Assert.That(details, Does.Contain("IX_Editions_BookId_Monitored_Id"), details);
+                Assert.That(details, Does.Not.Contain("IX_Editions_Monitored"), details);
+            }
+        }
+
+        private sealed class SqliteQueryPlanRow
+        {
+            public int Id { get; set; }
+            public int Parent { get; set; }
+            public int NotUsed { get; set; }
+            public string Detail { get; set; }
+        }
+
+        private static void WithRepository(Action<EditionRepository> action, bool postgres = false, Action<IDbConnection, string> captureCommand = null)
         {
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"edition_legacy_lookup_{Guid.NewGuid():N}.db");
             var connectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false
             }.ToString();
+
+            string databaseName = null;
+            if (postgres)
+            {
+                var adminString = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
+                if (string.IsNullOrWhiteSpace(adminString))
+                {
+                    Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING to exercise the PostgreSQL edition query");
+                }
+
+                databaseName = "edition_query_" + Guid.NewGuid().ToString("N");
+                using var admin = new NpgsqlConnection(adminString);
+                admin.Open();
+                admin.Execute($"CREATE DATABASE \"{databaseName}\"");
+                connectionString = new NpgsqlConnectionStringBuilder(adminString) { Database = databaseName, Pooling = false }.ConnectionString;
+            }
+
+            IDbConnection OpenRawConnection()
+            {
+                IDbConnection connection = postgres ? new NpgsqlConnection(connectionString) : new SqliteConnection(connectionString);
+                connection.Open();
+                return connection;
+            }
+
+            IDbConnection OpenConnection()
+            {
+                var connection = OpenRawConnection();
+                if (captureCommand == null)
+                {
+                    return connection;
+                }
+
+                return Chaptarr.Core.Test.MediaFiles.AuthorDeletionSafetyFixture.Proxy<IDbConnection>((method, args) =>
+                {
+                    if (method.Name == nameof(IDisposable.Dispose))
+                    {
+                        connection.Dispose();
+                        return null;
+                    }
+
+                    var result = method.Invoke(connection, args);
+                    if (result is IDbCommand command)
+                    {
+                        return Chaptarr.Core.Test.MediaFiles.AuthorDeletionSafetyFixture.Proxy<IDbCommand>((commandMethod, commandArgs) =>
+                        {
+                            if (commandMethod.Name == nameof(IDbCommand.ExecuteReader))
+                            {
+                                captureCommand(connection, command.CommandText);
+                            }
+
+                            return commandMethod.Invoke(command, commandArgs);
+                        });
+                    }
+
+                    return result;
+                });
+            }
 
             try
             {
-                using (var connection = new SqliteConnection(connectionString))
+                using (var connection = OpenRawConnection())
                 {
-                    connection.Open();
                     CreateSchema<Author>(connection);
                     CreateSchema<Book>(connection);
                     CreateSchema<Edition>(connection);
 
-                    connection.Execute("INSERT INTO \"Authors\" (\"Id\") VALUES (1);");
-                    connection.Execute("INSERT INTO \"Books\" (\"Id\", \"AuthorId\", \"MediaType\") VALUES (1, 1, 0), (2, 1, 1);");
-                    connection.Execute("INSERT INTO \"Editions\" (\"Id\", \"BookId\", \"Asin\", \"AudibleASIN\", \"Isbn13\", \"HardcoverEditionId\") VALUES " +
-                                       "(1, 1, 'B00EXPECTED', NULL, '9780123456789', 'edition:123'), " +
-                                       "(2, 2, 'B00EXPECTED', NULL, '9780123456789', 'edition:123');");
+                    connection.Execute(@"
+CREATE INDEX ""IX_Books_AuthorId_Id"" ON ""Books"" (""AuthorId"", ""Id"");
+CREATE INDEX ""IX_Editions_Monitored"" ON ""Editions"" (""Monitored"");
+CREATE INDEX ""IX_Editions_BookId_Monitored_Id"" ON ""Editions"" (""BookId"", ""Monitored"", ""Id"");
+INSERT INTO ""Authors"" (""Id"") VALUES (1), (2);
+INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""MediaType"") VALUES
+    (1, 1, 0),
+    (2, 1, 1),
+    (3, 2, 0),
+    (4, 999, 0);
+UPDATE ""Books"" SET ""AudiobookMonitored"" = FALSE, ""AnyEditionOk"" = TRUE;
+INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"", ""Asin"", ""AudibleASIN"", ""Isbn13"", ""HardcoverEditionId"") VALUES
+    (1, 1, TRUE, 'B00EXPECTED', NULL, '9780123456789', 'edition:123'),
+    (2, 2, FALSE, 'B00EXPECTED', NULL, '9780123456789', 'edition:123'),
+    (3, 3, TRUE, NULL, NULL, NULL, NULL),
+    (4, 4, TRUE, NULL, NULL, NULL, NULL),
+    (5, 9999, TRUE, NULL, NULL, NULL, NULL);");
                 }
 
-                var database = new Database("main", () =>
+                var database = Chaptarr.Core.Test.MediaFiles.AuthorDeletionSafetyFixture.Proxy<IMainDatabase>((method, args) => method.Name switch
                 {
-                    var conn = new SqliteConnection(connectionString);
-                    conn.Open();
-                    return conn;
+                    nameof(IMainDatabase.OpenConnection) => OpenConnection(),
+                    "get_DatabaseType" => postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite,
+                    _ => throw new NotImplementedException(method.Name)
                 });
 
-                action(new EditionRepository(new MainDatabase(database), new StubEventAggregator()));
+                action(new EditionRepository(database, new StubEventAggregator()));
             }
             finally
             {
-                try
+                if (postgres && databaseName != null)
                 {
-                    if (File.Exists(databasePath))
-                    {
-                        File.Delete(databasePath);
-                    }
+                    using var admin = new NpgsqlConnection(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"));
+                    admin.Open();
+                    admin.Execute($"DROP DATABASE \"{databaseName}\"");
                 }
-                catch
+                else if (File.Exists(databasePath))
                 {
+                    File.Delete(databasePath);
                 }
             }
         }
 
-        private static void CreateSchema<T>(SqliteConnection connection)
+        private static void CreateSchema<T>(IDbConnection connection)
             where T : ModelBase
         {
             var excluded = TableMapping.Mapper.ExcludeProperties(typeof(T))
@@ -279,8 +406,8 @@ namespace Chaptarr.Core.Test.Books
                 .GroupBy(property => property.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .Select(property => property.Name == nameof(ModelBase.Id)
-                    ? "\"Id\" INTEGER PRIMARY KEY AUTOINCREMENT"
-                    : $"\"{property.Name}\" {GetSqliteColumnType(property)} NULL")
+                    ? "\"Id\" INTEGER PRIMARY KEY"
+                    : $"\"{property.Name}\" {(connection is NpgsqlConnection && (Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType) == typeof(bool) ? "BOOLEAN" : GetSqliteColumnType(property))} NULL")
                 .ToList();
 
             connection.Execute($"CREATE TABLE \"{tableName}\" ({string.Join(", ", columns)});");

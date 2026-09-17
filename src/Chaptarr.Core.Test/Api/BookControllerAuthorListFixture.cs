@@ -54,6 +54,70 @@ namespace Chaptarr.Core.Test.Api
             return Proxy<T>(new Dictionary<string, Func<MethodInfo, object[], object>>());
         }
 
+        private static BookController CreateController(
+            Dictionary<string, Func<MethodInfo, object[], object>> bookHandlers = null,
+            Dictionary<string, Func<MethodInfo, object[], object>> authorHandlers = null,
+            Func<MethodInfo, object[], object> authorStatisticsHandler = null,
+            Func<MethodInfo, object[], object> seriesLinksHandler = null)
+        {
+            bookHandlers ??= new Dictionary<string, Func<MethodInfo, object[], object>>();
+            authorHandlers ??= new Dictionary<string, Func<MethodInfo, object[], object>>();
+            authorStatisticsHandler ??= (method, _) =>
+                method.ReturnType == typeof(AuthorStatistics)
+                    ? new AuthorStatistics()
+                    : new List<AuthorStatistics>();
+            seriesLinksHandler ??= (_, _) => new List<SeriesBookLink>();
+
+            if (!authorHandlers.ContainsKey(nameof(IAuthorService.GetAuthor)))
+            {
+                authorHandlers[nameof(IAuthorService.GetAuthor)] = (_, args) => new Author
+                {
+                    Id = (int)args[0],
+                    Name = "Test Author",
+                    SortNameLastFirst = "Author, Test"
+                };
+            }
+
+            if (!authorHandlers.ContainsKey(nameof(IAuthorService.GetAllAuthors)))
+            {
+                authorHandlers[nameof(IAuthorService.GetAllAuthors)] = (_, _) => new List<Author>();
+            }
+
+            return new BookController(
+                authorService: Proxy<IAuthorService>(authorHandlers),
+                bookService: Proxy<IBookService>(bookHandlers),
+                addBookService: null,
+                editionService: Proxy<IEditionService>(new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IEditionService.GetEditionsByAuthor)] = (_, _) => new List<Edition>(),
+                    [nameof(IEditionService.GetEditionsByBook)] = (_, _) => new List<Edition>()
+                }),
+                editionSelector: null,
+                seriesBookLinkService: Proxy<ISeriesBookLinkService>(new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(ISeriesBookLinkService.GetLinksByBook)] = seriesLinksHandler
+                }),
+                authorStatisticsService: Proxy<IAuthorStatisticsService>(new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IAuthorStatisticsService.AuthorStatistics)] = authorStatisticsHandler
+                }),
+                mediaFileService: null,
+                coverMapper: Proxy<IMapCoversToLocal>(new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IMapCoversToLocal.ConvertToLocalUrls)] = (_, _) => null
+                }),
+                upgradableSpecification: ThrowingProxy<IUpgradableSpecification>(),
+                signalRBroadcaster: null,
+                commandQueueManager: ThrowingProxy<IManageCommandQueue>(),
+                eventAggregator: ThrowingProxy<IEventAggregator>(),
+                metadataProfileService: ThrowingProxy<IMetadataProfileService>(),
+                qualityProfileService: ThrowingProxy<IQualityProfileService>(),
+                rootFolderService: ThrowingProxy<IRootFolderService>(),
+                qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
+                metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
+                logger: LogManager.GetCurrentClassLogger());
+        }
+
         [Test]
         public void author_book_list_should_not_reapply_metadata_profile_filter_to_local_rows()
         {
@@ -117,7 +181,15 @@ namespace Chaptarr.Core.Test.Api
                 }),
                 authorStatisticsService: Proxy<IAuthorStatisticsService>(new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
-                    [nameof(IAuthorStatisticsService.AuthorStatistics)] = (_, _) => new List<AuthorStatistics>()
+                    [nameof(IAuthorStatisticsService.AuthorStatistics)] = (method, args) =>
+                    {
+                        Assert.That(method.ReturnType, Is.EqualTo(typeof(AuthorStatistics)));
+                        Assert.That(args[0], Is.EqualTo(author.Id));
+                        return new AuthorStatistics
+                        {
+                            AuthorId = author.Id
+                        };
+                    }
                 }),
                 mediaFileService: null,
                 coverMapper: Proxy<IMapCoversToLocal>(new Dictionary<string, Func<MethodInfo, object[], object>>
@@ -312,6 +384,265 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(book.IsMonitoredForMediaType(mediaType == "audiobook" ? "ebook" : "audiobook"), Is.False);
                 Assert.That(addOptionsWriteCount, Is.EqualTo(1));
                 Assert.That(resource?.Monitored, Is.True);
+            });
+        }
+
+        [Test]
+        public void single_book_query_should_use_scoped_statistics_and_preserve_resource_shape()
+        {
+            const int authorId = 42;
+            const int bookId = 49184;
+            var author = new Author
+            {
+                Id = authorId,
+                Name = "Shirtaloon",
+                SortNameLastFirst = "Shirtaloon"
+            };
+            var series = new Series
+            {
+                Id = 7,
+                Title = "He Who Fights with Monsters",
+                MediaType = BookMediaType.Audiobook,
+                GoodreadsSeriesId = "gr:7000000"
+            };
+            var book = new Book
+            {
+                Id = bookId,
+                AuthorId = authorId,
+                Author = author,
+                Title = "He Who Fights with Monsters 1",
+                TitleSlug = "he-who-fights-with-monsters-1",
+                HardcoverBookId = "hc:2371526",
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = true,
+                Ratings = new Ratings(),
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 700,
+                        BookId = bookId,
+                        Monitored = true,
+                        Title = "He Who Fights with Monsters: A LitRPG Adventure",
+                        NarratorNames = new List<string> { "Heath Miller" }
+                    }
+                }
+            };
+            var statistics = new AuthorStatistics
+            {
+                AuthorId = authorId,
+                BookStatistics = new List<BookStatistics>
+                {
+                    new BookStatistics
+                    {
+                        AuthorId = authorId,
+                        BookId = bookId,
+                        BookFileCount = 2,
+                        BookCount = 1,
+                        AvailableBookCount = 1,
+                        TotalBookCount = 1,
+                        SizeOnDisk = 2048
+                    }
+                }
+            };
+            var globalCalls = 0;
+            var scopedCalls = 0;
+            var controller = CreateController(
+                bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IBookService.GetBook)] = (_, _) => book
+                },
+                authorHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IAuthorService.GetAuthor)] = (_, _) => author
+                },
+                authorStatisticsHandler: (method, args) =>
+                {
+                    if (method.ReturnType == typeof(AuthorStatistics))
+                    {
+                        scopedCalls++;
+                        Assert.That(args[0], Is.EqualTo(authorId));
+                        return statistics;
+                    }
+
+                    globalCalls++;
+                    return new List<AuthorStatistics>();
+                },
+                seriesLinksHandler: (_, _) => new List<SeriesBookLink>
+                {
+                    new SeriesBookLink
+                    {
+                        BookId = bookId,
+                        SeriesId = series.Id,
+                        Position = "1",
+                        Series = series
+                    }
+                });
+            var httpContext = new DefaultHttpContext();
+            httpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("hc", "audiobook", "/audiobook");
+            controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+            var resource = controller.GetBooks(
+                authorId: null,
+                bookIds: new List<int>(),
+                bookId: bookId.ToString()).Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(scopedCalls, Is.EqualTo(1));
+                Assert.That(globalCalls, Is.Zero);
+                Assert.That(resource.Id, Is.EqualTo(bookId));
+                Assert.That(resource.ForeignBookId, Is.EqualTo("2371526"));
+                Assert.That(resource.Author, Is.Null);
+                Assert.That(resource.MediaType, Is.EqualTo("audiobook"));
+                Assert.That(resource.Title, Is.EqualTo("He Who Fights with Monsters: A LitRPG Adventure"));
+                Assert.That(resource.SeriesTitle, Is.EqualTo("He Who Fights with Monsters #1"));
+                Assert.That(resource.Narrator, Is.EqualTo("Heath Miller"));
+                Assert.That(resource.Statistics.BookFileCount, Is.EqualTo(2));
+                Assert.That(resource.HasFiles, Is.True);
+            });
+        }
+
+        [Test]
+        public void mixed_author_book_list_should_use_one_global_statistics_lookup()
+        {
+            var books = new List<Book>
+            {
+                new Book { Id = 10, AuthorId = 42, Title = "One", MediaType = BookMediaType.Ebook, AnyEditionOk = true },
+                new Book { Id = 20, AuthorId = 43, Title = "Two", MediaType = BookMediaType.Ebook, AnyEditionOk = true }
+            };
+            var globalCalls = 0;
+            var scopedCalls = 0;
+            var controller = CreateController(
+                bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IBookService.GetBooks)] = (_, _) => books
+                },
+                authorStatisticsHandler: (method, _) =>
+                {
+                    if (method.ReturnType == typeof(AuthorStatistics))
+                    {
+                        scopedCalls++;
+                        return new AuthorStatistics();
+                    }
+
+                    globalCalls++;
+                    return new List<AuthorStatistics>
+                    {
+                        new AuthorStatistics
+                        {
+                            AuthorId = 42,
+                            BookStatistics = new List<BookStatistics>
+                            {
+                                new BookStatistics { AuthorId = 42, BookId = 10, BookCount = 1, TotalBookCount = 1 }
+                            }
+                        },
+                        new AuthorStatistics
+                        {
+                            AuthorId = 43,
+                            BookStatistics = new List<BookStatistics>
+                            {
+                                new BookStatistics { AuthorId = 43, BookId = 20, BookCount = 1, TotalBookCount = 1 }
+                            }
+                        }
+                    };
+                });
+
+            var resources = controller.GetBooks(
+                authorId: null,
+                bookIds: new List<int> { 10, 20 },
+                bookId: null);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(globalCalls, Is.EqualTo(1));
+                Assert.That(scopedCalls, Is.Zero);
+                Assert.That(resources.Select(resource => resource.Statistics?.TotalBookCount), Is.EqualTo(new[] { 1, 1 }));
+            });
+        }
+
+        [Test]
+        public void provided_statistics_should_not_trigger_an_additional_lookup()
+        {
+            const int authorId = 42;
+            const int bookId = 10;
+            var author = new Author { Id = authorId, Name = "Author", SortNameLastFirst = "Author" };
+            var book = new Book
+            {
+                Id = bookId,
+                AuthorId = authorId,
+                Author = author,
+                Title = "One",
+                MediaType = BookMediaType.Ebook,
+                AnyEditionOk = true
+            };
+            var statisticsCalls = 0;
+            var controller = CreateController(
+                bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IBookService.GetBooksForDisplay)] = (_, _) => new List<Book> { book }
+                },
+                authorHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IAuthorService.GetAllAuthors)] = (_, _) => new List<Author> { author }
+                },
+                authorStatisticsHandler: (method, _) =>
+                {
+                    Assert.That(method.ReturnType, Is.EqualTo(typeof(List<AuthorStatistics>)));
+                    statisticsCalls++;
+                    return new List<AuthorStatistics>
+                    {
+                        new AuthorStatistics
+                        {
+                            AuthorId = authorId,
+                            BookStatistics = new List<BookStatistics>
+                            {
+                                new BookStatistics { AuthorId = authorId, BookId = bookId, BookCount = 1, TotalBookCount = 1 }
+                            }
+                        }
+                    };
+                });
+
+            var resources = controller.GetBooks(
+                authorId: null,
+                bookIds: new List<int>(),
+                bookId: null);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(statisticsCalls, Is.EqualTo(1));
+                Assert.That(resources.Single().Statistics.TotalBookCount, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public void empty_book_batch_should_not_lookup_statistics()
+        {
+            var statisticsCalls = 0;
+            var controller = CreateController(
+                bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IBookService.GetBook)] = (_, _) => null
+                },
+                authorStatisticsHandler: (method, _) =>
+                {
+                    statisticsCalls++;
+                    return method.ReturnType == typeof(AuthorStatistics)
+                        ? new AuthorStatistics()
+                        : new List<AuthorStatistics>();
+                },
+                seriesLinksHandler: (_, _) => throw new AssertionException("empty mapping must not load series links"));
+
+            var resources = controller.GetBooks(
+                authorId: null,
+                bookIds: new List<int>(),
+                bookId: "49184");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resources, Is.Empty);
+                Assert.That(statisticsCalls, Is.Zero);
             });
         }
     }

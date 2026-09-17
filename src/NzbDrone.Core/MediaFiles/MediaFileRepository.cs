@@ -111,7 +111,10 @@ namespace NzbDrone.Core.MediaFiles
 
         public List<BookFile> GetFilesByBook(int bookId)
         {
-            return Query(Builder().Where<Book>(b => b.Id == bookId));
+            // Keep the joined-book predicate for ownership semantics and add the edition predicate for selectivity.
+            return Query(Builder()
+                .Where<Edition>(e => e.BookId == bookId)
+                .Where<Book>(b => b.Id == bookId));
         }
 
         public List<BookFile> GetFilesByBooks(List<int> bookIds)

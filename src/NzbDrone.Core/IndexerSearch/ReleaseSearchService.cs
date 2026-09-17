@@ -230,7 +230,7 @@ namespace NzbDrone.Core.IndexerSearch
                 return author.Books;
             }
 
-            return author?.Id > 0 ? _bookService.GetBooksByAuthor(author.Id) : new List<Book>();
+            return author?.Id > 0 ? _bookService.GetBooksByAuthor(author.Id, onlyMonitoredEditions: true) : new List<Book>();
         }
 
         private async Task<List<DownloadDecision>> Dispatch(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, SearchCriteriaBase criteriaBase)

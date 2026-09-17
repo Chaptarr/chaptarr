@@ -420,7 +420,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public Edition FindByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
                 public List<Edition> FindAllByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
                 public List<Edition> FindByBook(IEnumerable<int> ids) => throw new NotImplementedException();
-                public List<Edition> FindByAuthor(int id) => throw new NotImplementedException();
+                public List<Edition> FindByAuthor(int id, bool onlyMonitored = false) => throw new NotImplementedException();
                 public List<Edition> FindByAuthorId(int id, bool onlyMonitored) => throw new NotImplementedException();
                 public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
                 public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -562,7 +562,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     .Where(book => book != null)
                     .ToList();
             }
-            public List<Book> GetBooksByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();

@@ -119,7 +119,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
 
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByAuthor(int authorId)
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false)
             {
                 return _booksById.Values
                     .Where(b => b != null && b.AuthorId == authorId)
@@ -227,7 +227,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 	            public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();

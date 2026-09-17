@@ -90,7 +90,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             public Book GetBook(int bookId) => _booksById.TryGetValue(bookId, out var book) ? book : null;
             public List<Book> GetBooks(IEnumerable<int> bookIds) => (bookIds ?? Array.Empty<int>()).Select(GetBook).Where(book => book != null).ToList();
-            public List<Book> GetBooksByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
@@ -166,7 +166,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 var ids = (bookIds ?? Array.Empty<int>()).ToHashSet();
                 return _editionsById.Values.Where(e => ids.Contains(e.BookId)).ToList();
             }
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();

@@ -118,7 +118,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 _books = books ?? new List<Book>();
             }
 
-            public List<Book> GetBooksByAuthor(int authorId) => _books.Where(b => b.AuthorId == authorId).ToList();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => _books.Where(b => b.AuthorId == authorId).ToList();
 
             public Book GetBook(int bookId) => throw new NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
@@ -172,7 +172,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 _editions = editions ?? new List<Edition>();
             }
 
-            public List<Edition> GetEditionsByAuthor(int authorId) => _editions;
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => _editions;
 
             public Edition GetEdition(int id) => throw new NotImplementedException();
             public List<Edition> GetEditions(IEnumerable<int> ids) => throw new NotImplementedException();

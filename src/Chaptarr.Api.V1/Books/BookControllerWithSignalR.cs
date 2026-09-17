@@ -70,7 +70,17 @@ namespace Chaptarr.Api.V1.Books
 
         protected List<BookResource> MapToResource(List<Book> books, bool includeAuthor)
         {
-            return MapToResource(books, includeAuthor, null, includeOverview: true, includeLinks: true);
+            IReadOnlyDictionary<int, BookStatistics> statsByBookId = null;
+
+            if (books.Count > 0 && books.All(book => book.AuthorId == books[0].AuthorId))
+            {
+                statsByBookId = BuildBookStatisticsById(new[]
+                {
+                    _authorStatisticsService.AuthorStatistics(books[0].AuthorId)
+                });
+            }
+
+            return MapToResource(books, includeAuthor, statsByBookId, includeOverview: true, includeLinks: true);
         }
 
         protected List<BookResource> MapToResource(List<Book> books,
@@ -79,6 +89,11 @@ namespace Chaptarr.Api.V1.Books
                                                    bool includeOverview,
                                                    bool includeLinks)
         {
+            if (books.Count == 0)
+            {
+                return new List<BookResource>();
+            }
+
             var facadeContext = HttpContext?.GetReadarrFacadeContext();
             var seriesLinks = _seriesBookLinkService.GetLinksByBook(books.Select(x => x.Id).ToList())
                 .GroupBy(x => x.BookId)
