@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using Chaptarr.Api.V1.Indexers;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
@@ -74,6 +76,27 @@ namespace Chaptarr.Core.Test.DecisionEngine
             }
         }
 
+        private class CatalogBookService : DispatchProxy
+        {
+            public List<Book> Books { get; set; }
+            public int Calls { get; private set; }
+
+            public static IBookService Create(List<Book> books)
+            {
+                var service = Create<IBookService, CatalogBookService>();
+                ((CatalogBookService)(object)service).Books = books;
+                return service;
+            }
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IBookService.GetBooksByAuthor)));
+                Assert.That(args[1], Is.True);
+                Calls++;
+                return Books.Where(book => book.AuthorId == (int)args[0]).ToList();
+            }
+        }
+
         private sealed class TestEditionFtsRepository : IEditionFtsRepository, IStagedEditionFtsRepository
         {
             public List<BookFtsMatch> Recalls { get; } = new();
@@ -132,8 +155,26 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
         private sealed class NoOpReleaseNarratorMetadataEnricher : IReleaseNarratorMetadataEnricher
         {
-            public void EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+            public IReadOnlyCollection<ReleaseInfo> EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
             {
+                return System.Array.Empty<ReleaseInfo>();
+            }
+        }
+
+        private sealed class RecordingReleaseNarratorMetadataEnricher : IReleaseNarratorMetadataEnricher
+        {
+            public List<string> OfferedTitles { get; } = new();
+
+            public IReadOnlyCollection<ReleaseInfo> EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+            {
+                OfferedTitles.AddRange(releases.Select(release => release.Title));
+
+                foreach (var release in releases)
+                {
+                    release.Narrator = "Scott Brick";
+                }
+
+                return releases;
             }
         }
 
@@ -148,6 +189,101 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 SeenSource = remoteBook.ReleaseSource;
                 return Decision.Accept();
             }
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void title_identity_should_agree_across_rss_automatic_and_interactive_search(int path)
+        {
+            foreach (var mode in new[] { BookMatchingStrictness.Strict, BookMatchingStrictness.Balanced, BookMatchingStrictness.Aggressive })
+            {
+                var profile = new QualityProfile
+                {
+                    Id = 1, ProfileType = ProfileType.Audiobook, Cutoff = Quality.MP3.Id,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new QualityProfileQualityItem { Quality = Quality.MP3, Allowed = true },
+                        new QualityProfileQualityItem { Quality = Quality.M4B, Allowed = true },
+                        new QualityProfileQualityItem { Quality = Quality.FLAC, Allowed = false }
+                    }
+                };
+                var author = new Author { Id = 1, Name = "Frank Herbert", AudiobookMonitored = true, AudiobookQualityProfileId = 1, AudiobookQualityProfile = profile };
+                Book MakeBook(int id, string title, bool monitored) => new Book
+                {
+                    Id = id, AuthorId = author.Id, Author = author, Title = title, MediaType = BookMediaType.Audiobook,
+                    AudiobookMonitored = monitored, AnyEditionOk = true,
+                    Editions = new List<Edition> { new Edition { Id = id, BookId = id, Title = title, Monitored = true } }
+                };
+                var target = MakeBook(1, "Dune", true);
+                target.SeriesName = "Dune";
+                target.SeriesPosition = "1";
+                var catalog = new List<Book> { target, MakeBook(2, "Dune Messiah", false), MakeBook(3, "Children of Dune", false) };
+                var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = catalog };
+                var books = CatalogBookService.Create(catalog);
+                var fts = new TestEditionFtsRepository();
+                fts.Recalls.Add(new BookFtsMatch { BookId = target.Id, AuthorId = author.Id, BookTitle = target.Title });
+                var config = ConfigServiceTestProxy.Create(mode);
+                var logger = LogManager.GetCurrentClassLogger();
+                var maker = new DownloadDecisionMaker(new IDecisionEngineSpecification[]
+                {
+                    new ReleaseTitleMatchSpecification(logger, config),
+                    new MultiBookReleaseSpecification(logger),
+                    new QualityAllowedByProfileSpecification(logger),
+                    new NzbDrone.Core.DecisionEngine.Specifications.RssSync.MonitoredBookSpecification(logger)
+                }, parsing, books, fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                    new NoOpReleaseNarratorMetadataEnricher(), config, logger);
+                var cases = new[]
+                {
+                    ("Frank.Herbert.Dune.Repack.m4b.Scott.Brick.Euan.Morton.Simon.vance.320kps", true),
+                    ("Frank.Herbert.Dune.320kbps.Repack.m4b.Scott.Brick.Euan.Morton.Simon.vance.", true),
+                    ("Frank Herbert - Dune réédition MP3", true),
+                    ("Frank Herbert - Dune [64-128 kbps] MP3", true),
+                    ("Frank Herbert - Dune [Dune 64-128 kbps] MP3", true),
+                    ("Frank Herbert - Dune 1 MP3", true),
+                    ("Frank Herbert - Dune 4 MP3", false),
+                    ("Frank Herbert Dune series Dune 4 MP3", false),
+                    ("Frank Herbert Dune series du02 Dune Messiah MP3", false),
+                    ("Frank Herbert - Children of Dune MP3", false),
+                    ("Frank Herbert - Dune FLAC", false)
+                };
+                var reports = cases.Select((item, index) => new ReleaseInfo
+                {
+                    Guid = index.ToString(), Title = item.Item1, Author = author.Name, Indexer = "Generic",
+                    Categories = new List<int> { 3030 }, PublishDate = DateTime.UtcNow
+                }).ToList();
+                var decisions = path == 0 ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
+                {
+                    Author = author, Books = new List<Book> { target }, AuthorCatalog = catalog,
+                    InteractiveSearch = path == 2
+                });
+                for (var index = 0; index < cases.Length; index++)
+                {
+                    var decision = decisions.SingleOrDefault(item => item.RemoteBook.Release.Guid == index.ToString());
+                    Assert.That(decision?.Approved == true, Is.EqualTo(cases[index].Item2), mode + ": " + cases[index].Item1);
+                }
+
+                Assert.That(((CatalogBookService)(object)books).Calls, Is.EqualTo(path == 0 ? 1 : 0));
+            }
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void structured_book_evidence_should_use_the_same_title_comparison(bool structuredAuthor)
+        {
+            var author = new Author { Name = "J.K. Rowling" };
+            var book = new Book
+            {
+                Author = author, Title = "Harry Potter and the Chamber of Secrets",
+                Editions = new List<Edition> { new Edition { Monitored = true, Title = "Harry Potter and the Chamber of Secrets (Narrated by Stephen Fry)", Narrator = "Stephen Fry" } }
+            };
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = structuredAuthor ? "MP3 unabridged" : "J K Rowling MP3 unabridged", Book = "Harry Potter and the Chamber of Secrets", Author = structuredAuthor ? author.Name : null,
+                Narrator = "Stephen Fry", Indexer = "MyAnonaMouse", Categories = new List<int> { 3030 }, PublishDate = DateTime.UtcNow
+            });
+            Assert.That(decision.Approved, Is.True);
+            Assert.That(decision.RemoteBook.SearchCriteriaMatch.EvidenceTitle, Is.EqualTo("Harry Potter and the Chamber of Secrets"));
         }
 
         [TestCase(true, true)]
@@ -172,7 +308,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var logger = LogManager.GetCurrentClassLogger();
             var decisionMaker = new DownloadDecisionMaker(
                 new List<IDecisionEngineSpecification> { new ReleaseTitleMatchSpecification(logger) },
-                parsing, fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                parsing, CatalogBookService.Create(parsing.MappedBooks), fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
                 new NoOpReleaseNarratorMetadataEnricher(), (IConfigService)null, logger);
             var reports = new[] { emojiInRelease ? "Astorias Smutty Smut 🌶️" : "Astorias Smutty Smut", "Astorias Smutty Smut" }
                 .Select(title => new ReleaseInfo
@@ -200,6 +336,193 @@ namespace Chaptarr.Core.Test.DecisionEngine
             }
         }
 
+        [TestCase(true, false)]
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        public void should_accept_a_structured_narrator_credit_outside_the_release_title(bool rss, bool interactive)
+        {
+            var author = new Author { Id = 1, Name = "J.K. Rowling", GoodreadsAuthorId = "gr:1077326" };
+            var book = new Book
+            {
+                Id = 1,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Harry Potter und die Kammer des Schreckens - Gesprochen von Rufus Beck",
+                HardcoverBookId = "hc:429306",
+                GoodreadsWorkId = "gr:167643570",
+                MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 1,
+                        Title = "Harry Potter and the Chamber of Secrets (Narrated by Stephen Fry)",
+                        ForeignEditionId = "az:B0D1CTCS5D-audiobook",
+                        Monitored = true,
+                        ReadingFormatId = 2,
+                        Narrator = "Stephen Fry"
+                    }
+                }
+            };
+            author.Books = new List<Book> { book };
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = author.Books };
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = book.Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = book.Title });
+            var logger = LogManager.GetCurrentClassLogger();
+            var decisionMaker = new DownloadDecisionMaker(
+                new List<IDecisionEngineSpecification>
+                {
+                    new ReleaseTitleMatchSpecification(logger, ConfigServiceTestProxy.Create(BookMatchingStrictness.Strict))
+                },
+                parsing, CatalogBookService.Create(parsing.MappedBooks), fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                new NoOpReleaseNarratorMetadataEnricher(), (IConfigService)null, logger);
+            var reports = new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = "J K Rowling read by Stephen Fry - Harry Potter and the Chamber of Secrets (2000) MP3",
+                    Indexer = "DrunkenSlug (Prowlarr)",
+                    Categories = new List<int> { 3030 },
+                    PublishDate = DateTime.UtcNow
+                }
+            };
+
+            var decisions = rss
+                ? decisionMaker.GetRssDecision(reports)
+                : decisionMaker.GetSearchDecision(reports, new BookSearchCriteria
+                {
+                    Author = author,
+                    Books = author.Books,
+                    UserInvokedSearch = interactive,
+                    InteractiveSearch = interactive
+                });
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].Rejections, Is.Empty);
+            Assert.That(decisions[0].RemoteBook.Books, Is.EqualTo(new[] { book }));
+        }
+
+        [TestCase(false, false, BookMediaType.Audiobook)]
+        [TestCase(false, true, BookMediaType.Audiobook)]
+        [TestCase(true, false, BookMediaType.Audiobook)]
+        [TestCase(true, true, BookMediaType.Audiobook)]
+        [TestCase(false, false, BookMediaType.Ebook)]
+        [TestCase(false, true, BookMediaType.Ebook)]
+        [TestCase(true, false, BookMediaType.Ebook)]
+        [TestCase(true, true, BookMediaType.Ebook)]
+        public void should_accept_edition_derived_subtitle_fallback_through_search_rss_and_resource_mapping(bool rss, bool structured, BookMediaType mediaType)
+        {
+            var author = new Author { Id = 1, Name = "Shirtaloon" };
+            var editionTitle = "He Who Fights with Monsters 11: A LitRPG Adventure";
+            var releaseTitle = "He Who Fights with Monsters 11";
+            var book = new Book
+            {
+                Id = 11, AuthorId = author.Id, Author = author,
+                Title = "He Who Fights with Monsters", MediaType = mediaType,
+                SeriesName = "He Who Fights with Monsters", SeriesPosition = "11",
+                Editions = new List<Edition> { new Edition { Title = editionTitle, Monitored = true } }
+            };
+            author.Books = new List<Book> { book };
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = author.Books };
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = book.Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = book.Title });
+            var logger = LogManager.GetCurrentClassLogger();
+            var maker = new DownloadDecisionMaker(
+                new List<IDecisionEngineSpecification> { new ReleaseTitleMatchSpecification(logger) },
+                parsing, CatalogBookService.Create(author.Books), fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                new NoOpReleaseNarratorMetadataEnricher(), (IConfigService)null, logger);
+            var format = mediaType == BookMediaType.Ebook ? "EPUB" : "M4B";
+            var reports = new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = structured ? $"Upload {format}" : $"{author.Name} - {releaseTitle} {format}",
+                    Book = structured ? releaseTitle : null,
+                    Author = structured ? "Shirtaloon, Travis Deverell" : null,
+                    Indexer = "MyAnonaMouse", PublishDate = DateTime.UtcNow,
+                    Categories = new List<int> { mediaType == BookMediaType.Ebook ? 7020 : 3030 }
+                }
+            };
+            var decisions = rss ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
+            {
+                Author = author, Books = author.Books, AuthorCatalog = author.Books, InteractiveSearch = true
+            });
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            var decision = decisions.Single();
+            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.RemoteBook.Books.Single(), Is.SameAs(book));
+            Assert.That(decision.RemoteBook.SearchCriteriaMatch.MatchedVariant, Is.EqualTo(releaseTitle));
+            Assert.That(decision.RemoteBook.SearchCriteriaMatch.PrimaryTitle, Is.EqualTo(editionTitle));
+            var resource = decision.ToResource();
+            Assert.That(resource.MatchedTitle, Is.EqualTo(editionTitle));
+            Assert.That(resource.BookId, Is.EqualTo(book.Id));
+            Assert.That(resource.FormatType, Is.EqualTo(mediaType == BookMediaType.Ebook ? "ebook" : "audiobook"));
+            if (structured)
+            {
+                Assert.That(resource.MatchedTitleCharStart, Is.Null);
+            }
+            else
+            {
+                Assert.That(resource.MatchedTitleCharStart, Is.Not.Null);
+                Assert.That(resource.DisplayTitle.Substring(resource.MatchedTitleCharStart.Value,
+                    resource.MatchedTitleCharEnd.Value - resource.MatchedTitleCharStart.Value), Is.EqualTo(releaseTitle));
+            }
+        }
+
+        [TestCase(false, BookMediaType.Audiobook)]
+        [TestCase(true, BookMediaType.Audiobook)]
+        [TestCase(false, BookMediaType.Ebook)]
+        [TestCase(true, BookMediaType.Ebook)]
+        public void should_preserve_quoted_filename_evidence_through_search_rss_and_resource_mapping(bool rss, BookMediaType mediaType)
+        {
+            var author = new Author { Id = 1, Name = "Shirtaloon" };
+            var book = new Book
+            {
+                Id = 1, AuthorId = author.Id, Author = author,
+                Title = "He Who Fights with Monsters", MediaType = mediaType,
+                SeriesName = "He Who Fights with Monsters", SeriesPosition = "1",
+                Editions = new List<Edition>
+                {
+                    new Edition { Title = "He Who Fights with Monsters: A LitRPG Adventure", Monitored = true }
+                }
+            };
+            author.Books = new List<Book> { book };
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = author.Books };
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = book.Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = book.Title });
+            var logger = LogManager.GetCurrentClassLogger();
+            var maker = new DownloadDecisionMaker(
+                new List<IDecisionEngineSpecification> { new ReleaseTitleMatchSpecification(logger) },
+                parsing, CatalogBookService.Create(author.Books), fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                new NoOpReleaseNarratorMetadataEnricher(), (IConfigService)null, logger);
+            var extension = mediaType == BookMediaType.Ebook ? "epub" : "mp3";
+            var reports = new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = $"[1/3] - \"Shirtaloon - He Who Fights with Monsters 01 (2021) [Chaptered].{extension}\"",
+                    Indexer = "DrunkenSlug", PublishDate = DateTime.UtcNow,
+                    Categories = new List<int> { mediaType == BookMediaType.Ebook ? 7020 : 3030 }
+                }
+            };
+            var decisions = rss ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
+            {
+                Author = author, Books = author.Books, AuthorCatalog = author.Books, InteractiveSearch = true
+            });
+
+            var decision = decisions.Single();
+            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.RemoteBook.Books.Single(), Is.SameAs(book));
+            var resource = decision.ToResource();
+            Assert.That(resource.MatchedTitle, Is.EqualTo(book.Editions.Single().Title));
+            Assert.That(resource.BookId, Is.EqualTo(book.Id));
+            Assert.That(resource.FormatType, Is.EqualTo(mediaType == BookMediaType.Ebook ? "ebook" : "audiobook"));
+            Assert.That(resource.MatchedTitleCharStart, Is.Not.Null);
+            Assert.That(resource.DisplayTitle.Substring(resource.MatchedTitleCharStart.Value,
+                resource.MatchedTitleCharEnd.Value - resource.MatchedTitleCharStart.Value), Is.EqualTo(book.Title));
+        }
+
         private static DownloadDecision RunSingleSearchDecision(Author author, Book book, ReleaseInfo report)
         {
             var logger = LogManager.GetCurrentClassLogger();
@@ -208,6 +531,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -234,6 +558,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var specification = new RecordingReleaseSourceSpecification();
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification> { specification },
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -297,6 +622,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(),
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -374,6 +700,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new MultiBookReleaseSpecification(logger)
                                                           },
                                                           parsingService,
+                                                          CatalogBookService.Create(parsingService.MappedBooks),
                                                           ftsRepository,
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -430,6 +757,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var logger = LogManager.GetCurrentClassLogger();
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(),
                                                           parsingService,
+                                                          CatalogBookService.Create(parsingService.MappedBooks),
                                                           ftsRepository,
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -496,6 +824,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(
                 new List<IDecisionEngineSpecification> { new ReleaseTitleMatchSpecification(logger) },
                 parsingService,
+                CatalogBookService.Create(parsingService.MappedBooks),
                 ftsRepository,
                 new NoOpCustomFormatCalculationService(),
                 new NoOpRemoteBookAggregationService(),
@@ -602,7 +931,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 RunSingleSearchDecision(author, book, new ReleaseInfo
                 {
                     Title = "Moongarden - Voyeur (2014) MP3",
-                    Author = "Fiona Cole",
+                    Author = "Moongarden",
                     Indexer = "Generic",
                     Categories = new List<int> { 3010 },
                     PublishDate = DateTime.UtcNow
@@ -733,6 +1062,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                     new MonitoredMediaTypeSpecification(logger)
                 },
                 parsingService,
+                CatalogBookService.Create(parsingService.MappedBooks),
                 ftsRepository,
                 new NoOpCustomFormatCalculationService(),
                 new NoOpRemoteBookAggregationService(),
@@ -812,6 +1142,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(
                 new List<IDecisionEngineSpecification> { new ReleaseTitleMatchSpecification(logger) },
                 parsingService,
+                CatalogBookService.Create(parsingService.MappedBooks),
                 ftsRepository,
                 new NoOpCustomFormatCalculationService(),
                 new NoOpRemoteBookAggregationService(),
@@ -884,6 +1215,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(
                 new List<IDecisionEngineSpecification> { new ReleaseTitleMatchSpecification(logger) },
                 parsingService,
+                CatalogBookService.Create(parsingService.MappedBooks),
                 ftsRepository,
                 new NoOpCustomFormatCalculationService(),
                 new NoOpRemoteBookAggregationService(),
@@ -902,7 +1234,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_hide_short_title_false_positive_during_interactive_search()
+        public void should_reject_structured_author_mismatch_during_interactive_search()
         {
             var author = new Author
             {
@@ -929,7 +1261,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var report = new ReleaseInfo
             {
                 Title = "Moongarden - Voyeur (2014) MP3",
-                Author = "Fiona Cole",
+                Author = "Moongarden",
                 Indexer = "DrunkenSlug (Prowlarr)",
                 Categories = new List<int>(),
                 PublishDate = DateTime.UtcNow
@@ -942,6 +1274,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1013,6 +1346,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1077,6 +1411,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decisionMaker = new DownloadDecisionMaker(specs,
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1157,6 +1492,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decisionMaker = new DownloadDecisionMaker(specs,
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1231,6 +1567,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decisionMaker = new DownloadDecisionMaker(specs,
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1282,6 +1619,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(),
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1337,6 +1675,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1446,6 +1785,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1505,6 +1845,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
+                                                          CatalogBookService.Create(new List<Book>()),
                                                           new TestEditionFtsRepository(),
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1583,6 +1924,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                                                               new QualityAllowedByProfileSpecification(logger)
                                                           },
                                                           parsingService,
+                                                          CatalogBookService.Create(parsingService.MappedBooks),
                                                           ftsRepository,
                                                           new NoOpCustomFormatCalculationService(),
                                                           new NoOpRemoteBookAggregationService(),
@@ -1661,7 +2003,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_accept_authorless_long_title_release()
+        public void should_require_author_evidence_regardless_of_title_length()
         {
             var author = new Author { Name = "Mitch Albom" };
             var book = new Book
@@ -1683,7 +2025,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 PublishDate = DateTime.UtcNow
             });
 
-            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.Rejected, Is.True);
         }
 
         [Test]
@@ -2272,7 +2614,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_soft_reject_embedded_one_word_title_false_positive()
+        public void should_reject_a_displayed_sibling_that_contains_the_target_title()
         {
             var author = new Author { Name = "Stephen King" };
             var book = new Book
@@ -2285,6 +2627,12 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 }
             };
 
+            author.Books = new List<Book>
+            {
+                book,
+                new Book { Id = 2, Author = author, Title = "If It Bleeds", Editions = new List<Edition> { new Edition { Title = "If It Bleeds", Monitored = true } } }
+            };
+
             var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
             {
                 Title = "Stephen King - If It Bleeds-AUDiOBOOK-WEB-EN-2020-OLDSWE iNT-xpost",
@@ -2295,7 +2643,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
 
             Assert.That(decision.Rejected, Is.True);
-            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Release appears to match a different book by this author"));
         }
 
         private static List<DownloadDecision> RunRssWithoutFtsRecall()
@@ -2304,6 +2652,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(
                 new List<IDecisionEngineSpecification>(),
                 new TestParsingService(),
+                CatalogBookService.Create(new List<Book>()),
                 new TestEditionFtsRepository(),
                 new NoOpCustomFormatCalculationService(),
                 new NoOpRemoteBookAggregationService(),
@@ -2336,5 +2685,70 @@ namespace Chaptarr.Core.Test.DecisionEngine
             LogManager.ReconfigExistingLoggers();
             return memory;
         }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void narrator_enrichment_should_be_offered_to_visible_releases_and_fall_back_to_hidden(bool anyVisible)
+        {
+            var profile = new QualityProfile
+            {
+                Id = 1,
+                ProfileType = ProfileType.Audiobook,
+                Cutoff = Quality.MP3.Id,
+                Items = new List<QualityProfileQualityItem>
+                {
+                    new QualityProfileQualityItem { Quality = Quality.MP3, Allowed = true }
+                }
+            };
+            var author = new Author { Id = 1, Name = "Frank Herbert", AudiobookMonitored = true, AudiobookQualityProfileId = 1, AudiobookQualityProfile = profile };
+            Book MakeBook(int id, string title, bool monitored) => new Book
+            {
+                Id = id, AuthorId = author.Id, Author = author, Title = title, MediaType = BookMediaType.Audiobook,
+                AudiobookMonitored = monitored, AnyEditionOk = true,
+                Editions = new List<Edition> { new Edition { Id = id, BookId = id, Title = title, Monitored = true } }
+            };
+            var target = MakeBook(1, "Dune", true);
+            var catalog = new List<Book> { target, MakeBook(3, "Children of Dune", false) };
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = catalog };
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = target.Id, AuthorId = author.Id, BookTitle = target.Title });
+            var config = ConfigServiceTestProxy.Create(BookMatchingStrictness.Balanced);
+            var logger = LogManager.GetCurrentClassLogger();
+            var enricher = new RecordingReleaseNarratorMetadataEnricher();
+            var maker = new DownloadDecisionMaker(new IDecisionEngineSpecification[]
+            {
+                new ReleaseTitleMatchSpecification(logger, config),
+                new MultiBookReleaseSpecification(logger)
+            }, parsing, CatalogBookService.Create(catalog), fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                enricher, config, logger);
+
+            // "Children of Dune" is a different book by the same author, so it is rejected under
+            // Matching and hidden behind Show Hidden.
+            var titles = anyVisible
+                ? new[] { "Frank Herbert - Dune MP3", "Frank Herbert - Children of Dune MP3" }
+                : new[] { "Frank Herbert - Children of Dune MP3" };
+            var reports = titles.Select((title, index) => new ReleaseInfo
+            {
+                Guid = index.ToString(), Title = title, Author = author.Name, Indexer = "Generic",
+                Categories = new List<int> { 3030 }, PublishDate = DateTime.UtcNow
+            }).ToList();
+
+            var decisions = maker.GetSearchDecision(reports, new BookSearchCriteria
+            {
+                Author = author, Books = new List<Book> { target }, AuthorCatalog = catalog, InteractiveSearch = true
+            });
+
+            Assert.That(decisions.Count, Is.EqualTo(titles.Length));
+
+            if (anyVisible)
+            {
+                Assert.That(enricher.OfferedTitles, Is.EqualTo(new[] { "Frank Herbert - Dune MP3" }));
+            }
+            else
+            {
+                Assert.That(enricher.OfferedTitles, Is.EqualTo(new[] { "Frank Herbert - Children of Dune MP3" }));
+            }
+        }
+
     }
 }

@@ -173,7 +173,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_cap_narrator_metadata_enrichment_per_indexer()
+        public void should_enrich_every_offered_release_and_report_the_populated_ones()
         {
             var indexer = new StubEnhancedIndexer(1, release =>
             {
@@ -186,10 +186,11 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 .Select(i => new ReleaseInfo { Title = $"Harry Potter {i} m4b", IndexerId = 1 })
                 .ToList();
 
-            enricher.EnrichReleaseNarratorMetadata(releases, CreateCriteria(anyEditionOk: false));
+            var enriched = enricher.EnrichReleaseNarratorMetadata(releases, CreateCriteria(anyEditionOk: false));
 
-            Assert.That(indexer.PopulateCalls, Is.EqualTo(8));
-            Assert.That(releases.Count(release => release.Narrator == "Jim Dale"), Is.EqualTo(8));
+            Assert.That(indexer.PopulateCalls, Is.EqualTo(12));
+            Assert.That(releases.Count(release => release.Narrator == "Jim Dale"), Is.EqualTo(12));
+            Assert.That(enriched, Is.EquivalentTo(releases));
         }
 
         [Test]

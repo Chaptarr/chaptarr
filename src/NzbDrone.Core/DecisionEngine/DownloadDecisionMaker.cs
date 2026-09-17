@@ -30,6 +30,7 @@ namespace NzbDrone.Core.DecisionEngine
         private readonly IEnumerable<IDecisionEngineSpecification> _specifications;
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IParsingService _parsingService;
+        private readonly IBookService _bookService;
         private readonly IEditionFtsRepository _editionFtsRepository;
         private readonly IRemoteBookAggregationService _aggregationService;
         private readonly IReleaseNarratorMetadataEnricher _releaseNarratorMetadataEnricher;
@@ -38,6 +39,7 @@ namespace NzbDrone.Core.DecisionEngine
 
         public DownloadDecisionMaker(IEnumerable<IDecisionEngineSpecification> specifications,
             IParsingService parsingService,
+            IBookService bookService,
             IEditionFtsRepository editionFtsRepository,
             ICustomFormatCalculationService formatService,
             IRemoteBookAggregationService aggregationService,
@@ -47,6 +49,7 @@ namespace NzbDrone.Core.DecisionEngine
         {
             _specifications = specifications;
             _parsingService = parsingService;
+            _bookService = bookService;
             _editionFtsRepository = editionFtsRepository;
             _formatCalculator = formatService;
             _aggregationService = aggregationService;
@@ -91,7 +94,7 @@ namespace NzbDrone.Core.DecisionEngine
             return decisions;
         }
 
-        private IEnumerable<DownloadDecision> GetBookDecisions(List<ReleaseInfo> reports, bool pushedRelease = false, SearchCriteriaBase searchCriteria = null)
+        private List<DownloadDecision> GetBookDecisions(List<ReleaseInfo> reports, bool pushedRelease = false, SearchCriteriaBase searchCriteria = null)
         {
             if (reports.Any())
             {
@@ -102,11 +105,11 @@ namespace NzbDrone.Core.DecisionEngine
                 _logger.ProgressInfo("No results found");
             }
 
-            EnrichReleaseNarratorMetadata(reports, searchCriteria);
             var orderedReports = reports;
             // One result batch owns the prepared catalog; nothing survives into the next search.
-            var catalogPreparation = searchCriteria == null ? null : new ReleaseTitleMatchScorer.CatalogPreparation();
+            var catalogPreparation = new ReleaseTitleMatchScorer.CatalogPreparation();
 
+            var decisions = new List<DownloadDecision>(reports.Count);
             var reportNumber = 1;
 
             foreach (var report in orderedReports)
@@ -184,7 +187,7 @@ namespace NzbDrone.Core.DecisionEngine
                             parsedBookInfo.Quality = ParseQualityForSearchDecision(report);
                         }
 
-                        remoteBook = TryMapRssRelease(report, parsedBookInfo);
+                        remoteBook = TryMapRssRelease(report, parsedBookInfo, catalogPreparation);
                     }
                     else if (parsedBookInfo != null && !parsedBookInfo.AuthorName.IsNullOrWhiteSpace())
                     {
@@ -287,23 +290,7 @@ namespace NzbDrone.Core.DecisionEngine
                             _aggregationService.Augment(remoteBook);
                             PreferAllowedDetectedQuality(remoteBook);
 
-                            remoteBook.CustomFormats = _formatCalculator.ParseCustomFormat(remoteBook, remoteBook.Release.Size);
-
-                            _logger.Trace("[DECISION_MAKER] Getting quality profile for author '{0}' and quality '{1}'",
-                                remoteBook?.Author?.Name ?? "NULL",
-                                remoteBook?.ParsedBookInfo?.Quality?.Quality?.Name ?? "NULL");
-
-                            var qualityProfile = remoteBook?.Author?.GetQualityProfileForQuality(remoteBook.ParsedBookInfo.Quality.Quality);
-
-                            if (_logger.IsTraceEnabled)
-                            {
-                                _logger.Trace("[DECISION_MAKER] Quality profile result: {0}",
-                                    qualityProfile != null ? $"'{qualityProfile.Name}' (ID: {qualityProfile.Id})" : "NULL");
-                            }
-
-                            remoteBook.CustomFormatScore = qualityProfile?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
-
-                            decision = GetDecisionForReport(remoteBook, searchCriteria, catalogPreparation);
+                            decision = ScoreAndDecide(remoteBook, searchCriteria, catalogPreparation);
                         }
                     }
 
@@ -365,24 +352,54 @@ namespace NzbDrone.Core.DecisionEngine
 
                 if (decision != null)
                 {
-                        decision.RemoteBook.ReleaseSource = releaseSource;
-                        decision.RemoteBook.DownloadAllowed = decision.Approved;
-
-                        if (decision.Rejections.Any())
-                        {
-                            if (_logger.IsTraceEnabled)
-                            {
-                                _logger.Trace("Release rejected for the following reasons: {0}", string.Join(", ", decision.Rejections));
-                            }
-                        }
-                    else
-                    {
-                        _logger.Trace("Release accepted");
-                    }
-
-                    yield return decision;
+                    decisions.Add(FinalizeDecision(decision, releaseSource));
                 }
             }
+
+            EnrichNarratorMetadataForVisibleDecisions(decisions, searchCriteria, catalogPreparation);
+
+            return decisions;
+        }
+
+        private DownloadDecision ScoreAndDecide(RemoteBook remoteBook, SearchCriteriaBase searchCriteria, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
+        {
+            remoteBook.CustomFormats = _formatCalculator.ParseCustomFormat(remoteBook, remoteBook.Release.Size);
+
+            _logger.Trace("[DECISION_MAKER] Getting quality profile for author '{0}' and quality '{1}'",
+                remoteBook?.Author?.Name ?? "NULL",
+                remoteBook?.ParsedBookInfo?.Quality?.Quality?.Name ?? "NULL");
+
+            var qualityProfile = remoteBook?.Author?.GetQualityProfileForQuality(remoteBook.ParsedBookInfo.Quality.Quality);
+
+            if (_logger.IsTraceEnabled)
+            {
+                _logger.Trace("[DECISION_MAKER] Quality profile result: {0}",
+                    qualityProfile != null ? $"'{qualityProfile.Name}' (ID: {qualityProfile.Id})" : "NULL");
+            }
+
+            remoteBook.CustomFormatScore = qualityProfile?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
+
+            return GetDecisionForReport(remoteBook, searchCriteria, catalogPreparation);
+        }
+
+        private DownloadDecision FinalizeDecision(DownloadDecision decision, ReleaseSourceType releaseSource)
+        {
+            decision.RemoteBook.ReleaseSource = releaseSource;
+            decision.RemoteBook.DownloadAllowed = decision.Approved;
+
+            if (decision.Rejections.Any())
+            {
+                if (_logger.IsTraceEnabled)
+                {
+                    _logger.Trace("Release rejected for the following reasons: {0}", string.Join(", ", decision.Rejections));
+                }
+            }
+            else
+            {
+                _logger.Trace("Release accepted");
+            }
+
+            return decision;
         }
 
         private DownloadDecision TryBuildSearchCriteriaDecision(ReleaseInfo report, SearchCriteriaBase searchCriteria, ReleaseSourceType releaseSource, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
@@ -396,9 +413,9 @@ namespace NzbDrone.Core.DecisionEngine
             var searchedBooks = searchCriteria.Books.Where(b => b != null).ToList();
             var targetBook = searchedBooks.Count == 1 ? searchedBooks[0] : null;
             var authorCatalog = GetPackDetectionCatalog(searchCriteria.AuthorCatalog ?? searchCriteria.Author?.Books ?? searchCriteria.Books, targetBook);
-            var packDetection = ReleasePackDetector.Detect(report.Title, targetBook, authorCatalog);
+            var packDetection = ReleasePackDetector.Detect(report, targetBook, authorCatalog);
 
-            var searchMatch = ReleaseTitleMatchScorer.FindBestMatch(report.Title,
+            var searchMatch = ReleaseTitleMatchScorer.FindBestMatch(report,
                                                                     searchCriteria.Author.Name,
                                                                     searchedBooks,
                                                                     report.Author,
@@ -425,15 +442,11 @@ namespace NzbDrone.Core.DecisionEngine
             _aggregationService.Augment(remoteBook);
             EnsureSearchDecisionQuality(remoteBook, report);
             PreferAllowedDetectedQuality(remoteBook);
-            remoteBook.CustomFormats = _formatCalculator.ParseCustomFormat(remoteBook, remoteBook.Release.Size);
 
-            var qualityProfile = remoteBook.Author?.GetQualityProfileForQuality(remoteBook.ParsedBookInfo.Quality.Quality);
-            remoteBook.CustomFormatScore = qualityProfile?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
-
-            return GetDecisionForReport(remoteBook, searchCriteria, catalogPreparation);
+            return ScoreAndDecide(remoteBook, searchCriteria, catalogPreparation);
         }
 
-        private RemoteBook TryMapRssRelease(ReleaseInfo report, ParsedBookInfo parsedBookInfo)
+        private RemoteBook TryMapRssRelease(ReleaseInfo report, ParsedBookInfo parsedBookInfo, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
         {
             if (_editionFtsRepository is not IStagedEditionFtsRepository ftsRepository)
             {
@@ -493,11 +506,12 @@ namespace NzbDrone.Core.DecisionEngine
                     var candidates = group.ToList();
                     var author = candidates[0].Author;
                     var match = ReleaseTitleMatchScorer.FindBestMatch(
-                        report.Title,
+                        report,
                         author.Name,
                         candidates,
                         FirstNotBlank(report.Author, parsedBookInfo.AuthorName),
-                        candidates);
+                        catalogPreparation.GetAuthorCatalog(author.Id, _bookService).Where(book => book.MediaType == group.Key.MediaType),
+                        catalogPreparation);
 
                     return new
                     {
@@ -570,7 +584,7 @@ namespace NzbDrone.Core.DecisionEngine
                 ? remoteBook.Author.Books
                 : remoteBook.Books, targetBook);
 
-            remoteBook.PackDetection = ReleasePackDetector.Detect(report.Title, targetBook, authorCatalog) ?? ReleasePackDetection.None();
+            remoteBook.PackDetection = ReleasePackDetector.Detect(report, targetBook, authorCatalog) ?? ReleasePackDetection.None();
         }
 
         private static List<Book> GetPackDetectionCatalog(IEnumerable<Book> books, Book targetBook)
@@ -837,9 +851,60 @@ namespace NzbDrone.Core.DecisionEngine
                    indexerName.Contains("MAM", StringComparison.OrdinalIgnoreCase);
         }
 
-        private void EnrichReleaseNarratorMetadata(List<ReleaseInfo> reports, SearchCriteriaBase searchCriteria)
+        // Every NFO fetch is a full indexer API call, so only releases the user can see and grab
+        // earn one. Identity and pack rejections never read the narrator, so leaving them
+        // unenriched changes no verdict. Hidden releases are enriched only when nothing is
+        // visible, which is when Show Hidden is the user's only option.
+        private void EnrichNarratorMetadataForVisibleDecisions(List<DownloadDecision> decisions,
+                                                               SearchCriteriaBase searchCriteria,
+                                                               ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
         {
-            _releaseNarratorMetadataEnricher?.EnrichReleaseNarratorMetadata(reports, searchCriteria);
+            if (_releaseNarratorMetadataEnricher == null || decisions.Count == 0)
+            {
+                return;
+            }
+
+            var visible = decisions.Where(d => !InteractiveSearchVisibility.IsHidden(d)).ToList();
+            var targets = visible.Count > 0 ? visible : decisions;
+
+            var releases = targets
+                .Select(d => d.RemoteBook?.Release)
+                .Where(r => r != null)
+                .ToList();
+
+            _logger.Trace("Narrator metadata: offering {0} of {1} release(s) for lookup ({2}); {3} hidden release(s) skipped",
+                releases.Count,
+                decisions.Count,
+                visible.Count > 0 ? "visible" : "hidden fallback",
+                decisions.Count - targets.Count);
+
+            var enriched = _releaseNarratorMetadataEnricher.EnrichReleaseNarratorMetadata(releases, searchCriteria);
+            if (enriched.Count == 0)
+            {
+                return;
+            }
+
+            _logger.Debug("Narrator metadata populated {0} of {1} offered release(s); {2} hidden release(s) cost no lookup",
+                enriched.Count, releases.Count, decisions.Count - targets.Count);
+
+            var enrichedReleases = new HashSet<ReleaseInfo>(enriched);
+
+            for (var i = 0; i < decisions.Count; i++)
+            {
+                var remoteBook = decisions[i].RemoteBook;
+                if (remoteBook?.Release == null || !enrichedReleases.Contains(remoteBook.Release))
+                {
+                    continue;
+                }
+
+                // A narrator changes the custom formats, so the score and every specification
+                // that reads it are re-evaluated. Parsing and book mapping are not redone.
+                var rescored = ScoreAndDecide(remoteBook, searchCriteria, catalogPreparation);
+                if (rescored != null)
+                {
+                    decisions[i] = FinalizeDecision(rescored, remoteBook.ReleaseSource);
+                }
+            }
         }
     }
 }

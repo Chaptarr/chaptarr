@@ -15,14 +15,16 @@ namespace Chaptarr.Core.Test.Indexers
         {
             var decision = new DownloadDecision(
                 new RemoteBook { Release = new ReleaseInfo { Title = "House Harkonnen" } },
-                new Rejection("Release appears to contain multiple books", RejectionType.Permanent, false, "Pack", 3));
+                new Rejection("Release appears to contain multiple books", RejectionType.Permanent, true, "Pack", 3));
 
             var result = ReleaseController.ShouldFilterFromInteractiveSearch(decision);
 
+            // A pack is filtered out of the default list because "Pack" is a mismatch category, but it is a
+            // soft filter, so it reaches the hidden-results collection as a bypassable release.
             Assert.Multiple(() =>
             {
                 Assert.That(result.shouldFilter, Is.True);
-                Assert.That(result.isHardFilter, Is.True);
+                Assert.That(result.isHardFilter, Is.False);
             });
         }
 

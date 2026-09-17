@@ -1,7 +1,10 @@
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -13,7 +16,7 @@ namespace NzbDrone.Core.DecisionEngine
 {
     public interface IReleaseNarratorMetadataEnricher
     {
-        void EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria);
+        IReadOnlyCollection<ReleaseInfo> EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria);
     }
 
     public class ReleaseNarratorMetadataEnricher : IReleaseNarratorMetadataEnricher
@@ -34,61 +37,60 @@ namespace NzbDrone.Core.DecisionEngine
             _customFormatService = customFormatService;
         }
 
-        public void EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+        // Above this many lookups the call volume is reported at Warn instead of Debug. It
+        // changes logging only; every candidate is still fetched.
+        private const int LoudLookupCount = 50;
+
+        public IReadOnlyCollection<ReleaseInfo> EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
         {
             if (_indexerFactory == null || releases == null || releases.Count == 0)
             {
-                return;
+                return Array.Empty<ReleaseInfo>();
             }
 
             var hasPinnedTarget = searchCriteria?.Books?.Any(PreferredNarratorMatcher.HasPreferredNarratorTarget) == true;
             if (!hasPinnedTarget && !HasActiveNarratorCondition(searchCriteria))
             {
-                return;
+                return Array.Empty<ReleaseInfo>();
             }
 
-            const int maxLookupsPerIndexer = 8;
-            const int maxLookupsTotal = 25;
-
             var providerCache = new Dictionary<int, INarratorMetadataProvider>();
-            var totalLookups = 0;
+            var populated = new List<ReleaseInfo>();
+            var lookups = 0;
+            var stopwatch = Stopwatch.StartNew();
 
             foreach (var group in releases.Where(r => r != null).GroupBy(r => r.IndexerId))
             {
-                if (totalLookups >= maxLookupsTotal)
-                {
-                    break;
-                }
-
                 var provider = GetNarratorMetadataProvider(group.Key, providerCache);
                 if (provider == null || !provider.CanProvideNarratorMetadata)
                 {
                     continue;
                 }
 
-                var indexerLookups = 0;
-                foreach (var release in group.Where(IsLikelyAudiobook))
+                foreach (var release in group.Where(IsLikelyAudiobook).Where(NeedsNarratorMetadata))
                 {
-                    if (totalLookups >= maxLookupsTotal || indexerLookups >= maxLookupsPerIndexer)
-                    {
-                        break;
-                    }
-
-                    if (!NeedsNarratorMetadata(release))
-                    {
-                        continue;
-                    }
-
-                    indexerLookups++;
-                    totalLookups++;
+                    lookups++;
                     provider.TryPopulateNarratorMetadata(release);
+
+                    if (release.Narrator.IsNotNullOrWhiteSpace())
+                    {
+                        populated.Add(release);
+                    }
                 }
             }
 
-            if (totalLookups > 0)
+            stopwatch.Stop();
+
+            if (lookups > 0)
             {
-                _logger.Debug("Fetched narrator metadata for {0} release(s) before custom format scoring", totalLookups);
+                // Each lookup is one indexer API call. The caller's release set is the bound,
+                // so the volume is always reported rather than silently truncated.
+                _logger.Log(lookups >= LoudLookupCount ? LogLevel.Warn : LogLevel.Debug,
+                    "Narrator metadata: {0} indexer lookup(s) across {1} candidate release(s) populated {2} narrator(s) in {3}ms",
+                    lookups, releases.Count, populated.Count, stopwatch.ElapsedMilliseconds);
             }
+
+            return populated;
         }
 
         private INarratorMetadataProvider GetNarratorMetadataProvider(int indexerId, Dictionary<int, INarratorMetadataProvider> cache)

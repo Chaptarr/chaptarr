@@ -290,81 +290,6 @@ namespace Chaptarr.Api.V1.Indexers
             return resource;
         }
 
-        private List<ReleaseResource> MapDecisionsForInteractiveSearch(IEnumerable<DownloadDecision> decisions, bool bypassFilters = false)
-        {
-            var result = new List<ReleaseResource>();
-            var totalDecisions = decisions.Count();
-            var filteredCount = 0;
-            var hardFilteredCount = 0;
-            var softFilteredCount = 0;
-            var durationsFound = 0;
-            var narratorsFound = 0;
-            var graphicAudioFound = 0;
-
-            foreach (var downloadDecision in decisions)
-            {
-                // Count MAM metadata for trace logging
-                var releaseInfo = downloadDecision.RemoteBook.Release;
-                if (releaseInfo != null)
-                {
-                    if (!string.IsNullOrWhiteSpace(releaseInfo.Duration))
-                    {
-                        durationsFound++;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(releaseInfo.Narrator))
-                    {
-                        narratorsFound++;
-                    }
-
-                    if (releaseInfo.IsGraphicAudio)
-                    {
-                        graphicAudioFound++;
-                    }
-                }
-
-                // Enhanced filtering logic with bypass support
-                var shouldFilter = ShouldFilterFromInteractiveSearch(downloadDecision, bypassFilters);
-                if (shouldFilter.shouldFilter)
-                {
-                    filteredCount++;
-                    if (shouldFilter.isHardFilter)
-                    {
-                        hardFilteredCount++;
-                    }
-                    else
-                    {
-                        softFilteredCount++;
-                    }
-
-                    _logger.Debug("Filtering out rejected release for interactive search: {0} - {1} (Hard: {2}, Bypass: {3})",
-                        downloadDecision.RemoteBook.Release.Title,
-                        string.Join(", ", downloadDecision.Rejections.Select(r => r.Reason)),
-                        shouldFilter.isHardFilter,
-                        bypassFilters);
-                    continue;
-                }
-
-                var release = MapDecision(downloadDecision, result.Count);
-                result.Add(release);
-            }
-
-            // Enhanced logging with filter breakdown
-            _logger.Trace("MAM_SEARCH_SUMMARY: TOTAL={0}, FILTERED={1} (HARD={2}, SOFT={3}), DISPLAYED={4}, DURATIONS_FOUND={5}, NARRATORS_FOUND={6}, GRAPHIC_AUDIO={7}, BYPASS_MODE={8}", totalDecisions, filteredCount, hardFilteredCount, softFilteredCount, result.Count, durationsFound, narratorsFound, graphicAudioFound, bypassFilters);
-
-            if (bypassFilters && softFilteredCount > 0)
-            {
-                _logger.Debug("FILTER_BYPASS: Showing {0} additional results due to soft filter bypass (total: {1})", softFilteredCount, result.Count);
-            }
-
-            if (durationsFound == 0 && totalDecisions > 0)
-            {
-                _logger.Trace("MAM_DURATION_WARNING: No durations found in {0} results - check pattern matching", totalDecisions);
-            }
-
-            return result;
-        }
-
         private (List<ReleaseResource> results, List<ReleaseResource> hiddenResults, FilterSummary filterSummary) MapDecisionsForInteractiveSearchWithSummary(IEnumerable<DownloadDecision> decisions, bool bypassFilters = false)
         {
             var result = new List<ReleaseResource>();
@@ -401,7 +326,7 @@ namespace Chaptarr.Api.V1.Indexers
                 }
 
                 // Enhanced filtering logic with bypass support
-                var shouldFilter = ShouldFilterFromInteractiveSearch(downloadDecision, bypassFilters);
+                var shouldFilter = ShouldFilterFromInteractiveSearch(downloadDecision);
                 if (shouldFilter.shouldFilter)
                 {
                     filteredCount++;
@@ -440,7 +365,7 @@ namespace Chaptarr.Api.V1.Indexers
 
             if (bypassFilters && softFilteredCount > 0)
             {
-                _logger.Debug("FILTER_BYPASS: Showing {0} additional results due to soft filter bypass (total: {1})", softFilteredCount, result.Count);
+                _logger.Debug("FILTER_BYPASS: {0} soft-filtered release(s) are available in the hidden results and can be grabbed deliberately (visible list: {1})", softFilteredCount, result.Count);
             }
 
             if (durationsFound == 0 && totalDecisions > 0)
@@ -455,7 +380,7 @@ namespace Chaptarr.Api.V1.Indexers
         {
             var decisions = allDecisions.ToList();
             var hiddenDecisions = decisions
-                .Where(decision => ShouldFilterFromInteractiveSearch(decision, bypassFilters).shouldFilter)
+                .Where(decision => ShouldFilterFromInteractiveSearch(decision).shouldFilter)
                 .ToList();
             var totalDecisions = decisions.Count;
             var filteredCount = hardFilteredCount + softFilteredCount;
@@ -520,32 +445,9 @@ namespace Chaptarr.Api.V1.Indexers
             };
         }
 
-        // Enhanced filter method with bypass support and hard/soft filter detection
-        internal static (bool shouldFilter, bool isHardFilter) ShouldFilterFromInteractiveSearch(DownloadDecision decision, bool bypassFilters = false)
+        internal static (bool shouldFilter, bool isHardFilter) ShouldFilterFromInteractiveSearch(DownloadDecision decision)
         {
-            if (!decision.Rejections.Any())
-            {
-                return (false, false); // No rejections, don't filter
-            }
-
-            var mismatchCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "Matching",
-                "Author",
-                "Title",
-                "Parsing",
-                "Pack"
-            };
-
-            var hasMismatchRejection = decision.Rejections.Any(r => mismatchCategories.Contains(r.Category ?? "General"));
-            if (hasMismatchRejection)
-            {
-                return (true, decision.Rejections.Any(r => r.IsHardFilter));
-            }
-
-            // Interactive search is the user override surface. Once author/book identity has
-            // passed, profile and preference rejections remain visible with their score/reasons.
-            return (false, false);
+            return InteractiveSearchVisibility.Evaluate(decision);
         }
 
         internal static bool ShouldBlockInteractiveDownload(DownloadDecision decision)
