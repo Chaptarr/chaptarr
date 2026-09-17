@@ -13,6 +13,7 @@ namespace NzbDrone.Core.Parser.Model
         public ReleaseInfo()
         {
             Languages = new List<Language>();
+            SeriesInfo = new List<ReleaseSeriesInfo>();
         }
 
         public string Guid { get; set; }
@@ -25,6 +26,7 @@ namespace NzbDrone.Core.Parser.Model
         public string Indexer { get; set; }
         public string Author { get; set; }
         public string Book { get; set; }
+        public List<ReleaseSeriesInfo> SeriesInfo { get; set; }
         public int IndexerPriority { get; set; }
         public DownloadProtocol DownloadProtocol { get; set; }
         public DateTime PublishDate { get; set; }
@@ -99,6 +101,13 @@ namespace NzbDrone.Core.Parser.Model
                     return ToString();
             }
         }
+    }
+
+    public sealed class ReleaseSeriesInfo
+    {
+        public string ProviderId { get; set; }
+        public string Name { get; set; }
+        public string Position { get; set; }
     }
 
     [Flags]

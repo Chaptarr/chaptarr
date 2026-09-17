@@ -120,6 +120,13 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             }
 
             var data = jsonResponse["data"];
+            var apiError = jsonResponse.Value<string>("error");
+            if (!string.IsNullOrWhiteSpace(apiError) &&
+                !apiError.TrimStart().StartsWith("Nothing returned", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new IndexerException(indexerResponse, "MyAnonaMouse API error: {0}", apiError);
+            }
+
             if (data == null || !data.HasValues)
             {
                 logger.Trace("MAM_API_RESPONSE: No torrent data found in response");
@@ -240,6 +247,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             logger.Trace("MAM_SOURCE_TAGS: '{0}'", tags ?? "EMPTY");
             logger.Trace("MAM_SOURCE_NARRATOR_INFO: '{0}'", narratorInfo ?? "EMPTY");
+            logger.Trace("MAM_SOURCE_AUTHOR_INFO: '{0}'", torrent.Value<string>("author_info") ?? "EMPTY");
+            logger.Trace("MAM_SOURCE_SERIES_INFO: '{0}'", torrent.Value<string>("series_info") ?? "EMPTY");
             logger.Trace("MAM_SOURCE_DESCRIPTION_PREVIEW: '{0}'",
                 string.IsNullOrWhiteSpace(description) ? "EMPTY" :
                 description.Length > 200 ? description.Substring(0, 200) + "..." : description);
@@ -283,7 +292,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 Languages = BuildReleaseLanguages(torrent),
                 MediaType = mediaType,
                 MainCategory = mainCategory,
-                CategoryName = categoryName
+                CategoryName = categoryName,
+                SeriesInfo = ExtractSeriesInfo(torrent)
             };
 
             // Set indexer flags based on torrent properties
@@ -296,6 +306,41 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             logger.Trace("MAM_RELEASE_CREATED: Title='{0}', FileType='{1}', Flags={2}", release.Title, release.FileType ?? "NULL", flags);
 
             return release;
+        }
+
+        private static List<ReleaseSeriesInfo> ExtractSeriesInfo(JToken torrent)
+        {
+            var seriesInfo = new List<ReleaseSeriesInfo>();
+            var raw = torrent?.Value<string>("series_info");
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return seriesInfo;
+            }
+
+            try
+            {
+                var values = JsonConvert.DeserializeObject<Dictionary<string, JArray>>(raw);
+                foreach (var entry in values ?? new Dictionary<string, JArray>())
+                {
+                    var name = entry.Value?.Count > 0 ? entry.Value[0]?.Value<string>() : null;
+                    var position = entry.Value?.Count > 1 ? entry.Value[1]?.Value<string>() : null;
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        seriesInfo.Add(new ReleaseSeriesInfo
+                        {
+                            ProviderId = entry.Key,
+                            Name = CleanMetadataText(name),
+                            Position = CleanMetadataText(position)
+                        });
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed optional series metadata.
+            }
+
+            return seriesInfo;
         }
 
         private IndexerFlags ParseIndexerFlags(JToken torrent)

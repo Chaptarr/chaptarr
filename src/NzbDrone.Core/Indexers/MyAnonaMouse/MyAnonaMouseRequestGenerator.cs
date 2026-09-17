@@ -264,6 +264,11 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             request.StoreRequestCookie = true;
             request.StoreResponseCookie = true;
 
+            // The request URL and payload are already traced above; this completes the pair so the structured
+            // response fields (author_info, narrator_info, series_info, mediaInfo) can be read verbatim at Trace.
+            // HttpClient only emits the body when this flag is set, and only at Trace level.
+            request.LogResponseContent = true;
+
             Logger.Trace("MAM_API_COOKIES: mam_id present={0}, mam_ssl={1}, persistence=on", !string.IsNullOrWhiteSpace(Settings.MamId), Settings.MamSsl);
 
             return request;
@@ -277,7 +282,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 ["text"] = searchText ?? "",
                 ["srchIn"] = new[] { "title", "author", "narrator", "series", "tags" },
-                ["searchType"] = Settings.MinimumSeeders > 0 ? "active" : "all",
+                ["searchType"] = "all",
                 ["searchIn"] = "torrents",
                 ["cat"] = new[] { "0" },
                 ["main_cat"] = BuildMainCategories(searchCriteria),

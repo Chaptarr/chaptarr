@@ -253,5 +253,46 @@ namespace Chaptarr.Core.Test.Indexers
             var torrent = releases.OfType<TorrentInfo>().Single();
             Assert.That(torrent.Narrator, Is.EqualTo("Scott Brick"));
         }
+
+        [Test]
+        public void should_preserve_structured_series_memberships_without_treating_a_single_position_as_a_pack()
+        {
+            var settings = new MyAnonaMouseSettings { BaseUrl = "https://www.myanonamouse.net" };
+            var payload = new JObject
+            {
+                ["data"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["id"] = 1226159,
+                        ["title"] = "Dune",
+                        ["dl"] = "hash",
+                        ["size"] = "500 MiB",
+                        ["seeders"] = 12,
+                        ["leechers"] = 0,
+                        ["added"] = "2026-03-08 17:55:01",
+                        ["series_info"] = "{\"12922\":[\"Dune Chronicles\",\"1\",1.0],\"28664\":[\"Dune Universe\",\"10\",10.0],\"37638\":[\"Dungeons &amp; Dragons 5th Edition\",\"\",9999.0]}",
+                        ["category"] = 39,
+                        ["main_cat"] = 13,
+                        ["mediatype"] = 1,
+                        ["catname"] = "Audiobooks"
+                    }
+                }
+            };
+
+            var request = new HttpRequest("https://example.com/api");
+            var indexerRequest = new IndexerRequest(request);
+            var headers = new HttpHeader { ContentType = "application/json" };
+            var response = new HttpResponse(request, headers, payload.ToString(Formatting.None), HttpStatusCode.OK);
+            var releases = new MyAnonaMouseJsonParser(settings).ParseResponse(new IndexerResponse(indexerRequest, response));
+            var torrent = releases.OfType<TorrentInfo>().Single();
+
+            Assert.That(torrent.SeriesInfo.Select(series => (series.ProviderId, series.Name, series.Position)), Is.EquivalentTo(new[]
+            {
+                ("12922", "Dune Chronicles", "1"),
+                ("28664", "Dune Universe", "10"),
+                ("37638", "Dungeons & Dragons 5th Edition", null)
+            }));
+        }
     }
 }

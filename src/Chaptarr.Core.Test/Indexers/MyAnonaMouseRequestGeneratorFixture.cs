@@ -30,7 +30,7 @@ namespace Chaptarr.Core.Test.Indexers
             var payload = JObject.Parse(Encoding.UTF8.GetString(requests[0].HttpRequest.ContentData));
             Assert.That(payload["tor"]?["text"]?.Value<string>(), Is.Empty);
             Assert.That(payload["tor"]?["startNumber"]?.Value<string>(), Is.EqualTo("0"));
-            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("active"));
+            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("all"));
             Assert.That(payload["perpage"]?.Value<string>(), Is.EqualTo("500"));
             Assert.That(payload["mediaInfo"]?.Value<string>(), Is.EqualTo("1"));
             Assert.That(payload["description"], Is.Null);
@@ -188,7 +188,7 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(payload["dlLink"], Is.Null);
             Assert.That(payload["isbn"], Is.Null);
             Assert.That(payload["perpage"]?.Value<string>(), Is.EqualTo("100"));
-            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("active"));
+            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("all"));
             Assert.That(payload["tor"]?["srchIn"]?.Values<string>(), Is.EqualTo(new[] { "title", "author", "narrator", "series", "tags" }));
             Assert.That(payload["tor"]?["cat"]?.Values<string>(), Is.EqualTo(new[] { "0" }));
             Assert.That(payload["tor"]?["main_cat"]?.Values<string>(), Is.EqualTo(new[] { "13" }));
