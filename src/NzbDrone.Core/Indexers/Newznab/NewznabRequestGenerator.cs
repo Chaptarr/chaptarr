@@ -170,16 +170,23 @@ namespace NzbDrone.Core.Indexers.Newznab
 
             if (PageSize == 0)
             {
-                yield return new IndexerRequest($"{baseUrl}{parameters}", HttpAccept.Rss);
+                yield return LogResponses(new IndexerRequest($"{baseUrl}{parameters}", HttpAccept.Rss));
             }
             else
             {
                 for (var page = 0; page < maxPages; page++)
                 {
-                    yield return new IndexerRequest($"{baseUrl}&offset={page * PageSize}&limit={PageSize}{parameters}",
-                        HttpAccept.Rss);
+                    yield return LogResponses(new IndexerRequest($"{baseUrl}&offset={page * PageSize}&limit={PageSize}{parameters}",
+                        HttpAccept.Rss));
                 }
             }
+        }
+
+        // HttpClient only emits the body when this flag is set, and only at Trace.
+        private static IndexerRequest LogResponses(IndexerRequest request)
+        {
+            request.HttpRequest.LogResponseContent = true;
+            return request;
         }
 
         private static string NewsnabifyTitle(string title)
