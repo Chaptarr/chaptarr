@@ -56,7 +56,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             var best = context.ExistingMatch;
             if (best == null)
             {
-                best = ReleaseTitleMatchScorer.FindBestMatch(subject.Release.Title, context.AuthorName, context.Books, authorHint, context.AuthorCatalog, catalogPreparation ?? new ReleaseTitleMatchScorer.CatalogPreparation());
+                best = ReleaseTitleMatchScorer.FindBestMatch(subject.Release, context.AuthorName, context.Books, authorHint, context.AuthorCatalog, catalogPreparation ?? new ReleaseTitleMatchScorer.CatalogPreparation());
             }
 
             if (best == null)
@@ -114,7 +114,6 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             }
 
             return match.Problems.All(problem =>
-                problem.Code == TitleMatchProblemCode.SeriesPositionMismatch ||
                 problem.Code == TitleMatchProblemCode.SuspiciousAdjacentNumber);
         }
 

@@ -329,7 +329,8 @@ namespace Chaptarr.Api.V1.Indexers
         private static (int? Start, int? End) GetMatchedTitleCharSpan(RemoteBook remoteBook, string releaseTitle, string displayTitle)
         {
             var match = remoteBook?.SearchCriteriaMatch;
-            if (match?.IsMatch != true || string.IsNullOrWhiteSpace(releaseTitle) || string.IsNullOrWhiteSpace(displayTitle))
+            if (match?.IsMatch != true || string.IsNullOrWhiteSpace(releaseTitle) || string.IsNullOrWhiteSpace(displayTitle) ||
+                (match.EvidenceTitle != null && !string.Equals(match.EvidenceTitle, releaseTitle, StringComparison.Ordinal)))
             {
                 return (null, null);
             }

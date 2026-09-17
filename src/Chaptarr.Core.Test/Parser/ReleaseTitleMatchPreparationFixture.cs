@@ -44,8 +44,8 @@ namespace Chaptarr.Core.Test.Parser
         [Test]
         public void preparation_should_reuse_tokens_without_collapsing_value_equal_book_pockets()
         {
-            var first = new Book { Title = "Shared", Editions = new List<Edition> { new Edition { Title = "First Pocket" } } };
-            var second = new Book { Title = "Shared", Editions = new List<Edition> { new Edition { Title = "Second Pocket" } } };
+            var first = new Book { Title = "Shared", Editions = new List<Edition> { new Edition { Title = "First Pocket", Monitored = true } } };
+            var second = new Book { Title = "Shared", Editions = new List<Edition> { new Edition { Title = "Second Pocket", Monitored = true } } };
             Assert.That(first.Equals(second), Is.True, "edition-only pockets have value equality, not reference identity");
             var preparation = new ReleaseTitleMatchScorer.CatalogPreparation();
             var original = preparation.GetVariants(first);
@@ -57,10 +57,11 @@ namespace Chaptarr.Core.Test.Parser
         [Test]
         public void a_new_search_should_see_catalog_changes_without_invalidating_another_search()
         {
-            var book = new Book { Title = "Original Title", Editions = new List<Edition>() };
+            var book = new Book { Title = "Original Title", Editions = new List<Edition> { new Edition { Title = "Original Title", Monitored = true } } };
             var firstSearch = new ReleaseTitleMatchScorer.CatalogPreparation();
             var prepared = firstSearch.GetVariants(book);
             book.Title = "Changed Title";
+            book.Editions[0].Title = "Changed Title";
             var secondSearch = new ReleaseTitleMatchScorer.CatalogPreparation();
             Assert.That(secondSearch.GetVariants(book).Select(v => v.Title), Does.Contain("Changed Title"));
             Assert.That(prepared.Select(v => v.Title), Does.Not.Contain("Changed Title"));

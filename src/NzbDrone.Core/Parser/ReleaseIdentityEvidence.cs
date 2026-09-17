@@ -66,7 +66,7 @@ namespace NzbDrone.Core.Parser
                 return result;
             }
 
-            var cleanedReleaseTitle = Parser.CleanReleaseTitleForParsing(release.Title);
+            var cleanedReleaseTitle = Parser.CleanReleaseTitleForParsing(titleMatch.EvidenceTitle ?? release.Title);
             var releaseTokens = ReleaseTitleMatchScorer.Tokenize(cleanedReleaseTitle);
             if (!TryResolveMatchedSpan(releaseTokens, titleMatch, out var matchedStart, out var matchedEnd))
             {
@@ -110,7 +110,7 @@ namespace NzbDrone.Core.Parser
             return false;
         }
 
-        private static bool StructuredAuthorMatches(Author expectedAuthor, string releaseAuthor)
+        internal static bool StructuredAuthorMatches(Author expectedAuthor, string releaseAuthor)
         {
             var candidates = SplitContributorList(releaseAuthor).ToList();
             return GetKnownAuthorNames(expectedAuthor)
@@ -120,7 +120,7 @@ namespace NzbDrone.Core.Parser
 
         private static IEnumerable<string> SplitContributorList(string value)
         {
-            return Regex.Split(value ?? string.Empty, @"\s*(?:,|&|\band\b)\s*", RegexOptions.IgnoreCase)
+            return Regex.Split(value ?? string.Empty, @"\s*(?:,|;|&|\band\b)\s*", RegexOptions.IgnoreCase)
                 .Select(part => part.Trim())
                 .Where(part => part.IsNotNullOrWhiteSpace());
         }

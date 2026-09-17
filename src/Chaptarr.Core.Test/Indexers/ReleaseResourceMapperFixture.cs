@@ -13,6 +13,21 @@ namespace Chaptarr.Core.Test.Indexers
     public class ReleaseResourceMapperFixture
     {
         [Test]
+        public void structured_book_match_should_not_highlight_unrelated_release_title_offsets()
+        {
+            var remoteBook = new RemoteBook
+            {
+                Release = new ReleaseInfo { Title = "MP3 unabridged", Book = "Dune", Author = "Frank Herbert", Indexer = "MyAnonaMouse" },
+                ParsedBookInfo = new ParsedBookInfo { AuthorName = "Frank Herbert", BookTitle = "Dune", Quality = new QualityModel(Quality.MP3) },
+                SearchCriteriaMatch = new TitleMatchResult { IsMatch = true, PrimaryTitle = "Dune", MatchedVariant = "Dune", EvidenceTitle = "Dune", MatchedStart = 0, MatchedEnd = 0 }
+            };
+            var resource = new DownloadDecision(remoteBook).ToResource();
+            Assert.That(resource.MatchedTitle, Is.EqualTo("Dune"));
+            Assert.That(resource.MatchedTitleCharStart, Is.Null);
+            Assert.That(resource.MatchedTitleCharEnd, Is.Null);
+        }
+
+        [Test]
         public void should_not_throw_when_parsed_book_info_is_missing()
         {
             var remoteBook = new RemoteBook

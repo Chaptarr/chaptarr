@@ -3542,7 +3542,6 @@ FROM Books;")
                     .Select(entry =>
                     {
                         var r = entry.Result;
-                        var match = ReleaseTitleMatchScorer.FindBestMatch(r.Title, row.AuthorName, new[] { book }, r.Author, catalog);
                         var remoteBook = new RemoteBook
                         {
                             Release = new ReleaseInfo
@@ -3557,10 +3556,11 @@ FROM Books;")
                                 Categories = r.Categories?.Where(category => category != null).Select(category => category.Id).ToList(),
                                 PublishDate = DateTime.UtcNow
                             },
-                            SearchCriteriaMatch = match,
                             PackDetection = ReleasePackDetector.Detect(r.Title, book, catalog) ?? ReleasePackDetection.None()
                         };
 
+                        var match = ReleaseTitleMatchScorer.FindBestMatch(remoteBook.Release, row.AuthorName, new[] { book }, catalog);
+                        remoteBook.SearchCriteriaMatch = match;
                         var titleDecision = titleSpecification.IsSatisfiedBy(remoteBook, criteria);
                         var packDecision = packSpecification.IsSatisfiedBy(remoteBook, criteria);
 
@@ -3647,6 +3647,8 @@ FROM Books;")
             var bookIds = ParseTargetBookIds(GetArg(startupContext, "bookids"));
             var interactiveSearch = GetBoolArg(startupContext, "interactive", true);
             var indexerId = GetNullableIntArg(startupContext, "indexerid");
+            _mamRawDumpDir = GetArg(startupContext, "dumpraw");
+            _mamRawDumpSeq = 0;
 
             if (string.IsNullOrWhiteSpace(proxyUrl))
             {
@@ -3796,7 +3798,7 @@ FROM Books;")
                 var evaluations = releases
                     .Select(release =>
                     {
-                        var match = ReleaseTitleMatchScorer.FindBestMatch(release.Title, row.AuthorName, new[] { book }, release.Author, catalog);
+                        var match = ReleaseTitleMatchScorer.FindBestMatch(release, row.AuthorName, new[] { book }, catalog);
                         var remoteBook = new RemoteBook
                         {
                             Release = release,
@@ -3912,6 +3914,9 @@ WHERE Id = @id", new { id = profileId.Value });
             return author;
         }
 
+        private static string? _mamRawDumpDir;
+        private static int _mamRawDumpSeq;
+
         private static List<ReleaseInfo> FetchMamPage(HttpClient http, MyAnonaMouseJsonParser parser, IndexerRequest request)
         {
             using var message = new HttpRequestMessage(request.HttpRequest.Method, request.Url.FullUri);
@@ -3950,6 +3955,27 @@ WHERE Id = @id", new { id = profileId.Value });
             foreach (var header in response.Content.Headers)
             {
                 responseHeaders.Add(header.Key, string.Join(",", header.Value));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_mamRawDumpDir))
+            {
+                // Dev-only capture: the request we sent and the body we got back, verbatim.
+                var seq = (++_mamRawDumpSeq).ToString("D3");
+                System.IO.Directory.CreateDirectory(_mamRawDumpDir);
+                System.IO.File.WriteAllText(
+                    System.IO.Path.Combine(_mamRawDumpDir, $"{seq}-request.txt"),
+                    $"{request.HttpRequest.Method} {request.Url.FullUri}\n" +
+                    string.Join("\n", request.HttpRequest.Headers
+                        .Where(h => !h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
+                        .Select(h => $"{h.Key}: {h.Value}")) +
+                    $"\nCookie: [{string.Join(", ", request.HttpRequest.Cookies.Select(c => c.Key))} redacted]\n\n" +
+                    (request.HttpRequest.ContentData != null
+                        ? System.Text.Encoding.UTF8.GetString(request.HttpRequest.ContentData)
+                        : "<no body>"));
+                System.IO.File.WriteAllBytes(
+                    System.IO.Path.Combine(_mamRawDumpDir, $"{seq}-response-{(int)response.StatusCode}.json"),
+                    bytes);
+                System.Console.WriteLine($"[mambench] dumped raw request/response pair {seq} ({bytes.Length} bytes) to {_mamRawDumpDir}");
             }
 
             var nativeResponse = new NzbDrone.Common.Http.HttpResponse(request.HttpRequest, responseHeaders, bytes, response.StatusCode, response.Version);
@@ -4095,7 +4121,7 @@ SELECT
   e.Narrator as Narrator
 FROM Editions e
 JOIN Books b ON b.Id = e.BookId
-WHERE b.AuthorId = @authorId
+WHERE b.AuthorId = @authorId AND e.Monitored = 1
 ORDER BY e.BookId, e.Monitored DESC, e.Id;";
 
             var editionsByBook = conn.Query<LibraryEditionRow>(editionsSql, new { authorId = target.AuthorId })
@@ -4104,10 +4130,7 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
 
             foreach (var book in books)
             {
-                if (editionsByBook.TryGetValue(book.Id, out var editions) && editions.Count > 0)
-                {
-                    book.Editions = editions;
-                }
+                book.Editions = editionsByBook.TryGetValue(book.Id, out var editions) ? editions : new List<Edition>();
             }
 
             if (books.All(book => book.Id != target.BookId))

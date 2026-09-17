@@ -1,6 +1,8 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Parser
 {
@@ -41,6 +43,9 @@ namespace NzbDrone.Core.Parser
         private static readonly Regex CompletePackRegex = new Regex(@"\b(?:complete|full)\b.{0,80}\b(?:series|collection|saga|set|works|anthology|trilogy|tetralogy)\b|\b(?:box(?:ed)?\s+set|audio\s+collection|series\s+collection)\b",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        private static readonly Regex StructuredSeriesRangeRegex = new Regex(@"^\s*\d{1,3}(?:\.\d+)?\s*(?:[-–—]|,|/|&|\bto\b|\bthrough\b|\bthru\b|\band\b)\s*\d{1,3}(?:\.\d+)?(?:\s*(?:,|/|&|\band\b)\s*\d{1,3}(?:\.\d+)?)*\s*$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private static readonly Regex SingleBookSplitRegex = new Regex(@"\(\s*\d{1,3}\s+of\s+\d{1,3}\s*\)|\b(?:part|pt)\s*#?\d{1,3}(?:\s*(?:of|/)\s*\d{1,3})?\b",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -54,7 +59,7 @@ namespace NzbDrone.Core.Parser
                 return ReleasePackDetection.None();
             }
 
-            var explicitPack = DetectExplicitMultiBookPack(releaseTitle);
+            var explicitPack = DetectExplicitMultiBookPack(releaseTitle, targetBook);
             if (explicitPack != null)
             {
                 return explicitPack;
@@ -85,7 +90,32 @@ namespace NzbDrone.Core.Parser
             return ReleasePackDetection.None();
         }
 
-        private static ReleasePackDetection DetectExplicitMultiBookPack(string releaseTitle)
+        public static ReleasePackDetection Detect(ReleaseInfo release, Book targetBook, IEnumerable<Book> authorCatalog)
+        {
+            var structuredPack = DetectStructuredSeriesPack(release?.SeriesInfo);
+            return structuredPack ?? Detect(release?.Title, targetBook, authorCatalog);
+        }
+
+        private static ReleasePackDetection DetectStructuredSeriesPack(IEnumerable<ReleaseSeriesInfo> seriesInfo)
+        {
+            foreach (var series in seriesInfo ?? Enumerable.Empty<ReleaseSeriesInfo>())
+            {
+                if (!string.IsNullOrWhiteSpace(series?.Position) &&
+                    StructuredSeriesRangeRegex.IsMatch(series.Position))
+                {
+                    return new ReleasePackDetection
+                    {
+                        Verdict = ReleasePackDetectionVerdict.MultipleBooks,
+                        PackType = "structured-series-range",
+                        MatchedValue = $"{series.Name} {series.Position}".Trim()
+                    };
+                }
+            }
+
+            return null;
+        }
+
+        private static ReleasePackDetection DetectExplicitMultiBookPack(string releaseTitle, Book targetBook)
         {
             foreach (var (regex, packType) in new[]
             {
@@ -97,7 +127,10 @@ namespace NzbDrone.Core.Parser
             })
             {
                 var match = regex.Match(releaseTitle);
-                if (match.Success)
+                var tokens = ReleaseTitleMatchScorer.Tokenize(match.Value);
+                if (match.Success && (regex != BracketRangeRegex ||
+                    (ReleaseTitleMatchScorer.FindExactTitleSpans(tokens, ReleaseTitleMatchScorer.Tokenize(targetBook?.SeriesName)).Any() &&
+                     !ReleaseTitleMatchScorer.IsNumericMetadataTail(tokens, tokens.Count - 2))))
                 {
                     return new ReleasePackDetection
                     {

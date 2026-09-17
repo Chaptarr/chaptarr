@@ -166,7 +166,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_reject_interactive_search_result_when_release_omits_the_monitored_edition_subtitle()
+        public void should_accept_metadata_supported_base_when_release_omits_the_edition_subtitle()
         {
             var author = new Author { Name = "Mitch Albom" };
             var book = new Book
@@ -209,7 +209,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decision = spec.IsSatisfiedBy(remoteBook, criteria);
 
-            Assert.That(decision.Accepted, Is.False);
+            Assert.That(decision.Accepted, Is.True);
         }
 
         [Test]
@@ -402,10 +402,10 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
         }
 
-        [TestCase(BookMatchingStrictness.Aggressive, true)]
-        [TestCase(BookMatchingStrictness.Balanced, true)]
+        [TestCase(BookMatchingStrictness.Aggressive, false)]
+        [TestCase(BookMatchingStrictness.Balanced, false)]
         [TestCase(BookMatchingStrictness.Strict, false)]
-        public void should_only_position_veto_a_target_series_label_in_strict_mode(BookMatchingStrictness strictness, bool expectedAccepted)
+        public void should_reject_a_different_number_bound_to_the_target_series_in_every_mode(BookMatchingStrictness strictness, bool expectedAccepted)
         {
             var author = new Author { Name = "Matt Dinniman" };
             var book = new Book
@@ -630,7 +630,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             {
                 var subject = new RemoteBook { Release = new ReleaseInfo { Title = "Frank Herbert - Dune " + position, Author = author.Name } };
                 var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger(), ConfigServiceTestProxy.Create(mode));
-                Assert.That(spec.IsSatisfiedBy(subject, criteria).Accepted, Is.EqualTo(samePosition || mode != BookMatchingStrictness.Strict), mode + ": " + position);
+                Assert.That(spec.IsSatisfiedBy(subject, criteria).Accepted, Is.EqualTo(samePosition), mode + ": " + position);
             }
         }
 

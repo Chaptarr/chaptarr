@@ -216,9 +216,6 @@ namespace NzbDrone.Core.Parser
         private static readonly Regex MalformedApostropheEntityRegex = new Regex(@"&(?:#)?0*39;",
                                                                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        private static readonly Regex QuotedUsenetFilenameRegex = new Regex(@"\s*-\s*""[^""]+\.(?:mp3|m4b|m4a|flac|aac|opus|ogg|wav|wma|alac|aax|mp4|mp4a|epub|mobi|azw|azw3|pdf|djvu|cbz|cbr|fb2|lit|pdb|txt|nzb|rar|par2)""\s*(?:yenc)?\s*$",
-                                                                RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
         private static readonly Regex LeadingUsenetCounterRegex = new Regex(@"^\s*\(\d+/\d+\)\s*",
                                                                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -660,7 +657,6 @@ namespace NzbDrone.Core.Parser
 
             var cleaned = MalformedApostropheEntityRegex.Replace(title, "'");
             cleaned = WebUtility.HtmlDecode(cleaned);
-            cleaned = QuotedUsenetFilenameRegex.Replace(cleaned, string.Empty);
             cleaned = LeadingUsenetCounterRegex.Replace(cleaned, string.Empty);
             cleaned = MultipartArticleCounterRegex.Replace(cleaned, " ");
             cleaned = TrailingYEncRegex.Replace(cleaned, string.Empty);
