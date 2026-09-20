@@ -229,7 +229,8 @@ namespace Chaptarr.Api.V1.Author
             if (syncSkippedCount > 0)
             {
                 Response.Headers["X-Chaptarr-Warning"] = $"Sync was enabled for {syncEnabledCount} author(s). {syncSkippedCount} author(s) were skipped because both audiobook and ebook root folders are required. " +
-                    "Set both root folder paths for the skipped authors (Author Editor, or via the API with moveFiles left off so no files move) and enable sync again.";
+                    "In Author Editor, switch the media type filter to Audiobooks, select the skipped authors, and set a Root Folder (this only assigns the path - it won't move any files unless you choose to). " +
+                    "Repeat with the filter set to eBooks, then re-run Sync Monitored Audio/eBooks.";
             }
 
             return Accepted(updatedAuthors.ToResource());
