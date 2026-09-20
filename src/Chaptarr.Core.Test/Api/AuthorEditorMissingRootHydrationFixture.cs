@@ -238,6 +238,9 @@ namespace Chaptarr.Core.Test.Api
         [TestCase(ApplyTags.Add)]
         [TestCase(ApplyTags.Remove)]
         public void legacy_in_memory_null_media_tags_should_keep_the_existing_both_sides_fallback(ApplyTags operation)
+
+        [Test]
+        public void should_include_actionable_guidance_when_sync_is_skipped_for_missing_root()
         {
             var author = new CoreAuthor
             {
@@ -267,6 +270,28 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(resource.EbookTags, Is.EquivalentTo(expected));
                 Assert.That(resource.Tags, Is.EquivalentTo(expected));
             });
+                Name = "Martha Wells",
+                AudiobookRootFolderPath = "/library/audiobooks"
+            };
+            var authorService = CreateAuthorService(author);
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService())
+            {
+                ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+                {
+                    HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext()
+                }
+            };
+
+            controller.SaveAll(new AuthorEditorResource
+            {
+                AuthorIds = new List<int> { 1 },
+                SyncMonitoredAcrossFormats = true
+            });
+
+            var warning = controller.Response.Headers["X-Chaptarr-Warning"].ToString();
+
+            Assert.That(warning, Does.Contain("1 author(s) were skipped"));
+            Assert.That(warning, Does.Contain("Set both root folder paths"));
         }
 
         private static IAuthorService CreateAuthorService(params CoreAuthor[] authors)
