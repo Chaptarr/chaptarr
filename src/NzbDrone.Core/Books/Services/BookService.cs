@@ -99,6 +99,14 @@ namespace NzbDrone.Core.Books
         private readonly IEditionSelector _editionSelector;
         private readonly Logger _logger;
 
+        // PERF (chaptarr #163/#172): see the comment at BuildWorkGroups's call site in
+        // GetSyncUpdatesForMutations. Only ever populated/consulted when a caller passes a non-null
+        // authorBooksHint (i.e. RefreshBookService mid author-refresh); every other caller/code path
+        // never touches these fields, so this is inert everywhere else. Same single-disk-access-command
+        // safety invariant as RefreshBookService's _currentAuthorBooksHint.
+        private List<Book> _workGroupsCacheSource;
+        private List<List<Book>> _workGroupsCache;
+
         private sealed class MonitoredStateSnapshot
         {
             public bool AudiobookMonitored { get; set; }
@@ -1515,7 +1523,30 @@ namespace NzbDrone.Core.Books
                 var changedBookIds = authorBooks.Select(book => book.Id).ToHashSet();
                 var baseStates = authorBooksById.ToDictionary(pair => pair.Key, pair => SnapshotMonitoredState(pair.Value));
 
-                foreach (var workGroup in BuildWorkGroups(authorBooksById.Values.ToList()))
+                // PERF (chaptarr #163/#172): BuildWorkGroups is itself O(N^2) internally (pairwise
+                // WorkIdMatcher.CrossFormatSafeMatches over every remaining book), and this whole method
+                // runs once per book saved - for an N-book author that's an O(N^2) call happening N times.
+                // Measured live via dotnet-trace against a 10,107-book author: BuildWorkGroups accounted
+                // for ~99% of sampled CPU time in a 30s window. The grouping only depends on provider
+                // identity tokens, which don't change mid-refresh-pass for a given author, so it's safe to
+                // compute once per author (keyed on the same authorBooksHint reference already used above)
+                // and reuse for every subsequent book saved in this pass.
+                List<List<Book>> workGroups;
+                if (authorBooksHint != null && ReferenceEquals(_workGroupsCacheSource, authorBooksHint))
+                {
+                    workGroups = _workGroupsCache;
+                }
+                else
+                {
+                    workGroups = BuildWorkGroups(authorBooksById.Values.ToList());
+                    if (authorBooksHint != null)
+                    {
+                        _workGroupsCacheSource = authorBooksHint;
+                        _workGroupsCache = workGroups;
+                    }
+                }
+
+                foreach (var workGroup in workGroups)
                 {
                     ApplyMutationSyncForWorkGroup(author, workGroup, changedBookIds, authorStoredById, rootFolders);
                 }
