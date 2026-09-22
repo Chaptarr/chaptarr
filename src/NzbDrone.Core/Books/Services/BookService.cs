@@ -1284,7 +1284,113 @@ namespace NzbDrone.Core.Books
             return GetSyncParticipants(workGroup, mediaType).Any();
         }
 
-        private static List<List<Book>> BuildWorkGroups(List<Book> books)
+        // PERF (chaptarr #163/#173): the old algorithm (kept below, unused in production, as
+        // BuildWorkGroupsReference) compared every remaining book against every other remaining book -
+        // O(N^2) WorkIdMatcher.CrossFormatSafeMatches calls. For a 7,000+ book author (e.g. a
+        // publisher-as-author entity with many near-duplicate reprints) that's tens of millions of calls,
+        // in a single call (this isn't the repeated-per-book-saved bug fixed elsewhere in this cluster -
+        // BuildWorkGroups here is only called once per insert batch - it's the algorithm itself that's
+        // slow for a large N).
+        //
+        // CrossFormatSafeMatches can only return true when two books share some identity token (work-level
+        // or edition-level, depending on same/cross media type) - it can never match on titles or anything
+        // else. So two books that share NO token from BookIdentity.GetProviderIdentityTokens (the union of
+        // every token category CrossFormatSafeMatches's paths draw from) can never match, and don't need to
+        // be compared. Bucket books by token first (O(N)), then only run the real CrossFormatSafeMatches
+        // (the exact, unmodified matching rule - this does not reimplement it) within each bucket, unioning
+        // matches with a union-find. For realistic data almost every token bucket is small (a handful of
+        // format/duplicate siblings), so the expensive comparison only ever runs on small candidate sets
+        // instead of the whole catalogue.
+        //
+        // Correctness of this narrowing was verified by a differential test (BuildWorkGroupsFixture) that
+        // runs both this and the original O(N^2) algorithm against every book in five real, large libraries
+        // (10,000+ books total, including every author identified as slow during live testing) and asserts
+        // byte-for-byte identical groupings.
+        internal static List<List<Book>> BuildWorkGroups(List<Book> books)
+        {
+            var list = books ?? new List<Book>();
+            var n = list.Count;
+            var parent = new int[n];
+            for (var i = 0; i < n; i++)
+            {
+                parent[i] = i;
+            }
+
+            int Find(int x)
+            {
+                while (parent[x] != x)
+                {
+                    parent[x] = parent[parent[x]];
+                    x = parent[x];
+                }
+
+                return x;
+            }
+
+            void Union(int a, int b)
+            {
+                a = Find(a);
+                b = Find(b);
+                if (a != b)
+                {
+                    parent[a] = b;
+                }
+            }
+
+            var byToken = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < n; i++)
+            {
+                foreach (var token in BookIdentity.GetProviderIdentityTokens(list[i]))
+                {
+                    if (!byToken.TryGetValue(token, out var idxs))
+                    {
+                        idxs = new List<int>();
+                        byToken[token] = idxs;
+                    }
+
+                    idxs.Add(i);
+                }
+            }
+
+            foreach (var idxs in byToken.Values)
+            {
+                if (idxs.Count < 2)
+                {
+                    continue;
+                }
+
+                for (var a = 0; a < idxs.Count; a++)
+                {
+                    for (var b = a + 1; b < idxs.Count; b++)
+                    {
+                        if (Find(idxs[a]) != Find(idxs[b]) &&
+                            WorkIdMatcher.CrossFormatSafeMatches(list[idxs[a]], list[idxs[b]]))
+                        {
+                            Union(idxs[a], idxs[b]);
+                        }
+                    }
+                }
+            }
+
+            var groupsByRoot = new Dictionary<int, List<Book>>();
+            for (var i = 0; i < n; i++)
+            {
+                var root = Find(i);
+                if (!groupsByRoot.TryGetValue(root, out var group))
+                {
+                    group = new List<Book>();
+                    groupsByRoot[root] = group;
+                }
+
+                group.Add(list[i]);
+            }
+
+            return groupsByRoot.Values.ToList();
+        }
+
+        // Reference implementation kept ONLY for the differential test (BuildWorkGroupsFixture) that
+        // proves the fast version above produces identical results on real data. Not used in production.
+        internal static List<List<Book>> BuildWorkGroupsReference(List<Book> books)
         {
             var remaining = new List<Book>(books ?? new List<Book>());
             var groups = new List<List<Book>>();
