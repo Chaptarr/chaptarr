@@ -1090,5 +1090,65 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
             Assert.That(result, Has.Count.EqualTo(1));
         }
+
+        private static Book CreateBookWithGenres(string title, string workId, params string[] genres)
+        {
+            return new Book
+            {
+                Title = title,
+                GoodreadsWorkId = workId,
+                MediaType = BookMediaType.Ebook,
+                Genres = genres?.ToList(),
+                Editions = new List<Edition>
+                {
+                    new Edition { ForeignEditionId = $"{workId}-edition", Title = title }
+                }
+            };
+        }
+
+        [Test]
+        public void should_filter_books_matching_an_ignored_genre()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.IgnoredGenres = new List<string> { "Comics", "Graphic novels" };
+
+            var comic = CreateBookWithGenres("Action Comics", "gr:1", "Comics", "Superman");
+            var novel = CreateBookWithGenres("Foundation", "gr:2", "Science Fiction", "Classics");
+            var untagged = CreateBookWithGenres("Untitled", "gr:3");
+
+            var remoteAuthor = new Author { Books = new List<Book> { comic, novel, untagged } };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result.Select(x => x.Title), Is.EquivalentTo(new[] { novel.Title, untagged.Title }));
+        }
+
+        [Test]
+        public void ignored_genre_match_is_case_insensitive()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.IgnoredGenres = new List<string> { "comics" };
+
+            var comic = CreateBookWithGenres("Action Comics", "gr:1", "COMICS");
+            var remoteAuthor = new Author { Books = new List<Book> { comic } };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result, Is.Empty);
+        }
+
+        [Test]
+        public void empty_ignored_genres_filters_nothing()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.IgnoredGenres = new List<string>();
+
+            var comic = CreateBookWithGenres("Action Comics", "gr:1", "Comics");
+            var remoteAuthor = new Author { Books = new List<Book> { comic } };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result, Has.Count.EqualTo(1));
+        }
     }
 }
