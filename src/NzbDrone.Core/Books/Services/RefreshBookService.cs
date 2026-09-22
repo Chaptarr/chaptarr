@@ -54,6 +54,14 @@ namespace NzbDrone.Core.Books
         // Cache for book metadata during refresh
         private readonly Dictionary<string, Author> _bookMetadataCache = new Dictionary<string, Author>();
 
+        // PERF (chaptarr #163/#172): the current author's full local book list, set for the duration of
+        // one RefreshBookInfo(List<Book>,...) call (same reset-per-call pattern as _bookMetadataCache
+        // above). SaveEntity uses it so BookService.UpdateMany doesn't have to re-fetch and re-clone this
+        // author's entire catalogue from scratch on every single book saved - see SaveEntity below. Safe
+        // as instance state because CommandQueue only ever runs one disk-access command (which RefreshAuthor
+        // is) at a time, so RefreshBookInfo is never re-entered concurrently on this singleton service.
+        private List<Book> _currentAuthorBooksHint;
+
         public RefreshBookService(IBookService bookService,
                                   IAuthorService authorService,
                                   IRootFolderService rootFolderService,
@@ -719,8 +727,18 @@ namespace NzbDrone.Core.Books
 
         protected override void SaveEntity(Book local)
         {
-            // Use UpdateMany to avoid firing the book edited event
-            _bookService.UpdateMany(new List<Book> { local });
+            // Use UpdateMany to avoid firing the book edited event.
+            // The hint-aware overload isn't on IBookService (see BookService.UpdateMany for why) - use it
+            // when the concrete type is available (always true in production DI), otherwise fall back to
+            // the plain interface call exactly as before.
+            if (_bookService is BookService concreteBookService)
+            {
+                concreteBookService.UpdateMany(new List<Book> { local }, _currentAuthorBooksHint);
+            }
+            else
+            {
+                _bookService.UpdateMany(new List<Book> { local });
+            }
         }
 
         protected override void DeleteEntity(Book local, bool deleteFiles)
@@ -1193,6 +1211,18 @@ namespace NzbDrone.Core.Books
 
         public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
         {
+            try
+            {
+                return RefreshBookInfoInner(books, remoteBooks, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+            }
+            finally
+            {
+                _currentAuthorBooksHint = null;
+            }
+        }
+
+        private bool RefreshBookInfoInner(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        {
             var updated = false;
             _bookMetadataCache.Clear();
 
@@ -1224,6 +1254,8 @@ namespace NzbDrone.Core.Books
 
                 books = deduped;
             }
+
+            _currentAuthorBooksHint = books;
 
             // Group books by provider ID to ensure all books with same provider ID update together
             var groups = books

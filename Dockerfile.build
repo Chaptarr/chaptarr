@@ -43,7 +43,7 @@ RUN yarn build
 # Back‑end build with NuGet cache (limit to linux-x64 + disable parallel for stability)
 ARG RUNTIME_ID=linux-x64
 RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
-    dotnet restore src/Chaptarr.NoTests.sln -r ${RUNTIME_ID} --disable-parallel --nologo /p:RestoreUseStaticGraphEvaluation=true
+    dotnet restore src/Chaptarr.NoTests.sln -r ${RUNTIME_ID} --disable-parallel --nologo /p:RestoreUseStaticGraphEvaluation=true /p:NuGetAudit=false
 
 RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
     dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -r ${RUNTIME_ID} --self-contained false -o /app --no-restore /p:EnableWindowsTargeting=true /p:RunAnalyzersDuringBuild=false /p:RunCodeAnalysis=false /p:PublishSingleFile=false --nologo
