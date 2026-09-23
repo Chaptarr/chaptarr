@@ -130,6 +130,67 @@ namespace Chaptarr.Core.Test.Books
             {
                 base.ProcessChildren(author, children);
             }
+
+            public List<Book> OrderForMatching(List<Book> remoteChildren)
+            {
+                return base.OrderRemoteChildrenForMatching(remoteChildren);
+            }
+        }
+
+        [Test]
+        public void order_remote_children_for_matching_should_be_stable_regardless_of_input_order()
+        {
+            // Three same-titled "Dune" pockets, distinguished only by provider id - exactly the
+            // shape that let claim order (and therefore which local row wins a match) depend on
+            // whatever order the metadata source happened to return them in.
+            Book Pocket(string hcId, string editionId) => new Book
+            {
+                Title = "Dune",
+                HardcoverBookId = hcId,
+                ForeignEditionId = editionId,
+                MediaType = BookMediaType.Ebook
+            };
+
+            var a = Pocket("hc:1", "ed:1");
+            var b = Pocket("hc:2", "ed:2");
+            var c = Pocket("hc:3", "ed:3");
+
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book>()),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var orderedForward = service.OrderForMatching(new List<Book> { a, b, c });
+            var orderedReversed = service.OrderForMatching(new List<Book> { c, b, a });
+            var orderedShuffled = service.OrderForMatching(new List<Book> { b, c, a });
+
+            Assert.That(orderedForward.Select(x => x.HardcoverBookId),
+                Is.EqualTo(orderedReversed.Select(x => x.HardcoverBookId)),
+                "Same set in reverse input order must produce the same match-claim order");
+            Assert.That(orderedForward.Select(x => x.HardcoverBookId),
+                Is.EqualTo(orderedShuffled.Select(x => x.HardcoverBookId)),
+                "Same set in shuffled input order must produce the same match-claim order");
+        }
+
+        [Test]
+        public void order_remote_children_for_matching_should_not_lose_or_duplicate_books()
+        {
+            var books = new List<Book>
+            {
+                new Book { Title = "Dune", HardcoverBookId = "hc:1", MediaType = BookMediaType.Ebook },
+                new Book { Title = "Dune Messiah", GoodreadsWorkId = "gr:2", MediaType = BookMediaType.Audiobook },
+                new Book { Title = "Untitled" } // no provider tokens at all - must still survive the sort
+            };
+
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book>()),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var ordered = service.OrderForMatching(books);
+
+            Assert.That(ordered.Count, Is.EqualTo(books.Count));
+            Assert.That(ordered, Is.EquivalentTo(books));
         }
 
         [Test]

@@ -88,6 +88,13 @@ namespace NzbDrone.Core.Books
         protected abstract List<TChild> GetLocalChildren(TEntity entity, List<TChild> remoteChildren);
         protected abstract Tuple<TChild, List<TChild>> GetMatchingExistingChildren(List<TChild> existingChildren, TChild remote);
 
+        // Default: no reordering (today's behavior - whatever order GetRemoteChildren returned).
+        // Override when match-claim order needs to be stable across calls; see SortChildren for why.
+        protected virtual List<TChild> OrderRemoteChildrenForMatching(List<TChild> remoteChildren)
+        {
+            return remoteChildren;
+        }
+
         protected abstract void PrepareNewChild(TChild child, TEntity entity);
         protected abstract void PrepareExistingChild(TChild local, TChild remote, TEntity entity);
 
@@ -228,7 +235,17 @@ namespace NzbDrone.Core.Books
             var sortedChildren = new SortedChildren();
             sortedChildren.Deleted.AddRange(localChildren);
 
-            foreach (var remoteChild in remoteChildren)
+            // PERF/correctness (chaptarr #179): when several remote items could plausibly claim the same
+            // local row (e.g. multiple same-titled "Dune" pockets), whichever one is processed first below
+            // wins it via GetMatchingExistingChildren -> matchingIndex.Consume. Without a fixed processing
+            // order here, that outcome depends on whatever order the metadata source happened to return
+            // items in on a given call - which local row "wins" can flip between otherwise-identical
+            // refreshes, so the loser gets bucketed as Updated/Deleted every single time even though nothing
+            // really changed. Ordering by the remote item's own stable identity makes the claim order (and
+            // therefore the outcome) a function of the data, not of call-to-call API response order.
+            var orderedRemoteChildren = OrderRemoteChildrenForMatching(remoteChildren);
+
+            foreach (var remoteChild in orderedRemoteChildren)
             {
                 var tuple = GetMatchingExistingChildren(localChildren, remoteChild);
                 var existingChild = tuple.Item1;
