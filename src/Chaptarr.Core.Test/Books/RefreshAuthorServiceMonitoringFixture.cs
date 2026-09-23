@@ -121,9 +121,9 @@ namespace Chaptarr.Core.Test.Books
             {
             }
 
-            public void PublishRefreshComplete(Author author)
+            public void PublishRefreshComplete(Author author, bool anyChanges = true)
             {
-                base.PublishRefreshCompleteEvent(author);
+                base.PublishRefreshCompleteEvent(author, anyChanges);
             }
 
             public void ProcessAddedBooks(Author author, SortedChildren children)
