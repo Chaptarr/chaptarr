@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using NLog;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download.TrackedDownloads;
@@ -52,6 +53,14 @@ namespace NzbDrone.Core.Download
 
         public void Execute(ProcessMonitoredDownloadsCommand message)
         {
+            Execute(message, CancellationToken.None);
+        }
+
+        // CommandExecutor looks for this overload by reflection. Without it a cancelled sweep is only
+        // relabelled Cancelled while its worker thread keeps importing for as long as the sweep takes,
+        // so the command disappears from the started list yet still occupies one of the few workers.
+        public void Execute(ProcessMonitoredDownloadsCommand message, CancellationToken cancellationToken)
+        {
             var enableCompletedDownloadHandling = _configService.EnableCompletedDownloadHandling;
             var trackedDownloads = _trackedDownloadService.GetTrackedDownloads()
                                                           .Where(t => t.IsTrackable)
@@ -59,6 +68,8 @@ namespace NzbDrone.Core.Download
 
             foreach (var trackedDownload in trackedDownloads)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 try
                 {
                     if (trackedDownload.State == TrackedDownloadState.DownloadFailedPending)
