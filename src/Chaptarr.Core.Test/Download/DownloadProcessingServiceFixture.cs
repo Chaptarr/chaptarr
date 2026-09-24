@@ -10,6 +10,7 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MediaFiles.BookImport.Manual;
 
 namespace Chaptarr.Core.Test.Download
 {
@@ -192,6 +193,91 @@ namespace Chaptarr.Core.Test.Download
             {
                 return false;
             }
+        }
+
+        private class QueueProxy : DispatchProxy
+        {
+            public List<CommandModel> Commands { get; set; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == "All")
+                {
+                    return Commands;
+                }
+
+                throw new NotImplementedException($"Unexpected queue call: {targetMethod?.Name}");
+            }
+        }
+
+        private static CommandModel Queued(Command body)
+        {
+            return new CommandModel { Name = body.Name, Body = body, Status = CommandStatus.Queued };
+        }
+
+        private static List<string> RunSweep(List<TrackedDownload> downloads, params CommandModel[] queued)
+        {
+            var completed = new RecordingCompletedDownloadService(new ManualResetEventSlim(true));
+            var queue = DispatchProxy.Create<IManageCommandQueue, QueueProxy>();
+            ((QueueProxy)(object)queue).Commands = new List<CommandModel>(queued);
+            var service = new DownloadProcessingService(
+                DispatchProxy.Create<IConfigService, ConfigProxy>(),
+                completed,
+                new NoOpFailedDownloadService(),
+                new StaticTrackedDownloadService { Downloads = downloads },
+                new NoOpEventAggregator(),
+                LogManager.GetCurrentClassLogger(),
+                queue);
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            return completed.ImportedDownloadIds;
+        }
+
+        [Test]
+        public void sweep_should_yield_after_one_download_when_a_disk_command_is_waiting_for_the_same_slot()
+        {
+            var imported = RunSweep(
+                new List<TrackedDownload> { CreatePending("a"), CreatePending("b"), CreatePending("c") },
+                Queued(new ManualImportCommand()));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a" }));
+        }
+
+        [Test]
+        public void sweep_should_not_yield_for_a_command_that_does_not_need_the_disk_slot()
+        {
+            var imported = RunSweep(
+                new List<TrackedDownload> { CreatePending("a"), CreatePending("b") },
+                Queued(new RefreshMonitoredDownloadsCommand()));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a", "b" }));
+        }
+
+        [Test]
+        public void sweep_should_not_yield_for_a_different_disk_access_group()
+        {
+            var imported = RunSweep(
+                new List<TrackedDownload> { CreatePending("a"), CreatePending("b") },
+                Queued(new RetryFailedImportCommand { DownloadId = "x" }));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a", "b" }));
+        }
+
+        [Test]
+        public void entries_that_need_no_work_should_not_use_up_the_one_download_guarantee()
+        {
+            var noWork = new TrackedDownload
+            {
+                DownloadItem = new DownloadClientItem { DownloadId = "done", Title = "done" },
+                State = TrackedDownloadState.Imported,
+                IsTrackable = true
+            };
+
+            var imported = RunSweep(
+                new List<TrackedDownload> { noWork, noWork, CreatePending("a"), CreatePending("b") },
+                Queued(new ManualImportCommand()));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a" }));
         }
 
         private static TrackedDownload CreatePending(string downloadId)
