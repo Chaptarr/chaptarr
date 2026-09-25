@@ -448,7 +448,7 @@ namespace NzbDrone.Core.Books
 
             var fetchLimit = limit > 0 && limit < int.MaxValue ? limit + 1 : limit;
             var results = _dbType == DatabaseType.PostgreSQL
-                ? RecallBooksPostgres(authorId, terms, mediaType, trace, fetchLimit, monitoredOnly)
+                ? RecallBooksPostgres(authorId, DropRecallStopwords(terms), mediaType, trace, fetchLimit, monitoredOnly)
                 : RecallBooksSqlite(authorId, terms, mediaType, trace, fetchLimit, monitoredOnly);
             var cut = limit > 0 && results.Count > limit;
             if (cut) results.RemoveRange(limit, results.Count - limit);
@@ -456,6 +456,23 @@ namespace NzbDrone.Core.Books
             _logger.Debug("Edition FTS recall {0}: author {1}, media {2}, terms {3}, books {4}, elapsed {5} ms, cut={6}",
                 _dbType, authorId, mediaType, terms.Count, results.Count, stopwatch.ElapsedMilliseconds, cut);
             return results;
+        }
+
+        // The Postgres recall ORs every token under the 'simple' text search configuration, which has no stopword
+        // list, so a bare "and"/"the" matches tens of thousands of editions (measured: "and" alone matched 57k
+        // editions; an 11-term query pulled 80k candidates and 38k books before LIMIT 20, about 1.2s per file). A
+        // sweep issues this once per file, so a several-hundred-file audiobook kept Postgres busy for minutes. Words
+        // that carry no title identity are not useful recall keys. Digits and series words (part, book, volume) stay:
+        // they distinguish books in a series. If nothing but stopwords remains, keep the original terms.
+        private static readonly HashSet<string> RecallStopwords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "a", "an", "and", "the", "of", "in", "to"
+        };
+
+        internal static List<string> DropRecallStopwords(List<string> terms)
+        {
+            var kept = terms.Where(term => !RecallStopwords.Contains(term)).ToList();
+            return kept.Count == 0 ? terms : kept;
         }
 
         public List<EditionFtsMatch> RankEditions(
