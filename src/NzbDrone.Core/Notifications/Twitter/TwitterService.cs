@@ -78,7 +78,7 @@ namespace NzbDrone.Core.Notifications.Twitter
                         {
                             var responseBody = reader.ReadToEnd();
                             _logger.Trace("Reponse: {0} Status Code: {1}", responseBody, httpResponse.StatusCode);
-                            throw new TwitterException("Error received from Twitter: " + responseBody, ex);
+                            throw new TwitterException("Error received from Twitter: " + httpResponse.StatusCode, ex);
                         }
                     }
                 }

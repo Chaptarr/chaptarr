@@ -71,21 +71,21 @@ namespace NzbDrone.Core.Indexers.Newznab
             }
             catch (XmlException ex)
             {
-                ex.WithData(response, 128 * 1024);
+                ex.WithData(response);
                 _logger.Trace("Unexpected Response content ({0} bytes): {1}", response.ResponseData.Length, response.Content);
                 _logger.Debug(ex, "Failed to parse newznab api capabilities for {0}", indexerSettings.BaseUrl);
                 throw;
             }
             catch (ApiKeyException ex)
             {
-                ex.WithData(response, 128 * 1024);
+                ex.WithData(response);
                 _logger.Trace("Unexpected Response content ({0} bytes): {1}", response.ResponseData.Length, response.Content);
                 _logger.Debug(ex, "Failed to parse newznab api capabilities for {0}, invalid API key", indexerSettings.BaseUrl);
                 throw;
             }
             catch (Exception ex)
             {
-                ex.WithData(response, 128 * 1024);
+                ex.WithData(response);
                 _logger.Trace("Unexpected Response content ({0} bytes): {1}", response.ResponseData.Length, response.Content);
                 _logger.Error(ex, "Failed to determine newznab api capabilities for {0}, using the defaults instead till Chaptarr restarts", indexerSettings.BaseUrl);
             }

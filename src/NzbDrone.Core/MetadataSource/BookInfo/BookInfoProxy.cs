@@ -319,11 +319,11 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
+                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}",
                         authorId,
                         page,
-                        httpResponse.StatusCode,
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                        httpResponse.StatusCode);
+                    _logger.Trace("V5 author API error response: {0}", httpResponse.Content);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -443,11 +443,11 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
+                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}",
                         authorId,
                         page,
-                        httpResponse.StatusCode,
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                        httpResponse.StatusCode);
+                    _logger.Trace("V5 author API error response: {0}", httpResponse.Content);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -616,8 +616,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 if (httpResponse.HasHttpError)
                 {
                     var errorMsg = $"Refresh API error for author {authorId}: {httpResponse.StatusCode}";
-                    _logger.Error(errorMsg + ", Content: {0}", 
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                    _logger.Error(errorMsg);
+                    _logger.Trace("V5 author refresh error response: {0}", httpResponse.Content);
                     return RefreshResult.Error(errorMsg, httpResponse.StatusCode);
                 }
 

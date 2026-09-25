@@ -10,7 +10,7 @@ namespace NzbDrone.Common.Instrumentation
         private static readonly Regex[] CleansingRules =
         {
             // Url
-            new (@"(?<=\?|&|: )((?:api|auth|pass)?key|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd)=(?<secret>[^&=""]+?)(?=[ ""&=]|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=\?|&|;|: )((?:(?:api|auth|pass)[-_]?)?key|rss[-_]?key|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd)=(?<secret>[^&;=""]+?)(?=[ ""&;=]|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\b(?:authorization_code|code|client_secret|id_token|refresh_token|secret)=(?<secret>[^&\s=""]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"(?<=\?|&)[^=]*?(username|password)=(?<secret>[^&=]+?)(?= |&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // URL userinfo (http(s)://user:pass@host)
@@ -18,9 +18,10 @@ namespace NzbDrone.Common.Instrumentation
             // HTTP headers that sometimes get embedded into logs/exception messages
             new (@"\bAuthorization:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\bProxy-Authorization:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"\b(?:X[-_]?)?API[-_]Key:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\bCookie:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\bSet-Cookie:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"""[^""]*(?:apikey|token|secret|password|passwd|pwd|authorization|cookie)[^""]*""\s*:\s*""(?<secret>[^""]+)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"""[^""]*(?:api[-_]?key|passkey|authkey|rss[-_]?key|torrent_pass|token|secret|password|passwd|pwd|authorization|cookie)[^""]*""\s*:\s*""(?<secret>[^""]+)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"(?<=\?|&)(X-Plex-Token|X-Plex-Client-Identifier)=(?<secret>[^&=]+?)(?= |&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // Connection strings (e.g. Host=...;Username=...;Password=...;)
             new (@"(?<=\b(?:password|pwd)\s*=\s*)(?<secret>[^;\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
@@ -72,6 +73,12 @@ namespace NzbDrone.Common.Instrumentation
             new (@"api.telegram.org/bot(?<id>[\d]+):(?<secret>[\w-]+)/", RegexOptions.Compiled | RegexOptions.IgnoreCase)
         };
 
+        private static readonly Regex DownloadUrlFieldRegex = new (
+            @"(?<prefix>""(?:dl|dl[-_]?link|download[-_]?(?:urls?|links?))""\s*:\s*)(?<value>""(?:\\.|[^""\\])*""|\[(?:\s*""(?:\\.|[^""\\])*""\s*,?\s*)*\])",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static readonly Regex JsonArrayStringRegex = new (@"""(?:\\.|[^""\\])*""", RegexOptions.Compiled);
+
         private static readonly Regex CleanseRemoteIPRegex = new(@"(?:Auth-\w+(?<!Failure|Unauthorized) ip|from) (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", RegexOptions.Compiled);
 
         public static string Cleanse(string message)
@@ -94,6 +101,18 @@ namespace NzbDrone.Common.Instrumentation
                     return value;
                 });
             }
+
+            // Download URL fields may carry credentials in provider-specific path segments.
+            message = DownloadUrlFieldRegex.Replace(message, match =>
+            {
+                var prefix = match.Groups["prefix"].Value;
+                var value = match.Groups["value"].Value;
+                var cleansedValue = value.StartsWith("[", System.StringComparison.Ordinal)
+                    ? JsonArrayStringRegex.Replace(value, "\"(removed)\"")
+                    : "\"(removed)\"";
+
+                return prefix + cleansedValue;
+            });
 
             message = CleanseRemoteIPRegex.Replace(message, CleanseRemoteIP);
 
