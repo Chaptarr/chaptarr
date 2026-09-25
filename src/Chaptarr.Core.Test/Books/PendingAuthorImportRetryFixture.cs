@@ -365,8 +365,9 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repositoryProxy.Updated.LastSelectedMediaType, Is.EqualTo("ebook"));
         }
 
-        [Test]
-        public async Task direct_request_should_upgrade_import_list_origin_on_the_same_provider_author()
+        [TestCase("ImportList:Favorites")]
+        [TestCase("ImportListSync")]
+        public async Task direct_request_should_upgrade_current_or_legacy_import_list_origin_on_the_same_provider_author(string listOrigin)
         {
             var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
             var repositoryProxy = (RepositoryProxy)repository;
@@ -375,7 +376,7 @@ namespace Chaptarr.Core.Test.Books
                 Id = 58,
                 ProviderId = "gr:58",
                 AuthorName = "Frank Herbert",
-                RequestedBy = "ImportList:Favorites",
+                RequestedBy = listOrigin,
                 AudiobookStatus = PendingImportStatus.Pending,
                 EbookStatus = PendingImportStatus.NotRequested,
                 OverallStatus = PendingImportStatus.Pending,

@@ -102,9 +102,9 @@ namespace NzbDrone.Core.Books.Services
                     bool updated = false;
 
                     // Explicit requests take precedence over automatic list demand when they share a queue row.
-                    if (existing.RequestedBy?.StartsWith("ImportList:", StringComparison.OrdinalIgnoreCase) == true &&
+                    if (MonitoringConfig.IsImportListRequestOrigin(existing.RequestedBy) &&
                         !string.IsNullOrWhiteSpace(config.RequestedBy) &&
-                        !config.RequestedBy.StartsWith("ImportList:", StringComparison.OrdinalIgnoreCase))
+                        !MonitoringConfig.IsImportListRequestOrigin(config.RequestedBy))
                     {
                         existing.RequestedBy = config.RequestedBy;
                         updated = true;

@@ -481,7 +481,7 @@ namespace NzbDrone.Core.Books
             localBook.Author = author;
             localBook.SetMonitored(true);
             localBook.Monitored = true;
-            _bookService.UpdateBook(localBook);
+            _bookService.MonitorRequestedBooks(new[] { localBook.Id }, mediaType == BookMediaType.Ebook ? "ebook" : "audiobook");
 
             if (searchRequested)
             {
@@ -499,7 +499,12 @@ namespace NzbDrone.Core.Books
 
         private void RemoveMatchingImportListExclusions(Book book)
         {
-            var matchingExclusions = _importListExclusionService.FindByForeignId(ImportListExclusionBookMatcher.GetLookupIds(book));
+            var lookupIds = ImportListExclusionBookMatcher.GetLookupIds(book);
+            // Provider IDs can have one author exclusion per media side, so include all known aliases in the plural lookup.
+            lookupIds.AddRange(AuthorIdentity.GetProviderIdentityTokenList(book.Author));
+
+            var matchingExclusions = _importListExclusionService.FindByForeignId(
+                lookupIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
             var oppositeMediaType = ImportListExclusionBookMatcher.GetOppositeMediaType(book.MediaType);
 
             foreach (var exclusion in matchingExclusions)
@@ -515,11 +520,6 @@ namespace NzbDrone.Core.Books
                     exclusion.MediaType = oppositeMediaType;
                     _importListExclusionService.Update(exclusion);
                 }
-            }
-
-            if (book.Author != null && !string.IsNullOrEmpty(book.Author.HardcoverAuthorId))
-            {
-                _importListExclusionService.Delete(book.Author.HardcoverAuthorId);
             }
         }
 
@@ -580,9 +580,9 @@ namespace NzbDrone.Core.Books
         private Book CompleteScopedBookRequest(Book book, bool searchRequested)
         {
             var mediaType = book.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook";
-            // A request must remain eligible after its initial search, without selecting siblings.
+            // A request selects its matching sibling rows when format sync is enabled.
             _authorService.EnsureMediaTypeMonitoring(book.AuthorId, mediaType);
-            _bookService.SetMonitoredForMediaType(new[] { book.Id }, mediaType, true);
+            _bookService.MonitorRequestedBooks(new[] { book.Id }, mediaType);
             var author = _authorService.GetAuthor(book.AuthorId);
 
             // Request preservation survives the initial scan; it does not pin an edition.

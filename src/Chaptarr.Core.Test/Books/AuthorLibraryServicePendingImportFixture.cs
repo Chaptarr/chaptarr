@@ -154,8 +154,10 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(author.Id, Is.EqualTo(-pending.Id));
         }
 
-        [Test]
-        public async Task mixed_list_request_keeps_audio_and_removes_excluded_ebook_queue_targets()
+        [TestCase("ImportList:Dune", true)]
+        [TestCase("ImportListSync", true)]
+        [TestCase("UserInterface", false)]
+        public async Task import_list_provenance_applies_media_exclusion_but_direct_request_keeps_user_choice(string requestedBy, bool appliesExclusion)
         {
             var exclusions = new StubImportListExclusionService();
             exclusions.Exclusions.Add(new ImportListExclusion { ForeignId = "gr:58", Name = "Frank Herbert", MediaType = BookMediaType.Ebook });
@@ -165,7 +167,7 @@ namespace Chaptarr.Core.Test.Books
             var config = new MonitoringConfig
             {
                 QueueIfUnavailable = true,
-                RequestedBy = "ImportList:Dune",
+                RequestedBy = requestedBy,
                 CreateAudiobook = true,
                 CreateEbook = true,
                 EbookBooksToMonitor = new List<string> { "gr:3634639" },
@@ -174,9 +176,17 @@ namespace Chaptarr.Core.Test.Books
             var result = await service.AddAuthorAsync("gr:58", config);
             Assert.That(result.Id, Is.EqualTo(-1));
             Assert.That(config.CreateAudiobook, Is.True);
-            Assert.That(config.CreateEbook, Is.False);
-            Assert.That(config.EbookBooksToMonitor, Is.Null);
-            Assert.That(config.EbookBooksToSearch, Is.Null);
+            Assert.That(config.CreateEbook, Is.EqualTo(!appliesExclusion));
+            if (appliesExclusion)
+            {
+                Assert.That(config.EbookBooksToMonitor, Is.Null);
+                Assert.That(config.EbookBooksToSearch, Is.Null);
+            }
+            else
+            {
+                Assert.That(config.EbookBooksToMonitor, Is.EqualTo(new[] { "gr:3634639" }));
+                Assert.That(config.EbookBooksToSearch, Is.EqualTo(new[] { "gr:3634639" }));
+            }
             Assert.That(pending.EnqueueCalls, Is.EqualTo(1));
         }
 

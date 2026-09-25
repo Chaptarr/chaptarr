@@ -94,14 +94,31 @@ namespace Chaptarr.Core.Test.Books
         {
             public List<ImportListExclusion> Exclusions { get; set; } = new();
             public List<int> DeletedIds { get; } = new();
+            public List<int> UpdatedIds { get; } = new();
+            public List<List<string>> LookupIdLists { get; } = new();
+            public List<string> StringDeleteCalls { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IImportListExclusionService.FindByForeignId))
                 {
-                    return targetMethod.ReturnType == typeof(List<ImportListExclusion>) ?
-                        Exclusions.ToList() :
-                        Exclusions.FirstOrDefault();
+                    if (targetMethod.ReturnType == typeof(List<ImportListExclusion>))
+                    {
+                        var ids = (List<string>)args[0];
+                        LookupIdLists.Add(ids.ToList());
+                        return Exclusions
+                            .Where(exclusion => ids.Contains(exclusion.ForeignId, StringComparer.OrdinalIgnoreCase))
+                            .ToList();
+                    }
+
+                    var foreignId = (string)args[0];
+                    var matches = Exclusions.Where(exclusion => exclusion.ForeignId == foreignId).ToList();
+                    if (matches.Count > 1)
+                    {
+                        throw new InvalidOperationException("Single exclusion lookup matched more than one row.");
+                    }
+
+                    return matches.SingleOrDefault();
                 }
 
                 if (targetMethod?.Name == nameof(IImportListExclusionService.Delete))
@@ -111,12 +128,28 @@ namespace Chaptarr.Core.Test.Books
                         DeletedIds.Add(id);
                         Exclusions.RemoveAll(exclusion => exclusion.Id == id);
                     }
+                    else if (args[0] is string foreignId)
+                    {
+                        StringDeleteCalls.Add(foreignId);
+                        var matches = Exclusions.Where(exclusion => exclusion.ForeignId == foreignId).ToList();
+                        if (matches.Count > 1)
+                        {
+                            throw new InvalidOperationException("Single exclusion lookup matched more than one row.");
+                        }
+
+                        if (matches.SingleOrDefault() is ImportListExclusion match)
+                        {
+                            DeletedIds.Add(match.Id);
+                            Exclusions.RemoveAll(exclusion => exclusion.Id == match.Id);
+                        }
+                    }
 
                     return null;
                 }
 
                 if (targetMethod?.Name == nameof(IImportListExclusionService.Update))
                 {
+                    UpdatedIds.Add(((ImportListExclusion)args[0]).Id);
                     return args[0];
                 }
 
@@ -191,6 +224,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> AddOptionsBooks { get; private set; }
             public Book AddedBook { get; private set; }
             public Book UpdatedBook { get; private set; }
+            public List<(int[] Ids, string MediaType)> RequestedMonitoringCalls { get; } = new();
             public bool FindExistingBook { get; set; }
 
             public Book UpdateBook(Book book)
@@ -252,6 +286,12 @@ namespace Chaptarr.Core.Test.Books
                 {
                     book.SetMonitoredForMediaType(mediaType, monitored);
                 }
+            }
+            public void MonitorRequestedBooks(IEnumerable<int> ids, string mediaType)
+            {
+                var bookIds = ids.ToArray();
+                RequestedMonitoringCalls.Add((bookIds, mediaType));
+                SetMonitoredForMediaType(bookIds, mediaType, true);
             }
             public void UpdateLastSearchTime(List<Book> books) => throw new NotImplementedException();
             public NzbDrone.Core.Datastore.PagingSpec<Book> BooksWithoutFiles(NzbDrone.Core.Datastore.PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
@@ -1391,6 +1431,9 @@ namespace Chaptarr.Core.Test.Books
             var result = await service.AddBook(requestedBook);
 
             Assert.That(result, Is.SameAs(authoritativeBook));
+            Assert.That(bookService.RequestedMonitoringCalls.Single().Ids, Is.EqualTo(new[] { authoritativeBook.Id }));
+            Assert.That(bookService.RequestedMonitoringCalls.Single().MediaType,
+                Is.EqualTo(mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook"));
             Assert.That(bookService.AddedBook, Is.Null, "A direct book add must never create a row outside the authoritative author catalog.");
             Assert.That(result.AddOptions.SearchForNewBook, Is.True);
             Assert.That(result.IsMonitoredWithAuthor(), Is.True);
@@ -1478,6 +1521,8 @@ namespace Chaptarr.Core.Test.Books
             var result = await service.AddBook(requestedBook);
 
             Assert.That(result, Is.SameAs(importedBook));
+            Assert.That(bookService.RequestedMonitoringCalls.Single().Ids, Is.EqualTo(new[] { importedBook.Id }));
+            Assert.That(bookService.RequestedMonitoringCalls.Single().MediaType, Is.EqualTo("audiobook"));
             Assert.That(((AuthorLibraryProxy)authorLibraryService).Config.AudiobookBooksToSearch, Does.Contain("hc:1001"));
             Assert.That(((AuthorLibraryProxy)authorLibraryService).Config.EbookBooksToSearch, Is.Null);
             Assert.That(bookService.AddOptionsBooks, Is.EqualTo(new[] { importedBook }));
@@ -1617,6 +1662,69 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.ThrowsAsync<PendingBookRequestException>(() => service.AddBook(request));
             Assert.That(exclusionProxy.DeletedIds, Is.EqualTo(new[] { 9 }));
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void author_add_should_update_only_the_requested_exclusion_scope_for_all_provider_ids(BookMediaType mediaType)
+        {
+            var oppositeMediaType = ImportListExclusionBookMatcher.GetOppositeMediaType(mediaType);
+            var retainedHardcoverExclusionId = mediaType == BookMediaType.Audiobook ? 2 : 1;
+            var author = new Author
+            {
+                HardcoverAuthorId = "hc:777",
+                GoodreadsAuthorId = "gr:888",
+                OpenLibraryAuthorId = "ol:999"
+            };
+            var exclusionService = DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>();
+            var exclusionProxy = (ImportListExclusionServiceProxy)exclusionService;
+            exclusionProxy.Exclusions.AddRange(new[]
+            {
+                new ImportListExclusion { Id = 1, ForeignId = "hc:777", MediaType = BookMediaType.Audiobook },
+                new ImportListExclusion { Id = 2, ForeignId = "hc:777", MediaType = BookMediaType.Ebook },
+                new ImportListExclusion { Id = 3, ForeignId = "gr:888" },
+                new ImportListExclusion { Id = 4, ForeignId = "ol:999", MediaType = mediaType },
+                new ImportListExclusion { Id = 5, ForeignId = "ol:999", MediaType = oppositeMediaType }
+            });
+            var service = BuildService(
+                new StubAuthorService(null),
+                new StubBookService(),
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(),
+                importListExclusionService: exclusionService);
+
+            InvokeRemoveMatchingImportListExclusions(service, new Book { MediaType = mediaType, Author = author });
+
+            var authorIds = AuthorIdentity.GetProviderIdentityTokenList(author);
+            Assert.That(exclusionProxy.LookupIdLists.Any(ids => ids.SequenceEqual(authorIds)), Is.True);
+            Assert.That(exclusionProxy.StringDeleteCalls, Is.Empty);
+            Assert.That(exclusionProxy.DeletedIds, Is.EquivalentTo(new[]
+            {
+                mediaType == BookMediaType.Audiobook ? 1 : 2,
+                4
+            }));
+            Assert.That(exclusionProxy.UpdatedIds, Is.EqualTo(new[] { 3 }));
+            Assert.That(exclusionProxy.Exclusions.Select(exclusion => exclusion.Id), Is.EquivalentTo(new[]
+            {
+                retainedHardcoverExclusionId,
+                3,
+                5
+            }));
+            Assert.That(exclusionProxy.Exclusions.Single(exclusion => exclusion.Id == retainedHardcoverExclusionId).MediaType,
+                Is.EqualTo(oppositeMediaType));
+            Assert.That(exclusionProxy.Exclusions.Single(exclusion => exclusion.Id == 3).MediaType, Is.EqualTo(oppositeMediaType));
+            Assert.That(exclusionProxy.Exclusions.Single(exclusion => exclusion.Id == 5).MediaType, Is.EqualTo(oppositeMediaType));
+        }
+
+        private static void InvokeRemoveMatchingImportListExclusions(AddBookService service, Book book)
+        {
+            var method = typeof(AddBookService).GetMethod("RemoveMatchingImportListExclusions", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (method == null)
+            {
+                throw new InvalidOperationException("Could not find AddBookService.RemoveMatchingImportListExclusions via reflection");
+            }
+
+            method.Invoke(service, new object[] { book });
         }
     }
 }
