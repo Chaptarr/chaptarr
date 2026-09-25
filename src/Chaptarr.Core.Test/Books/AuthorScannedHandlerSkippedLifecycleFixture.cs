@@ -7,6 +7,7 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.MediaFiles.Events;
@@ -95,6 +96,86 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [Test]
+        public void initial_scan_should_reconcile_format_sync_after_media_defaults()
+        {
+            var author = new Author
+            {
+                Id = 7,
+                Name = "New Author",
+                SyncMonitoredAcrossFormats = true,
+                AddOptions = new AddAuthorOptions
+                {
+                    AudiobookMonitor = MonitorTypes.All,
+                    EbookMonitor = MonitorTypes.None
+                }
+            };
+            var queue = new StubCommandQueueManager();
+            var monitoredService = DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
+            queue.OnPush = command =>
+            {
+                if (command is BulkSyncFormatMonitoringCommand)
+                {
+                    Assert.That(((BookMonitoredServiceProxy)(object)monitoredService).Calls, Has.Count.EqualTo(2));
+                }
+            };
+            var subject = new AuthorScannedHandler(
+                monitoredService,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                queue,
+                DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
+                new StubEventAggregator(),
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+
+            subject.Handle(new AuthorScannedEvent(author));
+
+            var reconciliation = queue.Pushed.OfType<BulkSyncFormatMonitoringCommand>().Single();
+            Assert.That(reconciliation.AuthorIds, Is.EqualTo(new[] { author.Id }));
+        }
+
+        [Test]
+        public void importing_ebook_side_with_none_should_leave_audiobook_side_untouched_and_reconcile_once()
+        {
+            var author = new Author
+            {
+                Id = 7,
+                Name = "Existing Author",
+                AudiobookMonitored = true,
+                EbookMonitored = false,
+                SyncMonitoredAcrossFormats = true,
+                AddOptions = new AddAuthorOptions { EbookMonitor = MonitorTypes.None }
+            };
+            var monitoredService = DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
+            var queue = new StubCommandQueueManager();
+            queue.OnPush = command =>
+            {
+                if (command is BulkSyncFormatMonitoringCommand)
+                {
+                    Assert.That(((BookMonitoredServiceProxy)(object)monitoredService).Calls, Has.Count.EqualTo(1));
+                }
+            };
+            var subject = new AuthorScannedHandler(
+                monitoredService,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                queue,
+                DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
+                new StubEventAggregator(),
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+
+            subject.Handle(new AuthorScannedEvent(author));
+
+            var call = ((BookMonitoredServiceProxy)(object)monitoredService).Calls.Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(call.Options.MediaType, Is.EqualTo(BookMediaType.Ebook));
+                Assert.That(call.Options.Monitor, Is.EqualTo(MonitorTypes.None));
+                Assert.That(queue.Pushed.OfType<BulkSyncFormatMonitoringCommand>().Single().AuthorIds,
+                    Is.EqualTo(new[] { author.Id }));
+                Assert.That(author.AudiobookMonitored, Is.True);
+                Assert.That(author.EbookMonitored, Is.False);
+            });
+        }
+
         public class BookMonitoredServiceProxy : DispatchProxy
         {
             public Author Author { get; private set; }
@@ -161,11 +242,13 @@ namespace Chaptarr.Core.Test.Books
         private sealed class StubCommandQueueManager : IManageCommandQueue
         {
             public List<Command> Pushed { get; } = new();
+            public Action<Command> OnPush { get; set; }
 
             public CommandModel Push<TCommand>(TCommand command, CommandPriority priority = CommandPriority.Normal, CommandTrigger trigger = CommandTrigger.Unspecified)
                 where TCommand : Command
             {
                 Pushed.Add(command);
+                OnPush?.Invoke(command);
                 return new CommandModel { Name = command.Name, Body = command, Priority = priority, Trigger = trigger };
             }
 

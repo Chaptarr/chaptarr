@@ -124,7 +124,7 @@ namespace NzbDrone.Core.Books
         {
         }
 
-        public bool RefreshEntityInfo(TEntity local, List<TEntity> remoteItems, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        public bool RefreshEntityInfo(TEntity local, List<TEntity> remoteItems, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, Action<TEntity> saveEntity = null, Action<TEntity> entityDeleted = null)
         {
             var updated = false;
 
@@ -139,6 +139,7 @@ namespace NzbDrone.Core.Books
                 {
                     _logger.Warn($"{typeof(TEntity).Name} {local} not found in metadata and is being deleted");
                     DeleteEntity(local, false);
+                    entityDeleted?.Invoke(local);
                     return false;
                 }
                 else
@@ -172,12 +173,13 @@ namespace NzbDrone.Core.Books
                 {
                     _logger.Trace($"Merging {typeof(TEntity).Name} {local} into {target}");
                     result = MergeEntity(local, target, remote);
+                    entityDeleted?.Invoke(local);
 
                     // having merged local into target, do update for target using remote
                     local = target;
                 }
 
-                SaveEntity(local);
+                (saveEntity ?? SaveEntity)(local);
             }
             else
             {
@@ -195,7 +197,7 @@ namespace NzbDrone.Core.Books
 
             // Do this last so entity only marked as refreshed if refresh of children completed successfully
             _logger.Trace($"Saving {typeof(TEntity).Name} {local}");
-            SaveEntity(local);
+            (saveEntity ?? SaveEntity)(local);
 
             if (updated)
             {

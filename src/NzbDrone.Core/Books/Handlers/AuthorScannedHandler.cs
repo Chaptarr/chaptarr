@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using NLog;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.MediaFiles;
@@ -65,6 +67,12 @@ namespace NzbDrone.Core.Books
                 if (!hasMediaSpecificMode)
                 {
                     _bookMonitoredService.SetBookMonitoredStatus(author, author.AddOptions);
+                }
+
+                if (author.SyncMonitoredAcrossFormats == true)
+                {
+                    // Reconcile after both initial media-side defaults have been applied.
+                    _commandQueueManager.Push(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
                 }
 
                 if (author.AddOptions.SearchForMissingBooks)

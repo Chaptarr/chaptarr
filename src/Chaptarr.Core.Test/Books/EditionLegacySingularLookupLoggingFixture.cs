@@ -203,6 +203,48 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(logs.Logs.Any(log => log.StartsWith("Warn|", StringComparison.Ordinal) && log.Contains("legacy singular lookup", StringComparison.Ordinal)), Is.True);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void row_only_book_lookup_should_return_all_editions_without_joined_book_or_author(bool postgres)
+        {
+            var sql = new List<string>();
+
+            WithRepository(repository =>
+            {
+                var rows = repository.FindRowsByBook(new[] { 1, 2, 4, 9999 });
+                Assert.That(rows.Select(edition => edition.Id), Is.EquivalentTo(new[] { 1, 2, 4, 5 }));
+                Assert.That(rows.All(edition => edition.LazyBook?.IsLoaded != true), Is.True);
+                Assert.That(rows.Single(edition => edition.Id == 1).Asin, Is.EqualTo("B00EXPECTED"));
+
+                var hydrated = repository.FindByBook(new[] { 1 });
+                Assert.That(hydrated.Single().Book?.Author?.Id, Is.EqualTo(1));
+            }, postgres, (_, commandText) => sql.Add(commandText));
+
+            Assert.That(sql, Has.Count.EqualTo(2));
+            Assert.That(sql[0], Does.Not.Contain("JOIN").IgnoreCase);
+            Assert.That(sql[1], Does.Contain("JOIN").IgnoreCase);
+        }
+
+        [Test]
+        public void row_only_book_lookup_should_chunk_large_sqlite_id_sets()
+        {
+            var queryCount = 0;
+
+            WithRepository(repository =>
+            {
+                var rows = repository.FindRowsByBook(Enumerable.Range(1, 950).Concat(new[] { 1 }));
+                Assert.That(rows.Select(edition => edition.Id), Is.EquivalentTo(new[] { 1, 2, 3, 4 }));
+            }, captureCommand: (_, commandText) =>
+            {
+                if (commandText.Contains("Editions", StringComparison.OrdinalIgnoreCase))
+                {
+                    queryCount++;
+                }
+            });
+
+            Assert.That(queryCount, Is.EqualTo(2));
+        }
+
         private static MemoryTarget ConfigureLogging()
         {
             var memoryTarget = new MemoryTarget("memory")

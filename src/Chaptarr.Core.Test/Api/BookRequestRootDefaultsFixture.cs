@@ -35,14 +35,31 @@ namespace Chaptarr.Core.Test.Api
             var opposite = new Book { Id = 4, MediaType = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook };
             var books = new List<Book> { requested, withFiles, withoutFiles, opposite };
             var usedUnscopedWrite = false;
+            var fullCatalogLookups = 0;
+            var leanCatalogLookups = 0;
+            var fileLookups = 0;
             var bookService = DispatchProxy.Create<IBookService, ServiceProxy>();
-            ((ServiceProxy)bookService).Handler = (method, args) => method.Name switch
+            ((ServiceProxy)bookService).Handler = (method, args) =>
             {
-                nameof(IBookService.GetBooksByAuthor) => books,
-                nameof(IBookService.GetAuthorBooksWithFiles) => new List<Book> { withFiles },
-                nameof(IBookService.SetMonitoredForMediaType) when initialScan => null,
-                nameof(IBookService.UpdateManyWithLifecycle) => usedUnscopedWrite = true,
-                _ => throw new NotImplementedException(method.Name)
+                switch (method.Name)
+                {
+                    case nameof(IBookService.GetBooksByAuthor):
+                        fullCatalogLookups++;
+                        return books;
+                    case nameof(IBookService.GetBooksByAuthorId):
+                        leanCatalogLookups++;
+                        return books;
+                    case nameof(IBookService.GetAuthorBooksWithFiles):
+                        fileLookups++;
+                        return new List<Book> { withFiles };
+                    case nameof(IBookService.SetMonitoredForMediaType) when initialScan:
+                        return null;
+                    case nameof(IBookService.UpdateManyWithLifecycle):
+                        usedUnscopedWrite = true;
+                        return null;
+                    default:
+                        throw new NotImplementedException(method.Name);
+                }
             };
             var authorService = DispatchProxy.Create<IAuthorService, ServiceProxy>();
             ((ServiceProxy)authorService).Handler = (method, args) => method.Name == nameof(IAuthorService.UpdateAuthor)
@@ -58,6 +75,9 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(withoutFiles.IsMonitored(), Is.EqualTo(initial is MonitorTypes.All or MonitorTypes.Missing));
                 Assert.That(opposite.IsMonitored(), Is.False);
                 Assert.That(usedUnscopedWrite, Is.EqualTo(!initialScan));
+                Assert.That(fullCatalogLookups, Is.EqualTo(initialScan ? 0 : 1));
+                Assert.That(leanCatalogLookups, Is.EqualTo(initialScan ? 1 : 0));
+                Assert.That(fileLookups, Is.EqualTo(initial is MonitorTypes.Missing or MonitorTypes.Existing ? 1 : 0));
             });
         }
 

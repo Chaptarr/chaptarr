@@ -433,7 +433,8 @@ namespace NzbDrone.Core.ImportLists
                 EbookRootFolderPath = importList.RootFolderPath,
                 AudiobookTags = tags,
                 EbookTags = tags,
-                Tags = tags
+                Tags = tags,
+                RequestedBy = $"ImportList:{importList.Name}"
             };
 
             return config;
@@ -741,7 +742,22 @@ namespace NzbDrone.Core.ImportLists
                 lookup.AddAuthor(author);
             }
 
-            foreach (var book in _bookService.GetAllBooks() ?? new List<Book>())
+            var books = _bookService.GetAllBooks() ?? new List<Book>();
+            var booksNeedingEditions = books
+                .Where(book => book?.Id > 0 && book.LazyEditions?.IsLoaded == false)
+                .ToList();
+            if (booksNeedingEditions.Count > 0)
+            {
+                var editionsByBook = _editionService.GetEditionRowsByBook(booksNeedingEditions.Select(book => book.Id))
+                    .GroupBy(edition => edition.BookId)
+                    .ToDictionary(group => group.Key, group => group.ToList());
+                foreach (var book in booksNeedingEditions)
+                {
+                    book.Editions = editionsByBook.GetValueOrDefault(book.Id) ?? new List<Edition>();
+                }
+            }
+
+            foreach (var book in books)
             {
                 lookup.AddBook(book);
             }

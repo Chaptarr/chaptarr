@@ -1990,15 +1990,15 @@ namespace Chaptarr.Api.V1.Books
                     model.MediaType,
                     bookResource.Monitored))
             {
-                // A facade request changes only its media side. The generic update would overwrite
-                // the other side; submitted edition selection is persisted independently below.
+                // The author gate changes only on the requested side. Book-row siblings follow
+                // format sync when enabled; submitted edition selection is persisted below.
                 // Explicit requests resume later acquisition even when the book was already selected.
                 // Searches and lookups alone never change these saved monitoring settings.
                 _authorService.EnsureMediaTypeMonitoring(model.AuthorId, facadeContext.MediaType);
                 model.AddOptions ??= new AddBookOptions();
                 model.AddOptions.AddType = BookAddType.Manual;
                 _bookService.SetAddOptions(new[] { model });
-                _bookService.SetMonitoredForMediaType(new[] { model.Id }, facadeContext.MediaType, true);
+                _bookService.MonitorRequestedBooks(new[] { model.Id }, facadeContext.MediaType);
             }
             else
             {

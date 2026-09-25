@@ -274,11 +274,10 @@ namespace Chaptarr.Core.Test.Api
                     addOptionsWriteCount++;
                     return null;
                 },
-                [nameof(IBookService.SetMonitoredForMediaType)] = (_, args) =>
+                [nameof(IBookService.MonitorRequestedBooks)] = (_, args) =>
                 {
                     Assert.That((IEnumerable<int>)args[0], Is.EquivalentTo(new[] { book.Id }));
                     Assert.That(args[1], Is.EqualTo(mediaType));
-                    Assert.That(args[2], Is.True);
                     book.SetMonitoredForMediaType(mediaType, true);
                     scopedBookUpdateCount++;
                     return null;

@@ -473,10 +473,9 @@ namespace NzbDrone.Core.Books.Commands
 
             if (ids.Any())
             {
-                _bookService.SetMonitoredForMediaType(
+                _bookService.MonitorRequestedBooks(
                     ids,
-                    mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook",
-                    true);
+                    mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook");
             }
         }
 

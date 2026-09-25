@@ -26,7 +26,7 @@ namespace NzbDrone.Core.Books
     public interface IRefreshBookService
     {
         bool RefreshBookInfo(Book book, List<Book> remoteBooks, Author remoteData, bool forceUpdateFileTags);
-        bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate);
+        bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, BookTitleSlugIndex titleSlugs = null);
     }
 
     public class RefreshBookService : RefreshEntityServiceBase<Book, Edition>,
@@ -1162,7 +1162,7 @@ namespace NzbDrone.Core.Books
             _eventAggregator.PublishEvent(new BookUpdatedEvent(_bookService.GetBook(entity.Id)));
         }
 
-        public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, BookTitleSlugIndex titleSlugs = null)
         {
             var updated = false;
             _bookMetadataCache.Clear();
@@ -1227,7 +1227,20 @@ namespace NzbDrone.Core.Books
                 foreach (var book in group)
                 {
                     _logger.Debug("Refreshing book {0} (ID: {1}) in group {2}", book.Title, book.Id, groupKey);
-                    updated |= RefreshEntityInfo(book, remoteBooks, remoteData, true, forceUpdateFileTags, lastUpdate);
+                    updated |= RefreshEntityInfo(book, remoteBooks, remoteData, true, forceUpdateFileTags, lastUpdate,
+                        titleSlugs == null ? null : saved =>
+                        {
+                            if (saved.AuthorId == titleSlugs.AuthorId)
+                            {
+                                _bookService.UpdateMany(new List<Book> { saved }, titleSlugs);
+                            }
+                            else
+                            {
+                                titleSlugs.Remove(saved.Id);
+                                _bookService.UpdateMany(new List<Book> { saved });
+                            }
+                        },
+                        titleSlugs == null ? null : deleted => titleSlugs.Remove(deleted.Id));
                 }
             }
 

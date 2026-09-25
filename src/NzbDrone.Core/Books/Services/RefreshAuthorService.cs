@@ -1946,6 +1946,7 @@ namespace NzbDrone.Core.Books
                 // Repair upstream un-merges safely: if a local, file-attached book currently owns editions that now
                 // belong to multiple remote works, re-parent editions (and therefore files) to the correct local book
                 // rows using the remote metadata snapshot. This preserves local state and avoids unlink+delete+rescan churn.
+                var slugSnapshotReliable = true;
                 try
                 {
                     var authorId = booksToRefresh.FirstOrDefault(b => b?.AuthorId > 0)?.AuthorId ?? 0;
@@ -1959,6 +1960,7 @@ namespace NzbDrone.Core.Books
                 }
                 catch (Exception ex)
                 {
+                    slugSnapshotReliable = false;
                     _logger.Error(ex, "[UNMERGE] Failed to repair over-merged editions during author refresh");
                 }
                 finally
@@ -1980,13 +1982,19 @@ namespace NzbDrone.Core.Books
                     .Select(g => g.First())
                     .ToList();
 
+                // Reuse the complete local snapshot, including rows inserted above, for all slug checks.
+                var authorIdForSlugs = booksToRefresh.FirstOrDefault()?.AuthorId ?? 0;
+                var titleSlugs = slugSnapshotReliable && authorIdForSlugs > 0
+                    ? new BookTitleSlugIndex(authorIdForSlugs, localChildren.All.Where(book => book != null && !deletedSourceIds.Contains(book.Id)))
+                    : null;
+
                 // Reuse the reconciliation decision: a damaged row can still carry identities
                 // from another pocket, so independently matching it again can undo that decision.
                 var updated = false;
                 foreach (var group in booksToRefresh.GroupBy(book => _bookRefreshMatchingIndex?.GetMatchedRemotePocket(book), BookReferenceComparer.Instance))
                 {
                     var snapshot = group.Key == null ? remoteChildren : new List<Book> { group.Key };
-                    updated |= _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+                    updated |= _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, titleSlugs);
                 }
 
                 return updated;

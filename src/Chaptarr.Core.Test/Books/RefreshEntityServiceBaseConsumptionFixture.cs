@@ -227,19 +227,22 @@ namespace Chaptarr.Core.Test.Books
                 ShouldDeleteResult = true
             };
 
+            var deletedIds = new List<int>();
             var result = service.RefreshEntityInfo(
                 new Author { Id = 1, Name = "Missing" },
                 new List<Author>(),
                 remoteData: null,
                 forceChildRefresh: false,
                 forceUpdateFileTags: false,
-                lastUpdate: null);
+                lastUpdate: null,
+                entityDeleted: author => deletedIds.Add(author.Id));
 
             Assert.Multiple(() =>
             {
                 Assert.That(result, Is.False);
                 Assert.That(service.Deleted, Is.True);
                 Assert.That(service.DeletedWithFiles, Is.False);
+                Assert.That(deletedIds, Is.EqualTo(new[] { 1 }));
             });
         }
 
@@ -256,18 +259,21 @@ namespace Chaptarr.Core.Test.Books
                 MergeTarget = new Author { Id = 3, Name = "Target", Books = new List<Book>() }
             };
 
+            var deletedIds = new List<int>();
             service.RefreshEntityInfo(
                 new Author { Id = 1, Name = "Local", Books = new List<Book>() },
                 new List<Author>(),
                 remoteData: null,
                 forceChildRefresh: false,
                 forceUpdateFileTags: false,
-                lastUpdate: null);
+                lastUpdate: null,
+                entityDeleted: author => deletedIds.Add(author.Id));
 
             Assert.Multiple(() =>
             {
                 Assert.That(service.Deleted, Is.True);
                 Assert.That(service.DeletedWithFiles, Is.False);
+                Assert.That(deletedIds, Is.EqualTo(new[] { 1 }));
             });
         }
 

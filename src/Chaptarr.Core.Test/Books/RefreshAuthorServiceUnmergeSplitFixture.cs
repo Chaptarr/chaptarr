@@ -232,7 +232,7 @@ namespace Chaptarr.Core.Test.Books
         private sealed class StubRefreshBookService : IRefreshBookService
         {
             public bool RefreshBookInfo(Book book, List<Book> remoteBooks, Author remoteData, bool forceUpdateFileTags) => false;
-            public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate) => false;
+            public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, BookTitleSlugIndex titleSlugs = null) => false;
         }
 
         private sealed class TestableRefreshAuthorService : RefreshAuthorService

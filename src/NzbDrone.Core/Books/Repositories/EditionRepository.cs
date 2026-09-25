@@ -24,6 +24,7 @@ namespace NzbDrone.Core.Books
         Edition FindByGoogleBooksEditionId(string googleBooksEditionId);
         List<Edition> FindAllByGoogleBooksEditionId(string googleBooksEditionId);
         List<Edition> FindByBook(IEnumerable<int> ids);
+        List<Edition> FindRowsByBook(IEnumerable<int> ids) => FindByBook(ids);
         List<Edition> FindByAuthor(int id, bool onlyMonitored = false);
         List<Edition> FindByAuthorId(int id, bool onlyMonitored);
         Edition FindByTitle(int authorId, string title);
@@ -166,7 +167,11 @@ namespace NzbDrone.Core.Books
             return Query(r => r.BookId == bookId);
         }
 
-        public List<Edition> FindByBook(IEnumerable<int> ids)
+        public List<Edition> FindByBook(IEnumerable<int> ids) => FindByBookInternal(ids, hydrateBook: true);
+
+        public List<Edition> FindRowsByBook(IEnumerable<int> ids) => FindByBookInternal(ids, hydrateBook: false);
+
+        private List<Edition> FindByBookInternal(IEnumerable<int> ids, bool hydrateBook)
         {
             if (ids == null)
             {
@@ -179,10 +184,13 @@ namespace NzbDrone.Core.Books
                 return new List<Edition>();
             }
 
-            // populate the books, author metadata, and author also
-            // this hopefully speeds up the track matching a lot
             List<Edition> QueryForBookIds(int[] chunkBookIds)
             {
+                if (!hydrateBook)
+                {
+                    return Query(edition => Enumerable.Contains(chunkBookIds, edition.BookId));
+                }
+
                 var builder = new SqlBuilder(_database.DatabaseType)
                     .LeftJoin<Edition, Book>((e, b) => e.BookId == b.Id)
                     .LeftJoin<Book, Author>((b, au) => b.AuthorId == au.Id)

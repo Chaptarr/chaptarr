@@ -32,6 +32,7 @@ namespace NzbDrone.Core.Books
         List<Edition> GetEditionsForRefresh(int bookId);
         List<Edition> GetEditionsByBook(int bookId);
         List<Edition> GetEditionsByBook(IEnumerable<int> bookIds);
+        List<Edition> GetEditionRowsByBook(IEnumerable<int> bookIds) => GetEditionsByBook(bookIds);
         List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false);
         Edition FindByTitle(int authorId, string title);
         Edition FindByTitleInexact(int authorId, string title);
@@ -433,6 +434,11 @@ namespace NzbDrone.Core.Books
         public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds)
         {
             return _editionRepository.FindByBook(bookIds);
+        }
+
+        public List<Edition> GetEditionRowsByBook(IEnumerable<int> bookIds)
+        {
+            return _editionRepository.FindRowsByBook(bookIds);
         }
 
         public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false)

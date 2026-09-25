@@ -155,6 +155,22 @@ namespace Chaptarr.Core.Test.ImportLists
             }
         }
 
+        private class WorkInfoProxy : DispatchProxy
+        {
+            public Book Book { get; set; }
+            public Author Author { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == "GetWorkInfo")
+                {
+                    return Tuple.Create(args[0] as string, Book, new List<Author> { Author });
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IProvideBookInfo.{targetMethod?.Name}");
+            }
+        }
+
         private class AuthorServiceProxy : DispatchProxy
         {
             public Author Author { get; set; }
@@ -353,12 +369,44 @@ namespace Chaptarr.Core.Test.ImportLists
             }
         }
 
+        private sealed class FailOnEditionLoad : NzbDrone.Core.Datastore.LazyLoaded<List<Edition>>
+        {
+            public override void LazyLoad() => throw new AssertionException("Import-list indexing must load editions in a batch");
+        }
+
+        private class BatchEditionServiceProxy : DispatchProxy
+        {
+            public List<Edition> Editions { get; set; } = new();
+            public int RowOnlyLookupCount { get; private set; }
+            public int HydratedBatchLookupCount { get; private set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IEditionService.GetEditionRowsByBook) &&
+                    args?[0] is IEnumerable<int> bookIds)
+                {
+                    RowOnlyLookupCount++;
+                    var ids = bookIds.ToHashSet();
+                    return Editions.Where(edition => ids.Contains(edition.BookId)).ToList();
+                }
+
+                if (targetMethod?.Name == nameof(IEditionService.GetEditionsByBook))
+                {
+                    HydratedBatchLookupCount++;
+                    throw new AssertionException("Import-list indexing must use edition-only rows");
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IEditionService.{targetMethod?.Name}");
+            }
+        }
+
         private static ImportListSyncService BuildExistingAuthorService(
             ImportListDefinition definition,
             Author author,
             List<Book> books,
             List<ImportListItemInfo> items,
-            StubCommandQueueManager commandQueue = null)
+            StubCommandQueueManager commandQueue = null,
+            IEditionService editionService = null)
         {
             var importListFactory = DispatchProxy.Create<IImportListFactory, ImportListFactoryProxy>();
             ((ImportListFactoryProxy)(object)importListFactory).Definition = definition;
@@ -377,7 +425,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 authorService: authorService,
                 bookService: bookService,
                 bookRepository: DispatchProxy.Create<IBookRepository, ThrowingProxy<IBookRepository>>(),
-                editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                editionService: editionService ?? DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
                 editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
                 editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()),
                 authorLibraryService: new StubAuthorLibraryService(),
@@ -388,6 +436,40 @@ namespace Chaptarr.Core.Test.ImportLists
                 commandQueueManager: commandQueue ?? new StubCommandQueueManager(),
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
+        }
+
+        [Test]
+        public void local_lookup_should_batch_unloaded_editions_and_keep_edition_provider_matches()
+        {
+            var books = Enumerable.Range(1, 25)
+                .Select(index => new Book
+                {
+                    Id = index,
+                    AuthorId = 1,
+                    MediaType = BookMediaType.Ebook,
+                    HardcoverBookId = $"hc:{index}",
+                    LazyEditions = new FailOnEditionLoad()
+                })
+                .ToList();
+            var editionService = DispatchProxy.Create<IEditionService, BatchEditionServiceProxy>();
+            ((BatchEditionServiceProxy)(object)editionService).Editions = books
+                .Select(book => new Edition { BookId = book.Id, Asin = $"B{book.Id:D9}" })
+                .ToList();
+            var service = BuildExistingAuthorService(null, null, books, new List<ImportListItemInfo>(),
+                editionService: editionService);
+
+            var buildLookup = typeof(ImportListSyncService).GetMethod("BuildImportListLocalLookup",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            var lookup = buildLookup.Invoke(service, null);
+            var findBook = lookup.GetType().GetMethod("FindBook");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(((BatchEditionServiceProxy)(object)editionService).RowOnlyLookupCount, Is.EqualTo(1));
+                Assert.That(((BatchEditionServiceProxy)(object)editionService).HydratedBatchLookupCount, Is.Zero);
+                Assert.That(findBook.Invoke(lookup, new object[] { "az:B000000001" }), Is.SameAs(books[0]));
+                Assert.That(findBook.Invoke(lookup, new object[] { "az:B000000025" }), Is.SameAs(books[24]));
+            });
         }
 
         [Test]
@@ -924,6 +1006,88 @@ namespace Chaptarr.Core.Test.ImportLists
             var pendingDrain = commandQueue.Pushed.OfType<ProcessPendingImportsCommand>().Single();
             Assert.That(pendingDrain.ContinueUntilEmpty, Is.True);
             Assert.That(pendingDrain.BatchSize, Is.EqualTo(10));
+        }
+
+        [Test]
+        public void generic_list_full_selection_update_keeps_list_provenance_for_media_scoped_exclusion()
+        {
+            const string authorProviderId = "gr:58";
+            const string bookProviderId = "gr:312460";
+            const string importListName = "Generic Favorites";
+
+            var definition = new ImportListDefinition
+            {
+                Id = 31,
+                Name = importListName,
+                EnableAutomaticAdd = true,
+                ShouldMonitor = ImportListMonitorType.SpecificBook,
+                ShouldMonitorExisting = true,
+                RootFolderPath = @"C:\library".AsOsAgnostic(),
+                QualityProfileId = 1,
+                MetadataProfileId = 1
+            };
+            var author = new Author { Name = "Frank Herbert", GoodreadsAuthorId = authorProviderId };
+            var book = new Book { Title = "Dune", GoodreadsWorkId = bookProviderId, Author = author };
+            var report = new ImportListItemInfo
+            {
+                ImportListId = definition.Id,
+                ImportList = definition.Name,
+                Author = author.Name,
+                Book = book.Title,
+                BookProviderId = bookProviderId,
+                ReleaseDate = DateTime.UtcNow.Date
+            };
+
+            var importListFactory = DispatchProxy.Create<IImportListFactory, ImportListFactoryProxy>();
+            ((ImportListFactoryProxy)(object)importListFactory).Definition = definition;
+            var pendingImportService = new RecordingPendingAuthorImportService();
+            var bookInfoProxy = DispatchProxy.Create<NzbDrone.Core.MetadataSource.IProvideBookInfo, WorkInfoProxy>();
+            ((WorkInfoProxy)(object)bookInfoProxy).Book = book;
+            ((WorkInfoProxy)(object)bookInfoProxy).Author = author;
+            var commandQueue = new StubCommandQueueManager();
+
+            var service = new ImportListSyncService(
+                importListFactory: importListFactory,
+                importListExclusionService: new StubImportListExclusionService
+                {
+                    Exclusions = new List<ImportListExclusion>
+                    {
+                        new() { ForeignId = authorProviderId, Name = author.Name, MediaType = BookMediaType.Ebook }
+                    }
+                },
+                listFetcherAndParser: new StubFetchAndParseImportList { Items = new List<ImportListItemInfo> { report } },
+                bookInfoProxy: bookInfoProxy,
+                authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                bookService: DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                bookRepository: DispatchProxy.Create<IBookRepository, ThrowingProxy<IBookRepository>>(),
+                editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()),
+                authorLibraryService: new StubAuthorLibraryService(),
+                pendingAuthorImportService: pendingImportService,
+                rootFolderService: DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
+                rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsResolverProxy>(),
+                eventAggregator: new StubEventAggregator(),
+                commandQueueManager: commandQueue,
+                logger: LogManager.GetCurrentClassLogger(),
+                bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
+
+            service.Execute(new ImportListSyncCommand(definition.Id));
+
+            Assert.That(report.AuthorProviderId, Is.EqualTo(authorProviderId), "the missing author identity is supplied by the mapping pass before it is queued");
+            Assert.That(pendingImportService.Enqueued, Has.Count.EqualTo(2), "the mapped author is queued early, then updated with the complete book selection");
+            Assert.That(pendingImportService.Enqueued.Select(x => x.ProviderId), Is.All.EqualTo(authorProviderId));
+
+            var finalRequest = pendingImportService.Enqueued.Last();
+            Assert.Multiple(() =>
+            {
+                Assert.That(finalRequest.Config.RequestedBy, Is.EqualTo($"ImportList:{importListName}"));
+                Assert.That(finalRequest.SourceApplication, Is.EqualTo($"ImportList:{importListName}"));
+                Assert.That(finalRequest.Config.CreateAudiobook, Is.True);
+                Assert.That(finalRequest.Config.CreateEbook, Is.True);
+                Assert.That(finalRequest.Config.AudiobookBooksToMonitor, Is.EqualTo(new[] { bookProviderId }));
+                Assert.That(finalRequest.Config.EbookBooksToMonitor, Is.EqualTo(new[] { bookProviderId }));
+            });
         }
 
         [Test]

@@ -29,7 +29,10 @@ namespace NzbDrone.Core.Books
             {
                 _logger.Debug("[{0}] Setting book monitored status.", author.Name);
 
-                var allBooks = _bookService.GetBooksByAuthor(author.Id);
+                var initialMediaChoice = author.AddOptions != null && monitoringOptions.MediaType.HasValue;
+                var allBooks = initialMediaChoice
+                    ? _bookService.GetBooksByAuthorId(author.Id)
+                    : _bookService.GetBooksByAuthor(author.Id);
                 var books = allBooks;
 
                 if (monitoringOptions.MediaType.HasValue)
@@ -39,7 +42,11 @@ namespace NzbDrone.Core.Books
                         .ToList();
                 }
 
-                var booksWithFiles = _bookService.GetAuthorBooksWithFiles(author);
+                var needsFileState = monitoringOptions.BooksToMonitor.Count == 0 &&
+                    (monitoringOptions.Monitor is MonitorTypes.Future or MonitorTypes.Missing or MonitorTypes.Existing);
+                var booksWithFiles = needsFileState
+                    ? _bookService.GetAuthorBooksWithFiles(author)
+                    : new List<Book>();
                 if (monitoringOptions.MediaType.HasValue)
                 {
                     booksWithFiles = booksWithFiles
@@ -124,10 +131,10 @@ namespace NzbDrone.Core.Books
                 // Later monitoring edits have no Author.AddOptions and remain authoritative.
                 ToggleBooksMonitoredState(requestedBooks, true);
 
-                if (author.AddOptions != null && monitoringOptions.MediaType.HasValue)
+                if (initialMediaChoice)
                 {
-                    // Initial per-side defaults must not synchronize onto an already
-                    // configured opposite side. Reuse the explicitly scoped write path.
+                    // Apply each initial side independently; the scan handler reconciles
+                    // matching sibling rows after both sides have their final defaults.
                     var mediaType = monitoringOptions.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook";
                     foreach (var group in books.GroupBy(book => book.IsMonitored()))
                     {

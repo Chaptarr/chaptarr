@@ -103,6 +103,7 @@ namespace Chaptarr.Core.Test.Books
         private sealed class StubRefreshBookService : IRefreshBookService
         {
             public List<Book> RefreshCallsBooks { get; } = new();
+            public BookTitleSlugIndex TitleSlugs { get; private set; }
 
             public bool RefreshBookInfo(Book book, List<Book> remoteBooks, Author remoteData, bool forceUpdateFileTags)
             {
@@ -110,8 +111,9 @@ namespace Chaptarr.Core.Test.Books
                 return false;
             }
 
-            public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+            public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, BookTitleSlugIndex titleSlugs = null)
             {
+                TitleSlugs = titleSlugs;
                 RefreshCallsBooks.AddRange(books);
                 return false;
             }
@@ -562,8 +564,8 @@ namespace Chaptarr.Core.Test.Books
             var refreshBookService = new StubRefreshBookService();
             var service = new TestableRefreshAuthorService(bookService, mediaFileService, refreshBookService, LogManager.GetCurrentClassLogger());
 
-	            var target = new Book { Id = 2, Title = "Mere Christianity", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
-	            var duplicate = new Book { Id = 1, Title = "Mere Christianity", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var target = new Book { Id = 2, AuthorId = 5, Title = "Mere Christianity", TitleSlug = "mere-christianity", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var duplicate = new Book { Id = 1, AuthorId = 5, Title = "Mere Christianity", TitleSlug = "old-duplicate", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
 
             var children = new RefreshEntityServiceBase<Author, Book>.SortedChildren();
             children.UpToDate.Add(target);
@@ -574,6 +576,9 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(bookService.DeleteBookCalls.Select(c => c.bookId).ToList(), Is.EqualTo(new List<int> { duplicate.Id }));
             Assert.That(refreshBookService.RefreshCallsBooks.Select(b => b.Id).Contains(duplicate.Id), Is.False);
             Assert.That(refreshBookService.RefreshCallsBooks.Select(b => b.Id).Contains(target.Id), Is.True);
+            Assert.That(refreshBookService.TitleSlugs, Is.Not.Null);
+            Assert.That(refreshBookService.TitleSlugs.Contains(target.TitleSlug), Is.True);
+            Assert.That(refreshBookService.TitleSlugs.Contains(duplicate.TitleSlug), Is.False);
         }
     }
 }

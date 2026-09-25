@@ -62,6 +62,13 @@ namespace NzbDrone.Core.Books.Services
 
     public class MonitoringConfig
     {
+        // Queued automatic-list requests can outlive the producer version that created them.
+        public static bool IsImportListRequestOrigin(string requestedBy)
+        {
+            return requestedBy?.StartsWith("ImportList:", StringComparison.OrdinalIgnoreCase) == true ||
+                   string.Equals(requestedBy, "ImportListSync", StringComparison.Ordinal);
+        }
+
         // Flag to indicate this is a manual addition from modal (not disc scan)
         public bool IsManualAddition { get; set; } = false;
 
@@ -488,7 +495,7 @@ namespace NzbDrone.Core.Books.Services
 
         private void ThrowIfImportListAuthorExcluded(string providerId, Author author, MonitoringConfig config)
         {
-            if (config?.RequestedBy?.StartsWith("ImportList:", StringComparison.OrdinalIgnoreCase) != true)
+            if (!MonitoringConfig.IsImportListRequestOrigin(config?.RequestedBy))
             {
                 return;
             }
@@ -2213,6 +2220,29 @@ namespace NzbDrone.Core.Books.Services
             var allEditions = new List<Edition>();
             var booksToPersist = new List<Book>();
             var skippedMalformedBooks = 0;
+            var selectedCurrentBookByMedia = new Dictionary<BookMediaType, Book>();
+            if (GetInitialMonitorMode(config, BookMediaType.Audiobook) is MonitorTypes.Latest or MonitorTypes.First ||
+                GetInitialMonitorMode(config, BookMediaType.Ebook) is MonitorTypes.Latest or MonitorTypes.First)
+            {
+                foreach (var mediaBooks in books.Where(book => book != null).GroupBy(book => book.MediaType))
+                {
+                    var initialMode = GetInitialMonitorMode(config, mediaBooks.Key);
+                    if (initialMode == MonitorTypes.Latest)
+                    {
+                        selectedCurrentBookByMedia[mediaBooks.Key] = mediaBooks
+                            .OrderByDescending(candidate => candidate.ReleaseDate)
+                            .ThenByDescending(candidate => candidate.Id)
+                            .First();
+                    }
+                    else if (initialMode == MonitorTypes.First)
+                    {
+                        selectedCurrentBookByMedia[mediaBooks.Key] = mediaBooks
+                            .OrderBy(candidate => candidate.ReleaseDate)
+                            .ThenBy(candidate => candidate.Id)
+                            .First();
+                    }
+                }
+            }
 
             foreach (var book in books)
             {
@@ -2259,7 +2289,7 @@ namespace NzbDrone.Core.Books.Services
                 var hasSpecificBookMode = specificBookProviderIds.Any() || monitorMode == MonitorTypes.SpecificBook;
                 var monitorThisBook = hasSpecificBookMode
                     ? shouldMonitorThisBook
-                    : ShouldMonitorCurrentBook(book, books, monitorMode);
+                    : ShouldMonitorCurrentBook(book, monitorMode, selectedCurrentBookByMedia.GetValueOrDefault(book.MediaType));
 
                 if (book.MediaType == BookMediaType.Audiobook)
                 {
@@ -2384,38 +2414,26 @@ namespace NzbDrone.Core.Books.Services
             return perMediaMode ?? config.MonitorMode;
         }
 
-        private static bool ShouldMonitorCurrentBook(Book book, List<Book> books, MonitorTypes? monitorMode)
+        private static bool ShouldMonitorCurrentBook(Book book, MonitorTypes? monitorMode, Book selectedCurrentBook)
         {
             if (book == null || !monitorMode.HasValue)
             {
                 return false;
             }
 
-            var sameMediaBooks = books
-                .Where(candidate => candidate != null && candidate.MediaType == book.MediaType)
-                .ToList();
-
-            var hasFiles = book.HasFiles;
             switch (monitorMode.Value)
             {
                 case MonitorTypes.All:
                     return true;
                 case MonitorTypes.Future:
-                    return !hasFiles && (!book.ReleaseDate.HasValue || book.ReleaseDate.Value > DateTime.UtcNow);
+                    return !book.HasFiles && (!book.ReleaseDate.HasValue || book.ReleaseDate.Value > DateTime.UtcNow);
                 case MonitorTypes.Missing:
-                    return !hasFiles;
+                    return !book.HasFiles;
                 case MonitorTypes.Existing:
-                    return hasFiles;
+                    return book.HasFiles;
                 case MonitorTypes.Latest:
-                    return sameMediaBooks
-                        .OrderByDescending(candidate => candidate.ReleaseDate)
-                        .ThenByDescending(candidate => candidate.Id)
-                        .FirstOrDefault() == book;
                 case MonitorTypes.First:
-                    return sameMediaBooks
-                        .OrderBy(candidate => candidate.ReleaseDate)
-                        .ThenBy(candidate => candidate.Id)
-                        .FirstOrDefault() == book;
+                    return selectedCurrentBook == book;
                 case MonitorTypes.None:
                 case MonitorTypes.SpecificBook:
                 case MonitorTypes.Unknown:

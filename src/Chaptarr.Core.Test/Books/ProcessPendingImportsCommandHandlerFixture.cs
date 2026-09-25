@@ -133,12 +133,13 @@ namespace Chaptarr.Core.Test.Books
                                                        .Concat(book.RemoteProviderIds ?? Enumerable.Empty<string>())
                                                        .Any(id => string.Equals(id, providerId, StringComparison.OrdinalIgnoreCase)))
                             .ToList();
+                    case nameof(IBookService.MonitorRequestedBooks):
                     case nameof(IBookService.SetMonitoredForMediaType):
                         if (!IgnoreMonitoringUpdates)
                         {
                             var monitoredIds = ((IEnumerable<int>)args[0]).ToHashSet();
                             var mediaType = (string)args[1];
-                            var monitored = (bool)args[2];
+                            var monitored = targetMethod.Name == nameof(IBookService.MonitorRequestedBooks) || (bool)args[2];
                             for (var index = 0; index < Books.Count; index++)
                             {
                                 var book = Books[index];
