@@ -97,7 +97,6 @@ namespace Chaptarr.Api.V1.Author
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
         private readonly IBookMonitoredService _bookMonitoredService;
-        private readonly ISeriesService _seriesService;
         // DEPRECATED-IDENTIFICATION: IAddAuthorService removed - use IAuthorLibraryService instead
         // private readonly IAddAuthorService _addAuthorService;
         private readonly IAuthorLibraryService _authorLibraryService;
@@ -119,7 +118,6 @@ namespace Chaptarr.Api.V1.Author
 	                            IAuthorService authorService,
 	                            IBookService bookService,
                             IBookMonitoredService bookMonitoredService,
-                            ISeriesService seriesService,
                             IAuthorLibraryService authorLibraryService,
                             IAuthorStatisticsService authorStatisticsService,
                             IMapCoversToLocal coverMapper,
@@ -145,7 +143,6 @@ namespace Chaptarr.Api.V1.Author
             _authorService = authorService;
             _bookService = bookService;
             _bookMonitoredService = bookMonitoredService;
-            _seriesService = seriesService;
             _authorLibraryService = authorLibraryService;
             _authorStatisticsService = authorStatisticsService;
 
@@ -325,17 +322,6 @@ namespace Chaptarr.Api.V1.Author
             if (author == null)
             {
                 return null;
-            }
-
-            // Ensure author has all relationships loaded
-            if (author.Books == null)
-            {
-                author.Books = _bookService.GetBooksByAuthor(author.Id);
-            }
-
-            if (author.Series == null)
-            {
-                author.Series = _seriesService.GetByAuthorId(author.Id);
             }
 
             var resource = author.ToResource(HttpContext.GetReadarrFacadeContext());

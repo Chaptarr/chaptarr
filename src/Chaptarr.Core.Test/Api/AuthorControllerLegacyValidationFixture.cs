@@ -115,7 +115,6 @@ namespace Chaptarr.Core.Test.Api
                 authorService: authorService,
                 bookService: null,
                 bookMonitoredService: null,
-                seriesService: null,
                 authorLibraryService: authorLibraryService,
                 authorStatisticsService: null,
                 coverMapper: null,

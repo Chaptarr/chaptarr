@@ -262,6 +262,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                             parsedBookInfo =
                                 Parser.Parser.ParseBookTitleWithSearchCriteria(historyContextItem.SourceTitle,
                                     historyAuthor,
+                                    historyBooks,
                                     historyBooks);
 
                             if (parsedBookInfo != null)

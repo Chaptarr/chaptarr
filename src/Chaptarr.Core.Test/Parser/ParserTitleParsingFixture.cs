@@ -54,7 +54,8 @@ namespace Chaptarr.Core.Test.Parser
             var author = new Author { Name = "Freida McFadden" };
             var book = new Book { Author = author, Title = "Want to Know a Secret?" };
 
-            var result = CoreParser.ParseBookTitleWithSearchCriteria("Freida McFadden - Want to Know a Secret¿", author, new List<Book> { book });
+            var books = new List<Book> { book };
+            var result = CoreParser.ParseBookTitleWithSearchCriteria("Freida McFadden - Want to Know a Secret¿", author, books, books);
 
             Assert.That(result, Is.Not.Null);
             Assert.That(result.AuthorName, Is.EqualTo("Freida McFadden"));
@@ -77,10 +78,12 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
 
+            var books = new List<Book> { book };
             var result = CoreParser.ParseBookTitleWithSearchCriteria(
                 "J. K. Rowling - Harry Potter and the Philosopher's Stone (aka Harry Potter and the Sorcerer's Stone)",
                 author,
-                new List<Book> { book });
+                books,
+                books);
 
             Assert.That(result, Is.Not.Null);
             Assert.That(result.AuthorName, Is.EqualTo("J. K. Rowling"));
@@ -103,10 +106,12 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
 
+            var books = new List<Book> { book };
             var result = CoreParser.ParseBookTitleWithSearchCriteria(
                 "Harry Potter and the Philosopher's Stone",
                 author,
-                new List<Book> { book });
+                books,
+                books);
 
             Assert.That(result, Is.Null);
         }
@@ -128,10 +133,12 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
 
+            var books = new List<Book> { book };
             var result = CoreParser.ParseBookTitleWithSearchCriteria(
                 "Brandon Sanderson - 'Mistborn', Bk 1 - The Final Empire  (NMR 64 kbps) [27/31] - \"Brandon Sanderson - Mistborn - The Final Empire 18 of 22.mp3\" yEnc",
                 author,
-                new List<Book> { book });
+                books,
+                books);
 
             Assert.That(result, Is.Not.Null);
             Assert.That(result.AuthorName, Is.EqualTo("Brandon Sanderson"));
@@ -155,10 +162,12 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
 
+            var books = new List<Book> { book };
             var result = CoreParser.ParseBookTitleWithSearchCriteria(
                 "Brandon Sanderson-&039;mistborn&039;, Bk 1-The Final Empire (Nmr 64 Kbps)",
                 author,
-                new List<Book> { book });
+                books,
+                books);
 
             Assert.That(result, Is.Not.Null);
             Assert.That(result.AuthorName, Is.EqualTo("Brandon Sanderson"));
@@ -186,11 +195,44 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
 
-            var result = CoreParser.ParseBookTitleWithSearchCriteria(releaseTitle, author, new List<Book> { book });
+            var books = new List<Book> { book };
+            var result = CoreParser.ParseBookTitleWithSearchCriteria(releaseTitle, author, books, books);
 
             Assert.That(result, Is.Not.Null);
             Assert.That(result.AuthorName, Is.EqualTo("Brandon Sanderson"));
             Assert.That(result.BookTitle, Is.EqualTo("The Final Empire"));
+        }
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        public void should_use_explicit_sibling_catalog_independently_of_cached_author_books(BookMediaType mediaType, bool hasCachedBooks)
+        {
+            var author = new Author { Id = 1, Name = "Stephen King" };
+            var target = new Book
+            {
+                Id = 1, Author = author, Title = "It", MediaType = mediaType,
+                Editions = new List<Edition> { new Edition { Title = "It", Monitored = true } }
+            };
+            var sibling = new Book
+            {
+                Id = 2, Author = author, Title = "If It Bleeds", MediaType = mediaType,
+                Editions = new List<Edition> { new Edition { Title = "If It Bleeds", Monitored = true } }
+            };
+            var books = new List<Book> { target };
+            var catalog = new List<Book> { target, sibling };
+            author.Books = hasCachedBooks ? books : null;
+
+            var siblingResult = CoreParser.ParseBookTitleWithSearchCriteria("Stephen King - If It Bleeds", author, books, catalog);
+            var targetResult = CoreParser.ParseBookTitleWithSearchCriteria("Stephen King - It", author, books, catalog);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(siblingResult, Is.Null);
+                Assert.That(targetResult, Is.Not.Null);
+                Assert.That(targetResult?.BookTitle, Is.EqualTo("It"));
+                Assert.That(author.Books, Is.SameAs(hasCachedBooks ? books : null));
+            });
         }
     }
 }

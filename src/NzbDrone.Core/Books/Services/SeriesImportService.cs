@@ -136,17 +136,16 @@ namespace NzbDrone.Core.Books
                     author.Name,
                     refreshStopwatch.ElapsedMilliseconds);
 
-                // Check if series were actually created
-                var newSeriesCount = _seriesService.GetByAuthorId(authorMetadataId).Count;
+                // Use the refreshed result for both change detection and follow-up events.
+                var refreshedSeries = _seriesService.GetByAuthorId(authorMetadataId);
+                var newSeriesCount = refreshedSeries.Count;
                 _logger.Debug("[SERIES-IMPORT] Series refresh completed for author {0}. Series count: before={1}, after={2}",
                     author.Name, existingSeries.Count, newSeriesCount);
 
-                // Update the author's series collection and trigger event for variant processing
                 if (newSeriesCount > existingSeries.Count)
                 {
-                    author.Series = _seriesService.GetByAuthorId(author.Id);
-                    // For now, process each series individually
-                    foreach (var series in author.Series)
+                    // For now, process each series individually.
+                    foreach (var series in refreshedSeries)
                     {
                         _eventAggregator.PublishEvent(new SeriesRefreshCompleteEvent(series));
                     }

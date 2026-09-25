@@ -152,7 +152,8 @@ namespace NzbDrone.Core.DecisionEngine
                     {
                         parsedBookInfo = Parser.Parser.ParseBookTitleWithSearchCriteria(report.Title,
                                                                                         searchCriteria.Author,
-                                                                                        searchCriteria.Books);
+                                                                                        searchCriteria.Books,
+                                                                                        searchCriteria.AuthorCatalog ?? searchCriteria.Books);
                         attemptedCriteriaParse = true;
                     }
 
@@ -162,7 +163,8 @@ namespace NzbDrone.Core.DecisionEngine
                     {
                         parsedBookInfo = Parser.Parser.ParseBookTitleWithSearchCriteria(report.Title,
                                                                                         searchCriteria.Author,
-                                                                                        searchCriteria.Books);
+                                                                                        searchCriteria.Books,
+                                                                                        searchCriteria.AuthorCatalog ?? searchCriteria.Books);
                     }
 
                     if (searchCriteria == null)
@@ -220,7 +222,8 @@ namespace NzbDrone.Core.DecisionEngine
                             _logger.Trace("Author/Book null for {0}, reparsing with search criteria", report.Title);
                             var parsedBookInfoWithCriteria = Parser.Parser.ParseBookTitleWithSearchCriteria(report.Title,
                                                                                                             searchCriteria.Author,
-                                                                                                            searchCriteria.Books);
+                                                                                                            searchCriteria.Books,
+                                                                                                            searchCriteria.AuthorCatalog ?? searchCriteria.Books);
 
                             if (parsedBookInfoWithCriteria != null && parsedBookInfoWithCriteria.AuthorName.IsNotNullOrWhiteSpace())
                             {

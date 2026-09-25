@@ -23,6 +23,8 @@ namespace Chaptarr.Core.Test.Books
         private AuthorInfoProxy _authorInfo;
         private Author _author;
         private RefreshSeriesProxy _refreshSeries;
+        private SeriesServiceProxy _seriesService;
+        private EventAggregatorProxy _eventAggregator;
 
         [SetUp]
         public void SetUp()
@@ -67,18 +69,22 @@ namespace Chaptarr.Core.Test.Books
                 new Book { Id = 1, AuthorId = _author.Id, Title = "Shameless" }
             };
 
+            var seriesService = DispatchProxy.Create<ISeriesService, SeriesServiceProxy>();
+            _seriesService = (SeriesServiceProxy)(object)seriesService;
             var authorInfo = DispatchProxy.Create<IProvideAuthorInfo, AuthorInfoProxy>();
             _authorInfo = (AuthorInfoProxy)(object)authorInfo;
             var refreshSeries = DispatchProxy.Create<IRefreshSeriesService, RefreshSeriesProxy>();
             _refreshSeries = (RefreshSeriesProxy)(object)refreshSeries;
+            var eventAggregator = DispatchProxy.Create<IEventAggregator, EventAggregatorProxy>();
+            _eventAggregator = (EventAggregatorProxy)(object)eventAggregator;
 
             return new SeriesImportService(
                 authorService,
-                DispatchProxy.Create<ISeriesService, SeriesServiceProxy>(),
+                seriesService,
                 bookService,
                 refreshSeries,
                 authorInfo,
-                DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                eventAggregator,
                 LogManager.GetLogger("SeriesImportProviderIdentityFixture"));
         }
 
@@ -114,14 +120,34 @@ namespace Chaptarr.Core.Test.Books
 
         public class SeriesServiceProxy : DispatchProxy
         {
+            public List<int> RequestedAuthorIds { get; } = new();
+            public List<List<Series>> Responses { get; } = new() { new List<Series>() };
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(ISeriesService.GetByAuthorId))
                 {
-                    return new List<Series>();
+                    RequestedAuthorIds.Add((int)args[0]);
+                    return Responses[RequestedAuthorIds.Count - 1];
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement ISeriesService.{targetMethod?.Name}");
+            }
+        }
+
+        public class EventAggregatorProxy : DispatchProxy
+        {
+            public List<object> PublishedEvents { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IEventAggregator.PublishEvent))
+                {
+                    PublishedEvents.Add(args[0]);
+                    return null;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IEventAggregator.{targetMethod?.Name}");
             }
         }
 
@@ -140,6 +166,37 @@ namespace Chaptarr.Core.Test.Books
 
                 throw new NotImplementedException($"Test proxy does not implement IProvideAuthorInfo.{targetMethod?.Name}");
             }
+        }
+
+        [Test]
+        public void should_publish_refreshed_series_from_one_snapshot_without_mutating_cached_author()
+        {
+            _author.GoodreadsAuthorId = "gr:2514";
+            var cachedSeries = new List<Series> { new Series { Id = 99, Title = "Cached series" } };
+            _author.Series = cachedSeries;
+            var subject = BuildSubject();
+            var refreshedSeries = new List<Series>
+            {
+                new Series { Id = 1, Title = "First refreshed series" },
+                new Series { Id = 2, Title = "Second refreshed series" }
+            };
+            _seriesService.Responses.Add(refreshedSeries);
+            _seriesService.Responses.Add(refreshedSeries);
+            _authorInfo.Response = new Author
+            {
+                Series = new List<Series> { new Series { Title = "Remote series", GoodreadsSeriesId = "gr:1" } }
+            };
+
+            subject.ProcessSeriesForAuthor(_author.Id);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(_seriesService.RequestedAuthorIds, Is.EqualTo(new[] { _author.Id, _author.Id }));
+                Assert.That(_eventAggregator.PublishedEvents, Has.Count.EqualTo(2));
+                Assert.That(((SeriesRefreshCompleteEvent)_eventAggregator.PublishedEvents[0]).Series, Is.SameAs(refreshedSeries[0]));
+                Assert.That(((SeriesRefreshCompleteEvent)_eventAggregator.PublishedEvents[1]).Series, Is.SameAs(refreshedSeries[1]));
+                Assert.That(_author.Series, Is.SameAs(cachedSeries));
+            });
         }
 
         [TestCase(true)]
@@ -175,12 +232,5 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
-        public class ThrowingProxy<T> : DispatchProxy
-        {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                throw new NotImplementedException($"Test proxy does not implement {typeof(T).Name}.{targetMethod?.Name}");
-            }
-        }
     }
 }

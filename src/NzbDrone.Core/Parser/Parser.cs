@@ -267,7 +267,7 @@ namespace NzbDrone.Core.Parser
 
         private static readonly Regex AfterDashRegex = new Regex(@"[-:].*", RegexOptions.Compiled);
 
-        public static ParsedBookInfo ParseBookTitleWithSearchCriteria(string title, Author author, List<Book> books)
+        public static ParsedBookInfo ParseBookTitleWithSearchCriteria(string title, Author author, List<Book> books, List<Book> authorCatalog)
         {
             try
             {
@@ -295,7 +295,6 @@ namespace NzbDrone.Core.Parser
 
                 simpleTitle = CleanTorrentSuffixRegex.Replace(simpleTitle);
 
-                var authorCatalog = author?.Books ?? books;
                 var bestMatch = ReleaseTitleMatchScorer.FindBestMatch(simpleTitle, authorName, books, null, authorCatalog);
 
                 if (bestMatch?.Book == null || !bestMatch.IsMatch)
