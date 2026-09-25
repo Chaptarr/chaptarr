@@ -83,6 +83,73 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void primary_selection_should_prefer_true_then_unknown_then_false_before_position_order()
+        {
+            var explicitSecondary = Link("Almost Royal", "gr:almost-royal", "1.5", BookMediaType.Audiobook);
+            explicitSecondary.IsPrimary = false;
+            var unknown = Link("Risking It All", "gr:risking-it-all", "3.5", BookMediaType.Audiobook);
+            unknown.IsPrimary = null;
+            var explicitPrimary = Link("Primary Example Series", "gr:primary-example-series", "8", BookMediaType.Audiobook);
+            explicitPrimary.IsPrimary = true;
+            var book = new Book
+            {
+                Title = "My Gift Is You",
+                MediaType = BookMediaType.Audiobook,
+                SeriesLinks = new List<SeriesBookLink> { explicitSecondary, unknown, explicitPrimary }
+            };
+
+            Assert.That(BookSeries.Select(book), Is.SameAs(explicitPrimary));
+
+            explicitPrimary.IsPrimary = false;
+            Assert.That(BookSeries.Select(book), Is.SameAs(unknown));
+
+            unknown.IsPrimary = false;
+            Assert.That(BookSeries.Select(book), Is.SameAs(explicitSecondary));
+        }
+
+        [Test]
+        public void primary_selection_should_keep_existing_position_and_id_tie_order_with_equal_primary_metadata()
+        {
+            var later = Link("Later", "gr:later", "3", BookMediaType.Ebook);
+            later.IsPrimary = null;
+            var earlier = Link("Earlier", "gr:earlier", "1", BookMediaType.Ebook);
+            earlier.IsPrimary = null;
+            var book = new Book
+            {
+                Title = "Example",
+                MediaType = BookMediaType.Ebook,
+                SeriesLinks = new List<SeriesBookLink> { later, earlier }
+            };
+
+            Assert.That(BookSeries.Select(book), Is.SameAs(earlier));
+
+            var higherId = Link("Same Position", "gr:z", "1", BookMediaType.Ebook);
+            higherId.IsPrimary = null;
+            var lowerId = Link("Same Position", "gr:a", "1", BookMediaType.Ebook);
+            lowerId.IsPrimary = null;
+            book.SeriesLinks = new List<SeriesBookLink> { higherId, lowerId };
+
+            Assert.That(BookSeries.Select(book), Is.SameAs(lowerId));
+        }
+
+        [Test]
+        public void primary_selection_should_ignore_primary_links_from_the_other_media_side()
+        {
+            var otherSidePrimary = Link("Ebook Series", "gr:ebook", "1", BookMediaType.Ebook);
+            otherSidePrimary.IsPrimary = true;
+            var audiobookUnknown = Link("Audiobook Series", "gr:audiobook", "4", BookMediaType.Audiobook);
+            audiobookUnknown.IsPrimary = null;
+            var book = new Book
+            {
+                Title = "Example",
+                MediaType = BookMediaType.Audiobook,
+                SeriesLinks = new List<SeriesBookLink> { otherSidePrimary, audiobookUnknown }
+            };
+
+            Assert.That(BookSeries.Select(book), Is.SameAs(audiobookUnknown));
+        }
+
+        [Test]
         public void api_title_cleanup_must_compare_individual_memberships_not_the_joined_label()
         {
             var book = new Book { Title = "Guards! Guards! (Discworld, #8)", SeriesLinks = new List<SeriesBookLink>
