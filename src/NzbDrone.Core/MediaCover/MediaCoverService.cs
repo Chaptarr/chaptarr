@@ -850,34 +850,63 @@ namespace NzbDrone.Core.MediaCover
                     }
                 }
 
-                var directory = Path.GetDirectoryName(variantPath);
-                _diskProvider.EnsureFolder(directory);
+                byte[] imageData = null;
 
-                HttpResponse response;
-
-                try
+                // The canonical identity associates its existing renditions with this exact URL.
+                if (AuthorCoverMatchesRemoteUrl(author.Id, cover.CoverType, cover.Url))
                 {
-                    response = GetImageResponse(cover.Url, rangeRequest: false);
-                }
-                catch (HttpException e) when (e.Response?.StatusCode == HttpStatusCode.Forbidden || e.Response?.StatusCode == HttpStatusCode.NotFound)
-                {
-                    _logger.Warn("On-demand author image download failed ({0}) for {1} from URL: {2}", e.Response?.StatusCode, author.Name, cover.Url);
-                    return new EnsureImageResult { State = "error", ErrorCode = "download_failed" };
+                    var cachedCoverPath = MediaCoverRendition.FindExistingPath(
+                        height => GetCoverPath(author.Id, MediaCoverEntity.Author, cover.CoverType, cover.Extension, height),
+                        _diskProvider,
+                        cover.CoverType);
+
+                    if (cachedCoverPath != null)
+                    {
+                        try
+                        {
+                            using var cachedStream = _diskProvider.OpenReadStream(cachedCoverPath);
+                            using var buffer = new MemoryStream();
+                            cachedStream.CopyTo(buffer);
+                            if (buffer.Length > 0)
+                            {
+                                imageData = buffer.ToArray();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Debug(ex, "Unable to read verified canonical author image for {0}; trying the remote URL", author.Name);
+                        }
+                    }
                 }
 
-                if (response?.ResponseData == null || response.ResponseData.Length == 0)
+                if (imageData == null)
+                {
+                    try
+                    {
+                        imageData = GetImageResponse(cover.Url, rangeRequest: false)?.ResponseData;
+                    }
+                    catch (HttpException e) when (e.Response?.StatusCode == HttpStatusCode.Forbidden || e.Response?.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        _logger.Warn("On-demand author image download failed ({0}) for {1} from URL: {2}", e.Response?.StatusCode, author.Name, cover.Url);
+                        return new EnsureImageResult { State = "error", ErrorCode = "download_failed" };
+                    }
+                }
+
+                if (imageData == null || imageData.Length == 0)
                 {
                     return new EnsureImageResult { State = "error", ErrorCode = "empty_response" };
                 }
 
-                if (MediaCoverRendition.InspectDownloadedImage(cover.Url, response.ResponseData, out var contentHash))
+                if (MediaCoverRendition.InspectDownloadedImage(cover.Url, imageData, out var contentHash))
                 {
                     DeleteAuthorVariant(variantPath, verificationPath);
                     RejectPlaceholderAuthorImage(author, cover.Url);
                     return new EnsureImageResult { State = "error", ErrorCode = "placeholder_image" };
                 }
 
-                using (var stream = new MemoryStream(response.ResponseData))
+                _diskProvider.EnsureFolder(Path.GetDirectoryName(variantPath));
+
+                using (var stream = new MemoryStream(imageData))
                 {
                     _diskProvider.SaveStream(stream, variantPath);
                 }

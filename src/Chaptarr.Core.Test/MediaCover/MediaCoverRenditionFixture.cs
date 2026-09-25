@@ -890,6 +890,183 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(((ImageHttpClientProxy)(object)httpClient).Calls, Is.Zero);
         }
 
+        [TestCase(false, true)]
+        [TestCase(false, false)]
+        [TestCase(true, true)]
+        public async Task on_demand_author_image_should_restore_missing_url_variant_from_verified_canonical_rendition(
+            bool hasOriginal,
+            bool has500)
+        {
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            var httpClient = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var proxy = new MediaCoverProxyStub();
+            const string remoteUrl = "https://assets.hardcover.app/authors/166157/6390041-L.jpg";
+            const int authorId = 900010;
+            var authorFolder = Path.Combine(ConfigRoot, "MediaCover", authorId.ToString());
+            var identityPath = Path.Combine(authorFolder, "poster.url");
+            var originalPath = Path.Combine(authorFolder, "poster.jpg");
+            var cached250Path = Path.Combine(authorFolder, "poster-250.jpg");
+            var cached500Path = Path.Combine(authorFolder, "poster-500.jpg");
+            var originalBytes = BuildPngBytes(80, 120, new Rgba32(20, 120, 210));
+            var cached250Bytes = BuildPngBytes(32, 48, new Rgba32(20, 120, 210));
+            var cached500Bytes = BuildPngBytes(64, 96, new Rgba32(20, 120, 210));
+            var expectedBytes = hasOriginal ? originalBytes : has500 ? cached500Bytes : cached250Bytes;
+            var urlHash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(remoteUrl))).ToLowerInvariant()[..16];
+            var variantPath = Path.Combine(authorFolder, $"poster-{urlHash}.jpg");
+            var verificationPath = variantPath + ".sha256";
+            disk.ExistingPaths.UnionWith(new[] { identityPath, cached250Path });
+            if (hasOriginal)
+            {
+                disk.ExistingPaths.Add(originalPath);
+                disk.BinaryByPath[originalPath] = originalBytes;
+            }
+            if (has500)
+            {
+                disk.ExistingPaths.Add(cached500Path);
+                disk.BinaryByPath[cached500Path] = cached500Bytes;
+            }
+            disk.TextByPath[identityPath] = MediaCoverRendition.BuildAuthorCoverIdentity(remoteUrl, VerifiedRealImageHash);
+            disk.BinaryByPath[cached250Path] = cached250Bytes;
+            var subject = new MediaCoverService(
+                mediaCoverProxy: proxy,
+                resizer: null,
+                bookService: null,
+                httpClient: httpClient,
+                diskProvider: diskProvider,
+                appFolderInfo: appFolder,
+                coverExistsSpecification: null,
+                configService: null,
+                configFileProvider: config,
+                eventAggregator: null,
+                deferredCoverService: null,
+                logger: LogManager.GetCurrentClassLogger());
+            var author = new Author
+            {
+                Id = authorId,
+                Name = "Philip Pullman",
+                Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                {
+                    new(MediaCoverTypes.Poster, remoteUrl)
+                }
+            };
+
+            var result = await subject.EnsureAuthorImage(author, author.Images.Single());
+            var hasRestoredVariant = disk.BinaryByPath.TryGetValue(variantPath, out var restoredBytes);
+            var hasVerificationHash = disk.TextByPath.TryGetValue(verificationPath, out var verificationHash);
+            var httpCallsAfterRestore = ((ImageHttpClientProxy)(object)httpClient).Calls;
+            var cachedResult = await subject.EnsureAuthorImage(author, author.Images.Single());
+            var httpCallsAfterCacheHit = ((ImageHttpClientProxy)(object)httpClient).Calls;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.State, Is.EqualTo("downloaded"));
+                Assert.That(result.Path, Is.EqualTo(variantPath));
+                Assert.That(hasRestoredVariant, Is.True);
+                if (hasRestoredVariant)
+                {
+                    Assert.That(restoredBytes, Is.EqualTo(expectedBytes));
+                }
+                Assert.That(hasVerificationHash, Is.True);
+                if (hasVerificationHash)
+                {
+                    Assert.That(verificationHash, Is.EqualTo(MediaCoverRendition.ComputeContentSha256(expectedBytes)));
+                }
+                Assert.That(MediaCoverRendition.StoredContentHashIsVerified(verificationPath, diskProvider), Is.True);
+                Assert.That(httpCallsAfterRestore, Is.Zero);
+                Assert.That(cachedResult.State, Is.EqualTo("downloaded"));
+                Assert.That(cachedResult.Path, Is.EqualTo(variantPath));
+                Assert.That(httpCallsAfterCacheHit, Is.EqualTo(httpCallsAfterRestore));
+            });
+
+            author.SelectedPosterHash = MediaCoverRendition.ComputeStableAuthorImageHash(remoteUrl, MediaCoverTypes.Poster);
+            var resource = author.ToResource();
+            subject.ConvertToLocalUrls(resource.Id, MediaCoverEntity.Author, resource.Images, author.SelectedPosterHash);
+            Assert.That(resource.Images.Single().Url, Is.EqualTo($"/MediaCover/{authorId}/poster-{urlHash}.jpg?v={author.SelectedPosterHash}"));
+            Assert.That(resource.Images.Single().RemoteUrl, Is.EqualTo(remoteUrl));
+            Assert.That(proxy.ProxyCalls, Is.Zero);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task on_demand_author_image_should_download_when_canonical_rendition_has_no_matching_verified_identity(bool hasDifferentIdentity)
+        {
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            var httpClient = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
+            var responses = (ImageHttpClientProxy)(object)httpClient;
+            const string remoteUrl = "https://assets.hardcover.app/authors/900011/target.jpg";
+            const string differentUrl = "https://assets.hardcover.app/authors/900011/other.jpg";
+            const int authorId = 900011;
+            var authorFolder = Path.Combine(ConfigRoot, "MediaCover", authorId.ToString());
+            var identityPath = Path.Combine(authorFolder, "poster.url");
+            var cached250Path = Path.Combine(authorFolder, "poster-250.jpg");
+            var cached500Path = Path.Combine(authorFolder, "poster-500.jpg");
+            var cachedBytes = BuildPngBytes(32, 48, new Rgba32(210, 40, 30));
+            var responseBytes = BuildPngBytes(32, 48, new Rgba32(20, 120, 210));
+            var urlHash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(remoteUrl))).ToLowerInvariant()[..16];
+            var variantPath = Path.Combine(authorFolder, $"poster-{urlHash}.jpg");
+            var verificationPath = variantPath + ".sha256";
+            disk.ExistingPaths.UnionWith(new[] { cached250Path, cached500Path });
+            disk.BinaryByPath[cached250Path] = cachedBytes;
+            disk.BinaryByPath[cached500Path] = cachedBytes;
+            if (hasDifferentIdentity)
+            {
+                disk.ExistingPaths.Add(identityPath);
+                disk.TextByPath[identityPath] = MediaCoverRendition.BuildAuthorCoverIdentity(differentUrl, VerifiedRealImageHash);
+            }
+            responses.ResponseData = responseBytes;
+            var subject = new MediaCoverService(
+                mediaCoverProxy: null,
+                resizer: null,
+                bookService: null,
+                httpClient: httpClient,
+                diskProvider: diskProvider,
+                appFolderInfo: appFolder,
+                coverExistsSpecification: null,
+                configService: null,
+                configFileProvider: null,
+                eventAggregator: null,
+                deferredCoverService: null,
+                logger: LogManager.GetCurrentClassLogger());
+            var author = new Author
+            {
+                Id = authorId,
+                Name = "Example Author",
+                Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                {
+                    new(MediaCoverTypes.Poster, remoteUrl)
+                }
+            };
+
+            var result = await subject.EnsureAuthorImage(author, author.Images.Single());
+            var hasFetchedVariant = disk.BinaryByPath.TryGetValue(variantPath, out var fetchedBytes);
+            var hasVerificationHash = disk.TextByPath.TryGetValue(verificationPath, out var verificationHash);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.State, Is.EqualTo("downloaded"));
+                Assert.That(result.Path, Is.EqualTo(variantPath));
+                Assert.That(hasFetchedVariant, Is.True);
+                if (hasFetchedVariant)
+                {
+                    Assert.That(fetchedBytes, Is.EqualTo(responseBytes));
+                    Assert.That(fetchedBytes, Is.Not.EqualTo(cachedBytes));
+                }
+                Assert.That(hasVerificationHash, Is.True);
+                if (hasVerificationHash)
+                {
+                    Assert.That(verificationHash, Is.EqualTo(MediaCoverRendition.ComputeContentSha256(responseBytes)));
+                }
+                Assert.That(((ImageHttpClientProxy)(object)httpClient).Calls, Is.EqualTo(1));
+            });
+        }
+
         [Test]
         public void book_cover_candidates_should_come_only_from_the_monitored_edition()
         {

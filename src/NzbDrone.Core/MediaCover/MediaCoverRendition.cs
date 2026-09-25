@@ -344,9 +344,8 @@ namespace NzbDrone.Core.MediaCover
                 return original;
             }
 
-            // Prefer the smallest generated rendition. It is a valid URL for API clients
-            // as-is, while Chaptarr's image components can select a larger sibling for HiDPI.
-            foreach (var height in GetHeights(coverType))
+            // URL-keyed files are served directly, so use the largest cached rendition available.
+            foreach (var height in GetHeights(coverType).Reverse())
             {
                 var rendition = getPath(height);
                 if (IsUsable(rendition, diskProvider))
