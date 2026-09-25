@@ -1,6 +1,6 @@
 {
   "name": "chaptarr",
-  "version": "0.9.994",
+  "version": "0.9.995",
   "description": "Chaptarr",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
