@@ -377,6 +377,10 @@ namespace NzbDrone.Core.MediaFiles
                 {
                     _recycleBinProvider.DeleteFile(item.Path);
                 }
+                else
+                {
+                    _logger.Warn("Stored media file path ({0}) was not found or could not be resolved safely; continuing database cleanup without deleting a file.", item.Path);
+                }
             }
 
             foreach (var folder in folders)

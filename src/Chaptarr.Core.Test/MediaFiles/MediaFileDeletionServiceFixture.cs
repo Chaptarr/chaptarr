@@ -5,6 +5,8 @@ using System.IO;
 using System.Net;
 using System.Reflection;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common;
 using NzbDrone.Common.Disk;
@@ -149,6 +151,68 @@ namespace Chaptarr.Core.Test.MediaFiles
                 "DeleteRecordsForAuthorDeletion" => null,
                 _ => throw new NotImplementedException(method.Name)
             };
+        }
+
+        private class AuthorDeleteDiskProviderProxy : DispatchProxy
+        {
+            public HashSet<string> ExistingFolders { get; } = new(PathEqualityComparer.Instance);
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                switch (targetMethod?.Name)
+                {
+                    case nameof(IDiskProvider.FolderExists):
+                        return ExistingFolders.Contains((string)args[0]);
+
+                    case nameof(IDiskProvider.FolderEmpty):
+                        return false;
+
+                    case nameof(IDiskProvider.FileExistsCanonical):
+                        return false;
+
+                    case nameof(IDiskProvider.GetFileAttributes):
+                        return FileAttributes.Directory;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IDiskProvider.{targetMethod?.Name}");
+            }
+        }
+
+        private class AuthorDeleteMediaFileServiceProxy : DispatchProxy
+        {
+            public List<BookFile> Files { get; set; } = new();
+            public List<BookFile> DeletedRecords { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                switch (targetMethod?.Name)
+                {
+                    case nameof(IMediaFileService.GetFilesByAuthor):
+                        return Files.Where(file => file.Author?.Id == (int)args[0]).ToList();
+
+                    case nameof(IMediaFileService.GetFilePathOwnership):
+                        return Files.ToList();
+
+                    case nameof(IMediaFileService.DeleteRecordsForAuthorDeletion):
+                        DeletedRecords.AddRange((List<BookFile>)args[0]);
+                        return null;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IMediaFileService.{targetMethod?.Name}");
+            }
+        }
+
+        private class NoDeleteEmptyFoldersConfigProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == "get_DeleteEmptyFolders")
+                {
+                    return false;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IConfigService.{targetMethod?.Name}");
+            }
         }
 
         private class RecordingMediaFileServiceProxy : DispatchProxy
@@ -886,6 +950,67 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(subject.MediaFiles.Deleted, Is.EqualTo(new[] { bookFile }));
                 Assert.That(subject.Events.Events.OfType<DeleteCompletedEvent>(), Has.Exactly(1).Items);
             });
+        }
+
+        [Test]
+        public void should_warn_for_an_unresolved_standalone_path_and_still_cleanup_its_record()
+        {
+            var memory = new MemoryTarget("media-file-deletion-memory")
+            {
+                Layout = "${level}|${message}"
+            };
+            using var factory = new LogFactory();
+            var loggingConfiguration = new LoggingConfiguration(factory);
+            loggingConfiguration.AddRule(LogLevel.Warn, LogLevel.Fatal, memory);
+            factory.Configuration = loggingConfiguration;
+
+            {
+                var root = new RootFolder { Id = 1, Path = @"C:\books".AsOsAgnostic() };
+                var author = new Author
+                {
+                    Id = 1,
+                    Name = "Test Author",
+                    Path = @"C:\books\Test Author".AsOsAgnostic(),
+                    EbookPath = @"C:\books\Test Author".AsOsAgnostic()
+                };
+                var bookFile = new BookFile
+                {
+                    Id = 1,
+                    Author = author,
+                    MediaType = BookMediaType.Ebook.ToString(),
+                    Path = @"C:\books\Test Author\Book.epub".AsOsAgnostic()
+                };
+                var diskProvider = DispatchProxy.Create<IDiskProvider, AuthorDeleteDiskProviderProxy>();
+                var diskProxy = (AuthorDeleteDiskProviderProxy)(object)diskProvider;
+                diskProxy.ExistingFolders.Add(root.Path);
+                var mediaFileService = DispatchProxy.Create<IMediaFileService, AuthorDeleteMediaFileServiceProxy>();
+                var mediaProxy = (AuthorDeleteMediaFileServiceProxy)(object)mediaFileService;
+                mediaProxy.Files = new List<BookFile> { bookFile };
+                var recycleBinProvider = new RecordingRecycleBinProvider();
+                var eventAggregator = new RecordingEventAggregator();
+                var service = new MediaFileDeletionService(
+                    diskProvider,
+                    recycleBinProvider,
+                    mediaFileService,
+                    DispatchProxy.Create<IAuthorRepository, EmptyDeletionContextProxy>(),
+                    DispatchProxy.Create<IConfigService, NoDeleteEmptyFoldersConfigProxy>(),
+                    eventAggregator,
+                    new StubRootFolderService(root),
+                    DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                    factory.GetLogger(nameof(MediaFileDeletionServiceFixture)));
+
+                service.DeleteAuthorFiles(new List<Author> { author }, BookMediaType.Ebook);
+                factory.Flush();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(memory.Logs, Has.Some.EqualTo(
+                        $"Warn|Stored media file path ({bookFile.Path}) was not found or could not be resolved safely; continuing database cleanup without deleting a file."));
+                    Assert.That(recycleBinProvider.DeletedFiles, Is.Empty);
+                    Assert.That(mediaProxy.DeletedRecords, Is.EqualTo(new[] { bookFile }));
+                    Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Has.Exactly(1).Items);
+                });
+            }
         }
 
         [TestCase(null)]

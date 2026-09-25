@@ -119,9 +119,14 @@ class DeleteAuthorModalContent extends Component {
             {authors.map((author) => (
               <li key={author.id}>
                 {author.authorName}
-                {deleteFiles && [...new Set([author.path, author.audiobookFolder, author.ebookFolder].filter(Boolean))].map((path) => (
+                {deleteFiles && applyToBothFormats && [...new Set([author.path, author.audiobookFolder, author.ebookFolder].filter(Boolean))].map((path) => (
                   <div className={styles.pathContainer} key={path}>{path}</div>
                 ))}
+                {deleteFiles && !applyToBothFormats && scopeChosen &&
+                  <div className={styles.pathContainer}>
+                    {translate('AuthorDeleteScopedFilesSummary', { mediaType: formatName })}
+                  </div>
+                }
               </li>
             ))}
           </ul>

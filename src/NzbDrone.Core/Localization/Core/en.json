@@ -6,6 +6,7 @@
   "AuthorDeleteFoldersHelpText": "Delete all listed author folders and their contents, including untracked files. Tracked files and copies stored elsewhere are also included.",
   "AuthorDeleteFormatFiles": "Delete {mediaType} files",
   "AuthorDeleteFormatFilesHelpText": "Delete tracked files of the selected format, their copies, and exclusively owned extras. Keep other formats and shared contents. Remove only folders that are empty afterwards.",
+  "AuthorDeleteScopedFilesSummary": "{mediaType}: tracked files, copies and exclusively owned extras, wherever stored.",
   "AuthorDeleteExclusionHelpText": "Prevent import lists from adding this author for {mediaType}. Other formats remain allowed unless both formats are selected.",
   "AuthorDeleteFailed": "Author deletion failed. Review the error and try again.",
   "20MinutesTwenty": "20 Minutes: {0}",

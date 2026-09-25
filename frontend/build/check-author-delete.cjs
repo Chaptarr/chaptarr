@@ -101,6 +101,11 @@ const baseline = process.argv.includes('--baseline');
         await page.keyboard.press('Space');
         assert.equal(await files.isChecked(), true);
         assert.equal(await page.getByText(strings.AuthorDeleteFormatFilesHelpText, { exact: true }).isVisible(), true);
+        for (const configuredPath of ['/library/Dune/Frank Herbert', '/audiobooks/Dune/Frank Herbert', '/ebooks/Dune/Frank Herbert', '/library/Dune/Brian Herbert']) {
+          assert.equal(await page.getByText(configuredPath, { exact: true }).count(), 0, 'A scoped deletion must not present configured folders as folders to delete');
+        }
+        assert.equal(await page.getByText(strings.AuthorDeleteScopedFilesSummary.replace('{mediaType}', strings.Ebooks), { exact: true }).count(), 2);
+        await page.screenshot({ path: path.join(output, `${theme}-${width}-scoped.png`) });
         refuseDelete = true;
         await deleteButton.click();
         await page.getByText('Frank Herbert: choose a format or explicitly select both. Nothing was changed.').waitFor();
@@ -128,6 +133,8 @@ const baseline = process.argv.includes('--baseline');
         await files.focus();
         await page.keyboard.press('Space');
         assert.equal(await page.getByText(strings.AuthorDeleteFormatFilesHelpText, { exact: true }).isVisible(), true);
+        assert.equal(await page.getByText('/audiobooks/Dune/Frank Herbert', { exact: true }).count(), 0);
+        assert.equal(await page.getByText(strings.AuthorDeleteScopedFilesSummary.replace('{mediaType}', strings.Ebooks), { exact: true }).count(), 1);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: single overflow`);
         await page.screenshot({ path: path.join(output, `${theme}-${width}-single.png`) });
         const singleRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/author/1') && request.method() === 'DELETE');
