@@ -13,7 +13,7 @@ A book collection manager for audiobooks and eBooks.
 
 <div align="center"><a href='https://ko-fi.com/chaptarr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a></div>
 
-> **Chaptarr is beta software.** It is under active development. Bugs are likely; breaking changes less so, but still possible. Full disclosure: the last data loss event was in pre-alpha, with a tester group of roughly 30 people, about 12 months ago. Over the last 6 months we've grown past 11,000 active users with no reported data loss events. Still, follow good backup practice and avoid pointing it at a library you can't afford to lose.
+> **Chaptarr is beta software.** It is under active development. Bugs are likely; breaking changes less so, but still possible. Full disclosure: the last data loss event was in July 2025, during pre-alpha, with a tester group of roughly 30 people. Since then we've grown to over 26,000 monthly users with no reported data loss events. Still, follow good backup practice and avoid pointing it at a library you can't afford to lose.
 
 ## What is Chaptarr?
 
