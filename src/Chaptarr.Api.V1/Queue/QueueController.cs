@@ -172,7 +172,7 @@ namespace Chaptarr.Api.V1.Queue
             }
 
             var cancelled = !queueItem.DownloadId.IsNullOrWhiteSpace() &&
-                            (_conversionJobService?.Cancel(queueItem.DownloadId) ?? _conversionTrackingService.Cancel(queueItem.DownloadId));
+                            (_conversionJobService?.Cancel(queueItem.DownloadId) == true || _conversionTrackingService.Cancel(queueItem.DownloadId));
             if (!cancelled)
             {
                 throw new BadRequestException("No active conversion found for this queue item");
