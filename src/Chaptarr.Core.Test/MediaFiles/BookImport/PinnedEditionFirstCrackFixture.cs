@@ -114,7 +114,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Book GetBook(int bookId) => _book;
 
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new System.NotImplementedException();
-            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new System.NotImplementedException();
+            public int GetBooksByAuthorCalls { get; private set; }
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false)
+            {
+                GetBooksByAuthorCalls++;
+                return _book != null && _book.AuthorId == authorId ? new List<Book> { _book } : new List<Book>();
+            }
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new System.NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new System.NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new System.NotImplementedException();
@@ -237,6 +242,88 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(result.MatchedFiles[0].BookId, Is.EqualTo(book.Id));
             Assert.That(result.MatchedFiles[0].EditionId, Is.EqualTo(pinnedEdition.Id));
             Assert.That(result.MatchedFiles[0].AuthorName, Is.EqualTo(author.Name));
+        }
+
+        [Test]
+        public async Task should_use_numeric_title_proof_for_a_pinned_edition_before_fts()
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var author = new Author
+            {
+                Id = 5,
+                Name = "Tamora Pierce",
+                Path = "/audiobooks/Tamora Pierce"
+            };
+            var pinnedEdition = new Edition
+            {
+                Id = 100,
+                BookId = 42,
+                Title = "Ready Player 2",
+                Language = "eng",
+                Monitored = true,
+                ManualAdd = true,
+                NarratorNames = new List<string> { "Steven Pacey" }
+            };
+            var book = new Book
+            {
+                Id = 42,
+                AuthorId = author.Id,
+                Title = pinnedEdition.Title,
+                Author = author,
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = false,
+                Editions = new List<Edition> { pinnedEdition }
+            };
+            pinnedEdition.Book = book;
+            var bookService = new StubBookService(book);
+            var service = new FileMatchingService(
+                matchingLogger: new NullMatchingUploadLogger(),
+                v5MatchingService: null,
+                containmentValidator: new ContainmentValidator(new TagNormalizer(), logger),
+                pendingAuthorImportService: null,
+                commandQueue: null,
+                authorFolderMatchingService: null,
+                rootFolderService: null,
+                configService: ConfigServiceTestProxy.Create(usePathAsTagsFallback: false),
+                authorService: new StubAuthorService(author),
+                eventAggregator: null,
+                authorLibraryService: null,
+                editionFtsRepository: new ThrowingEditionFtsRepository(),
+                bookService: bookService,
+                editionService: null,
+                editionRepository: null,
+                mediaInfoExtractor: null,
+                logger: logger);
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/Ready Player II.m4b",
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    { "TITLE", new List<string> { "Ready Player II" } },
+                    { "ARTIST", new List<string> { author.Name } },
+                    { "ALBUMARTIST", new List<string> { "Narrated by Steven Pacey" } }
+                }
+            };
+            var context = new MatchingContext
+            {
+                AllowV5Identification = false,
+                AllowAuthorImport = false,
+                DeferUnmatchedToAuthorReady = false,
+                AllowUnscopedFallback = false,
+                PerFileMatching = true,
+                TargetBookIds = new List<int> { book.Id }
+            };
+
+            var result = await service.MatchFilesToLibraryAsync(new[] { file }, author.Id, context);
+
+            Assert.That(result.UnmatchedFiles, Is.Empty);
+            Assert.That(result.MatchedFiles, Has.Length.EqualTo(1));
+            Assert.That(result.MatchedFiles[0].BookId, Is.EqualTo(book.Id));
+            Assert.That(result.MatchedFiles[0].EditionId, Is.EqualTo(pinnedEdition.Id));
+            Assert.That(result.MatchedFiles[0].IdentityProof.Values, Has.Some.Matches<MatchIdentityProofValue>(value =>
+                value.Role == MatchIdentityRole.Title &&
+                value.Observed == "Ready Player II" && value.Expected == "Ready Player 2"));
+            Assert.That(bookService.GetBooksByAuthorCalls, Is.EqualTo(1));
         }
 
         [Test]

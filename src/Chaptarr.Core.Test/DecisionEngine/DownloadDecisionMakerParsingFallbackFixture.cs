@@ -164,9 +164,11 @@ namespace Chaptarr.Core.Test.DecisionEngine
         private sealed class RecordingReleaseNarratorMetadataEnricher : IReleaseNarratorMetadataEnricher
         {
             public List<string> OfferedTitles { get; } = new();
+            public int CallCount { get; private set; }
 
             public IReadOnlyCollection<ReleaseInfo> EnrichReleaseNarratorMetadata(List<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
             {
+                CallCount++;
                 OfferedTitles.AddRange(releases.Select(release => release.Title));
 
                 foreach (var release in releases)
@@ -284,6 +286,52 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
             Assert.That(decision.Approved, Is.True);
             Assert.That(decision.RemoteBook.SearchCriteriaMatch.EvidenceTitle, Is.EqualTo("Harry Potter and the Chamber of Secrets"));
+        }
+
+        [Test]
+        public void sibling_rejection_should_stay_within_the_media_enum_for_every_release_path(
+            [Values(0, 1, 2)] int path,
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(false, true)] bool sameMediaType)
+        {
+            var author = new Author { Id = 1, Name = "Frank Herbert" };
+            var target = new Book
+            {
+                Id = 1, AuthorId = author.Id, Author = author, Title = "Dune", MediaType = mediaType,
+                Editions = new List<Edition> { new Edition { Id = 1, BookId = 1, Title = "Dune", Monitored = true, ReadingFormatId = 2 } }
+            };
+            var sibling = new Book
+            {
+                Id = 2, AuthorId = author.Id, Author = author, Title = "Dune Messiah",
+                MediaType = sameMediaType ? mediaType : mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook,
+                Editions = new List<Edition> { new Edition { Id = 2, BookId = 2, Title = "Dune Messiah", Monitored = true, ReadingFormatId = 1 } }
+            };
+            var catalog = new List<Book> { target, sibling };
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = new List<Book> { target } };
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = target.Id, AuthorId = author.Id, BookTitle = target.Title });
+            var logger = LogManager.GetCurrentClassLogger();
+            var maker = new DownloadDecisionMaker(new IDecisionEngineSpecification[] { new ReleaseTitleMatchSpecification(logger) },
+                parsing, CatalogBookService.Create(catalog), fts, new NoOpCustomFormatCalculationService(),
+                new NoOpRemoteBookAggregationService(), new NoOpReleaseNarratorMetadataEnricher(), (IConfigService)null, logger);
+            var reports = new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = "Frank Herbert - Dune Messiah " + (mediaType == BookMediaType.Audiobook ? "MP3" : "EPUB"),
+                    Author = author.Name, PublishDate = DateTime.UtcNow, Indexer = "Test",
+                    Categories = new List<int> { mediaType == BookMediaType.Audiobook ? 3030 : 7020 }
+                }
+            };
+
+            var decisions = path == 0 ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
+            {
+                Author = author, Books = new List<Book> { target }, AuthorCatalog = catalog, InteractiveSearch = path == 2
+            });
+
+            Assert.That(decisions.Any(decision => decision.Approved), Is.EqualTo(!sameMediaType));
+            Assert.That(decisions.Where(decision => decision.Approved).SelectMany(decision => decision.RemoteBook.Books),
+                sameMediaType ? Is.Empty : Is.EqualTo(new[] { target }));
         }
 
         [TestCase(true, true)]
@@ -938,7 +986,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 });
                 LogManager.Flush();
 
-                Assert.That(memory.Logs, Has.Some.Contains("Debug|Interactive search (author='Fiona Cole', book='Voyeur') decision summary: reports=1, mapped=1, unmatched=0, accepted=0, permanentlyRejected=1, temporarilyRejected=0; topRejections=[Title/Author mismatch (1)]"));
+                Assert.That(memory.Logs, Has.Some.Contains("Debug|Interactive search (author='Fiona Cole', book='Voyeur') decision summary: reports=1, mapped=1, unmatched=0, accepted=0, permanentlyRejected=1, temporarilyRejected=0; topRejections=[Author mismatch: Moongarden (1)]"));
             }
             finally
             {
@@ -1286,7 +1334,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             Assert.That(decisions, Has.Count.EqualTo(1));
             Assert.That(decisions[0].Rejected, Is.True);
-            Assert.That(decisions[0].Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+            Assert.That(decisions[0].Rejections.Select(r => r.Reason), Has.Some.EqualTo("Author mismatch: Moongarden"));
             Assert.That(decisions[0].RemoteBook.ParsedBookInfo.BookTitle, Is.EqualTo("Moongarden - Voyeur (2014)"));
         }
 
@@ -2686,9 +2734,13 @@ namespace Chaptarr.Core.Test.DecisionEngine
             return memory;
         }
 
-        [TestCase(true)]
-        [TestCase(false)]
-        public void narrator_enrichment_should_be_offered_to_visible_releases_and_fall_back_to_hidden(bool anyVisible)
+        [TestCase(true, true)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(false, false)]
+        public void narrator_enrichment_should_offer_visible_releases_and_only_interactive_hidden_fallback(
+            bool interactiveSearch,
+            bool anyVisible)
         {
             var profile = new QualityProfile
             {
@@ -2722,11 +2774,9 @@ namespace Chaptarr.Core.Test.DecisionEngine
             }, parsing, CatalogBookService.Create(catalog), fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
                 enricher, config, logger);
 
-            // "Children of Dune" is a different book by the same author, so it is rejected under
-            // Matching and hidden behind Show Hidden.
             var titles = anyVisible
-                ? new[] { "Frank Herbert - Dune MP3", "Frank Herbert - Children of Dune MP3" }
-                : new[] { "Frank Herbert - Children of Dune MP3" };
+                ? new[] { "Frank Herbert - Dune MP3", "Frank Herbert - Children of Dune MP3", "Frank Herbert - Dune Trilogy MP3" }
+                : new[] { "Frank Herbert - Children of Dune MP3", "Frank Herbert - Dune Trilogy MP3" };
             var reports = titles.Select((title, index) => new ReleaseInfo
             {
                 Guid = index.ToString(), Title = title, Author = author.Name, Indexer = "Generic",
@@ -2735,18 +2785,38 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decisions = maker.GetSearchDecision(reports, new BookSearchCriteria
             {
-                Author = author, Books = new List<Book> { target }, AuthorCatalog = catalog, InteractiveSearch = true
+                Author = author, Books = new List<Book> { target }, AuthorCatalog = catalog, InteractiveSearch = interactiveSearch
             });
 
             Assert.That(decisions.Count, Is.EqualTo(titles.Length));
 
+            var identityRejection = decisions.Single(decision =>
+                decision.RemoteBook.Release.Title == "Frank Herbert - Children of Dune MP3");
+            var packRejection = decisions.Single(decision =>
+                decision.RemoteBook.Release.Title == "Frank Herbert - Dune Trilogy MP3");
+            Assert.That(InteractiveSearchVisibility.IsHidden(identityRejection), Is.True);
+            Assert.That(identityRejection.Rejections.Select(rejection => rejection.Category), Does.Contain("Matching"));
+            Assert.That(InteractiveSearchVisibility.IsHidden(packRejection), Is.True);
+            Assert.That(packRejection.Rejections.Select(rejection => rejection.Category), Does.Contain("Pack"));
+
             if (anyVisible)
             {
                 Assert.That(enricher.OfferedTitles, Is.EqualTo(new[] { "Frank Herbert - Dune MP3" }));
+                Assert.That(enricher.CallCount, Is.EqualTo(1));
+            }
+            else if (interactiveSearch)
+            {
+                Assert.That(enricher.OfferedTitles, Is.EqualTo(new[]
+                {
+                    "Frank Herbert - Children of Dune MP3",
+                    "Frank Herbert - Dune Trilogy MP3"
+                }));
+                Assert.That(enricher.CallCount, Is.EqualTo(1));
             }
             else
             {
-                Assert.That(enricher.OfferedTitles, Is.EqualTo(new[] { "Frank Herbert - Children of Dune MP3" }));
+                Assert.That(enricher.OfferedTitles, Is.Empty);
+                Assert.That(enricher.CallCount, Is.Zero);
             }
         }
 

@@ -48,6 +48,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private class BookServiceProxy : DispatchProxy
         {
             public Dictionary<int, Book> Books { get; set; } = new();
+            public int GetBooksByAuthorCalls { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -56,18 +57,39 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     return Books.TryGetValue((int)args[0], out var book) ? book : null;
                 }
 
+                if (targetMethod?.Name == nameof(IBookService.GetBooks))
+                {
+                    var ids = ((IEnumerable<int>)args[0]).ToHashSet();
+                    return Books.Values.Where(book => ids.Contains(book.Id)).ToList();
+                }
+
+                if (targetMethod?.Name == nameof(IBookService.GetBooksByAuthor))
+                {
+                    GetBooksByAuthorCalls++;
+                    return Books.Values.Where(book => book.AuthorId == (int)args[0]).ToList();
+                }
+
                 throw new NotImplementedException($"Test proxy does not implement IBookService.{targetMethod?.Name}");
             }
         }
 
         private static FileMatchingService CreateService(IEnumerable<EditionFtsMatch> candidates, IEnumerable<Book> books)
         {
+            return CreateService(candidates, books, out _);
+        }
+
+        private static FileMatchingService CreateService(
+            IEnumerable<EditionFtsMatch> candidates,
+            IEnumerable<Book> books,
+            out BookServiceProxy bookServiceProxy)
+        {
             var logger = LogManager.GetCurrentClassLogger();
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             ((AuthorServiceProxy)(object)authorService).Author = new Author { Id = 41, Name = "J.K. Rowling" };
 
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
-            ((BookServiceProxy)(object)bookService).Books = books.ToDictionary(b => b.Id);
+            bookServiceProxy = (BookServiceProxy)(object)bookService;
+            bookServiceProxy.Books = books.ToDictionary(b => b.Id);
 
             return new FileMatchingService(
                 matchingLogger: null,
@@ -96,7 +118,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 EditionId = editionId,
                 BookId = bookId,
                 EditionTitle = title,
+                MatchingTitle = title,
                 BookTitle = title,
+                Lang = "eng",
                 AuthorId = 41,
                 AuthorName = "J.K. Rowling",
                 DurationSeconds = durationSeconds,
@@ -112,7 +136,18 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Id = bookId,
                 AuthorId = 41,
                 Title = title,
-                MediaType = BookMediaType.Audiobook
+                MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = bookId,
+                        BookId = bookId,
+                        Title = title,
+                        Language = "eng",
+                        Monitored = true
+                    }
+                }
             };
         }
 
@@ -128,6 +163,189 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     { "ARTIST", new List<string> { "J.K. Rowling" } }
                 }
             };
+        }
+
+        [Test]
+        public void should_match_roman_numeral_alias_to_english_edition_and_preserve_proof_span()
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, "Ready Player 2", durationSeconds: 3600) },
+                new[] { Book(1, "Ready Player 2") },
+                out var bookService);
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player Ⅱ", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(1));
+            Assert.That(bookService.GetBooksByAuthorCalls, Is.EqualTo(1));
+            Assert.That(match.IdentityProof.Values, Has.Some.Matches<MatchIdentityProofValue>(value =>
+                value.Role == MatchIdentityRole.Title && value.Observed == "Ready Player Ⅱ" && value.Expected == "Ready Player 2"));
+            var titleEvidence = match.Provenance.EvidenceValues.Single(value => value.Value == "Ready Player Ⅱ");
+            Assert.That(titleEvidence.Ranges, Has.Some.Matches<MatchEvidenceRange>(range =>
+                range.Type == "title" && range.Disposition == "supporting" &&
+                titleEvidence.Value.Substring(range.Start, range.End - range.Start) == "Ready Player Ⅱ"));
+        }
+
+        [TestCase("I, Robot", "1 Robot")]
+        [TestCase("The Mix", "The 1009")]
+        [TestCase("Vi", "6")]
+        [TestCase("Ready Player II", "Ready Player 2")]
+        public void roman_word_title_must_not_gain_numeric_import_proof(string title, string observed)
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, title, durationSeconds: 3600) },
+                new[] { Book(1, title) });
+
+            Assert.That(svc.HolyGrailMatchFile(File(observed, durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41), Is.Null);
+            Assert.That(svc.HolyGrailMatchFile(File(title, durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41), Is.Not.Null);
+        }
+
+        [TestCase("Collected Stories Volume II", "Collected Stories Volume 2")]
+        [TestCase("Collected Stories Part II", "Collected Stories Part Two")]
+        public void marked_roman_title_keeps_numeric_import_proof_and_highlight(string title, string observed)
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, title, durationSeconds: 3600) },
+                new[] { Book(1, title) });
+
+            var match = svc.HolyGrailMatchFile(File(observed, durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.IdentityProof.Values, Has.Some.Matches<MatchIdentityProofValue>(value =>
+                value.Role == MatchIdentityRole.Title && value.Observed == observed && value.Expected == title));
+            Assert.That(match.Provenance.EvidenceValues, Has.Some.Matches<MatchEvidenceValue>(value =>
+                value.Value == observed && value.Ranges.Any(range => range.Type == "title" && range.Disposition == "supporting")));
+        }
+
+        [Test]
+        public void literal_title_match_does_not_load_the_full_author_catalog()
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, "Ready Player 2", durationSeconds: 3600) },
+                new[] { Book(1, "Ready Player 2") },
+                out var bookService);
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player 2", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(bookService.GetBooksByAuthorCalls, Is.Zero);
+        }
+
+        [Test]
+        public void should_reject_numeric_alias_when_a_distinct_same_media_selected_title_competes()
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, "Ready Player 2", durationSeconds: 3600) },
+                new[] { Book(1, "Ready Player 2"), Book(2, "Ready Player Two") });
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player Ⅱ", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Null);
+        }
+
+        [Test]
+        public void unmarked_roman_sibling_still_blocks_another_books_numeric_import_alias()
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, "Ready Player Two", durationSeconds: 3600) },
+                new[] { Book(1, "Ready Player Two"), Book(2, "Ready Player II") });
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player 2", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Null);
+        }
+
+        [Test]
+        public void provider_work_clones_do_not_create_numeric_title_collision()
+        {
+            var target = Book(1, "Ready Player 2");
+            var providerClone = Book(2, "Ready Player Two");
+            target.GoodreadsWorkId = "gr:12345";
+            providerClone.GoodreadsWorkId = "gr:12345";
+            var svc = CreateService(
+                new[] { Candidate(1, 1, "Ready Player 2", durationSeconds: 3600) },
+                new[] { target, providerClone });
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player Ⅱ", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void identical_full_selected_titles_do_not_create_numeric_title_collision()
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, "Ready Player Two", durationSeconds: 3600) },
+                new[] { Book(1, "Ready Player Two"), Book(2, "Ready Player Two") });
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player 2", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void should_prefer_the_exact_numeric_spelling_over_a_distinct_alias_candidate()
+        {
+            var exactBook = Book(1, "Ready Player 2");
+            var aliasBook = Book(2, "Ready Player Two");
+            var svc = CreateService(
+                new[]
+                {
+                    Candidate(1, 1, "Ready Player 2", durationSeconds: 3600),
+                    Candidate(2, 2, "Ready Player Two", durationSeconds: 3600)
+                },
+                new[] { exactBook, aliasBook });
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player 2", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(1));
+        }
+
+        [TestCase(null)]
+        [TestCase("und")]
+        public void unsupported_target_language_still_detects_an_english_numeric_sibling_but_keeps_literal_proof(string targetLanguage)
+        {
+            var target = Book(1, "Ready Player 2");
+            target.Editions.Single().Language = targetLanguage;
+            var candidate = Candidate(1, 1, "Ready Player 2", durationSeconds: 3600);
+            candidate.Lang = targetLanguage;
+            var sibling = Book(2, "Ready Player Two");
+
+            var aliasService = CreateService(new[] { candidate }, new[] { target, sibling });
+            var aliasMatch = aliasService.HolyGrailMatchFile(
+                File("Ready Player II", durationSeconds: 3600),
+                BookMediaType.Audiobook,
+                restrictToAuthorId: 41);
+
+            Assert.That(aliasMatch, Is.Null);
+
+            var literalService = CreateService(new[] { candidate }, new[] { target, sibling });
+            var literalMatch = literalService.HolyGrailMatchFile(
+                File("Ready Player 2", durationSeconds: 3600),
+                BookMediaType.Audiobook,
+                restrictToAuthorId: 41);
+
+            Assert.That(literalMatch, Is.Not.Null);
+            Assert.That(literalMatch.BookId, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void different_media_type_numeric_sibling_does_not_veto_import_title_proof()
+        {
+            var audioBook = Book(1, "Ready Player 2");
+            var ebookSibling = Book(2, "Ready Player Two");
+            ebookSibling.MediaType = BookMediaType.Ebook;
+            var svc = CreateService(
+                new[] { Candidate(1, 1, "Ready Player 2", durationSeconds: 3600) },
+                new[] { audioBook, ebookSibling });
+
+            var match = svc.HolyGrailMatchFile(File("Ready Player Ⅱ", durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(1));
         }
 
         [Test]

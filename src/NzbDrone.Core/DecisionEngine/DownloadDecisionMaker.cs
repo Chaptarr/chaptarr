@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
@@ -96,6 +97,7 @@ namespace NzbDrone.Core.DecisionEngine
 
         private List<DownloadDecision> GetBookDecisions(List<ReleaseInfo> reports, bool pushedRelease = false, SearchCriteriaBase searchCriteria = null)
         {
+            var stopwatch = Stopwatch.StartNew();
             if (reports.Any())
             {
                 _logger.ProgressInfo("Processing {0} releases", reports.Count);
@@ -357,6 +359,7 @@ namespace NzbDrone.Core.DecisionEngine
             }
 
             EnrichNarratorMetadataForVisibleDecisions(decisions, searchCriteria, catalogPreparation);
+            _logger.Debug("Processed {0} releases in {1} ms", reports.Count, stopwatch.ElapsedMilliseconds);
 
             return decisions;
         }
@@ -412,15 +415,15 @@ namespace NzbDrone.Core.DecisionEngine
 
             var searchedBooks = searchCriteria.Books.Where(b => b != null).ToList();
             var targetBook = searchedBooks.Count == 1 ? searchedBooks[0] : null;
-            var authorCatalog = GetPackDetectionCatalog(searchCriteria.AuthorCatalog ?? searchCriteria.Author?.Books ?? searchCriteria.Books, targetBook);
-            var packDetection = ReleasePackDetector.Detect(report, targetBook, authorCatalog);
+            var authorCatalog = GetSearchCatalog(searchCriteria.AuthorCatalog ?? searchCriteria.Author?.Books ?? searchCriteria.Books, targetBook);
+            var packDetection = ReleasePackDetector.Detect(report, targetBook);
 
-            var searchMatch = ReleaseTitleMatchScorer.FindBestMatch(report,
-                                                                    searchCriteria.Author.Name,
-                                                                    searchedBooks,
-                                                                    report.Author,
-                                                                    authorCatalog,
-                                                                    catalogPreparation);
+            var searchMatch = ReleaseTitleMatchScorer.FindBestMatchForSearch(report,
+                                                                             searchCriteria.Author.Name,
+                                                                             searchedBooks,
+                                                                             report.Author,
+                                                                             authorCatalog,
+                                                                             catalogPreparation);
 
             var parsedBookInfo = searchMatch?.IsMatch == true
                 ? CreateParsedBookInfoForSearchMatch(report, searchCriteria.Author, searchMatch)
@@ -510,7 +513,7 @@ namespace NzbDrone.Core.DecisionEngine
                         author.Name,
                         candidates,
                         FirstNotBlank(report.Author, parsedBookInfo.AuthorName),
-                        catalogPreparation.GetAuthorCatalog(author.Id, _bookService).Where(book => book.MediaType == group.Key.MediaType),
+                        GetSearchCatalog(catalogPreparation.GetAuthorCatalog(author.Id, _bookService), candidates[0]),
                         catalogPreparation);
 
                     return new
@@ -580,14 +583,10 @@ namespace NzbDrone.Core.DecisionEngine
             }
 
             var targetBook = remoteBook.Books?.Count == 1 ? remoteBook.Books[0] : null;
-            var authorCatalog = GetPackDetectionCatalog(remoteBook.Author?.Books?.Any() == true
-                ? remoteBook.Author.Books
-                : remoteBook.Books, targetBook);
-
-            remoteBook.PackDetection = ReleasePackDetector.Detect(report, targetBook, authorCatalog) ?? ReleasePackDetection.None();
+            remoteBook.PackDetection = ReleasePackDetector.Detect(report, targetBook) ?? ReleasePackDetection.None();
         }
 
-        private static List<Book> GetPackDetectionCatalog(IEnumerable<Book> books, Book targetBook)
+        private static List<Book> GetSearchCatalog(IEnumerable<Book> books, Book targetBook)
         {
             var catalog = (books ?? Enumerable.Empty<Book>())
                 .Where(book => book != null);
@@ -851,10 +850,8 @@ namespace NzbDrone.Core.DecisionEngine
                    indexerName.Contains("MAM", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Every NFO fetch is a full indexer API call, so only releases the user can see and grab
-        // earn one. Identity and pack rejections never read the narrator, so leaving them
-        // unenriched changes no verdict. Hidden releases are enriched only when nothing is
-        // visible, which is when Show Hidden is the user's only option.
+        // Identity and pack rejections cannot be rescued by narrator metadata. Keep hidden-only
+        // enrichment for interactive results, where Show Hidden lets the user choose those releases.
         private void EnrichNarratorMetadataForVisibleDecisions(List<DownloadDecision> decisions,
                                                                SearchCriteriaBase searchCriteria,
                                                                ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
@@ -865,6 +862,11 @@ namespace NzbDrone.Core.DecisionEngine
             }
 
             var visible = decisions.Where(d => !InteractiveSearchVisibility.IsHidden(d)).ToList();
+            if (visible.Count == 0 && searchCriteria?.InteractiveSearch != true)
+            {
+                return;
+            }
+
             var targets = visible.Count > 0 ? visible : decisions;
 
             var releases = targets

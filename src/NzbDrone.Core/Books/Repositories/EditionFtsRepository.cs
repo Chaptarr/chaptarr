@@ -8,6 +8,7 @@ using Microsoft.Data.Sqlite;
 using NLog;
 using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.Books
@@ -16,7 +17,6 @@ namespace NzbDrone.Core.Books
     {
         bool FtsTableExists();
         void RebuildIndex();
-
 
         /// <summary>
         /// Rank distinct books from edition title plus book series/author text, then return every
@@ -154,7 +154,6 @@ namespace NzbDrone.Core.Books
             _dbType = database.DatabaseType;
         }
 
-
         public bool FtsTableExists()
         {
             if (_ftsTableExists.HasValue && _ftsTableExists.Value)
@@ -227,7 +226,6 @@ namespace NzbDrone.Core.Books
                 _indexCheckedOnce = true;
             }
         }
-
 
         public void RebuildIndex()
         {
@@ -456,7 +454,6 @@ namespace NzbDrone.Core.Books
                 }
             }
         }
-
 
         private static string BuildPostgresTsQuery(IEnumerable<string> tokens)
         {
@@ -693,6 +690,7 @@ namespace NzbDrone.Core.Books
         {
             var columns = "MatchingTitle SeriesName AuthorName";
             var query = string.Join(" OR ", terms.Select(term => $"{{{columns}}}:{TokenToFtsQueryTerm(term)}"));
+            var titleAliasGroups = BuildTitleLookupAliasGroups(terms);
             EmitFtsTrace(trace, new EditionFtsTraceEvent
             {
                 EventType = "query",
@@ -710,6 +708,40 @@ namespace NzbDrone.Core.Books
             parameters.Add("ftsQuery", query);
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
+            var ftsMatchSelects = new List<string>
+            {
+                $@"
+                    SELECT edition_fts.rowid, bm25(edition_fts) AS bm25_score
+                    FROM edition_fts
+                    INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid
+                    WHERE edition_fts MATCH @ftsQuery
+                      {(monitoredOnly ? "AND selected_editions.Monitored = 1" : string.Empty)}"
+            };
+
+            AddFtsTraceForAliasGroups(trace, "stage1_book_recall", titleAliasGroups);
+            for (var index = 0; index < titleAliasGroups.Count; index++)
+            {
+                var group = titleAliasGroups[index];
+                var parameterName = $"titleAliasQuery{index}";
+                var languageFilter = string.Empty;
+                parameters.Add(parameterName, BuildSqliteTitleAliasQuery(group.Terms));
+                if (group.Language != null)
+                {
+                    var languageParameter = $"titleAliasLanguage{index}";
+                    parameters.Add(languageParameter, NzbDrone.Core.Books.Calibre.Extensions.GetLanguageAliases(group.Language).ToArray());
+                    var languageExpression = BuildSqliteCanonicalLanguageExpression("selected_editions.Language");
+                    languageFilter = $"AND {languageExpression} IN @{languageParameter}";
+                }
+
+                ftsMatchSelects.Add($@"
+                    SELECT edition_fts.rowid, bm25(edition_fts) AS bm25_score
+                    FROM edition_fts
+                    INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid
+                    WHERE edition_fts MATCH @{parameterName}
+                      {languageFilter}
+                      {(monitoredOnly ? "AND selected_editions.Monitored = 1" : string.Empty)}");
+            }
+
             if (authorId.HasValue)
             {
                 parameters.Add("authorId", authorId.Value);
@@ -718,11 +750,7 @@ namespace NzbDrone.Core.Books
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var sql = $@"
                 WITH fts_matches AS MATERIALIZED (
-                    SELECT edition_fts.rowid, bm25(edition_fts) AS bm25_score
-                    FROM edition_fts
-                    INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid
-                    WHERE edition_fts MATCH @ftsQuery
-                      {(monitoredOnly ? "AND selected_editions.Monitored = 1" : string.Empty)}
+                    {string.Join(" UNION ALL ", ftsMatchSelects)}
                 )
                 SELECT
                     b.Id AS BookId,
@@ -762,6 +790,7 @@ namespace NzbDrone.Core.Books
                 return new List<BookFtsMatch>();
             }
 
+            var titleAliasGroups = BuildTitleLookupAliasGroups(terms);
             EmitFtsTrace(trace, new EditionFtsTraceEvent
             {
                 EventType = "query",
@@ -779,14 +808,43 @@ namespace NzbDrone.Core.Books
             parameters.Add("tsQuery", query);
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
+            var titleAliasCandidateSelects = new List<string>();
+            var titleAliasScoreExpressions = new List<string>();
+            AddFtsTraceForAliasGroups(trace, "stage1_book_recall", titleAliasGroups, postgres: true);
+            for (var index = 0; index < titleAliasGroups.Count; index++)
+            {
+                var group = titleAliasGroups[index];
+                var parameterName = $"titleAliasTsQuery{index}";
+                var titleVector = "to_tsvector('simple', COALESCE(e.\"MatchingTitle\", ''))";
+                var titleQuery = $"to_tsquery('simple', @{parameterName})";
+                var languageFilter = string.Empty;
+                parameters.Add(parameterName, BuildPostgresPhraseTsQuery(group.Terms));
+                if (group.Language != null)
+                {
+                    var languageParameter = $"titleAliasLanguage{index}";
+                    parameters.Add(languageParameter, NzbDrone.Core.Books.Calibre.Extensions.GetLanguageAliases(group.Language).ToArray());
+                    var languageExpression = BuildPostgresCanonicalLanguageExpression("e.\"Language\"");
+                    languageFilter = $"AND {languageExpression} = ANY(@{languageParameter})";
+                }
+
+                titleAliasCandidateSelects.Add($@"
+                    SELECT e.""BookId"" AS ""Id""
+                    FROM ""Editions"" e
+                    WHERE {titleVector} @@ {titleQuery}
+                      {languageFilter}
+                      {(monitoredOnly ? "AND e.\"Monitored\" = true" : string.Empty)}");
+                titleAliasScoreExpressions.Add($@"
+                    CASE WHEN {titleVector} @@ {titleQuery} {languageFilter}
+                         THEN ts_rank({titleVector}, {titleQuery}) ELSE 0 END");
+            }
+
             if (authorId.HasValue)
             {
                 parameters.Add("authorId", authorId.Value);
             }
 
-            // Postgres can only combine OR'd index predicates with a BitmapOr when they sit on the
-            // same relation, so recalling the candidate ids per table keeps the GIN indexes from
-            // migration 013 usable. Scoring still runs over the joined row, so results are unchanged.
+            // Keep the existing broad query on its indexed fields. Numeric aliases are title-only
+            // predicates, so they cannot make author or series text establish a candidate.
             var sql = $@"
                 WITH candidates AS (
                     SELECT e.""BookId"" AS ""Id""
@@ -802,6 +860,7 @@ namespace NzbDrone.Core.Books
                     FROM ""Books"" b
                     INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
                     WHERE to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @tsQuery)
+                    {(titleAliasCandidateSelects.Count == 0 ? string.Empty : "UNION\n" + string.Join("\nUNION\n", titleAliasCandidateSelects))}
                 )
                 SELECT
                     b.""Id"" AS BookId,
@@ -810,11 +869,12 @@ namespace NzbDrone.Core.Books
                     b.""Title"" AS BookTitle,
                     b.""SeriesName"" AS SeriesName,
                     b.""SeriesPosition"" AS SeriesPosition,
-                    MAX(
+                    MAX(GREATEST(
                         ts_rank(to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')), to_tsquery('simple', @tsQuery)) +
                         ts_rank(to_tsvector('simple', COALESCE(b.""SeriesName"", '')), to_tsquery('simple', @tsQuery)) +
                         ts_rank(to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')), to_tsquery('simple', @tsQuery))
-                    ) AS MatchScore
+                        {(titleAliasScoreExpressions.Count == 0 ? string.Empty : ", " + string.Join(", ", titleAliasScoreExpressions))}
+                    )) AS MatchScore
                 FROM ""Editions"" e
                 INNER JOIN ""Books"" b ON b.""Id"" = e.""BookId""
                 INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
@@ -831,6 +891,147 @@ namespace NzbDrone.Core.Books
             stopwatch.Stop();
             EmitBookRecallTrace(trace, results, stopwatch.ElapsedMilliseconds);
             return results;
+        }
+
+        private sealed class TitleLookupAliasGroup
+        {
+            public string Language { get; set; }
+            public IReadOnlyList<string> Terms { get; set; }
+        }
+
+        private static List<TitleLookupAliasGroup> BuildTitleLookupAliasGroups(IEnumerable<string> terms)
+        {
+            var words = (terms ?? Array.Empty<string>())
+                .Where(term => !string.IsNullOrWhiteSpace(term))
+                .SelectMany(term => UnicodeComparisonNormalizer.WordSpans(StringSuperNormalizer.NormalizeForFts(term))
+                    .Select(match => match.Value))
+                .ToList();
+            if (words.Count == 0)
+            {
+                return new List<TitleLookupAliasGroup>();
+            }
+
+            var groups = new List<TitleLookupAliasGroup>();
+            var languageIndependent = GetTitleLookupAlternatives(words, "unknown");
+            var independentKeys = new HashSet<string>(
+                languageIndependent.Select(NormalizeFtsAlias),
+                StringComparer.OrdinalIgnoreCase);
+            if (languageIndependent.Count > 0)
+            {
+                groups.Add(new TitleLookupAliasGroup { Language = null, Terms = languageIndependent });
+            }
+
+            foreach (var language in TitleNumberCatalog.SupportedLanguages)
+            {
+                var languageAliases = GetTitleLookupAlternatives(words, language)
+                    .Where(alias => !independentKeys.Contains(NormalizeFtsAlias(alias)))
+                    .ToList();
+                if (languageAliases.Count > 0)
+                {
+                    groups.Add(new TitleLookupAliasGroup { Language = language, Terms = languageAliases });
+                }
+            }
+
+            return groups;
+        }
+
+        private static List<string> GetTitleLookupAlternatives(IReadOnlyList<string> words, string language)
+        {
+            var alternatives = new List<string>();
+            for (var index = 0; index < words.Count;)
+            {
+                var numberMatch = TitleNumberCatalog.GetNumberMatches(words, index, language).FirstOrDefault();
+                if (numberMatch.TokenCount <= 0)
+                {
+                    index++;
+                    continue;
+                }
+
+                var source = string.Join(" ", words.Skip(index).Take(numberMatch.TokenCount));
+                var normalizedSource = NormalizeFtsAlias(source);
+                foreach (var alternative in TitleNumberCatalog.GetLookupAlternatives(source, language))
+                {
+                    if (NormalizeFtsAlias(alternative).Equals(normalizedSource, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (!alternatives.Contains(alternative, StringComparer.OrdinalIgnoreCase))
+                    {
+                        alternatives.Add(alternative);
+                    }
+                }
+
+                index += numberMatch.TokenCount;
+            }
+
+            return alternatives;
+        }
+
+        private static string NormalizeFtsAlias(string value)
+        {
+            return StringSuperNormalizer.NormalizeForFts(value ?? string.Empty).Trim();
+        }
+
+        private static string BuildSqliteCanonicalLanguageExpression(string languageExpression)
+        {
+            var normalized = $"LOWER(REPLACE(TRIM(COALESCE({languageExpression}, '')), '_', '-'))";
+            return $"CASE WHEN INSTR({normalized}, '-') > 0 THEN TRIM(SUBSTR({normalized}, 1, INSTR({normalized}, '-') - 1)) ELSE TRIM({normalized}) END";
+        }
+
+        private static string BuildPostgresCanonicalLanguageExpression(string languageExpression)
+        {
+            return $"TRIM(SPLIT_PART(LOWER(REPLACE(TRIM(COALESCE({languageExpression}, '')), '_', '-')), '-', 1))";
+        }
+
+        private static string AliasToFtsQueryTerm(string alias)
+        {
+            if (alias.Any(char.IsWhiteSpace))
+            {
+                return $"\"{alias.Replace("\"", "\"\"")}\"";
+            }
+
+            return TokenToFtsQueryTerm(alias);
+        }
+
+        private static string BuildSqliteTitleAliasQuery(IEnumerable<string> aliases)
+        {
+            return string.Join(" OR ", aliases
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .Select(alias => $"{{MatchingTitle}}:{AliasToFtsQueryTerm(alias)}"));
+        }
+
+        private static string BuildPostgresPhraseTsQuery(IEnumerable<string> aliases)
+        {
+            var phrases = (aliases ?? Array.Empty<string>())
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .Select(alias => UnicodeComparisonNormalizer.WordSpans(StringSuperNormalizer.NormalizeForFts(alias))
+                    .Select(match => match.Value)
+                    .ToList())
+                .Where(words => words.Count > 0)
+                .Select(words => string.Join(" <-> ", words))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return phrases.Count == 0 ? string.Empty : string.Join(" | ", phrases);
+        }
+
+        private static void AddFtsTraceForAliasGroups(
+            Action<EditionFtsTraceEvent> trace,
+            string step,
+            IReadOnlyList<TitleLookupAliasGroup> groups,
+            bool postgres = false)
+        {
+            foreach (var group in groups)
+            {
+                EmitFtsTrace(trace, new EditionFtsTraceEvent
+                {
+                    EventType = "query",
+                    Step = step,
+                    Terms = group.Terms,
+                    Columns = group.Language == null ? "MatchingTitle numeric aliases" : $"MatchingTitle numeric aliases ({group.Language})",
+                    Query = postgres ? BuildPostgresPhraseTsQuery(group.Terms) : BuildSqliteTitleAliasQuery(group.Terms)
+                });
+            }
         }
 
         private SqlBuilder.Template BuildMonitoredBookIds(BookMediaType mediaType)
@@ -1178,7 +1379,14 @@ namespace NzbDrone.Core.Books
             {
                 var prepared = preparedQueries[queryIndex];
                 var fieldKey = prepared.Query.Key ?? string.Join(" ", prepared.Terms);
+                var aliasGroups = titleColumn ? BuildTitleLookupAliasGroups(prepared.Terms) : new List<TitleLookupAliasGroup>();
+                var independentGroup = aliasGroups.FirstOrDefault(group => group.Language == null);
                 var ftsQuery = string.Join(" OR ", prepared.Terms.Select(term => $"{{{ftsColumn}}}:{TokenToFtsQueryTerm(term)}"));
+                if (independentGroup != null)
+                {
+                    ftsQuery += " OR " + BuildSqliteTitleAliasQuery(independentGroup.Terms);
+                }
+
                 parameters.Add($"fieldKey{queryIndex}", fieldKey);
                 parameters.Add($"ftsQuery{queryIndex}", ftsQuery);
                 queriesByKey[fieldKey] = prepared.Query;
@@ -1194,10 +1402,49 @@ namespace NzbDrone.Core.Books
                     EventType = "query",
                     Step = "stage2_field_ranking",
                     FieldKey = string.Join(", ", prepared.Query.SourceFields ?? Array.Empty<string>()),
-                    Terms = prepared.Terms,
+                    Terms = prepared.Terms.Concat(independentGroup?.Terms ?? Array.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                     Columns = traceColumn,
                     Query = ftsQuery
                 });
+
+                if (!titleColumn)
+                {
+                    continue;
+                }
+
+                for (var aliasIndex = 0; aliasIndex < aliasGroups.Count; aliasIndex++)
+                {
+                    var group = aliasGroups[aliasIndex];
+                    if (group.Language == null)
+                    {
+                        continue;
+                    }
+
+                    var queryParameter = $"titleAliasQuery{queryIndex}_{aliasIndex}";
+                    var languageParameter = $"titleAliasLanguage{queryIndex}_{aliasIndex}";
+                    var aliasQuery = BuildSqliteTitleAliasQuery(group.Terms);
+                    parameters.Add(queryParameter, aliasQuery);
+                    parameters.Add(languageParameter, NzbDrone.Core.Books.Calibre.Extensions.GetLanguageAliases(group.Language).ToArray());
+                    var languageExpression = BuildSqliteCanonicalLanguageExpression("alias_editions.Language");
+                    scoreSelects.Add($@"
+                        SELECT
+                            {ftsTable}.rowid AS EditionId,
+                            @fieldKey{queryIndex} AS FieldKey,
+                            0 - bm25({ftsTable}) AS Score
+                        FROM {ftsTable}
+                        INNER JOIN Editions alias_editions ON alias_editions.Id = {ftsTable}.rowid
+                        WHERE {ftsTable} MATCH @{queryParameter}
+                          AND {languageExpression} IN @{languageParameter}");
+                    EmitFtsTrace(trace, new EditionFtsTraceEvent
+                    {
+                        EventType = "query",
+                        Step = "stage2_field_ranking",
+                        FieldKey = string.Join(", ", prepared.Query.SourceFields ?? Array.Empty<string>()),
+                        Terms = group.Terms,
+                        Columns = traceColumn,
+                        Query = aliasQuery
+                    });
+                }
             }
 
             var sql = $@"
@@ -1256,6 +1503,17 @@ namespace NzbDrone.Core.Books
                 }
 
                 var fieldKey = fieldQuery.Key ?? string.Join(" ", fieldQuery.Terms);
+                var aliasGroups = titleColumn ? BuildTitleLookupAliasGroups(fieldQuery.Terms) : new List<TitleLookupAliasGroup>();
+                var independentGroup = aliasGroups.FirstOrDefault(group => group.Language == null);
+                if (independentGroup != null)
+                {
+                    var aliases = BuildPostgresPhraseTsQuery(independentGroup.Terms);
+                    if (!string.IsNullOrWhiteSpace(aliases))
+                    {
+                        query = $"({query}) | ({aliases})";
+                    }
+                }
+
                 parameters.Add($"fieldKey{queryIndex}", fieldKey);
                 parameters.Add($"tsQuery{queryIndex}", query);
                 queriesByKey[fieldKey] = fieldQuery;
@@ -1272,10 +1530,49 @@ namespace NzbDrone.Core.Books
                     EventType = "query",
                     Step = "stage2_field_ranking",
                     FieldKey = string.Join(", ", fieldQuery.SourceFields ?? Array.Empty<string>()),
-                    Terms = fieldQuery.Terms,
+                    Terms = fieldQuery.Terms.Concat(independentGroup?.Terms ?? Array.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                     Columns = column,
                     Query = query
                 });
+
+                if (!titleColumn)
+                {
+                    continue;
+                }
+
+                for (var aliasIndex = 0; aliasIndex < aliasGroups.Count; aliasIndex++)
+                {
+                    var group = aliasGroups[aliasIndex];
+                    if (group.Language == null)
+                    {
+                        continue;
+                    }
+
+                    var queryParameter = $"titleAliasTsQuery{queryIndex}_{aliasIndex}";
+                    var languageParameter = $"titleAliasLanguage{queryIndex}_{aliasIndex}";
+                    var aliasQuery = BuildPostgresPhraseTsQuery(group.Terms);
+                    parameters.Add(queryParameter, aliasQuery);
+                    parameters.Add(languageParameter, NzbDrone.Core.Books.Calibre.Extensions.GetLanguageAliases(group.Language).ToArray());
+                    var languageExpression = BuildPostgresCanonicalLanguageExpression("e.\"Language\"");
+                    scoreSelects.Add($@"
+                        SELECT
+                            e.""Id"" AS EditionId,
+                            @fieldKey{queryIndex} AS FieldKey,
+                            ts_rank(to_tsvector('simple', {valueExpression}), to_tsquery('simple', @{queryParameter})) AS Score
+                        FROM ""Editions"" e
+                        WHERE e.""BookId"" = ANY(@bookIds)
+                          AND {languageExpression} = ANY(@{languageParameter})
+                          AND to_tsvector('simple', {valueExpression}) @@ to_tsquery('simple', @{queryParameter})");
+                    EmitFtsTrace(trace, new EditionFtsTraceEvent
+                    {
+                        EventType = "query",
+                        Step = "stage2_field_ranking",
+                        FieldKey = string.Join(", ", fieldQuery.SourceFields ?? Array.Empty<string>()),
+                        Terms = group.Terms,
+                        Columns = column,
+                        Query = aliasQuery
+                    });
+                }
             }
 
             if (scoreSelects.Count == 0)

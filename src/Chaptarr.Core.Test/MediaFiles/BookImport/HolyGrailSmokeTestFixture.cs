@@ -562,7 +562,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     .Where(book => book != null)
                     .ToList();
             }
-            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new NotImplementedException();
+            public int GetBooksByAuthorCalls { get; private set; }
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false)
+            {
+                GetBooksByAuthorCalls++;
+                return _booksById.Values.Where(book => book.AuthorId == authorId).ToList();
+            }
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
@@ -2230,6 +2235,135 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match.BookId, Is.EqualTo(correctCandidate.BookId));
             Assert.That(match.EditionId, Is.EqualTo(correctCandidate.EditionId));
             Assert.That(match.Provenance.MatchedVia, Is.Not.EqualTo("provider_identifier"));
+        }
+
+        [Test]
+        public void provider_identifier_may_use_exact_numeric_edition_title_proof()
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var author = new Author { Id = 404, Name = "J.K. Rowling" };
+            var book = new Book
+            {
+                Id = 4004,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Ready Player 2",
+                MediaType = BookMediaType.Audiobook
+            };
+            var edition = new Edition
+            {
+                Id = 40004,
+                BookId = book.Id,
+                Book = book,
+                Title = "Ready Player 2",
+                Language = "eng",
+                Asin = "B0NUMERIC1",
+                Monitored = true
+            };
+            book.Editions = new List<Edition> { edition };
+            var bookService = new StubBookService(new[] { book });
+            var fts = new StubEditionFtsRepository(new List<EditionFtsMatch>(), throwOnSearch: true);
+            var service = new FileMatchingService(
+                matchingLogger: null,
+                v5MatchingService: null,
+                containmentValidator: new ContainmentValidator(new TagNormalizer(), logger),
+                pendingAuthorImportService: null,
+                commandQueue: null,
+                authorFolderMatchingService: null,
+                rootFolderService: null,
+                configService: ConfigServiceTestProxy.Create(usePathAsTagsFallback: false),
+                authorService: new StubAuthorService(author),
+                eventAggregator: null,
+                authorLibraryService: null,
+                editionFtsRepository: fts,
+                bookService: bookService,
+                editionService: null,
+                editionRepository: new StubEditionRepository(new[] { edition }),
+                mediaInfoExtractor: null,
+                logger: logger);
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/Ready Player II.m4b",
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    { "TITLE", new List<string> { "Ready Player II" } },
+                    { "ARTIST", new List<string> { author.Name } },
+                    { "ASIN", new List<string> { edition.Asin } }
+                }
+            };
+
+            var match = service.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: null);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(edition.Id));
+            Assert.That(match.Provenance.MatchedVia, Is.EqualTo("provider_identifier"));
+            Assert.That(match.IdentityProof.Values, Has.Some.Matches<MatchIdentityProofValue>(value =>
+                value.Role == MatchIdentityRole.Title &&
+                value.Observed == "Ready Player II" && value.Expected == "Ready Player 2"));
+            Assert.That(bookService.GetBooksByAuthorCalls, Is.EqualTo(1));
+            var titleEvidence = match.Provenance.EvidenceValues.Single(value => value.Value == "Ready Player II");
+            Assert.That(titleEvidence.Ranges, Has.Some.Matches<MatchEvidenceRange>(range =>
+                range.Type == "title" && range.Disposition == "supporting" &&
+                titleEvidence.Value.Substring(range.Start, range.End - range.Start) == "Ready Player II"));
+        }
+
+        [Test]
+        public void provider_identifier_must_not_use_numeric_work_title_fallback_when_edition_title_is_empty()
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var author = new Author { Id = 405, Name = "J.K. Rowling" };
+            var book = new Book
+            {
+                Id = 4005,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Ready Player 2",
+                MediaType = BookMediaType.Audiobook
+            };
+            var edition = new Edition
+            {
+                Id = 40005,
+                BookId = book.Id,
+                Book = book,
+                Title = string.Empty,
+                Language = "eng",
+                Asin = "B0NUMERIC2"
+            };
+            book.Editions = new List<Edition> { edition };
+            var fts = new StubEditionFtsRepository(new List<EditionFtsMatch>());
+            var service = new FileMatchingService(
+                matchingLogger: null,
+                v5MatchingService: null,
+                containmentValidator: new ContainmentValidator(new TagNormalizer(), logger),
+                pendingAuthorImportService: null,
+                commandQueue: null,
+                authorFolderMatchingService: null,
+                rootFolderService: null,
+                configService: ConfigServiceTestProxy.Create(usePathAsTagsFallback: false),
+                authorService: new StubAuthorService(author),
+                eventAggregator: null,
+                authorLibraryService: null,
+                editionFtsRepository: fts,
+                bookService: null,
+                editionService: null,
+                editionRepository: new StubEditionRepository(new[] { edition }),
+                mediaInfoExtractor: null,
+                logger: logger);
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/Ready Player II.m4b",
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    { "TITLE", new List<string> { "Ready Player II" } },
+                    { "ARTIST", new List<string> { author.Name } },
+                    { "ASIN", new List<string> { edition.Asin } }
+                }
+            };
+
+            var match = service.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: null);
+
+            Assert.That(fts.Calls, Is.GreaterThan(0));
+            Assert.That(match, Is.Null);
         }
 
         [Test]

@@ -35,6 +35,47 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
+        public void number_equivalent_title_proof_should_highlight_the_original_roman_span()
+        {
+            const string raw = "Ready Player Ⅱ — Unabridged";
+            var sut = new MatchEvidenceValueBuilder();
+
+            sut.AddNumberEquivalentPhrase(
+                "embedded_tag",
+                "TITLE",
+                raw,
+                "Ready Player 2",
+                "eng",
+                "supporting",
+                "title",
+                "edition",
+                "Numeric title proof");
+
+            var value = sut.Build().Single();
+            var titleRange = value.Ranges.Single(range => range.Type == "title");
+            Assert.That(Slice(value, titleRange), Is.EqualTo("Ready Player Ⅱ"));
+        }
+
+        [Test]
+        public void unsupported_edition_language_does_not_highlight_cardinal_word_aliases()
+        {
+            var sut = new MatchEvidenceValueBuilder();
+
+            sut.AddNumberEquivalentPhrase(
+                "embedded_tag",
+                "TITLE",
+                "Ready Player Two",
+                "Ready Player 2",
+                "spa",
+                "supporting",
+                "title",
+                "edition",
+                "Numeric title proof");
+
+            Assert.That(sut.Build(), Is.Empty);
+        }
+
+        [Test]
         public void a_different_numeric_title_should_not_be_highlighted_as_proof()
         {
             var sut = new MatchEvidenceValueBuilder();

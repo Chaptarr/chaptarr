@@ -10,15 +10,15 @@ namespace Chaptarr.Core.Test.Parser
     [TestFixture]
     public class ReleaseTitleMatchScorerFixture
     {
-        [TestCase("Frank Herbert Dune (Reprint) - Dune Messiah MP3")]
-        [TestCase("Frank Herbert Dune (Reprint) - Dune 4 MP3")]
+        [TestCase("Frank Herbert Dune (Unabridged) - Dune Messiah MP3")]
+        [TestCase("Frank Herbert Dune (Unabridged) - Dune 4 MP3")]
         public void optional_qualifier_variants_should_not_hide_a_contradicted_base_title_occurrence(string release)
         {
             var author = new Author { Name = "Frank Herbert" };
             var target = new Book
             {
                 Id = 1, Author = author, Title = "Dune", SeriesName = "Dune", SeriesPosition = "1",
-                Editions = new List<Edition> { new Edition { Title = "Dune (Reprint)", Monitored = true } }
+                Editions = new List<Edition> { new Edition { Title = "Dune (Unabridged)", Monitored = true } }
             };
             var sibling = new Book
             {
@@ -80,12 +80,12 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(result?.IsMatch, Is.EqualTo(expected));
         }
 
-        [TestCase("(Narrated by Stephen Fry)")]
-        [TestCase("(Reprint)")]
-        [TestCase("(réédition)")]
-        [TestCase("(Neuauflage)")]
-        [TestCase("（再版）")]
-        public void descriptive_parentheticals_should_not_pin_an_edition_or_narrator(string qualifier)
+        [TestCase("(Narrated by Stephen Fry)", true)]
+        [TestCase("(Reprint)", false)]
+        [TestCase("(réédition)", false)]
+        [TestCase("(Neuauflage)", false)]
+        [TestCase("（再版）", false)]
+        public void only_known_metadata_parentheticals_may_be_omitted(string qualifier, bool canOmit)
         {
             var author = new Author { Name = "J.K. Rowling" };
             var book = new Book
@@ -97,7 +97,8 @@ namespace Chaptarr.Core.Test.Parser
                 }
             };
             var result = ReleaseTitleMatchScorer.FindBestMatch("J K Rowling Harry Potter and the Chamber of Secrets M4B", author.Name, new[] { book });
-            Assert.That(result?.IsMatch, Is.True);
+            Assert.That(result?.IsMatch == true, Is.EqualTo(canOmit));
+            Assert.That(ReleaseTitleMatchScorer.FindBestMatch($"J K Rowling {book.Editions[0].Title} M4B", author.Name, new[] { book })?.IsMatch, Is.True);
         }
 
         [Test]
@@ -678,9 +679,9 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(result?.IsMatch == true, Is.EqualTo(expected));
         }
 
-        [TestCase("Shirtaloon - He Who Fights with Monsters 11", TitleMatchProblemCode.SeriesPositionMismatch)]
-        [TestCase("Shirtaloon - He Who Fights with Monsters 11: A LitRPG Adventure", null)]
-        public void subtitle_fallback_should_not_bypass_a_numbered_sibling(string release, TitleMatchProblemCode? expectedProblem)
+        [TestCase("Shirtaloon - He Who Fights with Monsters 11")]
+        [TestCase("Shirtaloon - He Who Fights with Monsters 11: A LitRPG Adventure")]
+        public void subtitle_fallback_should_not_borrow_a_numbered_siblings_prefix(string release)
         {
             var author = new Author { Name = "Shirtaloon" };
             var target = new Book
@@ -696,8 +697,7 @@ namespace Chaptarr.Core.Test.Parser
             };
 
             var result = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, new[] { target }, null, new[] { target, sibling });
-            Assert.That(result?.IsMatch, Is.Not.True);
-            Assert.That(result?.ProblemCode, Is.EqualTo(expectedProblem));
+            Assert.That(result, Is.Null);
         }
 
         [TestCase(false)]
@@ -1241,14 +1241,13 @@ namespace Chaptarr.Core.Test.Parser
         [TestCase("(Stephen Fry)", "Stephen Fry", true)]
         [TestCase("(Narrated by Stephen Fry)", "Jim Dale", true)]
         [TestCase("(Narrated by Stephen Fry)", null, true)]
-        [TestCase("(Narrated by Jim Dale)", "Stephen Fry", true)]
-        [TestCase("(Narrated by Stephen Fry, Part 2 of 2)", "Stephen Fry", true)]
-        [TestCase("(Narrated by Stephen Fry) (Part 2 of 2)", "Stephen Fry", true)]
+        [TestCase("(Narrated by Jim Dale)", "Stephen Fry", false)]
+        [TestCase("(Narrated by Stephen Fry, Part 2 of 2)", "Stephen Fry", false)]
+        [TestCase("(Narrated by Stephen Fry) (Part 2 of 2)", "Stephen Fry", false)]
 
-        // A subtitle still identifies; only bracketed content is non-blocking.
         [TestCase("(Narrated by Stephen Fry): Part 2 of 2", "Stephen Fry", false)]
-        [TestCase("(Stephen Fry and the Prisoner of Azkaban)", "Stephen Fry", true)]
-        public void bracketed_qualifiers_should_never_block_but_a_subtitle_part_still_identifies(string qualifier, string selectedNarrator, bool expectedMatch)
+        [TestCase("(Stephen Fry and the Prisoner of Azkaban)", "Stephen Fry", false)]
+        public void known_narrator_credits_may_be_omitted_but_other_title_content_remains_required(string qualifier, string selectedNarrator, bool expectedMatch)
         {
             var author = new Author { Name = "J.K. Rowling", GoodreadsAuthorId = "gr:1077326" };
             var book = new Book
@@ -1363,17 +1362,20 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(result.MeaningfulLeftovers, Is.Empty);
         }
 
-        [Test]
-        public void bracketed_part_label_should_not_block_the_release()
+        [TestCase("Part 2 of 2")]
+        [TestCase("Part Two")]
+        [TestCase("Part II")]
+        [TestCase("The Other Story")]
+        public void substantive_bracketed_title_content_must_not_be_omitted(string qualifier)
         {
             var author = new Author { Name = "Rebecca Yarros" };
             var book = new Book
             {
-                Title = "Iron Flame (Part 2 of 2) (Dramatized Adaptation)",
+                Title = $"Iron Flame ({qualifier}) (Dramatized Adaptation)",
                 Author = author,
                 Editions = new List<Edition>
                 {
-                    new Edition { Id = 1, Title = "Iron Flame (Part 2 of 2) (Dramatized Adaptation)", Monitored = true }
+                    new Edition { Id = 1, Title = $"Iron Flame ({qualifier}) (Dramatized Adaptation)", Monitored = true }
                 }
             };
 
@@ -1384,8 +1386,9 @@ namespace Chaptarr.Core.Test.Parser
                 null,
                 new[] { book });
 
-            Assert.That(result?.IsMatch, Is.True);
-            Assert.That(result.MatchedVariant, Is.EqualTo("Iron Flame"));
+            Assert.That(result?.IsMatch == true, Is.False);
+            Assert.That(ReleaseTitleMatchScorer.FindBestMatch($"Rebecca Yarros - Iron Flame ({qualifier}) [GraphicAudio]",
+                author.Name, new[] { book })?.IsMatch, Is.True);
         }
 
         [Test]

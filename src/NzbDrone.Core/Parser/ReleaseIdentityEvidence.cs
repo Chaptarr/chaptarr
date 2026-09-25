@@ -40,6 +40,10 @@ namespace NzbDrone.Core.Parser
         public bool HasStructuredAuthorMismatch { get; set; }
         public bool HasPositiveIdentityEvidence { get; set; }
 
+        // Author evidence specifically, as opposed to a known narrator or series. Acceptance keys on
+        // the author, so tolerances that could admit another author's product require this one.
+        public bool HasAuthorIdentityEvidence { get; set; }
+
         public static ReleaseIdentityEvidence Analyze(ReleaseInfo release, Author expectedAuthor, Book targetBook, TitleMatchResult titleMatch)
         {
             var result = new ReleaseIdentityEvidence();
@@ -54,6 +58,7 @@ namespace NzbDrone.Core.Parser
                 if (StructuredAuthorMatches(expectedAuthor, release.Author))
                 {
                     result.HasPositiveIdentityEvidence = true;
+                    result.HasAuthorIdentityEvidence = true;
                     return result;
                 }
 
@@ -76,10 +81,14 @@ namespace NzbDrone.Core.Parser
             var segments = BuildTokenSegments(cleanedReleaseTitle);
             var titleSegmentIndex = FindContainingSegment(segments, matchedStart, matchedEnd);
 
-            if (HasAuthorEditionTitleIdentity(releaseTokens, matchedStart, matchedEnd, expectedAuthor, targetBook, titleMatch) ||
-                HasBoundaryIdentity(releaseTokens, segments, titleSegmentIndex, matchedStart, matchedEnd, expectedAuthor, targetBook))
+            var authorIdentity = HasAuthorEditionTitleIdentity(releaseTokens, matchedStart, matchedEnd, expectedAuthor, targetBook, titleMatch) ||
+                                 HasBoundaryIdentity(releaseTokens, segments, titleSegmentIndex, matchedStart, matchedEnd, expectedAuthor, targetBook, authorOnly: true);
+
+            if (authorIdentity ||
+                HasBoundaryIdentity(releaseTokens, segments, titleSegmentIndex, matchedStart, matchedEnd, expectedAuthor, targetBook, authorOnly: false))
             {
                 result.HasPositiveIdentityEvidence = true;
+                result.HasAuthorIdentityEvidence = authorIdentity;
                 return result;
             }
 
@@ -209,19 +218,26 @@ namespace NzbDrone.Core.Parser
                    left.Select((token, index) => ReleaseTitleMatchScorer.TokensMatch(token, right[index])).All(matches => matches);
         }
 
-        private static bool HasBoundaryIdentity(IReadOnlyList<string> releaseTokens, IReadOnlyList<TokenSegment> segments, int titleSegmentIndex, int matchedStart, int matchedEnd, Author expectedAuthor, Book targetBook)
+        // One clause list, two strengths. authorOnly answers "did the release name this author?";
+        // the full form also accepts a known narrator or series as neutral corroboration.
+        private static bool HasBoundaryIdentity(IReadOnlyList<string> releaseTokens, IReadOnlyList<TokenSegment> segments, int titleSegmentIndex, int matchedStart, int matchedEnd, Author expectedAuthor, Book targetBook, bool authorOnly)
         {
             var leftTokens = GetLeftBoundaryTokens(releaseTokens, segments, titleSegmentIndex, matchedStart);
             var rightTokens = GetRightBoundaryTokens(releaseTokens, segments, titleSegmentIndex, matchedEnd);
             var leftText = GetLeftBoundaryText(releaseTokens, segments, titleSegmentIndex, matchedStart);
             var rightText = GetRightBoundaryText(releaseTokens, segments, titleSegmentIndex, matchedEnd);
 
-            return BoundaryMatchesExpectedAuthor(leftText, leftTokens, true, expectedAuthor) ||
-                   BoundaryMatchesExpectedAuthor(rightText, rightTokens, false, expectedAuthor) ||
-                   BoundaryMatchesKnownNarrator(leftText, leftTokens, true, targetBook) ||
-                   BoundaryMatchesKnownNarrator(rightText, rightTokens, false, targetBook) ||
-                   BoundaryMatchesKnownSeries(leftText, leftTokens, true, targetBook) ||
-                   BoundaryMatchesKnownSeries(rightText, rightTokens, false, targetBook);
+            if (BoundaryMatchesExpectedAuthor(leftText, leftTokens, true, expectedAuthor) ||
+                BoundaryMatchesExpectedAuthor(rightText, rightTokens, false, expectedAuthor))
+            {
+                return true;
+            }
+
+            return !authorOnly &&
+                   (BoundaryMatchesKnownNarrator(leftText, leftTokens, true, targetBook) ||
+                    BoundaryMatchesKnownNarrator(rightText, rightTokens, false, targetBook) ||
+                    BoundaryMatchesKnownSeries(leftText, leftTokens, true, targetBook) ||
+                    BoundaryMatchesKnownSeries(rightText, rightTokens, false, targetBook));
         }
 
         private static bool BoundaryMatchesExpectedAuthor(string rawCandidate, IReadOnlyList<string> tokens, bool leftOfTitle, Author expectedAuthor)
@@ -386,6 +402,13 @@ namespace NzbDrone.Core.Parser
                        out var alignment) &&
                    (alignment.ConsumedFieldIndexes.First() == 0 ||
                     alignment.ConsumedFieldIndexes.Last() == fieldTokens.Count - 1);
+        }
+
+        internal static bool IsKnownNarratorCredit(Book book, string label)
+        {
+            var names = GetKnownNarrators(book).Select(ReleaseTitleMatchScorer.Tokenize).ToList();
+            return GetCandidateNameForms(label).Any(candidate =>
+                names.Any(name => name.SequenceEqual(ReleaseTitleMatchScorer.Tokenize(candidate), StringComparer.Ordinal)));
         }
 
         private static IEnumerable<string> GetKnownNarrators(Book targetBook)

@@ -4,36 +4,13 @@ using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport
 {
     internal static class SeriesPositionTokenHelper
     {
-        private static readonly string[] Cardinals =
-        {
-            null,
-            "one",
-            "two",
-            "three",
-            "four",
-            "five",
-            "six",
-            "seven",
-            "eight",
-            "nine",
-            "ten",
-            "eleven",
-            "twelve",
-            "thirteen",
-            "fourteen",
-            "fifteen",
-            "sixteen",
-            "seventeen",
-            "eighteen",
-            "nineteen"
-        };
-
         private static readonly string[] Ordinals =
         {
             null,
@@ -56,20 +33,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             "seventeenth",
             "eighteenth",
             "nineteenth"
-        };
-
-        private static readonly string[] TensCardinals =
-        {
-            null,
-            null,
-            "twenty",
-            "thirty",
-            "forty",
-            "fifty",
-            "sixty",
-            "seventy",
-            "eighty",
-            "ninety"
         };
 
         private static readonly string[] TensOrdinals =
@@ -184,35 +147,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         public static bool LooksLikeRomanNumeralToken(string token)
         {
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                return false;
-            }
-
-            token = token.Trim().ToLowerInvariant();
-            if (token.Length > 8)
-            {
-                return false;
-            }
-
-            foreach (var ch in token)
-            {
-                switch (ch)
-                {
-                    case 'i':
-                    case 'v':
-                    case 'x':
-                    case 'l':
-                    case 'c':
-                    case 'd':
-                    case 'm':
-                        break;
-                    default:
-                        return false;
-                }
-            }
-
-            return true;
+            return UnicodeComparisonNormalizer.IsCanonicalRomanNumeral(token);
         }
 
         public static string ToRomanNumeral(int number)
@@ -222,9 +157,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return null;
             }
 
-            var ones = new[] { "", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix" };
-            var tens = new[] { "", "x", "xx", "xxx" };
-            return tens[number / 10] + ones[number % 10];
+            return TitleNumberCatalog.ToRomanNumeral(number);
         }
 
         private static void AddNumberTokens(HashSet<string> tokens, int number)
@@ -247,7 +180,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 tokens.Add(roman);
             }
 
-            AddWordTokens(tokens, ToCardinalWords(number));
+            AddWordTokens(tokens, TitleNumberCatalog.ToCardinalWords(number));
             AddWordTokens(tokens, ToOrdinalWords(number));
         }
 
@@ -269,23 +202,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
         }
 
-        private static string ToCardinalWords(int number)
-        {
-            if (number <= 0 || number >= 100)
-            {
-                return null;
-            }
-
-            if (number < 20)
-            {
-                return Cardinals[number];
-            }
-
-            var ten = number / 10;
-            var one = number % 10;
-            return one == 0 ? TensCardinals[ten] : $"{TensCardinals[ten]} {Cardinals[one]}";
-        }
-
         private static string ToOrdinalWords(int number)
         {
             if (number <= 0 || number >= 100)
@@ -300,7 +216,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             var ten = number / 10;
             var one = number % 10;
-            return one == 0 ? TensOrdinals[ten] : $"{TensCardinals[ten]} {Ordinals[one]}";
+            return one == 0 ? TensOrdinals[ten] : $"{TitleNumberCatalog.ToCardinalWords(ten * 10)} {Ordinals[one]}";
         }
 
         internal static bool TryParseNumber(string raw, out decimal value, bool allowRoman = true)
@@ -332,7 +248,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             for (var n = 1; n < 100; n++)
             {
-                AddWordMapping(map, ToCardinalWords(n), n);
+                AddWordMapping(map, TitleNumberCatalog.ToCardinalWords(n), n);
                 AddWordMapping(map, ToOrdinalWords(n), n);
             }
 

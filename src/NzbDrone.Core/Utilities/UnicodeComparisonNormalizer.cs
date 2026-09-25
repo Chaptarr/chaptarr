@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace NzbDrone.Core.Utilities
 {
@@ -13,6 +14,11 @@ namespace NzbDrone.Core.Utilities
 
     public static class UnicodeComparisonNormalizer
     {
+        // Keep Roman numeric interpretation in the standard canonical range and spelling.
+        private static readonly Regex CanonicalRomanNumeralRegex = new Regex(
+            @"^(?=[ivxlcdm]+$)m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
         internal static IEnumerable<(string Value, int Index, int Length)> WordSpans(string text, bool preserveFtsConnectors = false, bool includePossessive = false, bool splitNumbers = false)
         {
             var index = 0;
@@ -128,8 +134,8 @@ namespace NzbDrone.Core.Utilities
                         end++;
                     }
 
-                    var roman = text.Substring(index, end - index).Normalize(NormalizationForm.FormKC);
-                    folded = TryParseRomanNumeral(roman, out var number) ? number.ToString(CultureInfo.InvariantCulture) : roman;
+                    // Fold presentation glyphs to their letter sequence; contextual parsers decide whether it is numeric.
+                    folded = text.Substring(index, end - index).Normalize(NormalizationForm.FormKC);
                     length = end - index;
                 }
                 else if (folded == null && !rune.IsAscii && Rune.IsNumber(rune) && Rune.GetNumericValue(rune) != -1)
@@ -270,7 +276,7 @@ namespace NzbDrone.Core.Utilities
         internal static bool TryParseRomanNumeral(string raw, out int value)
         {
             value = 0;
-            if (string.IsNullOrWhiteSpace(raw))
+            if (!IsCanonicalRomanNumeral(raw))
             {
                 return false;
             }
@@ -297,6 +303,11 @@ namespace NzbDrone.Core.Utilities
 
             value = (int)total;
             return true;
+        }
+
+        internal static bool IsCanonicalRomanNumeral(string raw)
+        {
+            return !string.IsNullOrWhiteSpace(raw) && CanonicalRomanNumeralRegex.IsMatch(raw.Trim());
         }
 
         private static bool IsWordCharacter(Rune rune) => Rune.IsLetter(rune) || Rune.IsNumber(rune);

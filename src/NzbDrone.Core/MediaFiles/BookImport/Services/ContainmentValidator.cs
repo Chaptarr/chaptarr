@@ -16,13 +16,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             string fieldValue,
             string matchedTitle,
             bool isNearExact = false,
-            bool requiresAudiobookDurationCorroboration = false)
+            bool requiresAudiobookDurationCorroboration = false,
+            bool isNumberEquivalent = false,
+            string editionLanguage = null)
         {
             FieldName = fieldName;
             FieldValue = fieldValue;
             MatchedTitle = matchedTitle;
             IsNearExact = isNearExact;
             RequiresAudiobookDurationCorroboration = requiresAudiobookDurationCorroboration;
+            IsNumberEquivalent = isNumberEquivalent;
+            EditionLanguage = editionLanguage;
         }
 
         public string FieldName { get; }
@@ -30,6 +34,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         public string MatchedTitle { get; }
         public bool IsNearExact { get; }
         public bool RequiresAudiobookDurationCorroboration { get; }
+        public bool IsNumberEquivalent { get; }
+        public string EditionLanguage { get; }
     }
 
 	    public interface IContainmentValidator
@@ -66,7 +72,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
 	        // Edition titles are never plot summaries. If a tag value is longer than this, treat it as
 	        // ineligible for edition-title evidence (defense-in-depth against non-standard comment fields).
-	        private const int MaxTitleEvidenceValueLength = 400;
+	        internal const int MaxTitleEvidenceValueLength = 400;
 	        
         // Roman numerals (conservative)
         private static readonly Regex RomanRegex = new Regex(@"^(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))$", RegexOptions.Compiled | RegexOptions.IgnoreCase);

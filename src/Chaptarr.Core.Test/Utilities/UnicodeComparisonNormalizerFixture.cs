@@ -74,6 +74,48 @@ namespace Chaptarr.Core.Test.Utilities
             Assert.That(UnicodeComparisonNormalizer.NormalizeWords("Astorias Smutty Smut 🌶️"), Is.EqualTo("astorias smutty smut"));
         }
 
+        [TestCase("II", true, 2)]
+        [TestCase("XIV", true, 14)]
+        [TestCase("MIX", true, 1009)]
+        [TestCase("VI", true, 6)]
+        [TestCase("DL", true, 550)]
+        [TestCase("DVD", false, 0)]
+        [TestCase("MID", false, 0)]
+        [TestCase("Mild", false, 0)]
+        [TestCase("Civil", false, 0)]
+        [TestCase("IL", false, 0)]
+        [TestCase("IM", false, 0)]
+        [TestCase("", false, 0)]
+        public void roman_number_parser_should_accept_only_canonical_forms(string raw, bool expectedSuccess, int expectedValue)
+        {
+            var success = UnicodeComparisonNormalizer.TryParseRomanNumeral(raw, out var value);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(success, Is.EqualTo(expectedSuccess));
+                Assert.That(value, Is.EqualTo(expectedValue));
+            });
+        }
+
+        [TestCase("VI", "vi")]
+        [TestCase("MIX", "mix")]
+        [TestCase("Book VI", "book vi")]
+        public void ascii_roman_words_should_remain_ordinary_title_tokens(string title, string expected)
+        {
+            Assert.That(UnicodeComparisonNormalizer.NormalizeWords(title), Is.EqualTo(expected));
+        }
+
+        [TestCase("Ⅱ", "ii")]
+        [TestCase("ⅮⅤⅮ", "dvd")]
+        [TestCase("ⅯⅠⅮ", "mid")]
+        [TestCase("ⅮⅬ", "dl")]
+        [TestCase("Ⅵ", "vi")]
+        [TestCase("ⅩⅣ", "xiv")]
+        public void unicode_roman_sequences_should_normalize_as_letter_tokens(string title, string expected)
+        {
+            Assert.That(UnicodeComparisonNormalizer.NormalizeWords(title), Is.EqualTo(expected));
+        }
+
         [Test]
         public void normalize_words_should_treat_a_symbol_outside_the_bmp_as_a_word_boundary()
         {
@@ -151,17 +193,17 @@ namespace Chaptarr.Core.Test.Utilities
         [TestCase("Ready Player ２", "ready player 2")]
         [TestCase("Ready Player ②", "ready player 2")]
         [TestCase("Ready Player ²", "ready player 2")]
-        [TestCase("Ready Player Ⅱ", "ready player 2")]
+        [TestCase("Ready Player Ⅱ", "ready player ii")]
         [TestCase("Ready Player Two", "ready player two")]
         [TestCase("The Thirty-Nine Steps", "the thirty nine steps")]
         [TestCase("One Flew Over the Cuckoo’s Nest", "one flew over the cuckoo s nest")]
         [TestCase("Un mundo feliz", "un mundo feliz")]
-        [TestCase("A Memory of Light ⅩⅣ", "a memory of light 14")]
+        [TestCase("A Memory of Light ⅩⅣ", "a memory of light xiv")]
         [TestCase("I, Robot", "i robot")]
         [TestCase("1Q84", "1q84")]
         [TestCase("一九八四", "一九八四")]
         [TestCase("The First Law", "the first law")]
-        public void numeric_title_forms_should_share_one_comparison_representation(string input, string expected)
+        public void comparison_text_should_normalize_numeric_characters_without_rewriting_roman_glyphs(string input, string expected)
         {
             Assert.That(UnicodeComparisonNormalizer.NormalizeWords(input), Is.EqualTo(expected));
             Assert.That(UnicodeComparisonNormalizer.NormalizeKey(input), Is.EqualTo(expected.Replace(" ", "")));
@@ -172,10 +214,26 @@ namespace Chaptarr.Core.Test.Utilities
         }
 
         [Test]
-        public void expanded_numeric_glyph_should_retain_its_original_source_span()
+        public void expanded_roman_glyphs_should_retain_their_original_source_span()
         {
             var mapped = UnicodeComparisonNormalizer.NormalizeWordsWithSourceSpans("A Memory of Light ⅩⅣ", null);
-            Assert.That(mapped.SourceSpans.TakeLast(2), Is.EqualTo(new[] { (18, 20), (18, 20) }));
+            Assert.That(mapped.Text, Is.EqualTo("a memory of light xiv"));
+            Assert.That(mapped.SourceSpans.TakeLast(3), Is.EqualTo(new[] { (18, 20), (18, 20), (18, 20) }));
+        }
+
+        [Test]
+        public void unicode_roman_glyphs_should_match_ascii_letter_tokens_and_preserve_source_spans()
+        {
+            const string ascii = "II";
+            const string unicode = "Ⅱ";
+
+            Assert.That(UnicodeComparisonNormalizer.NormalizeText(unicode), Is.EqualTo(UnicodeComparisonNormalizer.NormalizeText(ascii)));
+            Assert.That(UnicodeComparisonNormalizer.NormalizeWords(unicode), Is.EqualTo(UnicodeComparisonNormalizer.NormalizeWords(ascii)));
+            Assert.That(UnicodeComparisonNormalizer.NormalizeKey(unicode), Is.EqualTo(UnicodeComparisonNormalizer.NormalizeKey(ascii)));
+
+            var mapped = UnicodeComparisonNormalizer.NormalizeTextWithSourceSpans("II Ⅱ");
+            Assert.That(mapped.Text, Is.EqualTo("ii ii"));
+            Assert.That(mapped.SourceSpans, Is.EqualTo(new[] { (0, 1), (1, 2), (2, 3), (3, 4), (3, 4) }));
         }
 
 
@@ -213,10 +271,10 @@ namespace Chaptarr.Core.Test.Utilities
         [TestCase("Dune 3 1/3", "dune 3.333333333333333")]
         [TestCase("Dune 3 ⅓", "dune 3.333333333333333")]
         [TestCase("Dune twenty one ½", "dune twenty one 0.5")]
-        [TestCase("Dune Ⅳ ½", "dune 4.5")]
+        [TestCase("Dune Ⅳ ½", "dune iv 0.5")]
         [TestCase("Dune 3½", "dune 3.5")]
         [TestCase("Dune 13½", "dune 13.5")]
-        [TestCase("Dune Ⅳ½", "dune 4.5")]
+        [TestCase("Dune Ⅳ½", "dune iv0.5")]
         public void mixed_fraction_should_not_become_a_different_whole_number(string input, string expected)
         {
             Assert.That(UnicodeComparisonNormalizer.NormalizeWords(input), Is.EqualTo(expected));

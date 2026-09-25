@@ -252,7 +252,6 @@ namespace NzbDrone.Core.Parser
 
         private static readonly Regex RequestInfoRegex = new Regex(@"\[.+?\]", RegexOptions.Compiled);
 
-        private static readonly string[] Numbers = new[] { "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" };
 
         private static readonly Regex[] CommonTagRegex = new Regex[]
         {
@@ -850,23 +849,6 @@ namespace NzbDrone.Core.Parser
             }
 
             return string.Empty;
-        }
-
-        private static int ParseNumber(string value)
-        {
-            if (int.TryParse(value, out var number))
-            {
-                return number;
-            }
-
-            number = Array.IndexOf(Numbers, value.ToLower());
-
-            if (number != -1)
-            {
-                return number;
-            }
-
-            throw new FormatException(string.Format("{0} isn't a number", value));
         }
 
         private static double StringSimilarity(string a, string b)

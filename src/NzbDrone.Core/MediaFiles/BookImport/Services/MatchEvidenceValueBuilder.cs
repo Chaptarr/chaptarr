@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
@@ -46,6 +47,51 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             AddTokenIndexes(source, field, rawValue, fieldTokens, matchedIndexes, disposition, type, scope, detail);
+        }
+
+        public void AddNumberEquivalentPhrase(
+            string source,
+            string field,
+            string rawValue,
+            string phrase,
+            string editionLanguage,
+            string disposition,
+            string type,
+            string scope,
+            string detail)
+        {
+            if (string.IsNullOrWhiteSpace(rawValue) || string.IsNullOrWhiteSpace(phrase))
+            {
+                return;
+            }
+
+            var fieldTokens = Tokenize(rawValue);
+            var expectedTokens = Tokenize(phrase).Select(token => token.Value).ToList();
+            var matchingSpans = ReleaseTitleMatchScorer
+                .FindNumberEquivalentTitleSpans(
+                    fieldTokens.Select(token => token.Value).ToList(),
+                    expectedTokens,
+                    editionLanguage)
+                .OrderByDescending(span => span.End - span.Start)
+                .ThenBy(span => span.Start)
+                .ToList();
+            if (expectedTokens.Count == 0 || matchingSpans.Count == 0)
+            {
+                return;
+            }
+
+            var matchingSpan = matchingSpans[0];
+
+            AddTokenIndexes(
+                source,
+                field,
+                rawValue,
+                fieldTokens,
+                Enumerable.Range(matchingSpan.Start, matchingSpan.End - matchingSpan.Start + 1),
+                disposition,
+                type,
+                scope,
+                detail);
         }
 
         public void AddMatchingTokens(

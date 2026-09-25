@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.Utilities;
 
@@ -8,7 +9,8 @@ namespace NzbDrone.Core.Books.Services
 {
     public static class TextNormalizer
     {
-        // Enhanced normalization with all the improvements from Database Engineer B
+        private static readonly Regex UnicodeRomanNumeralGlyphRunRegex = new Regex(@"[\u2160-\u217F]+", RegexOptions.Compiled);
+
         public static List<string> NormalizeAndTokenize(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -21,6 +23,9 @@ namespace NzbDrone.Core.Books.Services
 
             // Handle hyphens in names (convert to spaces for tokenization)
             normalized = normalized.Replace('-', ' ');
+
+            // Convert Unicode Roman numeral glyphs to their ASCII letter spelling before the bounded map.
+            normalized = UnicodeRomanNumeralGlyphRunRegex.Replace(normalized, match => match.Value.Normalize(NormalizationForm.FormKC).ToLowerInvariant());
 
             // Handle Roman numerals (convert to numbers)
             normalized = ReplaceRomanNumerals(normalized);

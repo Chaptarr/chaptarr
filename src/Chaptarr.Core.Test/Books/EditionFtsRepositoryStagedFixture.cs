@@ -255,7 +255,7 @@ namespace Chaptarr.Core.Test.Books
         [TestCase("𠀀 | ! ' book:* 🌶️", "𠀀 | book")]
         [TestCase("Two", "two")]
         [TestCase("②", "2")]
-        [TestCase("ⅩⅣ", "14")]
+        [TestCase("ⅩⅣ", "xiv")]
         [TestCase("1Q84", "1q84")]
         [TestCase("½", "0.5")]
         [TestCase("0.5", "0.5")]
@@ -355,6 +355,141 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
+
+        [Test]
+        public void sqlite_staged_recall_should_use_language_scoped_numeric_aliases_on_titles_only()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"numeric_alias_fts_{Guid.NewGuid():N}.db");
+            var connectionString = new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString();
+            try
+            {
+                SeedDatabase(connectionString);
+                using (var connection = new SqliteConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"
+                        INSERT INTO Authors (Id, Name) VALUES (2, 'Two');
+                        INSERT INTO Books (Id, AuthorId, Title, MediaType) VALUES
+                            (4, 1, 'Two English', 1),
+                            (5, 1, 'Two Null', 1),
+                            (6, 1, 'Two Unsupported', 1),
+                            (7, 1, 'Roman Two', 1),
+                            (8, 1, 'Twenty One', 1),
+                            (9, 2, 'Author Alias Decoy', 1),
+                            (10, 1, 'Digit English', 1),
+                            (11, 1, 'Audio Narrator Alias Decoy', 0),
+                            (12, 1, 'Two English Short', 1),
+                            (13, 1, 'Two English Name', 1),
+                            (14, 1, 'Two English Region Hyphen', 1),
+                            (15, 1, 'Two English Region Underscore', 1);
+                        INSERT INTO Editions (
+                            Id, ForeignEditionId, BookId, Monitored, Language, Title, MatchingTitle,
+                            NarratorNames, Narrator, Publisher, Images, DurationSeconds, ReleaseDate, ReadingFormatId)
+                        VALUES
+                            (44, 'hc:edition:numeric-alias-english', 4, 1, 'eng', 'Two English', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (55, 'hc:edition:numeric-alias-null', 5, 1, NULL, 'Two Null', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (66, 'hc:edition:numeric-alias-unsupported', 6, 1, 'fra', 'Two Unsupported', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (77, 'hc:edition:numeric-alias-roman', 7, 1, NULL, 'Roman Two', 'ii', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (88, 'hc:edition:numeric-alias-twenty-one', 8, 1, 'eng', 'Twenty One', 'twenty one', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (99, 'hc:edition:numeric-alias-author-decoy', 9, 1, 'eng', 'Author Alias Decoy', 'author alias decoy', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (100, 'hc:edition:numeric-alias-digit', 10, 1, 'eng', 'Digit English', '2', '[]', '', '2', '[]', 0, '2026-01-01', 3),
+                            (111, 'hc:edition:numeric-alias-narrator-decoy', 11, 1, 'eng', 'Audio Narrator Alias Decoy', 'unrelated audio', '[2]', '2', '', '[]', 0, '2026-01-01', 2),
+                            (112, 'hc:edition:numeric-alias-en', 12, 1, 'en', 'Two English Short', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (113, 'hc:edition:numeric-alias-english-name', 13, 1, 'English', 'Two English Name', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (114, 'hc:edition:numeric-alias-en-us', 14, 1, ' En - US ', 'Two English Region Hyphen', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (115, 'hc:edition:numeric-alias-en-us-underscore', 15, 1, 'en_US', 'Two English Region Underscore', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3);
+                        INSERT INTO edition_fts (rowid, MatchingTitle, SeriesName, AuthorName, Narrator, Subtitle, Publisher) VALUES
+                            (44, 'two', '', 'Freida McFadden', '', '', ''),
+                            (55, 'two', '', 'Freida McFadden', '', '', ''),
+                            (66, 'two', '', 'Freida McFadden', '', '', ''),
+                            (77, 'ii', '', 'Freida McFadden', '', '', ''),
+                            (88, 'twenty one', '', 'Freida McFadden', '', '', ''),
+                            (99, 'author alias decoy', '', 'Two', '', '', ''),
+                            (100, '2', '', 'Freida McFadden', '', '', '2'),
+                            (111, 'unrelated audio', '', 'Freida McFadden', '2', '', ''),
+                            (112, 'two', '', 'Freida McFadden', '', '', ''),
+                            (113, 'two', '', 'Freida McFadden', '', '', ''),
+                            (114, 'two', '', 'Freida McFadden', '', '', ''),
+                            (115, 'two', '', 'Freida McFadden', '', '', '');");
+                }
+
+                var database = new Database("numeric-alias-sqlite", () =>
+                {
+                    var connection = new SqliteConnection(connectionString);
+                    connection.Open();
+                    return connection;
+                });
+                var repository = new EditionFtsRepository(new MainDatabase(database), LogManager.GetCurrentClassLogger());
+
+                var numericRecalls = repository.RecallBooks(null, new[] { "2" }, BookMediaType.Ebook, limit: 20);
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Contain(4), "English numeric words may recall matching title text");
+                Assert.That(numericRecalls.Select(book => book.BookId), Is.SupersetOf(new[] { 12, 13, 14, 15 }),
+                    "English aliases follow the shared canonicalizer for codes, names, and locale suffixes");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Contain(7), "Roman title aliases apply for editions with no stored language");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Not.Contain(5), "English words must not be inferred for a null language");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Not.Contain(6), "English words must not be inferred for an unsupported language");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Not.Contain(9), "an author-name alias cannot establish title recall");
+
+                var englishWordRecalls = repository.RecallBooks(null, new[] { "Two" }, BookMediaType.Ebook, limit: 20);
+                Assert.That(englishWordRecalls.Select(book => book.BookId), Does.Contain(10), "English title words may recall their numeric title");
+                var multiWordRecalls = repository.RecallBooks(null, new[] { "21" }, BookMediaType.Ebook, limit: 20);
+                Assert.That(multiWordRecalls.Select(book => book.BookId), Does.Contain(8), "a multiword English cardinal remains one title alternative");
+
+                var recalled = new[]
+                {
+                    new BookFtsMatch { BookId = 4, AuthorId = 1, MatchScore = 4 },
+                    new BookFtsMatch { BookId = 5, AuthorId = 1, MatchScore = 3 },
+                    new BookFtsMatch { BookId = 6, AuthorId = 1, MatchScore = 2 },
+                    new BookFtsMatch { BookId = 7, AuthorId = 1, MatchScore = 1 },
+                    new BookFtsMatch { BookId = 12, AuthorId = 1, MatchScore = 0.9 },
+                    new BookFtsMatch { BookId = 13, AuthorId = 1, MatchScore = 0.8 },
+                    new BookFtsMatch { BookId = 14, AuthorId = 1, MatchScore = 0.7 },
+                    new BookFtsMatch { BookId = 15, AuthorId = 1, MatchScore = 0.6 }
+                };
+                var ranked = repository.RankEditions(recalled, new[]
+                {
+                    new EditionFtsFieldQuery { Key = "TITLE[0]", Terms = new[] { "2" }, SourceFields = new[] { "TITLE[0]" } }
+                }, BookMediaType.Ebook).ToDictionary(edition => edition.EditionId);
+                Assert.That(ranked[44].Stage2FieldHits.Single(hit => hit.FieldKey == "TITLE[0]").TitleHit, Is.True);
+                Assert.That(ranked[55].Stage2TitleScore, Is.EqualTo(0), "null-language edition title must not get an English word alias");
+                Assert.That(ranked[66].Stage2TitleScore, Is.EqualTo(0), "unsupported-language edition title must not get an English word alias");
+                Assert.That(ranked[77].Stage2FieldHits.Single(hit => hit.FieldKey == "TITLE[0]").TitleHit, Is.True,
+                    "Roman title aliases remain available without an edition language");
+                Assert.That(ranked[112].Stage2TitleScore, Is.GreaterThan(0));
+                Assert.That(ranked[113].Stage2TitleScore, Is.GreaterThan(0));
+                Assert.That(ranked[114].Stage2TitleScore, Is.GreaterThan(0));
+                Assert.That(ranked[115].Stage2TitleScore, Is.GreaterThan(0),
+                    "Stage 2 uses the same canonicalizer aliases as Stage 1");
+
+                var titleOnly = repository.RankEditions(new[]
+                {
+                    new BookFtsMatch { BookId = 10, AuthorId = 1, MatchScore = 1 }
+                }, new[]
+                {
+                    new EditionFtsFieldQuery { Key = "TITLE[1]", Terms = new[] { "Two" }, SourceFields = new[] { "TITLE[1]" } }
+                }, BookMediaType.Ebook).Single();
+                var titleHit = titleOnly.Stage2FieldHits.Single(hit => hit.FieldKey == "TITLE[1]");
+                Assert.That(titleHit.TitleHit, Is.True);
+                Assert.That(titleHit.DetailHit, Is.False, "publisher text does not inherit title-number aliases");
+                var narratorOnly = repository.RankEditions(new[]
+                {
+                    new BookFtsMatch { BookId = 11, AuthorId = 1, MatchScore = 1 }
+                }, new[]
+                {
+                    new EditionFtsFieldQuery { Key = "TITLE[2]", Terms = new[] { "Two" }, SourceFields = new[] { "TITLE[2]" } }
+                }, BookMediaType.Audiobook).Single();
+                Assert.That(narratorOnly.Stage2TitleScore, Is.EqualTo(0));
+                Assert.That(narratorOnly.Stage2DetailScore, Is.EqualTo(0), "narrator text does not inherit title-number aliases");
+            }
+            finally
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+        }
+
         [Test]
         public void postgres_recall_rank_and_legacy_search_should_fold_numeric_titles_without_merging_ready_player_siblings()
         {
@@ -440,6 +575,144 @@ namespace Chaptarr.Core.Test.Books
 
                 AssertReadyPlayerQuery("①", expectedBookId: 1, expectedEditionId: 11);
                 AssertReadyPlayerQuery("𝟚", expectedBookId: 2, expectedEditionId: 22);
+            }
+            finally
+            {
+                using var adminConnection = new NpgsqlConnection(adminConnectionString);
+                adminConnection.Open();
+                adminConnection.Execute($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+            }
+        }
+
+
+        [Test]
+        public void postgres_staged_recall_should_use_language_scoped_numeric_aliases_on_titles_only()
+        {
+            var adminConnectionString = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
+            if (string.IsNullOrWhiteSpace(adminConnectionString))
+            {
+                Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING to exercise PostgreSQL edition FTS");
+            }
+
+            var schema = "numeric_alias_fts_" + Guid.NewGuid().ToString("N");
+            using (var adminConnection = new NpgsqlConnection(adminConnectionString))
+            {
+                adminConnection.Open();
+                adminConnection.Execute($"CREATE SCHEMA \"{schema}\"");
+            }
+
+            try
+            {
+                var connectionString = new NpgsqlConnectionStringBuilder(adminConnectionString)
+                {
+                    SearchPath = schema,
+                    Pooling = false
+                }.ConnectionString;
+                SeedPostgresDatabase(connectionString);
+                using (var connection = new NpgsqlConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"
+                        INSERT INTO ""Authors"" (""Id"", ""Name"", ""CleanName"", ""TitleSlug"")
+                        VALUES (2, 'Two', 'two', 'two');
+                        INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""Title"", ""MediaType"") VALUES
+                            (4, 1, 'Two English', 1),
+                            (5, 1, 'Two Null', 1),
+                            (6, 1, 'Two Unsupported', 1),
+                            (7, 1, 'Roman Two', 1),
+                            (8, 1, 'Twenty One', 1),
+                            (9, 2, 'Author Alias Decoy', 1),
+                            (10, 1, 'Digit English', 1),
+                            (11, 1, 'Audio Narrator Alias Decoy', 0),
+                            (12, 1, 'Two English Short', 1),
+                            (13, 1, 'Two English Name', 1),
+                            (14, 1, 'Two English Region Hyphen', 1),
+                            (15, 1, 'Two English Region Underscore', 1);
+                        INSERT INTO ""Editions"" (
+                            ""Id"", ""ForeignEditionId"", ""BookId"", ""Language"", ""Title"", ""MatchingTitle"",
+                            ""NarratorNames"", ""Narrator"", ""Publisher"", ""Images"", ""DurationSeconds"", ""ReleaseDate"", ""ReadingFormatId"")
+                        VALUES
+                            (44, 'hc:edition:numeric-alias-english', 4, 'eng', 'Two English', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (55, 'hc:edition:numeric-alias-null', 5, NULL, 'Two Null', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (66, 'hc:edition:numeric-alias-unsupported', 6, 'fra', 'Two Unsupported', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (77, 'hc:edition:numeric-alias-roman', 7, NULL, 'Roman Two', 'ii', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (88, 'hc:edition:numeric-alias-twenty-one', 8, 'eng', 'Twenty One', 'twenty one', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (99, 'hc:edition:numeric-alias-author-decoy', 9, 'eng', 'Author Alias Decoy', 'author alias decoy', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (100, 'hc:edition:numeric-alias-digit', 10, 'eng', 'Digit English', '2', '[]', '', '2', '[]', 0, '2026-01-01', 3),
+                            (111, 'hc:edition:numeric-alias-narrator-decoy', 11, 'eng', 'Audio Narrator Alias Decoy', 'unrelated audio', '[2]', '2', '', '[]', 0, '2026-01-01', 2),
+                            (112, 'hc:edition:numeric-alias-en', 12, 'en', 'Two English Short', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (113, 'hc:edition:numeric-alias-english-name', 13, 'English', 'Two English Name', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (114, 'hc:edition:numeric-alias-en-us', 14, ' En - US ', 'Two English Region Hyphen', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3),
+                            (115, 'hc:edition:numeric-alias-en-us-underscore', 15, 'en_US', 'Two English Region Underscore', 'two', '[]', '', '', '[]', 0, '2026-01-01', 3)");
+                }
+
+                var database = new Database("numeric-alias-postgres", () =>
+                {
+                    var connection = new NpgsqlConnection(connectionString);
+                    connection.Open();
+                    return connection;
+                });
+                var repository = new EditionFtsRepository(new MainDatabase(database), LogManager.GetCurrentClassLogger());
+
+                var numericRecalls = repository.RecallBooks(null, new[] { "2" }, BookMediaType.Ebook, limit: 20);
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Contain(4), "English numeric words may recall matching title text");
+                Assert.That(numericRecalls.Select(book => book.BookId), Is.SupersetOf(new[] { 12, 13, 14, 15 }),
+                    "English aliases follow the shared canonicalizer for codes, names, and locale suffixes");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Contain(7), "Roman title aliases apply for editions with no stored language");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Not.Contain(5), "English words must not be inferred for a null language");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Not.Contain(6), "English words must not be inferred for an unsupported language");
+                Assert.That(numericRecalls.Select(book => book.BookId), Does.Not.Contain(9), "an author-name alias cannot establish title recall");
+
+                var englishWordRecalls = repository.RecallBooks(null, new[] { "Two" }, BookMediaType.Ebook, limit: 20);
+                Assert.That(englishWordRecalls.Select(book => book.BookId), Does.Contain(10), "English title words may recall their numeric title");
+                var multiWordRecalls = repository.RecallBooks(null, new[] { "21" }, BookMediaType.Ebook, limit: 20);
+                Assert.That(multiWordRecalls.Select(book => book.BookId), Does.Contain(8), "a multiword English cardinal remains one title alternative");
+
+                var recalled = new[]
+                {
+                    new BookFtsMatch { BookId = 4, AuthorId = 1, MatchScore = 4 },
+                    new BookFtsMatch { BookId = 5, AuthorId = 1, MatchScore = 3 },
+                    new BookFtsMatch { BookId = 6, AuthorId = 1, MatchScore = 2 },
+                    new BookFtsMatch { BookId = 7, AuthorId = 1, MatchScore = 1 },
+                    new BookFtsMatch { BookId = 12, AuthorId = 1, MatchScore = 0.9 },
+                    new BookFtsMatch { BookId = 13, AuthorId = 1, MatchScore = 0.8 },
+                    new BookFtsMatch { BookId = 14, AuthorId = 1, MatchScore = 0.7 },
+                    new BookFtsMatch { BookId = 15, AuthorId = 1, MatchScore = 0.6 }
+                };
+                var ranked = repository.RankEditions(recalled, new[]
+                {
+                    new EditionFtsFieldQuery { Key = "TITLE[0]", Terms = new[] { "2" }, SourceFields = new[] { "TITLE[0]" } }
+                }, BookMediaType.Ebook).ToDictionary(edition => edition.EditionId);
+                Assert.That(ranked[44].Stage2FieldHits.Single(hit => hit.FieldKey == "TITLE[0]").TitleHit, Is.True);
+                Assert.That(ranked[55].Stage2TitleScore, Is.EqualTo(0), "null-language edition title must not get an English word alias");
+                Assert.That(ranked[66].Stage2TitleScore, Is.EqualTo(0), "unsupported-language edition title must not get an English word alias");
+                Assert.That(ranked[77].Stage2FieldHits.Single(hit => hit.FieldKey == "TITLE[0]").TitleHit, Is.True,
+                    "Roman title aliases remain available without an edition language");
+                Assert.That(ranked[112].Stage2TitleScore, Is.GreaterThan(0));
+                Assert.That(ranked[113].Stage2TitleScore, Is.GreaterThan(0));
+                Assert.That(ranked[114].Stage2TitleScore, Is.GreaterThan(0));
+                Assert.That(ranked[115].Stage2TitleScore, Is.GreaterThan(0),
+                    "Stage 2 uses the same canonicalizer aliases as Stage 1");
+
+                var titleOnly = repository.RankEditions(new[]
+                {
+                    new BookFtsMatch { BookId = 10, AuthorId = 1, MatchScore = 1 }
+                }, new[]
+                {
+                    new EditionFtsFieldQuery { Key = "TITLE[1]", Terms = new[] { "Two" }, SourceFields = new[] { "TITLE[1]" } }
+                }, BookMediaType.Ebook).Single();
+                var titleHit = titleOnly.Stage2FieldHits.Single(hit => hit.FieldKey == "TITLE[1]");
+                Assert.That(titleHit.TitleHit, Is.True);
+                Assert.That(titleHit.DetailHit, Is.False, "publisher text does not inherit title-number aliases");
+                var narratorOnly = repository.RankEditions(new[]
+                {
+                    new BookFtsMatch { BookId = 11, AuthorId = 1, MatchScore = 1 }
+                }, new[]
+                {
+                    new EditionFtsFieldQuery { Key = "TITLE[2]", Terms = new[] { "Two" }, SourceFields = new[] { "TITLE[2]" } }
+                }, BookMediaType.Audiobook).Single();
+                Assert.That(narratorOnly.Stage2TitleScore, Is.EqualTo(0));
+                Assert.That(narratorOnly.Stage2DetailScore, Is.EqualTo(0), "narrator text does not inherit title-number aliases");
             }
             finally
             {
