@@ -86,23 +86,64 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     const releaseRequests = [];
     const authorRequests = [];
     const grabRequests = [];
+    const stopRequests = [];
+    const stopResponseStatuses = [];
+    const expectedStopResourceErrors = [];
+    let pendingExpectedStopResourceErrorCount = 0;
     const requestFailures = [];
+    const authorLifecycleEvents = [];
     const heldAuthorRoutes = new Map();
+    const heldBookRoutes = new Map();
     let holdNextAuthorSearch = false;
     let heldAuthorRequestResolver = null;
+    let holdNextBookSearch = false;
+    let heldBookRequestResolver = null;
+    let failNextStopRequest = false;
     page.on('pageerror', (error) => errors.push({ type: 'pageerror', message: error.message, stack: error.stack }));
     page.on('console', (message) => {
       if (message.type() === 'error') {
+        const expectedStopError = 'Failed to load resource: the server responded with a status of 503 (Service Unavailable)';
+        if (pendingExpectedStopResourceErrorCount > 0 && message.text() === expectedStopError) {
+          pendingExpectedStopResourceErrorCount--;
+          expectedStopResourceErrors.push(message.text());
+          return;
+        }
+
         errors.push({ type: 'console', message: message.text() });
       }
     });
     page.on('requestfailed', (request) => requestFailures.push({ url: request.url(), failure: request.failure()?.errorText }));
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      const searchId = url.searchParams.get('searchId');
+      if (url.pathname === '/api/v1/release' && (request.method() === 'DELETE' || searchId)) {
+        authorLifecycleEvents.push({ event: 'request', method: request.method(), searchId });
+      }
+    });
+    page.on('requestfailed', (request) => {
+      const url = new URL(request.url());
+      const searchId = url.searchParams.get('searchId');
+      if (url.pathname === '/api/v1/release' && searchId) {
+        authorLifecycleEvents.push({ event: 'failed', method: request.method(), searchId });
+      }
+    });
     await page.route('**/*', async(route) => {
       const request = route.request();
       const url = new URL(request.url());
       const pathname = url.pathname;
       if (pathname === '/api/v1/release') {
         const params = Object.fromEntries(url.searchParams);
+        if (request.method() === 'DELETE') {
+          stopRequests.push(params);
+          if (failNextStopRequest) {
+            failNextStopRequest = false;
+            stopResponseStatuses.push(503);
+            pendingExpectedStopResourceErrorCount++;
+            return route.fulfill({ status: 503, json: { message: 'Temporary stop failure' } });
+          }
+          stopResponseStatuses.push(200);
+          return route.fulfill({ json: { isStopping: true } });
+        }
         if (request.method() === 'POST') {
           const payload = request.postDataJSON();
           grabRequests.push(payload);
@@ -129,6 +170,15 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
           } });
         }
         releaseRequests.push(params);
+        if (holdNextBookSearch) {
+          holdNextBookSearch = false;
+          heldBookRoutes.set(params.bookId, route);
+          if (heldBookRequestResolver) {
+            heldBookRequestResolver(params);
+            heldBookRequestResolver = null;
+          }
+          return;
+        }
         return route.fulfill({ json: {
           releases: [],
           hiddenReleases: [{ id: 1, title: 'Hidden release' }],
@@ -231,6 +281,77 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     }
 
     console.log('Toolbar confirmation and selected-media checks passed.');
+
+    authorRequests.length = 0;
+    await page.evaluate(() => window.renderAuthorSearchFixture('grouped-tabs', 6, 0, { selectedMediaType: 'audiobook' }));
+    await page.getByRole('tab', { name: 'Search tab', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Search', exact: true }).count(), 1);
+    let resolvePendingRosterRequest = null;
+    const pendingRosterRequest = new Promise((resolve) => {
+      resolvePendingRosterRequest = resolve;
+    });
+    holdNextAuthorSearch = true;
+    heldAuthorRequestResolver = resolvePendingRosterRequest;
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByText('This will perform 6 book searches', { exact: false }).waitFor();
+    assert.equal(authorRequests.length, 0, 'The six-book audiobook search must wait for confirmation');
+    await page.getByRole('button', { name: 'Search', exact: true }).last().click();
+    const pendingRosterParams = await pendingRosterRequest;
+    const pendingRosterSearchId = pendingRosterParams.searchId;
+    assert.equal(pendingRosterParams.mediaType, 'audiobook', 'The confirmed roster must use the selected media side');
+
+    const pendingTitles = ['Analgesia', 'Slipstream', 'Forgive & Forget', 'The Summoner', 'Rain Whore', 'Pervert'];
+    const pendingRoster = pendingTitles.map((title, index) => makeBookResult(700 + index, title, 'pending', []));
+    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+      searchId: pendingRosterSearchId,
+      authorId: 10,
+      mediaType: 'audiobook',
+      bookResults: pendingRoster,
+      isComplete: false,
+      isCancelled: false
+    });
+    let pendingSearchState = await page.evaluate(() => window.readAuthorSearchState());
+    assert.deepEqual(pendingSearchState.bookResults.map((result) => result.title), pendingTitles,
+      'The complete pending roster should be visible before any book result arrives');
+    for (const title of pendingTitles) {
+      const row = page.getByRole('button', { name: 'Show other releases for ' + title, exact: true }).locator('xpath=ancestor::tr[1]');
+      assert.equal(await row.isVisible(), true, title + ' should be visible before the first result');
+      assert.match(await row.innerText(), /Waiting for results/, title + ' should be visible as waiting before the first result');
+    }
+
+    const firstRosterBook = pendingRoster[0];
+    const firstRosterRelease = makeRelease({
+      guid: 'pending-roster-first-result', title: firstRosterBook.title, bookId: firstRosterBook.bookId, rank: 1, preferred: true
+    });
+    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+      searchId: pendingRosterSearchId,
+      authorId: 10,
+      mediaType: 'audiobook',
+      bookResults: [makeBookResult(firstRosterBook.bookId, firstRosterBook.title, 'complete', [firstRosterRelease])],
+      isComplete: false,
+      isCancelled: false
+    });
+    pendingSearchState = await page.evaluate(() => window.readAuthorSearchState());
+    assert.equal(pendingSearchState.bookResults[0].status, 'complete', 'The first book should advance when its result arrives');
+    assert.deepEqual(pendingSearchState.bookResults.slice(1).map((result) => result.status), ['pending', 'pending', 'pending', 'pending', 'pending'],
+      'Completing the first book must preserve all other roster entries as pending');
+    for (const title of pendingTitles.slice(1)) {
+      const row = page.getByRole('button', { name: 'Show other releases for ' + title, exact: true }).locator('xpath=ancestor::tr[1]');
+      assert.equal(await row.isVisible(), true, title + ' should remain visible after the first result');
+      assert.match(await row.innerText(), /Waiting for results/, title + ' should remain visibly waiting after the first result');
+    }
+
+    await heldAuthorRoutes.get(pendingRosterSearchId).fulfill({ json: {
+      searchId: pendingRosterSearchId,
+      authorId: 10,
+      mediaType: 'audiobook',
+      bookResults: [makeBookResult(firstRosterBook.bookId, firstRosterBook.title, 'complete', [firstRosterRelease]), ...pendingRoster.slice(1)],
+      isComplete: true,
+      isCancelled: false
+    } });
+    heldAuthorRoutes.delete(pendingRosterSearchId);
+    await page.waitForFunction(() => window.readAuthorSearchState().isComplete === true);
+    console.log('A confirmed six-book audiobook roster renders all pending rows before the first result and preserves the other five as waiting.');
     releaseRequests.length = 0;
     authorRequests.length = 0;
     grabRequests.length = 0;
@@ -557,7 +678,9 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     assert.equal(await page.getByText('Grab Release', { exact: true }).count(), 0);
 
     authorRequests.length = 0;
-    await page.evaluate(() => window.renderAuthorSearchFixture('tab', 2, 3, { selectedMediaType: 'audiobook' }));
+    stopRequests.length = 0;
+    await page.evaluate(() => window.renderAuthorSearchFixture('grouped-tabs', 3, 3, { selectedMediaType: 'audiobook' }));
+    await page.getByRole('tab', { name: 'Search tab', exact: true }).click();
     let resolveCancelledAuthorRequest = null;
     const cancelledAuthorRequest = new Promise((resolve) => {
       resolveCancelledAuthorRequest = resolve;
@@ -567,6 +690,9 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     const cancelledRequestParams = await cancelledAuthorRequest;
     const cancelledSearchId = cancelledRequestParams.searchId;
+
+    assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).count(), 0,
+      'Stop must stay unavailable until the server publishes the registered book roster');
 
     const keptRelease = makeRelease({
       guid: 'cancel-kept-guid', title: 'Completed Before Stop', bookId: 201, rank: 1, preferred: true
@@ -592,6 +718,16 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
       isComplete: false,
       isCancelled: false
     });
+    await page.getByText('Searching book releases...', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).isVisible(), true);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    assert.equal(await page.getByText('Search stopped before all books completed.', { exact: true }).count(), 0,
+      'A pending search must not display a terminal stopped state');
+    await page.screenshot({ path: path.join(os.tmpdir(), 'chaptarr-author-search-active-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(os.tmpdir(), 'chaptarr-author-search-active-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
     const keptResultRow = page.getByRole('row').filter({ hasText: 'Completed Before Stop' }).first();
     await keptResultRow.locator('[title="Add to downloaded queue"]').click();
     await page.waitForFunction(() => window.readAuthorSearchState().bookResults
@@ -603,38 +739,119 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
       assert.match(await row.innerText(), /Waiting for results/, `${title} should show its waiting status before cancellation`);
     }
 
-    const abortedSearchRequest = page.waitForEvent('requestfailed', (request) =>
-      request.url().includes(`searchId=${cancelledSearchId}`));
-    await Promise.all([
-      abortedSearchRequest,
-      page.evaluate((cancelledId) => window.cancelAuthorSearchRequest(cancelledId), cancelledSearchId)
-    ]);
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    let resolveHeldBookRequest = null;
+    const heldBookRequest = new Promise((resolve) => {
+      resolveHeldBookRequest = resolve;
+    });
+    holdNextBookSearch = true;
+    heldBookRequestResolver = resolveHeldBookRequest;
+    await page.getByRole('button', { name: 'Open book modal', exact: true }).click();
+    const heldBookParams = await heldBookRequest;
+    assert.equal(heldBookParams.bookId, '900');
+    assert.equal(await page.getByRole('dialog', { name: 'Book search modal' }).count(), 1);
+
+    failNextStopRequest = true;
+    await page.getByRole('button', { name: 'Stop search', exact: true }).click();
+    await page.getByText('Could not stop the search. Try again.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).isDisabled(), false,
+      'A failed stop request should leave a retryable control');
+    assert.deepEqual(stopRequests, [{ searchId: cancelledSearchId }]);
+    assert.deepEqual(stopResponseStatuses, [503]);
+
+    await page.getByRole('button', { name: 'Stop search', exact: true }).click();
+    await page.getByText('Stopping after the current book', { exact: true }).waitFor();
+    const stoppingButton = page.getByRole('button', { name: 'Stop search', exact: true });
+    assert.equal(await stoppingButton.isVisible(), true, 'Keep Stop discoverable while the accepted request is pending');
+    assert.equal(await stoppingButton.isDisabled(), true);
+    assert.equal(await page.getByText('Search stopped before all books completed.', { exact: true }).count(), 0,
+      'The DELETE acknowledgement is not terminal cancellation');
+    searchState = await page.evaluate(() => window.readAuthorSearchState());
+    assert.equal(searchState.isFetching, true);
+    assert.equal(searchState.isCancelled, false);
+    assert.equal(searchState.bookResults[0].releases[0].isGrabbed, true);
+    assert.deepEqual(stopRequests, [{ searchId: cancelledSearchId }, { searchId: cancelledSearchId }]);
+    assert.deepEqual(stopResponseStatuses, [503, 200]);
+    assert.equal(expectedStopResourceErrors.length, 1, 'Only the deliberately failed Stop response may log an HTTP console error');
+    assert.equal(pendingExpectedStopResourceErrorCount, 0);
+    assert.equal(heldBookRoutes.has('900'), true, 'Stopping an author search must leave the book-modal request open');
+    assert.equal(requestFailures.some((failure) => new URL(failure.url).searchParams.get('bookId') === '900'), false,
+      'Stopping an author search must not abort the book-modal request');
+
+    await page.screenshot({ path: path.join(os.tmpdir(), 'chaptarr-author-search-stopping-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(os.tmpdir(), 'chaptarr-author-search-stopping-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    const finalStoppedResult = {
       searchId: cancelledSearchId,
       authorId: 10,
       mediaType: 'audiobook',
-      bookResults: [],
+      bookResults: [
+        makeBookResult(201, 'Completed Before Stop', 'complete', [keptRelease]),
+        makeBookResult(202, 'Pending At Stop', 'pending', []),
+        makeBookResult(203, 'Not Started', 'pending', [])
+      ],
       isComplete: true,
       isCancelled: true
-    });
+    };
+    await heldAuthorRoutes.get(cancelledSearchId).fulfill({ json: finalStoppedResult });
+    heldAuthorRoutes.delete(cancelledSearchId);
     await page.waitForFunction(() => {
       const state = window.readAuthorSearchState();
       return state.isComplete && state.isCancelled && !state.isFetching;
     });
     searchState = await page.evaluate(() => window.readAuthorSearchState());
-    assert.equal(searchState.bookResults[0].releases[0].isGrabbed, true, 'A grabbed result must survive terminal cancellation');
+    assert.equal(searchState.bookResults[0].releases[0].isGrabbed, true, 'A grabbed result must survive the final cancellation response');
     assert.equal(searchState.bookResults[1].status, 'pending', 'Cancellation may leave unfinished groups pending in state');
     for (const title of ['Pending At Stop', 'Not Started']) {
       const row = page.getByRole('row').filter({ hasText: title }).first();
       assert.match(await row.innerText(), /Search stopped before all books completed\./, `${title} should show the stopped status`);
     }
-    assert.equal(await page.locator('.followingBalls').count(), 0, 'Terminal cancellation should leave no active loader');
+    assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).count(), 0,
+      'The Stop control should disappear after terminal cancellation');
+
+    const abortedBookRequest = page.waitForEvent('requestfailed', (request) =>
+      new URL(request.url()).searchParams.get('bookId') === '900');
+    await page.getByRole('button', { name: 'Close book modal', exact: true }).click();
+    await abortedBookRequest;
+    assert.equal(await page.locator('.followingBalls').count(), 0, 'Terminal cancellation should leave no author loader');
     assert.equal(await page.getByText('Search stopped before all books completed.', { exact: true }).count(), 3,
       'The alert and both unfinished book rows should show the stopped status');
+    assert.equal(requestFailures.some((failure) => failure.url.includes(`searchId=${cancelledSearchId}`)), false,
+      'The author GET must remain open until its terminal HTTP response');
     assert.deepEqual(errors, []);
-    heldAuthorRoutes.delete(cancelledSearchId);
 
-    console.log('Author-search browser check passed: confirmation and media boundaries, production tab visibility, scoped invalid/valid grabs, legacy confirmation, incremental groups, final merge, preferred summary and hidden-results paging.');
+    stopRequests.length = 0;
+    await page.evaluate(() => window.renderAuthorSearchFixture('grouped-tabs', 3, 3, { selectedMediaType: 'audiobook' }));
+    await page.getByRole('tab', { name: 'Search tab', exact: true }).click();
+    let resolveUnmountAuthorRequest = null;
+    const unmountAuthorRequest = new Promise((resolve) => {
+      resolveUnmountAuthorRequest = resolve;
+    });
+    holdNextAuthorSearch = true;
+    heldAuthorRequestResolver = resolveUnmountAuthorRequest;
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    const unmountRequestParams = await unmountAuthorRequest;
+    const unmountSearchId = unmountRequestParams.searchId;
+    assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).count(), 0,
+      'The user cannot click Stop before roster registration');
+    const lifecycleStart = authorLifecycleEvents.length;
+    const unmountStopRequest = page.waitForRequest((request) =>
+      request.method() === 'DELETE' && new URL(request.url()).searchParams.get('searchId') === unmountSearchId);
+    const unmountGetFailure = page.waitForEvent('requestfailed', (request) =>
+      request.method() === 'GET' && new URL(request.url()).searchParams.get('searchId') === unmountSearchId);
+    await page.evaluate(() => window.renderAuthorSearchFixture('filter-warning', 0, 0));
+    await Promise.all([unmountStopRequest, unmountGetFailure]);
+    const unmountEvents = authorLifecycleEvents.slice(lifecycleStart).filter((event) => event.searchId === unmountSearchId);
+    const unmountDeleteIndex = unmountEvents.findIndex((event) => event.event === 'request' && event.method === 'DELETE');
+    const unmountAbortIndex = unmountEvents.findIndex((event) => event.event === 'failed' && event.method === 'GET');
+    assert.ok(unmountDeleteIndex >= 0, 'Unmount should request explicit server cancellation');
+    assert.ok(unmountAbortIndex >= 0, 'Unmount should abort the hanging HTTP request after requesting cancellation');
+    assert.ok(unmountDeleteIndex < unmountAbortIndex, 'Unmount must initiate DELETE before aborting the author GET');
+    assert.deepEqual(stopRequests, [{ searchId: unmountSearchId }], 'Unmount should issue only one scoped Stop request');
+    heldAuthorRoutes.delete(unmountSearchId);
+
+    console.log('Author-search browser check passed: confirmation and media boundaries, scoped grabs, incremental/final merges, explicit Stop acceptance, retry, modal isolation, terminal cancellation, and unmount cleanup.');
   } finally {
     await browser.close();
     fs.rmSync(output, { recursive: true, force: true });

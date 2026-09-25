@@ -17,6 +17,7 @@ export const authorSection = 'releases.author';
 
 let abortCurrentRequest = null;
 const authorSearchAbortRequests = new Map();
+const authorReleaseStopRequests = new Map();
 
 //
 // State
@@ -259,6 +260,7 @@ export const SET_FILTER_SUMMARY = 'releases/setFilterSummary';
 export const SET_RELEASE_SEARCH_RESPONSE = 'releases/setReleaseSearchResponse';
 export const FETCH_AUTHOR_RELEASES = 'releases/fetchAuthorReleases';
 export const CANCEL_AUTHOR_RELEASES = 'releases/cancelAuthorReleases';
+export const REQUEST_AUTHOR_RELEASE_STOP = 'releases/requestAuthorReleaseStop';
 export const SET_AUTHOR_SEARCH_RESULTS = 'releases/setAuthorSearchResults';
 export const CLEAR_AUTHOR_SEARCH = 'releases/clearAuthorSearch';
 export const TOGGLE_AUTHOR_SEARCH_BOOK = 'releases/toggleAuthorSearchBook';
@@ -279,6 +281,7 @@ export const setFilterSummary = createAction(SET_FILTER_SUMMARY);
 export const setReleaseSearchResponse = createAction(SET_RELEASE_SEARCH_RESPONSE);
 export const fetchAuthorReleases = createThunk(FETCH_AUTHOR_RELEASES);
 export const cancelAuthorReleases = createThunk(CANCEL_AUTHOR_RELEASES);
+export const requestAuthorReleaseStop = createThunk(REQUEST_AUTHOR_RELEASE_STOP);
 export const setAuthorSearchResults = createAction(SET_AUTHOR_SEARCH_RESULTS);
 export const clearAuthorSearch = createAction(CLEAR_AUTHOR_SEARCH);
 export const toggleAuthorSearchBook = createAction(TOGGLE_AUTHOR_SEARCH_BOOK);
@@ -497,6 +500,30 @@ export const actionHandlers = handleThunks({
       authorSearchAbortRequests.delete(payload.searchId);
       abortRequest();
     }
+  },
+
+  [REQUEST_AUTHOR_RELEASE_STOP]: function(getState, payload) {
+    const searchId = payload.searchId;
+    const existingRequest = authorReleaseStopRequests.get(searchId);
+
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    const request = createAjaxRequest({
+      url: `/release?searchId=${encodeURIComponent(searchId)}`,
+      method: 'DELETE',
+      dataType: 'json'
+    }).request;
+
+    authorReleaseStopRequests.set(searchId, request);
+    request.always(() => {
+      if (authorReleaseStopRequests.get(searchId) === request) {
+        authorReleaseStopRequests.delete(searchId);
+      }
+    });
+
+    return request;
   },
 
   [GRAB_RELEASE]: function(getState, payload, dispatch) {

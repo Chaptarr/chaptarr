@@ -131,6 +131,24 @@
   font-size: 12px;
 }
 
+.authorSearchActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  flex-wrap: wrap;
+}
+
+.authorSearchProgress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--helpTextColor);
+}
+
 .authorSearchBookButton {
   composes: button from '~Components/Link/Button.css';
 

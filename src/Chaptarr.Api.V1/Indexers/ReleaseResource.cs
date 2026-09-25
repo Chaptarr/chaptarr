@@ -89,6 +89,11 @@ namespace Chaptarr.Api.V1.Indexers
         public string SiblingToggleDisabledReason { get; set; }
     }
 
+    public class AuthorReleaseSearchStopResponse
+    {
+        public bool IsStopping { get; set; }
+    }
+
     public class AuthorReleaseSearchResponse
     {
         public string SearchId { get; set; }

@@ -58,6 +58,8 @@ namespace Chaptarr.Core.Test.Indexers
                 Assert.That(messages[1].IsComplete, Is.True);
                 Assert.That(messages[1].BookResults, Is.Empty);
             });
+
+            Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
         }
 
         [Test]
@@ -224,6 +226,236 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(harness.Search.AuthorSearchCalls, Is.Zero);
         }
 
+
+        [Test]
+        public async Task explicit_stop_from_another_controller_should_finish_the_current_book_and_retain_its_result()
+        {
+            var sharedCache = new CacheManager();
+            var searchHarness = CreateHarness(cacheManager: sharedCache);
+            var stopHarness = CreateHarness(cacheManager: sharedCache);
+            var author = CreateAuthor();
+            var completedBook = CreateBook(501, "Finishes Before Stop", author);
+            var pendingBook = CreateBook(502, "Remains Pending", author);
+            var searchStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowCurrentBookToFinish = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var searchToken = CancellationToken.None;
+
+            searchHarness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, token) =>
+            {
+                searchToken = token;
+                await onSearchStarted(new[] { completedBook, pendingBook });
+                searchStarted.TrySetResult(true);
+                await allowCurrentBookToFinish.Task;
+                await onBookCompleted(completedBook,
+                    new List<DownloadDecision> { CreateDecision(author, completedBook, "finished-after-stop") }, null);
+                token.ThrowIfCancellationRequested();
+            };
+
+            var searchTask = GetGroupedResults(searchHarness.Controller);
+            await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var stopResponse = stopHarness.Controller.StopAuthorSearch(SearchId);
+            Assert.Multiple(() =>
+            {
+                Assert.That(searchHarness.Controller.HttpContext.RequestAborted.IsCancellationRequested, Is.False);
+                Assert.That(stopResponse.IsStopping, Is.True);
+                Assert.That(searchToken.IsCancellationRequested, Is.True);
+            });
+
+            allowCurrentBookToFinish.TrySetResult(true);
+            var response = await searchTask;
+            var completedGroup = response.BookResults.Single(group => group.BookId == completedBook.Id);
+            var pendingGroup = response.BookResults.Single(group => group.BookId == pendingBook.Id);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.IsComplete, Is.True);
+                Assert.That(response.IsCancelled, Is.True);
+                Assert.That(completedGroup.Status, Is.EqualTo("complete"));
+                Assert.That(completedGroup.Releases.Select(release => release.Guid), Is.EqualTo(new[] { "finished-after-stop" }));
+                Assert.That(pendingGroup.Status, Is.EqualTo("pending"));
+                Assert.That(stopHarness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
+            });
+        }
+
+        [Test]
+        public async Task repeated_stop_should_remain_true_while_active_and_uuid_formatting_should_be_canonicalized()
+        {
+            var sharedCache = new CacheManager();
+            var searchHarness = CreateHarness(cacheManager: sharedCache);
+            var stopHarness = CreateHarness(cacheManager: sharedCache);
+            var author = CreateAuthor();
+            var completedBook = CreateBook(511, "Current Book", author);
+            var pendingBook = CreateBook(512, "Next Book", author);
+            var searchStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowSearchToObserveCancellation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var searchToken = CancellationToken.None;
+            searchHarness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, token) =>
+            {
+                searchToken = token;
+                await onSearchStarted(new[] { completedBook, pendingBook });
+                searchStarted.TrySetResult(true);
+                await allowSearchToObserveCancellation.Task;
+                await onBookCompleted(completedBook,
+                    new List<DownloadDecision> { CreateDecision(author, completedBook, "current-book-complete") }, null);
+                token.ThrowIfCancellationRequested();
+            };
+
+            var searchTask = GetGroupedResults(searchHarness.Controller);
+            await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var searchGuid = Guid.Parse(SearchId);
+            var firstStop = stopHarness.Controller.StopAuthorSearch(searchGuid.ToString("B"));
+            var secondStop = stopHarness.Controller.StopAuthorSearch(searchGuid.ToString("P"));
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstStop.IsStopping, Is.True);
+                Assert.That(secondStop.IsStopping, Is.True);
+                Assert.That(searchToken.IsCancellationRequested, Is.True);
+            });
+
+            allowSearchToObserveCancellation.TrySetResult(true);
+            var response = await searchTask;
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.IsCancelled, Is.True);
+                Assert.That(response.BookResults.Single(group => group.BookId == completedBook.Id).Status, Is.EqualTo("complete"));
+                Assert.That(response.BookResults.Single(group => group.BookId == pendingBook.Id).Status, Is.EqualTo("pending"));
+                Assert.That(stopHarness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
+            });
+        }
+
+        [Test]
+        public async Task stopping_one_of_two_shared_cache_searches_should_not_cancel_the_other()
+        {
+            const string secondSearchId = "1cf23748-41cb-4738-aa54-42b62ed8f39d";
+            var sharedCache = new CacheManager();
+            var firstHarness = CreateHarness(cacheManager: sharedCache);
+            var secondHarness = CreateHarness(cacheManager: sharedCache);
+            var stopHarness = CreateHarness(cacheManager: sharedCache);
+            var author = CreateAuthor();
+            var firstCompletedBook = CreateBook(521, "First Search Current Book", author);
+            var firstPendingBook = CreateBook(522, "First Search Next Book", author);
+            var firstStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var secondStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowFirstToFinish = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowSecondToFinish = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var firstToken = CancellationToken.None;
+            var secondToken = CancellationToken.None;
+
+            firstHarness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, token) =>
+            {
+                firstToken = token;
+                await onSearchStarted(new[] { firstCompletedBook, firstPendingBook });
+                firstStarted.TrySetResult(true);
+                await allowFirstToFinish.Task;
+                await onBookCompleted(firstCompletedBook,
+                    new List<DownloadDecision> { CreateDecision(author, firstCompletedBook, "isolated-current-book") }, null);
+                token.ThrowIfCancellationRequested();
+            };
+            secondHarness.Search.Handler = async (_, _, _, _, _, onSearchStarted, _, token) =>
+            {
+                secondToken = token;
+                await onSearchStarted(Array.Empty<Book>());
+                secondStarted.TrySetResult(true);
+                await allowSecondToFinish.Task;
+            };
+
+            var firstTask = GetGroupedResults(firstHarness.Controller);
+            var secondTask = GetGroupedResults(secondHarness.Controller, secondSearchId);
+            await Task.WhenAll(firstStarted.Task, secondStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+
+            var stopResponse = stopHarness.Controller.StopAuthorSearch(SearchId);
+            Assert.Multiple(() =>
+            {
+                Assert.That(stopResponse.IsStopping, Is.True);
+                Assert.That(firstToken.IsCancellationRequested, Is.True);
+                Assert.That(secondToken.IsCancellationRequested, Is.False);
+            });
+
+            allowFirstToFinish.TrySetResult(true);
+            allowSecondToFinish.TrySetResult(true);
+            var responses = await Task.WhenAll(firstTask, secondTask);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(responses[0].IsCancelled, Is.True);
+                Assert.That(responses[1].IsCancelled, Is.False);
+                Assert.That(stopHarness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
+                Assert.That(stopHarness.Controller.StopAuthorSearch(secondSearchId).IsStopping, Is.False);
+            });
+        }
+
+        [Test]
+        public async Task invalid_or_unknown_stop_id_should_not_cancel_an_active_search()
+        {
+            var harness = CreateHarness();
+            var searchStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowSearchToFinish = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var searchToken = CancellationToken.None;
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, _, token) =>
+            {
+                searchToken = token;
+                await onSearchStarted(Array.Empty<Book>());
+                searchStarted.TrySetResult(true);
+                await allowSearchToFinish.Task;
+            };
+
+            var searchTask = GetGroupedResults(harness.Controller);
+            await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Multiple(() =>
+            {
+                Assert.Throws<BadRequestException>(() => harness.Controller.StopAuthorSearch(null));
+                Assert.Throws<BadRequestException>(() => harness.Controller.StopAuthorSearch("not-a-uuid"));
+                Assert.That(harness.Controller.StopAuthorSearch("7f2f1c72-3491-451a-946f-4222fc0dcb74").IsStopping, Is.False);
+                Assert.That(searchToken.IsCancellationRequested, Is.False);
+            });
+
+            allowSearchToFinish.TrySetResult(true);
+            var response = await searchTask;
+            Assert.That(response.IsCancelled, Is.False);
+            Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
+        }
+
+        [Test]
+        public async Task duplicate_active_search_id_should_conflict_without_disturbing_the_first_search()
+        {
+            var sharedCache = new CacheManager();
+            var firstHarness = CreateHarness(cacheManager: sharedCache);
+            var duplicateHarness = CreateHarness(cacheManager: sharedCache);
+            var searchStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowSearchToFinish = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var searchToken = CancellationToken.None;
+            firstHarness.Search.Handler = async (_, _, _, _, _, onSearchStarted, _, token) =>
+            {
+                searchToken = token;
+                await onSearchStarted(Array.Empty<Book>());
+                searchStarted.TrySetResult(true);
+                await allowSearchToFinish.Task;
+            };
+
+            var firstTask = GetGroupedResults(firstHarness.Controller);
+            await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var duplicate = Assert.ThrowsAsync<NzbDroneClientException>(() =>
+                GetGroupedResults(duplicateHarness.Controller, Guid.Parse(SearchId).ToString("B")));
+            Assert.Multiple(() =>
+            {
+                Assert.That(duplicate.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.Conflict));
+                Assert.That(searchToken.IsCancellationRequested, Is.False);
+            });
+
+            allowSearchToFinish.TrySetResult(true);
+            var response = await firstTask;
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.IsComplete, Is.True);
+                Assert.That(response.IsCancelled, Is.False);
+                Assert.That(firstHarness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
+            });
+        }
+
         [Test]
         public async Task scoped_grab_should_reject_a_posted_book_id_that_differs_from_the_search_target()
         {
@@ -320,6 +552,7 @@ namespace Chaptarr.Core.Test.Indexers
                 Assert.That(finalMessage.IsCancelled, Is.False);
                 Assert.That(failedGroup.BookId, Is.EqualTo(pendingBook.Id));
                 Assert.That(failedGroup.Status, Is.EqualTo("failed"));
+                Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
             });
         }
 
@@ -329,17 +562,21 @@ namespace Chaptarr.Core.Test.Indexers
             using var cancellation = new CancellationTokenSource();
             cancellation.Cancel();
             var harness = CreateHarness(cancellation.Token);
+            OperationCanceledException requestCancellation = null;
             harness.Search.Handler = (_, _, _, _, _, _, _, token) =>
             {
-                Assert.That(token, Is.EqualTo(cancellation.Token));
-                return Task.FromException(new OperationCanceledException(token));
+                Assert.That(token, Is.Not.EqualTo(cancellation.Token));
+                Assert.That(token.IsCancellationRequested, Is.True);
+                requestCancellation = new OperationCanceledException(token);
+                return Task.FromException(requestCancellation);
             };
 
-            Assert.ThrowsAsync<OperationCanceledException>(() => GetGroupedResults(harness.Controller));
+            var thrown = Assert.ThrowsAsync<OperationCanceledException>(() => GetGroupedResults(harness.Controller));
 
             var finalMessage = GroupedMessages(harness.Broadcaster).Last();
             Assert.Multiple(() =>
             {
+                Assert.That(thrown, Is.SameAs(requestCancellation));
                 Assert.That(finalMessage.IsComplete, Is.True);
                 Assert.That(finalMessage.IsCancelled, Is.True);
             });
@@ -413,6 +650,11 @@ namespace Chaptarr.Core.Test.Indexers
             return CastGroupedResults(controller.GetReleases(null, AuthorId, mediaType: "audiobook", searchId: SearchId));
         }
 
+        private static Task<AuthorReleaseSearchResponse> GetGroupedResults(ReleaseController controller, string searchId)
+        {
+            return CastGroupedResults(controller.GetReleases(null, AuthorId, mediaType: "audiobook", searchId: searchId));
+        }
+
         private static async Task<AuthorReleaseSearchResponse> CastGroupedResults(Task<object> response)
         {
             return (AuthorReleaseSearchResponse)await response;
@@ -474,7 +716,7 @@ namespace Chaptarr.Core.Test.Indexers
             }, rejections);
         }
 
-        private static Harness CreateHarness(CancellationToken cancellationToken = default)
+        private static Harness CreateHarness(CancellationToken cancellationToken = default, ICacheManager cacheManager = null)
         {
             var search = DispatchProxy.Create<ISearchForReleases, SearchServiceProxy>();
             var prioritize = DispatchProxy.Create<IPrioritizeDownloadDecision, PrioritizeProxy>();
@@ -490,7 +732,7 @@ namespace Chaptarr.Core.Test.Indexers
                 bookService: null,
                 parsingService: null,
                 indexerFactory: null,
-                cacheManager: new CacheManager(),
+                cacheManager: cacheManager ?? new CacheManager(),
                 logger: LogManager.GetLogger(nameof(ReleaseControllerGroupedSearchFixture)),
                 signalRBroadcaster: broadcaster);
 

@@ -61,6 +61,10 @@ function createMapDispatchToProps(dispatch) {
       dispatch(releaseActions.cancelAuthorReleases(payload));
     },
 
+    dispatchRequestAuthorReleaseStop(payload) {
+      return dispatch(releaseActions.requestAuthorReleaseStop(payload));
+    },
+
     dispatchClearAuthorSearch(payload) {
       dispatch(releaseActions.clearAuthorSearch(payload));
     },
@@ -125,8 +129,15 @@ const resultColumns = [
 
 class AuthorInteractiveSearchTable extends Component {
   state = {
-    isConfirmOpen: false
+    isConfirmOpen: false,
+    stopSearchId: null,
+    stopRequestStatus: null,
+    stopError: false
   };
+
+  componentDidMount() {
+    this._isMounted = true;
+  }
 
   componentWillUnmount() {
     const { authorSearch, authorId, selectedMediaType } = this.props;
@@ -142,9 +153,21 @@ class AuthorInteractiveSearchTable extends Component {
         mediaType: selectedMediaType
       };
 
+      const stopRequestAlreadySent = this.state.stopSearchId === authorSearch.searchId && this.state.stopRequestStatus;
+
+      if (authorSearch.isFetching && !authorSearch.isComplete && !authorSearch.isCancelled && !stopRequestAlreadySent) {
+        const stopRequest = this.props.dispatchRequestAuthorReleaseStop({ searchId: authorSearch.searchId });
+
+        if (stopRequest && typeof stopRequest.fail === 'function') {
+          stopRequest.fail(() => {});
+        }
+      }
+
       this.props.dispatchCancelAuthorReleases({ searchId: authorSearch.searchId });
       this.props.dispatchClearAuthorSearch(scope);
     }
+
+    this._isMounted = false;
   }
 
   onSearchPress = () => {
@@ -172,10 +195,74 @@ class AuthorInteractiveSearchTable extends Component {
       return;
     }
 
+    this.setState({
+      stopSearchId: null,
+      stopRequestStatus: null,
+      stopError: false
+    });
+
     dispatchFetchAuthorReleases({
       authorId,
       mediaType: selectedMediaType,
       searchId: generateUUIDv4()
+    });
+  };
+
+  onStopPress = () => {
+    const { authorSearch, dispatchRequestAuthorReleaseStop } = this.props;
+    const searchId = authorSearch.searchId;
+
+    if (
+      !searchId ||
+      !authorSearch.isFetching ||
+      authorSearch.isComplete ||
+      authorSearch.isCancelled ||
+      !authorSearch.bookResults.length ||
+      (this.state.stopSearchId === searchId && this.state.stopRequestStatus)
+    ) {
+      return;
+    }
+
+    this.setState({
+      stopSearchId: searchId,
+      stopRequestStatus: 'requesting',
+      stopError: false
+    });
+
+    const request = dispatchRequestAuthorReleaseStop({ searchId });
+
+    request.done((data) => {
+      if (!this._isMounted) {
+        return;
+      }
+
+      this.setState((state) => {
+        if (state.stopSearchId !== searchId) {
+          return null;
+        }
+
+        return {
+          stopRequestStatus: data && data.isStopping === true ? 'stopping' : 'finishing',
+          stopError: false
+        };
+      });
+    });
+
+    request.fail(() => {
+      if (!this._isMounted) {
+        return;
+      }
+
+      this.setState((state) => {
+        if (state.stopSearchId !== searchId) {
+          return null;
+        }
+
+        return {
+          stopRequestStatus: null,
+          stopError: true
+        };
+      });
     });
   };
 
@@ -309,16 +396,56 @@ class AuthorInteractiveSearchTable extends Component {
       authorSearch
     } = this.props;
     const isSearchDisabled = !searchCount || !selectedMediaType || authorSearch.isFetching;
+    const isSearchActive = authorSearch.isFetching && !authorSearch.isComplete && !authorSearch.isCancelled;
+    const stopRequestStatus = this.state.stopSearchId === authorSearch.searchId ? this.state.stopRequestStatus : null;
+    const showStopError = isSearchActive && this.state.stopSearchId === authorSearch.searchId && this.state.stopError;
+    const canRequestStop = isSearchActive && authorSearch.bookResults.length > 0;
+    let stopStatusText = null;
+
+    if (stopRequestStatus === 'requesting') {
+      stopStatusText = 'AuthorSearchStopRequesting';
+    } else if (stopRequestStatus === 'stopping') {
+      stopStatusText = 'AuthorSearchStopping';
+    } else if (stopRequestStatus === 'finishing') {
+      stopStatusText = 'AuthorSearchStopFinishing';
+    }
 
     return (
       <div>
         <p>{translate('SearchAuthorBooksHelp', { count: searchCount })}</p>
-        <Button
-          isDisabled={isSearchDisabled}
-          onPress={this.onSearchPress}
-        >
-          {translate('Search')}
-        </Button>
+        <div className={styles.authorSearchActions}>
+          <Button
+            isDisabled={isSearchDisabled}
+            onPress={this.onSearchPress}
+          >
+            {translate('Search')}
+          </Button>
+          {canRequestStop ?
+            <Button
+              isDisabled={Boolean(stopRequestStatus)}
+              onPress={this.onStopPress}
+            >
+              {translate(stopRequestStatus === 'requesting' ? 'AuthorSearchStopRequesting' : 'AuthorSearchStop')}
+            </Button> :
+            null}
+        </div>
+
+        {isSearchActive ?
+          <div
+            className={styles.authorSearchProgress}
+            role="status"
+            aria-live="polite"
+          >
+            <LoadingIndicator />
+            <span>{translate(stopStatusText || 'AuthorSearchInProgress')}</span>
+          </div> :
+          null}
+
+        {showStopError ?
+          <Alert kind={kinds.WARNING}>
+            {translate('AuthorSearchStopFailed')}
+          </Alert> :
+          null}
 
         <ConfirmModal
           isOpen={this.state.isConfirmOpen}
@@ -329,7 +456,6 @@ class AuthorInteractiveSearchTable extends Component {
           onCancel={this.onSearchCancelled}
         />
 
-        {authorSearch.isFetching && !authorSearch.bookResults.length ? <LoadingIndicator /> : null}
         {authorSearch.error ?
           <Alert kind={kinds.WARNING}>
             {translate('AuthorSearchIncomplete')}
@@ -371,6 +497,7 @@ AuthorInteractiveSearchTable.propTypes = {
   timeFormat: PropTypes.string.isRequired,
   dispatchFetchAuthorReleases: PropTypes.func.isRequired,
   dispatchCancelAuthorReleases: PropTypes.func.isRequired,
+  dispatchRequestAuthorReleaseStop: PropTypes.func.isRequired,
   dispatchClearAuthorSearch: PropTypes.func.isRequired,
   dispatchToggleAuthorSearchBook: PropTypes.func.isRequired,
   onSortPress: PropTypes.func.isRequired,

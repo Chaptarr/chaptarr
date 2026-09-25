@@ -99,14 +99,31 @@ here identify request targets, not cross-provider identity.
 
 The UI merges incremental and final results while preserving grab state. Search
 remains mounted but hidden when another tab on the same author page is selected;
-results and request ownership are separate from single-book search modals. Leaving
-the author page or changing media scope aborts that request and stops the remaining
-book searches at the next between-book checkpoint. The current book's indexer work
-may finish. Legacy flat author GET requests also stop remaining book searches on
-request abort, while their existing response shape stays unchanged. No caller
-cancellation enters the shared indexer HTTP failure path. Interrupted grouped
-results remain partial; neither reconnection nor a missed update restarts tracker
-searches automatically.
+results and request ownership are separate from single-book search modals.
+
+`DELETE /api/v1/release?searchId={UUID}` requests an explicit stop for an active
+grouped search. Its `200` response is `{ "isStopping": true }` when the request
+reaches an active search, or `{ "isStopping": false }` when that search is no longer
+active. Missing or malformed IDs return `400`. Repeated stops are idempotent. A
+second grouped GET with the same active UUID returns `409`; UUID spelling/casing
+does not create a second identity. Stop uses the existing API authentication.
+
+The Stop button becomes available once the server has published the book roster.
+It keeps the original GET open and shows “Stopping after the current book” while
+waiting. The current book finishes and publishes its results; no remaining books
+are searched. The final GET response and terminal SignalR message carry
+`isComplete: true` and `isCancelled: true` when remaining books were stopped. If
+the active book was already the last one, the search completes normally. Completed
+results and grab state remain available. A failed Stop request is shown as an error and can be retried; it must
+not be displayed as a completed stop.
+
+Leaving the author page or changing media scope requests the same stop before
+aborting the browser request. RequestAborted remains a second cancellation signal
+for grouped and legacy flat requests when the server observes a disconnect. No
+caller cancellation enters the shared indexer HTTP failure path. Active stop
+handles exist only for the lifetime of the grouped request and are removed on
+success, cancellation, or error. Interrupted results remain partial; neither
+reconnection nor a missed update restarts tracker searches automatically.
 
 ### Ambiguous Provider Identity
 

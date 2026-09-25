@@ -12,7 +12,7 @@ import SignalRConnector from 'Components/SignalRConnector';
 import FilterWarning from 'InteractiveSearch/FilterWarning';
 import InteractiveSearchRow from 'InteractiveSearch/InteractiveSearchRow';
 import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
-import { cancelAuthorReleases, defaultState as releaseState, grabRelease, reducers as releaseReducer, setAuthorSearchResults, setBypassFilters } from 'Store/Actions/releaseActions';
+import { defaultState as releaseState, grabRelease, reducers as releaseReducer, setAuthorSearchResults, setBypassFilters } from 'Store/Actions/releaseActions';
 import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import { fetchTranslations } from 'Utilities/String/translate';
 
@@ -145,7 +145,6 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
   fixtureStore = store;
   window.readReleaseResults = () => ({ items: store.getState().releases.items, hiddenItems: store.getState().releases.hiddenItems });
   window.readAuthorSearchState = () => store.getState().releases.authorSearch;
-  window.cancelAuthorSearchRequest = (searchId) => store.dispatch(cancelAuthorReleases({ searchId }));
   window.sendAuthorSearchSignalR = (body) => {
     const handler = new SignalR({
       authorSearch: store.getState().releases.authorSearch,

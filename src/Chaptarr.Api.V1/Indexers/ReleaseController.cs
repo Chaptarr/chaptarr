@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
@@ -43,6 +44,7 @@ namespace Chaptarr.Api.V1.Indexers
         private readonly IBroadcastSignalRMessage _signalRBroadcaster;
 
         private readonly ICached<DownloadDecision> _downloadDecisionCache;
+        private readonly ICached<CancellationTokenSource> _authorSearchCancellations;
 
         public ReleaseController(IFetchAndParseRss rssFetcherAndParser,
                              ISearchForReleases releaseSearchService,
@@ -73,6 +75,27 @@ namespace Chaptarr.Api.V1.Indexers
             PostValidator.RuleFor(s => s.Guid).NotEmpty();
 
             _downloadDecisionCache = cacheManager.GetCache<DownloadDecision>(GetType(), "downloadDecisions");
+            _authorSearchCancellations = cacheManager.GetCache<CancellationTokenSource>(GetType(), "authorSearchCancellations");
+        }
+
+        [HttpDelete]
+        [ProducesResponseType(typeof(AuthorReleaseSearchStopResponse), 200)]
+        [ProducesResponseType(400)]
+        [SwaggerOperation(Description = "Requests a stop for an active grouped author search identified by its UUID searchId. The current book finishes; remaining books are not searched. isStopping confirms the request, not completion. The original GET and SignalR stream deliver the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.")]
+        public AuthorReleaseSearchStopResponse StopAuthorSearch(string searchId)
+        {
+            if (!Guid.TryParse(searchId, out var id))
+            {
+                throw new BadRequestException("Stopping an author search requires a UUID searchId");
+            }
+
+            // Serialize cancellation with removal so a completed request cannot dispose a handle in use.
+            lock (_authorSearchCancellations)
+            {
+                var cancellation = _authorSearchCancellations.Find(id.ToString());
+                cancellation?.Cancel();
+                return new AuthorReleaseSearchStopResponse { IsStopping = cancellation != null };
+            }
         }
 
         [HttpPost]
@@ -199,6 +222,9 @@ namespace Chaptarr.Api.V1.Indexers
         }
 
         [HttpGet]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(409)]
         [SwaggerOperationFilter(typeof(ReleaseSearchResponseOperationFilter))]
         [SwaggerOperation(Description = "GET /api/v1/release returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType returns grouped AuthorReleaseSearchResponse results. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.")]
         public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false, string mediaType = null, string searchId = null)
@@ -322,7 +348,19 @@ namespace Chaptarr.Api.V1.Indexers
                 AuthorId = authorId,
                 MediaType = ToMediaTypeName(mediaType)
             };
-            var cancellationToken = HttpContext.RequestAborted;
+            var cancellationKey = Guid.Parse(searchId).ToString();
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+            lock (_authorSearchCancellations)
+            {
+                if (_authorSearchCancellations.Find(cancellationKey) != null)
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.Conflict, "This searchId is already active");
+                }
+
+                _authorSearchCancellations.Set(cancellationKey, cancellation);
+            }
+
+            var cancellationToken = cancellation.Token;
 
             try
             {
@@ -355,8 +393,15 @@ namespace Chaptarr.Api.V1.Indexers
             {
                 response.IsComplete = true;
                 response.IsCancelled = true;
+                _logger.Info("Stopped author search {0} after {1} of {2} books; completed results retained", searchId,
+                    response.BookResults.Count(result => result.Status != "pending"), response.BookResults.Count);
                 await PublishAuthorSearchResults(response, Array.Empty<BookReleaseSearchResult>());
-                throw;
+                if (HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    throw;
+                }
+
+                return response;
             }
             catch (Exception ex)
             {
@@ -370,6 +415,13 @@ namespace Chaptarr.Api.V1.Indexers
                 response.IsComplete = true;
                 await PublishAuthorSearchResults(response, failedGroups);
                 throw;
+            }
+            finally
+            {
+                lock (_authorSearchCancellations)
+                {
+                    _authorSearchCancellations.Remove(cancellationKey);
+                }
             }
         }
 
