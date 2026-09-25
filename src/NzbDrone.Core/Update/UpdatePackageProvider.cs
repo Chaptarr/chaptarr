@@ -240,12 +240,42 @@ namespace NzbDrone.Core.Update
                     Branch = "chaptarr",
                     Changes = new UpdateChanges
                     {
+                        New = new List<string>
+                        {
+                            "Author Search (Search tab) searches each monitored book and groups results by book, with a preferred release per book and expandable alternatives. It follows the selected format, asks before searching more than five books, and has a Stop button that finishes the current book and skips the remaining searches.",
+                            "Series labels, folder tokens and ebook/Calibre tags come from Goodreads-backed series memberships in a consistent order. Thanks @tillkruss (PR #48).",
+                            "{Book SeriesPosition:00} zero-pads individual numeric series positions.",
+                            "Author deletion can target audiobooks or ebooks independently, can add an import-list exclusion in bulk deletes, and explains the scope of a single-format delete. Thanks @benjitobz (PR #134).",
+                            "Naming settings preview filenames and validate multi-part formats.",
+                            "Changed the messy narrator icon to the simple microphone.",
+                            "Finally showing some love to the mobile layout. Many screens should work and look better on mobile.",
+                            "Adjusted book search results when searching your local library to hopefully be more accurate."
+                        },
                         Fixed = new List<string>
                         {
-                            "The Updates page no longer says you are on the latest version when a newer release exists. Thanks chunni!",
-                            "System Status now warns when a newer release is available.",
-                            "The book list on an author page keeps its column widths steady."
-                        }
+                            "MAM account status reads the tracker's new response format. With slot protection enabled, the indexer test fails when no usable status is available instead of showing stale counts, and refresh failures log at Warning. Thanks @jjbobzin (PR #189) and @jbob06 (#193).",
+                            "Author Search searches every currently monitored book instead of a stale list.",
+                            "Release matching keeps part and volume identifiers from the selected edition title and prefers an indexer's structured book title.",
+                            "Release matching recognizes equivalent numeric spellings, with English number words limited to English-tagged editions and safeguards for Roman-looking words.",
+                            "Unmarked track numbers in quoted audio filenames no longer cause false mismatches when the complete title appears separately. Conflicting book positions remain rejected.",
+                            "Structured series metadata no longer labels a release as a pack when its positions match the target book's own positions. Thanks @jonnotk (PR #137).",
+                            "Adding one format clears only that side's import-list exclusion; authors with exclusions on both sides no longer fail to add; queued import-list requests respect exclusions.",
+                            "Requesting a book also monitors its matching row in the other format when format sync is enabled. Thanks @JordanFromIT (PR #178).",
+                            "Improved author refresh and monitoring-sync performance for large catalogs. Thanks @jordanfelle (PR #174).",
+                            "SQLite library search keeps author names current after metadata ownership changes.",
+                            "Improved primary-series selection for books belonging to multiple series.",
+                            "Preferred narrators are chosen from audio editions only.",
+                            "Cancel Conversion also stops conversions started by manual import.",
+                            "Author photos reuse verified cached images when the provider link is unavailable, and the selected photo stays selected when the photo list is reordered.",
+                            "Ebook files are no longer moved into a colocated folder when no matching destination applies. Thanks @jbob06 (PR #127).",
+                            "Fixed title-processing crashes involving emoji and rare Unicode characters. Thanks @jbob06 (PR #117).",
+                            "Improved input placeholder contrast in dark mode. Thanks @jberlyn (PR #124).",
+                            "Indexer seed time and torrent preservation settings are explained clearly. Thanks @jberlyn (PR #129).",
+                            "Newznab logs why a search was skipped when no configured category matches the media type.",
+                            "Search result badges stay inside their cells and the table no longer collapses on narrow screens.",
+                            "Empty or unavailable root folders are refused before an author's files are deleted.",
+                            "Full HTTP response bodies are restricted to Trace, with expanded credential and download-link redaction."
+                            }
                     }
                 }
             };
