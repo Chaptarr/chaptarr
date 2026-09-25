@@ -651,6 +651,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<ConversionJob> Get(IEnumerable<string> downloadIds) => Job == null ? new() : new() { Job };
             public Action PrepareArtifactRemoval(string downloadId, ConversionRemovalOrigin origin) => () => throw new NotImplementedException();
 
+            public List<ConversionJob> GetNonCompleted() => Job == null || Job.Status == ConversionJobStatus.Completed
+                ? new List<ConversionJob>()
+                : new List<ConversionJob> { Job };
+
             public ConversionJob Enqueue(ConversionJobRequest request)
             {
                 Request = request;
