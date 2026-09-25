@@ -2,16 +2,29 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Chaptarr.Api.V1.Indexers;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Qualities;
+using NzbDrone.SignalR;
 
 namespace Chaptarr.Core.Test.IndexerSearch
 {
@@ -71,6 +84,158 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1));
                 Assert.That(harness.Indexer.Searches.Select(criteria => criteria.AuthorCatalog.Count), Is.All.EqualTo(3));
                 Assert.That(harness.Indexer.Searches.All(criteria => criteria.AuthorCatalog.All(book => book.MediaType == BookMediaType.Audiobook)), Is.True);
+            });
+        }
+
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        public async Task author_search_should_use_current_catalog_when_cached_author_books_are_stale(
+            BookMediaType mediaType,
+            bool staleRosterOvercounts)
+        {
+            var author = BuildAuthor();
+            var otherMediaType = mediaType == BookMediaType.Audiobook
+                ? BookMediaType.Ebook
+                : BookMediaType.Audiobook;
+            var currentCatalog = Enumerable.Range(0, 6)
+                .Select(index => BuildBook(301 + index, mediaType, author, new DateTime(2026, 1, 1).AddDays(index)))
+                .ToList();
+
+            foreach (var (book, index) in currentCatalog.Select((book, index) => (book, index)))
+            {
+                SetMonitored(book, mediaType, staleRosterOvercounts ? index == 0 : true);
+            }
+
+            var currentOtherMediaBook = BuildBook(399, otherMediaType, author, new DateTime(2026, 1, 10));
+            currentCatalog.Add(currentOtherMediaBook);
+
+            var cachedRoster = currentCatalog
+                .Where(book => book.MediaType == mediaType)
+                .Select(book => CloneBookWithMonitoring(book, author, monitored: staleRosterOvercounts || book.Id == currentCatalog[0].Id))
+                .ToList();
+            cachedRoster.Add(CloneBookWithMonitoring(currentOtherMediaBook, author, monitored: true));
+            author.Books = cachedRoster;
+
+            var harness = BuildHarness(currentCatalog, author);
+            harness.Indexer.FetchHandler = _ => Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+
+            IReadOnlyList<Book> roster = null;
+            var completedBookIds = new List<int>();
+            await harness.Subject.AuthorSearch(
+                author.Id,
+                false,
+                true,
+                false,
+                mediaType,
+                books =>
+                {
+                    roster = books;
+                    return Task.CompletedTask;
+                },
+                (book, _, _) =>
+                {
+                    completedBookIds.Add(book.Id);
+                    return Task.CompletedTask;
+                });
+
+            var expectedBookIds = currentCatalog
+                .Where(book => book.MediaType == mediaType && book.IsMonitoredWithAuthor())
+                .Select(book => book.Id)
+                .ToArray();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(roster.Select(book => book.Id).ToArray(), Is.EqualTo(expectedBookIds));
+                Assert.That(completedBookIds, Is.EqualTo(expectedBookIds));
+                Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id).ToArray(), Is.EqualTo(expectedBookIds));
+                Assert.That(harness.Indexer.Searches.All(criteria => criteria.AuthorCatalog.All(book => book.MediaType == mediaType)), Is.True);
+                Assert.That(harness.BookService.CatalogLoads, Is.EqualTo(1));
+                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1));
+            });
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public async Task single_book_search_should_load_sibling_evidence_when_author_books_are_stale(BookMediaType mediaType)
+        {
+            var author = BuildAuthor();
+            var target = BuildBook(501, mediaType, author, new DateTime(2026, 1, 1));
+            var currentSibling = BuildBook(502, mediaType, author, new DateTime(2026, 1, 2));
+            var currentCatalog = new List<Book> { target, currentSibling };
+            var staleSibling = BuildBook(503, mediaType, author, new DateTime(2026, 1, 3));
+            author.Books = new List<Book> { target, staleSibling };
+
+            var harness = BuildHarness(currentCatalog, author);
+            harness.Indexer.FetchHandler = _ => Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+
+            await harness.Subject.BookSearch(target, false, true, false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(harness.Indexer.Searches, Has.Count.EqualTo(1));
+                Assert.That(harness.Indexer.Searches.Single().Books.Select(book => book.Id).ToArray(), Is.EqualTo(new[] { target.Id }));
+                Assert.That(harness.Indexer.Searches.Single().AuthorCatalog.Select(book => book.Id).ToArray(), Is.EqualTo(new[] { target.Id, currentSibling.Id }));
+                Assert.That(harness.Indexer.Searches.Single().AuthorCatalog.All(book => book.MediaType == mediaType), Is.True);
+                Assert.That(harness.BookService.CatalogLoads, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public async Task grouped_author_search_should_publish_fresh_roster_when_cached_author_books_understate_monitoring()
+        {
+            var author = BuildAuthor();
+            var currentCatalog = Enumerable.Range(0, 6)
+                .Select(index => BuildBook(401 + index, BookMediaType.Audiobook, author, new DateTime(2026, 1, 1).AddDays(index)))
+                .ToList();
+            var staleRoster = currentCatalog
+                .Select((book, index) => CloneBookWithMonitoring(book, author, monitored: index == 0))
+                .ToList();
+            author.Books = staleRoster;
+
+            var harness = BuildHarness(currentCatalog, author);
+            harness.Indexer.FetchHandler = _ => Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+
+            var cache = new CacheManager();
+            var prioritize = DispatchProxy.Create<IPrioritizeDownloadDecision, SearchPrioritizeProxy>();
+            var broadcaster = new SearchBroadcaster();
+            var builder = WebApplication.CreateSlimBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
+            builder.Services.AddCors(options => options.AddPolicy("ApiCorsPolicy", policy => policy.AllowAnyOrigin()));
+            builder.Services.AddControllers().AddApplicationPart(typeof(ReleaseController).Assembly).AddControllersAsServices();
+            builder.Services.AddTransient(_ => new ReleaseController(null, harness.Subject, null, prioritize,
+                null, null, null, null, null, cache,
+                LogManager.GetLogger(nameof(ReleaseSearchServiceAuthorCallbacksFixture)), broadcaster));
+            await using var app = builder.Build();
+            app.UseCors();
+            app.MapControllers();
+            await app.StartAsync();
+            var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses.Single();
+            using var client = new HttpClient(new HttpClientHandler { UseProxy = false })
+            {
+                BaseAddress = new Uri(address),
+                Timeout = TimeSpan.FromSeconds(20),
+                DefaultRequestVersion = HttpVersion.Version11,
+                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
+            };
+            var searchId = Guid.NewGuid().ToString();
+
+            using var result = await client.GetAsync($"/api/v1/release?authorId={author.Id}&mediaType=audiobook&searchId={searchId}");
+            result.EnsureSuccessStatusCode();
+            var response = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
+            var expectedBookIds = currentCatalog.Select(book => book.Id).ToArray();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.IsComplete, Is.True);
+                Assert.That(response.BookResults.Select(group => group.BookId).ToArray(), Is.EqualTo(expectedBookIds));
+                Assert.That(response.BookResults.Select(group => group.Status).ToArray(), Is.All.EqualTo("complete"));
+                Assert.That(broadcaster.FirstPublishedBookResultCount, Is.EqualTo(expectedBookIds.Length));
+                Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id), Is.EqualTo(expectedBookIds));
+                Assert.That(harness.BookService.CatalogLoads, Is.EqualTo(1));
+                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1));
             });
         }
 
@@ -331,6 +496,133 @@ namespace Chaptarr.Core.Test.IndexerSearch
             });
         }
 
+        [TestCase(true)]
+        [TestCase(false)]
+        public async Task http_stop_should_finish_the_active_book_and_preserve_results_without_aborting_the_get(bool hasPendingBook)
+        {
+            var author = BuildAuthor();
+            var first = BuildBook(701, BookMediaType.Audiobook, author, DateTime.MinValue);
+            var active = BuildBook(702, BookMediaType.Audiobook, author, DateTime.MinValue.AddDays(1));
+            var pending = BuildBook(703, BookMediaType.Audiobook, author, DateTime.MinValue.AddDays(2));
+            var harness = BuildHarness(hasPendingBook ? new List<Book> { first, active, pending } : new List<Book> { first, active }, author);
+            var activeStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var finishActive = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            harness.Indexer.FetchHandler = async criteria =>
+            {
+                var bookId = criteria.Books.Single().Id;
+                if (bookId == active.Id)
+                {
+                    activeStarted.TrySetResult(true);
+                    await finishActive.Task;
+                }
+
+                return new List<ReleaseInfo> { BuildRelease($"retained-{bookId}") };
+            };
+            harness.DecisionMaker.DecisionHandler = (reports, criteria) => reports.Select(report =>
+                new DownloadDecision(new RemoteBook
+                {
+                    Release = report,
+                    Author = criteria.Author,
+                    Books = criteria.Books,
+                    DownloadAllowed = true,
+                    ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.MP3) }
+                })).ToList();
+
+            var cache = new CacheManager();
+            var prioritize = DispatchProxy.Create<IPrioritizeDownloadDecision, SearchPrioritizeProxy>();
+            var broadcaster = new SearchBroadcaster();
+            var builder = WebApplication.CreateSlimBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
+            builder.Services.AddCors(options => options.AddPolicy("ApiCorsPolicy", policy => policy.AllowAnyOrigin()));
+            builder.Services.AddControllers().AddApplicationPart(typeof(ReleaseController).Assembly).AddControllersAsServices();
+            builder.Services.AddTransient(_ => new ReleaseController(null, harness.Subject, null, prioritize,
+                null, null, null, null, null, cache,
+                LogManager.GetLogger(nameof(ReleaseSearchServiceAuthorCallbacksFixture)), broadcaster));
+            await using var app = builder.Build();
+            app.UseCors();
+            app.MapControllers();
+            await app.StartAsync();
+            var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses.Single();
+            using var client = new HttpClient(new HttpClientHandler { UseProxy = false })
+            {
+                BaseAddress = new Uri(address),
+                Timeout = TimeSpan.FromSeconds(20),
+                DefaultRequestVersion = HttpVersion.Version11,
+                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
+            };
+            var searchId = Guid.NewGuid().ToString();
+            var search = client.GetAsync($"/api/v1/release?authorId={author.Id}&mediaType=audiobook&searchId={searchId}");
+
+            try
+            {
+                await activeStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                using var stop = await client.DeleteAsync($"/api/v1/release?searchId={searchId}");
+                stop.EnsureSuccessStatusCode();
+                var acknowledgement = await stop.Content.ReadFromJsonAsync<AuthorReleaseSearchStopResponse>();
+                Assert.Multiple(() =>
+                {
+                    Assert.That(acknowledgement.IsStopping, Is.True);
+                    Assert.That(search.IsCompleted, Is.False, "The active book must finish before the stopped response.");
+                    Assert.That(finishActive.Task.IsCompleted, Is.False);
+                    Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id),
+                        Is.EqualTo(new[] { first.Id, active.Id }));
+                });
+            }
+            finally
+            {
+                finishActive.TrySetResult(true);
+            }
+
+            using var result = await search;
+            result.EnsureSuccessStatusCode();
+            var response = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.IsComplete, Is.True);
+                Assert.That(response.IsCancelled, Is.EqualTo(hasPendingBook));
+                Assert.That(response.BookResults.Select(group => group.Status),
+                    Is.EqualTo(hasPendingBook ? new[] { "complete", "complete", "pending" } : new[] { "complete", "complete" }));
+                Assert.That(response.BookResults.SelectMany(group => group.Releases).Select(release => release.Guid),
+                    Is.EqualTo(new[] { $"retained-{first.Id}", $"retained-{active.Id}" }));
+                Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id),
+                    Is.EqualTo(new[] { first.Id, active.Id }));
+                Assert.That(broadcaster.LastResult.IsComplete, Is.True);
+                Assert.That(broadcaster.LastResult.IsCancelled, Is.EqualTo(hasPendingBook));
+            });
+
+            using var afterCompletion = await client.DeleteAsync($"/api/v1/release?searchId={searchId}");
+            afterCompletion.EnsureSuccessStatusCode();
+            Assert.That((await afterCompletion.Content.ReadFromJsonAsync<AuthorReleaseSearchStopResponse>()).IsStopping, Is.False);
+        }
+
+        private class SearchPrioritizeProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name == nameof(IPrioritizeDownloadDecision.PrioritizeDecisions))
+                {
+                    return args[0];
+                }
+
+                throw new NotImplementedException(method.Name);
+            }
+        }
+
+        private sealed class SearchBroadcaster : IBroadcastSignalRMessage
+        {
+            public bool IsConnected => true;
+            public AuthorReleaseSearchResponse LastResult { get; private set; }
+            public int? FirstPublishedBookResultCount { get; private set; }
+
+            public Task BroadcastMessage(SignalRMessage message)
+            {
+                LastResult = (AuthorReleaseSearchResponse)message.Body;
+                FirstPublishedBookResultCount ??= LastResult.BookResults.Count;
+                return Task.CompletedTask;
+            }
+        }
+
         private static Author BuildAuthor()
         {
             return new Author
@@ -357,6 +649,26 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 EbookMonitored = mediaType == BookMediaType.Ebook,
                 LastSearchTime = lastSearchTime
             };
+        }
+
+        private static void SetMonitored(Book book, BookMediaType mediaType, bool monitored)
+        {
+            if (mediaType == BookMediaType.Audiobook)
+            {
+                book.AudiobookMonitored = monitored;
+                book.EbookMonitored = false;
+                return;
+            }
+
+            book.AudiobookMonitored = false;
+            book.EbookMonitored = monitored;
+        }
+
+        private static Book CloneBookWithMonitoring(Book source, Author author, bool monitored)
+        {
+            var clone = BuildBook(source.Id, source.MediaType, author, source.LastSearchTime ?? DateTime.MinValue);
+            SetMonitored(clone, source.MediaType, monitored);
+            return clone;
         }
 
         private static ReleaseInfo BuildRelease(string guid)

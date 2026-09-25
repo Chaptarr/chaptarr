@@ -91,7 +91,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 BuildMonitoredBook(102, BookMediaType.Ebook, author)
             };
             var decisionMaker = DispatchProxy.Create<IMakeDownloadDecision, DecisionMakerProxy>();
-            var subject = BuildSubject(decisionMaker);
+            var subject = BuildSubject(decisionMaker, author.Books);
 
             subject.AuthorSearch(author, false, false, false).GetAwaiter().GetResult();
 
@@ -116,7 +116,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             var book = BuildMonitoredBook(101, BookMediaType.Audiobook, author);
             author.Books = new List<Book> { book };
             var decisionMaker = DispatchProxy.Create<IMakeDownloadDecision, DecisionMakerProxy>();
-            var subject = BuildSubject(decisionMaker);
+            var subject = BuildSubject(decisionMaker, author.Books);
 
             subject.BookSearch(book, false, userInvokedSearch, interactiveSearch).GetAwaiter().GetResult();
 
@@ -138,7 +138,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             book.AudiobookMonitored = false;
             author.Books = new List<Book> { book };
             var decisionMaker = DispatchProxy.Create<IMakeDownloadDecision, DecisionMakerProxy>();
-            var subject = BuildSubject(decisionMaker);
+            var subject = BuildSubject(decisionMaker, author.Books);
 
             subject.BookSearch(book, false, true, false, allowUnmonitored: true).GetAwaiter().GetResult();
 
@@ -164,7 +164,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             var book = BuildMonitoredBook(101, BookMediaType.Audiobook, author);
             author.Books = new List<Book> { book };
             var decisionMaker = DispatchProxy.Create<IMakeDownloadDecision, DecisionMakerProxy>();
-            var subject = BuildSubject(decisionMaker);
+            var subject = BuildSubject(decisionMaker, author.Books);
 
             subject.BookSearch(book, false, false, false).GetAwaiter().GetResult();
             Assert.That(((DecisionMakerProxy)(object)decisionMaker).SearchBookIds, Is.EqualTo(new[] { 101 }));
@@ -194,7 +194,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 BuildMonitoredBook(102, BookMediaType.Ebook, author)
             };
             var decisionMaker = DispatchProxy.Create<IMakeDownloadDecision, DecisionMakerProxy>();
-            var subject = BuildSubject(decisionMaker);
+            var subject = BuildSubject(decisionMaker, author.Books);
 
             subject.AuthorSearch(author, false, true, false).GetAwaiter().GetResult();
 
@@ -222,6 +222,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             }
 
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Catalog = author.Books;
             var decisionMaker = DispatchProxy.Create<IMakeDownloadDecision, DecisionMakerProxy>();
             var indexer = DispatchProxy.Create<IIndexer, IndexerProxy>();
             var indexerFactory = DispatchProxy.Create<IIndexerFactory, IndexerFactoryProxy>();
@@ -247,7 +248,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 Assert.That(((BookServiceProxy)(object)bookService).SearchTimeUpdates,
                     Is.EqualTo(expectedIds.Select(id => id.ToString())));
                 Assert.That(author.Books.Where(book => book.LastSearchTime.HasValue).Select(book => book.Id), Is.EqualTo(expectedIds));
-                Assert.That(((BookServiceProxy)(object)bookService).CatalogLoads, Is.Zero);
+                Assert.That(((BookServiceProxy)(object)bookService).CatalogLoads, Is.EqualTo(1));
             });
         }
 
@@ -265,11 +266,13 @@ namespace Chaptarr.Core.Test.IndexerSearch
             };
         }
 
-        private static ReleaseSearchService BuildSubject(IMakeDownloadDecision decisionMaker)
+        private static ReleaseSearchService BuildSubject(IMakeDownloadDecision decisionMaker, List<Book> catalog)
         {
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Catalog = catalog;
             return new ReleaseSearchService(
                 DispatchProxy.Create<IIndexerFactory, IndexerFactoryProxy>(),
-                DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                bookService,
                 DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 null,
                 decisionMaker,
@@ -278,6 +281,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
         private class BookServiceProxy : DispatchProxy
         {
+            public List<Book> Catalog { get; set; }
             public int CatalogLoads { get; private set; }
             public List<string> SearchTimeUpdates { get; } = new();
 
@@ -292,7 +296,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 if (targetMethod.Name == nameof(IBookService.GetBooksByAuthor))
                 {
                     CatalogLoads++;
-                    throw new AssertionException("The provided author catalog should have been reused");
+                    return Catalog ?? throw new AssertionException("The provided author catalog should have been reused");
                 }
 
                 throw new NotImplementedException(targetMethod.Name);

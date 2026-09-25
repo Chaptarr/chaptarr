@@ -292,11 +292,7 @@ namespace NzbDrone.Core.IndexerSearch
                 return authorCatalog;
             }
 
-            if (author?.Books?.Count > 0)
-            {
-                return author.Books;
-            }
-
+            // Cached author relationships can predate book monitoring or catalog changes.
             return author?.Id > 0 ? _bookService.GetBooksByAuthor(author.Id, onlyMonitoredEditions: true) : new List<Book>();
         }
 
