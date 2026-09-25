@@ -9,7 +9,7 @@
 
   /* Reserve 240px for Title plus 930px of fixed columns, a 1px collapsed border and 1px slack. */
   min-width: 1172px;
-  max-width: 100%;
+  max-width: none;
   width: 100%;
   table-layout: fixed;
 }
@@ -85,24 +85,24 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 0;
   padding: 12px 20px;
-  background-color: #f5f5f5;
   border: 1px solid #ddd;
   border-bottom: 2px solid #337ab7;
-  margin-bottom: 0;
+  background-color: #f5f5f5;
 }
 
 .formatTitle {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
   color: #333;
+  font-weight: 600;
+  font-size: 18px;
 }
 
 .formatCount {
-  font-size: 14px;
   color: #666;
   font-weight: normal;
+  font-size: 14px;
 }
 
 .hiddenResultsHeader {
@@ -110,6 +110,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+
   margin-bottom: 8px;
 }
 
@@ -121,10 +122,97 @@
   display: flex;
   align-items: center;
   gap: 8px;
+
   flex-wrap: wrap;
 }
 
 .hiddenResultsRange {
   color: #666;
   font-size: 12px;
+}
+
+.authorSearchBookButton {
+  composes: button from '~Components/Link/Button.css';
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  max-width: 100%;
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+}
+
+.authorSearchBookTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.authorSearchBookDisclosure {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+
+  color: var(--primaryColor);
+  white-space: nowrap;
+}
+
+.authorSearchStatusCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  color: var(--helpTextColor);
+}
+
+.summaryTable {
+  composes: table from '~Components/Table/Table.css';
+
+  min-width: 1150px;
+  max-width: none;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.summaryTable > thead th:nth-child(1) {
+  width: 245px;
+}
+
+.summaryTable > thead th:nth-child(2) {
+  width: 300px;
+}
+
+.summaryTable > thead th:nth-child(3) {
+  width: 120px;
+}
+
+.summaryTable > thead th:nth-child(4) {
+  width: 140px;
+}
+
+.summaryTable > thead th:nth-child(5) {
+  width: 85px;
+}
+
+.summaryTable > thead th:nth-child(6) {
+  width: 160px;
+}
+
+.summaryTable > thead th:nth-child(7) {
+  width: 100px;
+}
+
+.authorSearchExpandedRow {
+  background: rgba(0, 0, 0, 0.025);
+}
+
+.authorSearchExpandedCell {
+  composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  padding: 12px 20px 16px !important;
+}
+
+.authorSearchExpandedEmpty {
+  color: var(--helpTextColor);
 }

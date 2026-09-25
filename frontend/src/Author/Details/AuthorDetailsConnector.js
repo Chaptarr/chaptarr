@@ -5,8 +5,10 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
+import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
 import { setSelectedMediaType } from 'Store/Actions/appActions';
-import { updateAuthorMediaType, fetchAuthorMediaTypeSize } from 'Store/Actions/authorActions';
+import { fetchAuthorMediaTypeSize, updateAuthorMediaType } from 'Store/Actions/authorActions';
 import { clearBooks, fetchBooks } from 'Store/Actions/bookActions';
 import { clearBookFiles, fetchBookFiles } from 'Store/Actions/bookFileActions';
 import { saveBookEditor } from 'Store/Actions/bookIndexActions';
@@ -19,10 +21,11 @@ import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
-import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
-import { FolderType, coerceFolderType } from 'Helpers/Props/folderTypes';
+import translate from 'Utilities/String/translate';
 import AuthorDetails from './AuthorDetails';
 
 const selectBooks = createSelector(
@@ -459,8 +462,8 @@ const mapDispatchToProps = {
   fetchAuthorMediaTypeSize,
   fetchQueueDetails,
   clearQueueDetails,
-  clearReleases,
   cancelFetchReleases,
+  clearReleases,
   executeCommand,
   fetchRootFolders,
   setSelectedMediaType
@@ -469,6 +472,8 @@ const mapDispatchToProps = {
 class AuthorDetailsConnector extends Component {
   constructor(props) {
     super(props);
+
+    this.state = { pendingSearch: null };
 
     this._hasPopulated = false;
     this._userSelectedMediaType = false;
@@ -660,10 +665,25 @@ class AuthorDetailsConnector extends Component {
   };
 
   onSearchPress = () => {
+    const count = getAuthorSearchBookCount(this.props);
+    if (count > 5) {
+      this.setState({ pendingSearch: { authorId: this.props.id, count } });
+      return;
+    }
+
+    this.onSearchConfirmed();
+  };
+
+  onSearchConfirmed = () => {
     this.props.executeCommand({
       name: commandNames.AUTHOR_SEARCH,
       authorId: this.props.id
     });
+    this.onSearchCancelled();
+  };
+
+  onSearchCancelled = () => {
+    this.setState({ pendingSearch: null });
   };
 
   onSaveSelected = (payload) => {
@@ -690,13 +710,23 @@ class AuthorDetailsConnector extends Component {
 
   render() {
     return (
-      <AuthorDetails
-        {...this.props}
-        onRefreshPress={this.onRefreshPress}
-        onSearchPress={this.onSearchPress}
-        onSaveSelected={this.onSaveSelected}
-        onMediaTypeChange={this.onMediaTypeChange}
-      />
+      <>
+        <AuthorDetails
+          {...this.props}
+          onRefreshPress={this.onRefreshPress}
+          onSearchPress={this.onSearchPress}
+          onSaveSelected={this.onSaveSelected}
+          onMediaTypeChange={this.onMediaTypeChange}
+        />
+        <ConfirmModal
+          isOpen={this.state.pendingSearch?.authorId === this.props.id}
+          title={translate('SearchMonitored')}
+          message={translate('SearchAuthorBooksConfirm', { count: this.state.pendingSearch?.count ?? 0 })}
+          confirmLabel={translate('Search')}
+          onConfirm={this.onSearchConfirmed}
+          onCancel={this.onSearchCancelled}
+        />
+      </>
     );
   }
 }
@@ -725,8 +755,8 @@ AuthorDetailsConnector.propTypes = {
   fetchAuthorMediaTypeSize: PropTypes.func.isRequired,
   fetchQueueDetails: PropTypes.func.isRequired,
   clearQueueDetails: PropTypes.func.isRequired,
-  clearReleases: PropTypes.func.isRequired,
   cancelFetchReleases: PropTypes.func.isRequired,
+  clearReleases: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired,
   fetchRootFolders: PropTypes.func.isRequired,
   setSelectedMediaType: PropTypes.func.isRequired

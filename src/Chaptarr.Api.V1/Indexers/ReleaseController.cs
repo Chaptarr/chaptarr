@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -19,6 +20,9 @@ using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Validation;
+using NzbDrone.SignalR;
+using Swashbuckle.AspNetCore.Annotations;
+using BadRequestException = Chaptarr.Http.REST.BadRequestException;
 using HttpStatusCode = System.Net.HttpStatusCode;
 
 namespace Chaptarr.Api.V1.Indexers
@@ -36,6 +40,7 @@ namespace Chaptarr.Api.V1.Indexers
         private readonly IParsingService _parsingService;
         private readonly IIndexerFactory _indexerFactory;
         private readonly Logger _logger;
+        private readonly IBroadcastSignalRMessage _signalRBroadcaster;
 
         private readonly ICached<DownloadDecision> _downloadDecisionCache;
 
@@ -49,7 +54,8 @@ namespace Chaptarr.Api.V1.Indexers
                              IParsingService parsingService,
                              IIndexerFactory indexerFactory,
                              ICacheManager cacheManager,
-                             Logger logger)
+                             Logger logger,
+                             IBroadcastSignalRMessage signalRBroadcaster)
         {
             _rssFetcherAndParser = rssFetcherAndParser;
             _releaseSearchService = releaseSearchService;
@@ -61,6 +67,7 @@ namespace Chaptarr.Api.V1.Indexers
             _parsingService = parsingService;
             _indexerFactory = indexerFactory;
             _logger = logger;
+            _signalRBroadcaster = signalRBroadcaster;
 
             PostValidator.RuleFor(s => s.IndexerId).ValidId();
             PostValidator.RuleFor(s => s.Guid).NotEmpty();
@@ -73,6 +80,14 @@ namespace Chaptarr.Api.V1.Indexers
         {
             ValidateResource(release);
 
+            if (release.SearchId != null || release.SearchedBookId.HasValue)
+            {
+                if (!Guid.TryParse(release.SearchId, out _) || release.SearchedBookId.GetValueOrDefault() <= 0)
+                {
+                    throw new BadRequestException("A scoped release requires a valid searchId and searchedBookId");
+                }
+            }
+
             var decision = _downloadDecisionCache.Find(GetCacheKey(release));
 
             if (decision?.RemoteBook == null)
@@ -83,6 +98,15 @@ namespace Chaptarr.Api.V1.Indexers
             }
 
             var remoteBook = decision.RemoteBook;
+
+            // A displayed search group must never redirect a grab to another book.
+            if (release.SearchId != null &&
+                (remoteBook.Books?.Count != 1 || remoteBook.Books[0].Id != release.SearchedBookId ||
+                 release.BookId != release.SearchedBookId ||
+                 (release.AuthorId.HasValue && release.AuthorId != remoteBook.Author?.Id)))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "The release does not match the requested book");
+            }
 
             try
             {
@@ -175,8 +199,21 @@ namespace Chaptarr.Api.V1.Indexers
         }
 
         [HttpGet]
-        public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false)
+        [SwaggerOperationFilter(typeof(ReleaseSearchResponseOperationFilter))]
+        [SwaggerOperation(Description = "GET /api/v1/release returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType returns grouped AuthorReleaseSearchResponse results. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.")]
+        public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false, string mediaType = null, string searchId = null)
         {
+            if (searchId != null)
+            {
+                var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
+                if (bookId.HasValue || !authorId.HasValue || !parsedMediaType.HasValue || !Guid.TryParse(searchId, out _))
+                {
+                    throw new BadRequestException("Grouped search requires authorId, audiobook or ebook mediaType, and a UUID searchId");
+                }
+
+                return await GetGroupedAuthorReleases(authorId.Value, parsedMediaType.Value, searchId);
+            }
+
             if (bookId.HasValue)
             {
                 return await GetBookReleases(int.Parse(Request.Query["bookId"]), bypassFilters);
@@ -184,7 +221,7 @@ namespace Chaptarr.Api.V1.Indexers
 
             if (authorId.HasValue)
             {
-                return await GetAuthorReleases(int.Parse(Request.Query["authorId"]), bypassFilters);
+                return await GetAuthorReleases(int.Parse(Request.Query["authorId"]), bypassFilters, MediaTypeParameterParser.ParseOptional(mediaType));
             }
 
             return await GetRss();
@@ -239,11 +276,11 @@ namespace Chaptarr.Api.V1.Indexers
             }
         }
 
-        private async Task<object> GetAuthorReleases(int authorId, bool bypassFilters = false)
+        private async Task<object> GetAuthorReleases(int authorId, bool bypassFilters, BookMediaType? mediaType)
         {
             try
             {
-                var decisions = await _releaseSearchService.AuthorSearch(authorId, false, true, true);
+                var decisions = await _releaseSearchService.AuthorSearch(authorId, false, true, true, mediaType, HttpContext.RequestAborted);
                 var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 
                 var (results, hiddenResults, filterSummary) = MapDecisionsForInteractiveSearchWithSummary(prioritizedDecisions, bypassFilters);
@@ -266,10 +303,131 @@ namespace Chaptarr.Api.V1.Indexers
                     FilterSummary = filterSummary
                 };
             }
+            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Author search failed");
                 throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
+            }
+        }
+
+        private async Task<AuthorReleaseSearchResponse> GetGroupedAuthorReleases(int authorId, BookMediaType mediaType, string searchId)
+        {
+            var response = new AuthorReleaseSearchResponse
+            {
+                SearchId = searchId,
+                AuthorId = authorId,
+                MediaType = ToMediaTypeName(mediaType)
+            };
+            var cancellationToken = HttpContext.RequestAborted;
+
+            try
+            {
+                await _releaseSearchService.AuthorSearch(authorId, false, true, true, mediaType,
+                    async books =>
+                    {
+                        response.BookResults = books.Select(book => new BookReleaseSearchResult
+                        {
+                            BookId = book.Id,
+                            Title = book.Editions?.Where(edition => edition.Monitored).OrderBy(edition => edition.Id).FirstOrDefault()?.Title ?? book.Title,
+                            MediaType = ToMediaTypeName(book.MediaType),
+                            Status = "pending"
+                        }).ToList();
+                        await PublishAuthorSearchResults(response, response.BookResults);
+                    },
+                    async (book, decisions, error) =>
+                    {
+                        var group = MapBookSearchResults(book, decisions, error, response.SearchId);
+                        var index = response.BookResults.FindIndex(result => result.BookId == book.Id);
+                        response.BookResults[index] = group;
+                        await PublishAuthorSearchResults(response, new[] { group });
+                    },
+                    cancellationToken);
+
+                response.IsComplete = true;
+                await PublishAuthorSearchResults(response, Array.Empty<BookReleaseSearchResult>());
+                return response;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                response.IsComplete = true;
+                response.IsCancelled = true;
+                await PublishAuthorSearchResults(response, Array.Empty<BookReleaseSearchResult>());
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Grouped author search could not publish a complete book result");
+                var failedGroups = response.BookResults.Where(result => result.Status == "pending").ToList();
+                foreach (var group in failedGroups)
+                {
+                    group.Status = "failed";
+                }
+
+                response.IsComplete = true;
+                await PublishAuthorSearchResults(response, failedGroups);
+                throw;
+            }
+        }
+
+        private BookReleaseSearchResult MapBookSearchResults(Book book, List<DownloadDecision> decisions, Exception error, string searchId)
+        {
+            var prioritized = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
+            var (visible, hidden, _) = MapDecisionsForInteractiveSearchWithSummary(prioritized, false, (decision, weight) =>
+            {
+                var resource = base.MapDecision(decision, weight);
+                resource.SearchId = searchId;
+                resource.SearchedBookId = book.Id;
+                resource.DownloadUrl = null;
+                resource.MagnetUrl = null;
+
+                // The decision must be available before a streamed row exposes its grab action.
+                _downloadDecisionCache.Set(GetCacheKey(resource), decision, TimeSpan.FromMinutes(30));
+                return resource;
+            });
+
+            var rank = 0;
+            foreach (var resource in visible.Concat(hidden))
+            {
+                resource.ReleaseWeight = rank;
+                resource.Rank = ++rank;
+            }
+
+            return new BookReleaseSearchResult
+            {
+                BookId = book.Id,
+                Title = book.Editions?.Where(edition => edition.Monitored).OrderBy(edition => edition.Id).FirstOrDefault()?.Title ?? book.Title,
+                MediaType = ToMediaTypeName(book.MediaType),
+                Status = error == null ? "complete" : "failed",
+                Releases = visible,
+                HiddenReleases = hidden
+            };
+        }
+
+        private async Task PublishAuthorSearchResults(AuthorReleaseSearchResponse response, IEnumerable<BookReleaseSearchResult> groups)
+        {
+            try
+            {
+                await _signalRBroadcaster.BroadcastMessage(new SignalRMessage
+                {
+                    Name = "AuthorSearchResults",
+                    Body = new AuthorReleaseSearchResponse
+                    {
+                        SearchId = response.SearchId,
+                        AuthorId = response.AuthorId,
+                        MediaType = response.MediaType,
+                        BookResults = groups.ToList(),
+                        IsComplete = response.IsComplete,
+                        IsCancelled = response.IsCancelled
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to deliver author search update");
             }
         }
 
@@ -290,8 +448,9 @@ namespace Chaptarr.Api.V1.Indexers
             return resource;
         }
 
-        private (List<ReleaseResource> results, List<ReleaseResource> hiddenResults, FilterSummary filterSummary) MapDecisionsForInteractiveSearchWithSummary(IEnumerable<DownloadDecision> decisions, bool bypassFilters = false)
+        private (List<ReleaseResource> results, List<ReleaseResource> hiddenResults, FilterSummary filterSummary) MapDecisionsForInteractiveSearchWithSummary(IEnumerable<DownloadDecision> decisions, bool bypassFilters = false, Func<DownloadDecision, int, ReleaseResource> mapDecision = null)
         {
+            mapDecision ??= MapDecision;
             var result = new List<ReleaseResource>();
             var hiddenResults = new List<ReleaseResource>();
             var allDecisions = decisions.ToList(); // Convert to list for multiple enumeration
@@ -348,13 +507,25 @@ namespace Chaptarr.Api.V1.Indexers
                         downloadDecision.Rejections.Any(r => r.IsSoftFilter),
                         bypassFilters);
 
-                    hiddenResults.Add(MapDecision(downloadDecision, hiddenResults.Count));
+                    hiddenResults.Add(mapDecision(downloadDecision, hiddenResults.Count));
                     continue;
                 }
 
-                var release = MapDecision(downloadDecision, result.Count);
+                var release = mapDecision(downloadDecision, result.Count);
 
                 result.Add(release);
+            }
+
+            foreach (var release in result.Concat(hiddenResults))
+            {
+                release.IsPreferredChoice = false;
+            }
+
+            var preferred = result.FirstOrDefault(release => release.Approved && release.DownloadAllowed &&
+                (!release.SearchedBookId.HasValue || release.BookId == release.SearchedBookId));
+            if (preferred != null)
+            {
+                preferred.IsPreferredChoice = true;
             }
 
             // Create filter summary
@@ -478,7 +649,9 @@ namespace Chaptarr.Api.V1.Indexers
 
         private string GetCacheKey(ReleaseResource resource)
         {
-            return string.Concat(resource.IndexerId, "_", resource.Guid);
+            return resource.SearchId == null
+                ? string.Concat(resource.IndexerId, "_", resource.Guid)
+                : $"search:{Guid.Parse(resource.SearchId):N}:book:{resource.SearchedBookId}:indexer:{resource.IndexerId}:{resource.Guid}";
         }
 
         private SiblingToggleInfo BuildSiblingToggleInfo(Book book, NzbDrone.Core.Books.Author author)

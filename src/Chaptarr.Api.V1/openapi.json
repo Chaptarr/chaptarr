@@ -9997,6 +9997,7 @@
         "tags": [
           "Release"
         ],
+        "description": "GET /api/v1/release returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType returns grouped AuthorReleaseSearchResponse results. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.",
         "parameters": [
           {
             "name": "bookId",
@@ -10021,11 +10022,45 @@
               "type": "boolean",
               "default": false
             }
+          },
+          {
+            "name": "mediaType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "searchId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReleaseResource"
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/ReleaseSearchResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthorReleaseSearchResponse"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -12956,6 +12991,37 @@
         },
         "additionalProperties": false
       },
+      "AuthorReleaseSearchResponse": {
+        "type": "object",
+        "properties": {
+          "searchId": {
+            "type": "string",
+            "nullable": true
+          },
+          "authorId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "mediaType": {
+            "type": "string",
+            "nullable": true
+          },
+          "bookResults": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookReleaseSearchResult"
+            },
+            "nullable": true
+          },
+          "isComplete": {
+            "type": "boolean"
+          },
+          "isCancelled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "AuthorResource": {
         "type": "object",
         "properties": {
@@ -13760,6 +13826,42 @@
           },
           "canInheritFromSeries": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BookReleaseSearchResult": {
+        "type": "object",
+        "properties": {
+          "bookId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "mediaType": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseResource"
+            },
+            "nullable": true
+          },
+          "hiddenReleases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseResource"
+            },
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -15171,6 +15273,67 @@
           "bookReleaseDate"
         ],
         "type": "string"
+      },
+      "FilterSummary": {
+        "type": "object",
+        "properties": {
+          "totalResults": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "filteredCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "displayedCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hardFilteredCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "softFilteredCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hasSoftFilters": {
+            "type": "boolean"
+          },
+          "hasHardFilters": {
+            "type": "boolean"
+          },
+          "bypassMode": {
+            "type": "boolean"
+          },
+          "filteredCategories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "filterBreakdown": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
+          "summaryText": {
+            "type": "string",
+            "nullable": true
+          },
+          "filterWarnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
       },
       "HardcoverConfigResource": {
         "type": "object",
@@ -19190,6 +19353,15 @@
             "format": "int32",
             "nullable": true
           },
+          "searchId": {
+            "type": "string",
+            "nullable": true
+          },
+          "searchedBookId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
           "downloadClientId": {
             "type": "integer",
             "format": "int32",
@@ -19200,6 +19372,45 @@
             "nullable": true
           },
           "formatType": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseSearchResponse": {
+        "type": "object",
+        "properties": {
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseResource"
+            },
+            "nullable": true
+          },
+          "hiddenReleases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseResource"
+            },
+            "nullable": true
+          },
+          "filterSummary": {
+            "$ref": "#/components/schemas/FilterSummary"
+          },
+          "siblingBookId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "siblingMediaType": {
+            "type": "string",
+            "nullable": true
+          },
+          "siblingToggleEnabled": {
+            "type": "boolean"
+          },
+          "siblingToggleDisabledReason": {
             "type": "string",
             "nullable": true
           }

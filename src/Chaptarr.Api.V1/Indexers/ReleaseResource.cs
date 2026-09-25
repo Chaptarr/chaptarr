@@ -89,6 +89,26 @@ namespace Chaptarr.Api.V1.Indexers
         public string SiblingToggleDisabledReason { get; set; }
     }
 
+    public class AuthorReleaseSearchResponse
+    {
+        public string SearchId { get; set; }
+        public int AuthorId { get; set; }
+        public string MediaType { get; set; }
+        public List<BookReleaseSearchResult> BookResults { get; set; } = new();
+        public bool IsComplete { get; set; }
+        public bool IsCancelled { get; set; }
+    }
+
+    public class BookReleaseSearchResult
+    {
+        public int BookId { get; set; }
+        public string Title { get; set; }
+        public string MediaType { get; set; }
+        public string Status { get; set; }
+        public List<ReleaseResource> Releases { get; set; } = new();
+        public List<ReleaseResource> HiddenReleases { get; set; } = new();
+    }
+
     public class ReleaseResource : RestResource
     {
         public string Guid { get; set; }
@@ -184,6 +204,12 @@ namespace Chaptarr.Api.V1.Indexers
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? BookId { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string SearchId { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? SearchedBookId { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? DownloadClientId { get; set; }

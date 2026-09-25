@@ -180,7 +180,7 @@ class InteractiveSearch extends Component {
     });
   };
 
-  renderTableRows(items, preferredIndex) {
+  renderTableRows(items) {
     const {
       searchPayload,
       longDateFormat,
@@ -192,7 +192,11 @@ class InteractiveSearch extends Component {
       <InteractiveSearchRow
         key={`${item.indexerId}-${item.guid}`}
         {...item}
-        isPreferredChoice={preferredIndex !== -1 && index === preferredIndex}
+        isPreferredChoice={
+          item.isPreferredChoice === true &&
+          item.downloadAllowed === true &&
+          !(Array.isArray(item.rejections) && item.rejections.length)
+        }
         searchPayload={searchPayload}
         longDateFormat={longDateFormat}
         timeFormat={timeFormat}
@@ -223,7 +227,6 @@ class InteractiveSearch extends Component {
 
     const { showHiddenResults } = this.state;
     const selectedMediaType = searchPayload?.initialMediaType === 'ebook' ? 'ebook' : 'audiobook';
-    const preferredIndex = items.findIndex((item) => item.approved && item.downloadAllowed);
     const hiddenCount = hiddenItems.length;
     const hiddenPageCount = Math.ceil(hiddenCount / hiddenResultsPageSize);
     const hiddenResultsPage = Math.min(this.state.hiddenResultsPage, Math.max(hiddenPageCount - 1, 0));
@@ -298,7 +301,9 @@ class InteractiveSearch extends Component {
                   size="small"
                   onPress={this.onToggleHiddenResults}
                 >
-                  {showHiddenResults ? `Hide ${hiddenCount} Hidden Results` : `Show ${hiddenCount} Hidden Results`}
+                  {showHiddenResults ?
+                    translate('FilterWarningHideHiddenResults') :
+                    translate('FilterWarningShowHiddenCount', { count: hiddenCount })}
                 </Button>
               </div> :
               null}
@@ -312,7 +317,7 @@ class InteractiveSearch extends Component {
                 onSortPress={onSortPress}
               >
                 <TableBody>
-                  {this.renderTableRows(items, preferredIndex)}
+                  {this.renderTableRows(items)}
                 </TableBody>
               </Table> :
               null}
@@ -355,7 +360,7 @@ class InteractiveSearch extends Component {
                   onSortPress={onSortPress}
                 >
                   <TableBody>
-                    {this.renderTableRows(pagedHiddenItems, -1)}
+                    {this.renderTableRows(pagedHiddenItems)}
                   </TableBody>
                 </Table>
               </div> :

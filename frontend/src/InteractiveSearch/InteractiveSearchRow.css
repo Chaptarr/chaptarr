@@ -60,8 +60,9 @@
 .indexer {
   composes: cell;
 
-  width: 82px;
   overflow: hidden;
+
+  width: 82px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -202,5 +203,19 @@
   white-space: nowrap;
   letter-spacing: 0.35px;
   font-weight: 600;
+  font-size: 11px;
+}
+
+.summaryBook {
+  composes: cell;
+
+  white-space: normal;
+  font-weight: 600;
+}
+
+.summaryBookStatus {
+  margin-top: 4px;
+  color: var(--helpTextColor);
+  font-weight: normal;
   font-size: 11px;
 }

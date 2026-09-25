@@ -10,6 +10,7 @@ import { removeItem, update, updateItem } from 'Store/Actions/baseActions';
 import { deleteAuthorBooks } from 'Store/Actions/bookActions';
 import { fetchCommands, finishCommand, pauseCommand, resumeCommand, updateCommand } from 'Store/Actions/commandActions';
 import { fetchQueue, fetchQueueDetails } from 'Store/Actions/queueActions';
+import { setAuthorSearchResults } from 'Store/Actions/releaseActions';
 import { fetchQualityDefinitions, fetchRootFolders } from 'Store/Actions/settingsActions';
 import { fetchHealth } from 'Store/Actions/systemActions';
 import { fetchTagDetails, fetchTags } from 'Store/Actions/tagActions';
@@ -56,6 +57,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   dispatchFetchCommands: fetchCommands,
+  dispatchAuthorSearchResults: setAuthorSearchResults,
   dispatchUpdateCommand: updateCommand,
   dispatchFinishCommand: finishCommand,
   dispatchPauseCommand: pauseCommand,
@@ -361,6 +363,14 @@ class SignalRConnector extends Component {
 
   handleHealth = () => {
     this.props.dispatchFetchHealth();
+  };
+
+  handleAuthorsearchresults = (body) => {
+    if (!body || typeof body !== 'object' || !body.searchId) {
+      return;
+    }
+
+    this.props.dispatchAuthorSearchResults(body);
   };
 
   handleAuthor = (body) => {
@@ -989,6 +999,7 @@ SignalRConnector.propTypes = {
   isQueuePopulated: PropTypes.bool.isRequired,
   commands: PropTypes.array,
   dispatchFetchCommands: PropTypes.func.isRequired,
+  dispatchAuthorSearchResults: PropTypes.func.isRequired,
   dispatchUpdateCommand: PropTypes.func.isRequired,
   dispatchFinishCommand: PropTypes.func.isRequired,
   dispatchPauseCommand: PropTypes.func.isRequired,

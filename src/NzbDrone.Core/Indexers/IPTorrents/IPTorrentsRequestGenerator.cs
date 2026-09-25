@@ -22,11 +22,6 @@ namespace NzbDrone.Core.Indexers.IPTorrents
             throw new System.NotImplementedException();
         }
 
-        public virtual IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            throw new System.NotImplementedException();
-        }
-
         private IEnumerable<IndexerRequest> GetRssRequests()
         {
             yield return new IndexerRequest(Settings.BaseUrl, HttpAccept.Rss);

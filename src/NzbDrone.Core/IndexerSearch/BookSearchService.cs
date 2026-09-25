@@ -14,6 +14,7 @@ using NzbDrone.Core.Queue;
 namespace NzbDrone.Core.IndexerSearch
 {
     internal class BookSearchService : IExecute<BookSearchCommand>,
+                               IExecute<AuthorSearchCommand>,
                                IExecute<MissingBookSearchCommand>,
                                IExecute<CutoffUnmetBookSearchCommand>
     {
@@ -151,6 +152,17 @@ namespace NzbDrone.Core.IndexerSearch
             return snapshottedTargets.Select(target => target.BookId)
                 .Where(currentTargetIds.Contains)
                 .ToHashSet();
+        }
+
+        public void Execute(AuthorSearchCommand message)
+        {
+            var authorCatalog = _bookService.GetBooksByAuthor(message.AuthorId, onlyMonitoredEditions: true);
+            var books = FilterBooksWithConfiguredProfiles(authorCatalog.Where(book => book.IsMonitoredWithAuthor()));
+            _logger.ProgressInfo("Searching {0} monitored books for author {1}", books.Count, message.AuthorId);
+            var downloadedCount = SearchForBooks(books, message.Trigger == CommandTrigger.Manual,
+                authorCatalog: authorCatalog).GetAwaiter().GetResult();
+
+            _logger.ProgressInfo("Author search completed. {0} reports downloaded.", downloadedCount);
         }
 
         public void Execute(BookSearchCommand message)

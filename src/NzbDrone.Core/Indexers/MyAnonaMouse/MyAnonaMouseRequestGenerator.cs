@@ -66,16 +66,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             return pageableRequests;
         }
 
-        public virtual IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            // Use JSON API for enhanced metadata
-            pageableRequests.Add(GetJsonApiRequests(searchCriteria));
-
-            return pageableRequests;
-        }
-
         private IEnumerable<IndexerRequest> GetRecentJsonApiRequests()
         {
             // MAM has no reliable RSS endpoint; emulate RSS sync by pulling the "recent" list from its JSON search endpoint.
@@ -177,7 +167,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             return searchTerms;
         }
 
-        private IEnumerable<IndexerRequest> GetJsonApiRequests(string searchText, SearchCriteriaBase searchCriteria = null)
+        internal IEnumerable<IndexerRequest> GetJsonApiRequests(string searchText, SearchCriteriaBase searchCriteria = null)
         {
             for (var page = 0; page < SearchMaxPages; page++)
             {
@@ -201,22 +191,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             var normalized = title.Replace("’", " ").Replace("'", " ");
             normalized = MultiWhitespaceRegex.Replace(normalized, " ").Trim();
             return normalized;
-        }
-
-        private IEnumerable<IndexerRequest> GetJsonApiRequests(AuthorSearchCriteria searchCriteria)
-        {
-            var authorQuery = GetSafeAuthorQuery(searchCriteria);
-
-            // Decode URL-encoded search query for JSON API (MAM expects raw text, not URL-encoded)
-            var decodedQuery = string.IsNullOrWhiteSpace(authorQuery) ?
-                string.Empty :
-                System.Web.HttpUtility.UrlDecode(authorQuery);
-
-            Logger.Trace("MAM_SEARCH_TERM: '{0}' (decoded from: '{1}')", decodedQuery ?? "Empty", authorQuery ?? "Empty");
-            foreach (var request in GetJsonApiRequests(decodedQuery, searchCriteria))
-            {
-                yield return request;
-            }
         }
 
         private static string GetSafeBookQuery(BookSearchCriteria searchCriteria)

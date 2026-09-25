@@ -55,7 +55,6 @@ namespace Chaptarr.Core.Test.DecisionEngine
             public DownloadProtocol Protocol => DownloadProtocol.Usenet;
             public Task<IList<ReleaseInfo>> FetchRecent() => throw new NotImplementedException();
             public Task<IList<ReleaseInfo>> Fetch(BookSearchCriteria searchCriteria) => throw new NotImplementedException();
-            public Task<IList<ReleaseInfo>> Fetch(AuthorSearchCriteria searchCriteria) => throw new NotImplementedException();
             public HttpRequest GetDownloadRequest(string link) => new HttpRequest(link);
             public Task<HttpResponse> ExecuteDownloadRequestAsync(HttpRequest request) => Task.FromResult(new HttpResponse(request, new HttpHeader(), string.Empty));
         }

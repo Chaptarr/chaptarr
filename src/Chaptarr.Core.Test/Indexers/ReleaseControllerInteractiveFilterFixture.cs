@@ -1,15 +1,92 @@
 using System.Collections.Generic;
+using System.Reflection;
+using System.Threading.Tasks;
+using System;
 using Chaptarr.Api.V1.Indexers;
-using NzbDrone.Core.Books;
+using Chaptarr.Http.REST;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.SignalR;
 
 namespace Chaptarr.Core.Test.Indexers
 {
     [TestFixture]
     public class ReleaseControllerInteractiveFilterFixture
     {
+        [TestCase("audiobook", BookMediaType.Audiobook)]
+        [TestCase("ebook", BookMediaType.Ebook)]
+        [TestCase(null, null)]
+        [TestCase("all", null)]
+        public async Task author_release_search_should_forward_optional_media_scope(string mediaType, BookMediaType? expected)
+        {
+            var search = DispatchProxy.Create<ISearchForReleases, SearchScopeProxy>();
+            var controller = BuildSearchController(search);
+
+            await controller.GetReleases(null, 10, mediaType: mediaType);
+
+            Assert.That(((SearchScopeProxy)(object)search).Scopes, Is.EqualTo(new[] { expected }));
+        }
+
+        [Test]
+        public void invalid_author_search_media_scope_should_fail_before_any_search()
+        {
+            var search = DispatchProxy.Create<ISearchForReleases, SearchScopeProxy>();
+            var controller = BuildSearchController(search);
+
+            Assert.ThrowsAsync<BadRequestException>(() => controller.GetReleases(null, 10, mediaType: "invalid"));
+            Assert.That(((SearchScopeProxy)(object)search).Scopes, Is.Empty);
+        }
+
+        private static ReleaseController BuildSearchController(ISearchForReleases search)
+        {
+            return new ReleaseController(null, search, null,
+                DispatchProxy.Create<IPrioritizeDownloadDecision, SearchScopeProxy>(),
+                null, null, null, null, null, new CacheManager(), LogManager.GetCurrentClassLogger(), new NoOpSignalRBroadcaster())
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext
+                    {
+                        Request = { QueryString = new QueryString("?authorId=10") }
+                    }
+                }
+            };
+        }
+
+        private sealed class NoOpSignalRBroadcaster : IBroadcastSignalRMessage
+        {
+            public bool IsConnected => false;
+            public Task BroadcastMessage(SignalRMessage message) => Task.CompletedTask;
+        }
+
+        private class SearchScopeProxy : DispatchProxy
+        {
+            public List<BookMediaType?> Scopes { get; } = new();
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name == nameof(ISearchForReleases.AuthorSearch))
+                {
+                    Scopes.Add((BookMediaType?)args[4]);
+                    return Task.FromResult(new List<DownloadDecision>());
+                }
+
+                if (method.Name == nameof(IPrioritizeDownloadDecision.PrioritizeDecisions))
+                {
+                    return args[0];
+                }
+
+                throw new NotImplementedException(method.Name);
+            }
+        }
+
         [Test]
         public void should_hide_pack_rejections_from_visible_interactive_search_results()
         {

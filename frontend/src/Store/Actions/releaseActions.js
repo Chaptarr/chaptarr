@@ -16,6 +16,7 @@ export const bookSection = 'releases.book';
 export const authorSection = 'releases.author';
 
 let abortCurrentRequest = null;
+const authorSearchAbortRequests = new Map();
 
 //
 // State
@@ -26,6 +27,17 @@ export const defaultState = {
   error: null,
   items: [],
   hiddenItems: [],
+  authorSearch: {
+    searchId: null,
+    authorId: null,
+    mediaType: null,
+    isFetching: false,
+    isComplete: false,
+    isCancelled: false,
+    error: null,
+    bookResults: [],
+    expandedBookIds: {}
+  },
   sortKey: 'releaseWeight',
   sortDirection: sortDirections.ASCENDING,
   bypassFilters: false,
@@ -245,6 +257,11 @@ export const SET_AUTHOR_RELEASES_FILTER = 'releases/setAuthorReleasesFilter';
 export const SET_BYPASS_FILTERS = 'releases/setBypassFilters';
 export const SET_FILTER_SUMMARY = 'releases/setFilterSummary';
 export const SET_RELEASE_SEARCH_RESPONSE = 'releases/setReleaseSearchResponse';
+export const FETCH_AUTHOR_RELEASES = 'releases/fetchAuthorReleases';
+export const CANCEL_AUTHOR_RELEASES = 'releases/cancelAuthorReleases';
+export const SET_AUTHOR_SEARCH_RESULTS = 'releases/setAuthorSearchResults';
+export const CLEAR_AUTHOR_SEARCH = 'releases/clearAuthorSearch';
+export const TOGGLE_AUTHOR_SEARCH_BOOK = 'releases/toggleAuthorSearchBook';
 
 //
 // Action Creators
@@ -260,6 +277,11 @@ export const setAuthorReleasesFilter = createAction(SET_AUTHOR_RELEASES_FILTER);
 export const setBypassFilters = createAction(SET_BYPASS_FILTERS);
 export const setFilterSummary = createAction(SET_FILTER_SUMMARY);
 export const setReleaseSearchResponse = createAction(SET_RELEASE_SEARCH_RESPONSE);
+export const fetchAuthorReleases = createThunk(FETCH_AUTHOR_RELEASES);
+export const cancelAuthorReleases = createThunk(CANCEL_AUTHOR_RELEASES);
+export const setAuthorSearchResults = createAction(SET_AUTHOR_SEARCH_RESULTS);
+export const clearAuthorSearch = createAction(CLEAR_AUTHOR_SEARCH);
+export const toggleAuthorSearchBook = createAction(TOGGLE_AUTHOR_SEARCH_BOOK);
 
 //
 // Helpers
@@ -314,6 +336,54 @@ function normalizeReleaseItems(items) {
     customFormats: Array.isArray(item.customFormats) ? item.customFormats : [],
     rejections: Array.isArray(item.rejections) ? item.rejections : []
   }));
+}
+
+function getReleaseKey(item) {
+  return `${item.indexerId ?? ''}:${item.guid ?? ''}`;
+}
+
+function mergeGrabState(previous, incoming) {
+  if (!previous) {
+    return incoming;
+  }
+
+  return {
+    ...previous,
+    ...incoming,
+    isGrabbing: previous.isGrabbing === true || incoming.isGrabbing === true,
+    isGrabbed: previous.isGrabbed === true || incoming.isGrabbed === true,
+    grabError: previous.grabError ?? incoming.grabError ?? null
+  };
+}
+
+function mergeReleaseItems(previousItems, incomingItems) {
+  const previousByKey = new Map((previousItems || []).map((item) => [getReleaseKey(item), item]));
+
+  return normalizeReleaseItems(incomingItems).map((item) => mergeGrabState(previousByKey.get(getReleaseKey(item)), item));
+}
+
+function mergeAuthorBookResults(previousResults, incomingResults) {
+  const results = [...(previousResults || [])];
+
+  (Array.isArray(incomingResults) ? incomingResults : []).forEach((incoming) => {
+    const incomingId = String(incoming.bookId);
+    const index = results.findIndex((result) => String(result.bookId) === incomingId);
+    const previous = index === -1 ? null : results[index];
+    const merged = {
+      ...previous,
+      ...incoming,
+      releases: mergeReleaseItems(previous?.releases, incoming.releases),
+      hiddenReleases: mergeReleaseItems(previous?.hiddenReleases, incoming.hiddenReleases)
+    };
+
+    if (index === -1) {
+      results.push(merged);
+    } else {
+      results[index] = merged;
+    }
+  });
+
+  return results;
 }
 
 //
@@ -373,11 +443,74 @@ export const actionHandlers = handleThunks({
     }
   },
 
+  [FETCH_AUTHOR_RELEASES]: function(getState, payload, dispatch) {
+    const { searchId, authorId, mediaType } = payload;
+
+    dispatch(set({
+      section,
+      authorSearch: {
+        ...defaultState.authorSearch,
+        searchId,
+        authorId,
+        mediaType,
+        isFetching: true
+      }
+    }));
+
+    const { request, abortRequest } = createAjaxRequest({
+      url: '/release',
+      data: { authorId, mediaType, searchId },
+      traditional: true
+    });
+
+    authorSearchAbortRequests.set(searchId, abortRequest);
+
+    request.done((data) => {
+      authorSearchAbortRequests.delete(searchId);
+      dispatch(setAuthorSearchResults({
+        ...data,
+        allowTerminalMerge: true,
+        requestFinished: true
+      }));
+    });
+
+    request.fail((xhr) => {
+      authorSearchAbortRequests.delete(searchId);
+
+      if (!xhr.aborted) {
+        dispatch(setAuthorSearchResults({
+          searchId,
+          authorId,
+          mediaType,
+          requestFinished: true,
+          requestFailed: true,
+          error: xhr
+        }));
+      }
+    });
+  },
+
+  [CANCEL_AUTHOR_RELEASES]: function(getState, payload) {
+    const abortRequest = authorSearchAbortRequests.get(payload.searchId);
+
+    if (abortRequest) {
+      authorSearchAbortRequests.delete(payload.searchId);
+      abortRequest();
+    }
+  },
+
   [GRAB_RELEASE]: function(getState, payload, dispatch) {
     const guid = payload.guid;
     const indexerId = payload.indexerId;
 
-    dispatch(updateRelease({ guid, indexerId, isGrabbing: true }));
+    const releaseIdentity = {
+      guid,
+      indexerId,
+      searchId: payload.searchId,
+      searchedBookId: payload.searchedBookId
+    };
+
+    dispatch(updateRelease({ ...releaseIdentity, isGrabbing: true }));
 
     const promise = createAjaxRequest({
       url: '/release',
@@ -389,8 +522,7 @@ export const actionHandlers = handleThunks({
 
     promise.done((data) => {
       dispatch(updateRelease({
-        guid,
-        indexerId,
+        ...releaseIdentity,
         isGrabbing: false,
         isGrabbed: true,
         grabError: null
@@ -401,8 +533,7 @@ export const actionHandlers = handleThunks({
       const grabError = xhr.responseJSON && xhr.responseJSON.message || 'Failed to add to download queue';
 
       dispatch(updateRelease({
-        guid,
-        indexerId,
+        ...releaseIdentity,
         isGrabbing: false,
         isGrabbed: false,
         grabError
@@ -420,10 +551,11 @@ export const reducers = createHandleActions({
     const {
       book,
       author,
+      authorSearch,
       ...otherDefaultState
     } = defaultState;
 
-    return Object.assign({}, state, otherDefaultState);
+    return Object.assign({}, state, otherDefaultState, { authorSearch: state.authorSearch || authorSearch });
   },
 
   [SET_BYPASS_FILTERS]: (state, { payload }) => {
@@ -449,9 +581,124 @@ export const reducers = createHandleActions({
     });
   },
 
+  [SET_AUTHOR_SEARCH_RESULTS]: (state, { payload }) => {
+    const current = state.authorSearch;
+
+    if (
+      !current.searchId ||
+      payload.searchId !== current.searchId ||
+      payload.authorId !== current.authorId ||
+      payload.mediaType !== current.mediaType ||
+      (current.isComplete && payload.allowTerminalMerge !== true)
+    ) {
+      return state;
+    }
+
+    if (payload.requestFailed === true) {
+      return Object.assign({}, state, {
+        authorSearch: {
+          ...current,
+          isFetching: false,
+          isComplete: false,
+          error: payload.error || true
+        }
+      });
+    }
+
+    const bookResults = mergeAuthorBookResults(current.bookResults, payload.bookResults);
+    const isComplete = current.isComplete || payload.isComplete === true;
+
+    return Object.assign({}, state, {
+      authorSearch: {
+        ...current,
+        bookResults,
+        isFetching: payload.requestFinished === true || isComplete ? false : current.isFetching,
+        isComplete,
+        isCancelled: current.isCancelled || payload.isCancelled === true,
+        error: isComplete ? null : current.error
+      }
+    });
+  },
+
+  [CLEAR_AUTHOR_SEARCH]: (state, { payload }) => {
+    const current = state.authorSearch;
+
+    if (
+      !current.searchId ||
+      payload.searchId !== current.searchId ||
+      payload.authorId !== current.authorId ||
+      payload.mediaType !== current.mediaType
+    ) {
+      return state;
+    }
+
+    return Object.assign({}, state, { authorSearch: defaultState.authorSearch });
+  },
+
+  [TOGGLE_AUTHOR_SEARCH_BOOK]: (state, { payload }) => {
+    const current = state.authorSearch;
+
+    if (!current.searchId || payload.searchId !== current.searchId) {
+      return state;
+    }
+
+    return Object.assign({}, state, {
+      authorSearch: {
+        ...current,
+        expandedBookIds: {
+          ...current.expandedBookIds,
+          [payload.bookId]: !current.expandedBookIds[payload.bookId]
+        }
+      }
+    });
+  },
+
   [UPDATE_RELEASE]: (state, { payload }) => {
     const guid = payload.guid;
     const indexerId = payload.indexerId;
+
+    if (payload.searchId != null && payload.searchedBookId != null) {
+      const authorSearch = state.authorSearch;
+
+      if (authorSearch.searchId !== payload.searchId) {
+        return state;
+      }
+
+      const groupIndex = authorSearch.bookResults.findIndex((result) => String(result.bookId) === String(payload.searchedBookId));
+
+      if (groupIndex === -1) {
+        return state;
+      }
+
+      const group = authorSearch.bookResults[groupIndex];
+      const updateGroupList = (list) => {
+        const itemIndex = list.findIndex((item) => item.guid === guid && item.indexerId === indexerId);
+
+        if (itemIndex === -1) {
+          return list;
+        }
+
+        const updated = [...list];
+        updated[itemIndex] = { ...updated[itemIndex], ...payload };
+        return updated;
+      };
+      const nextGroup = {
+        ...group,
+        releases: updateGroupList(group.releases || []),
+        hiddenReleases: updateGroupList(group.hiddenReleases || [])
+      };
+
+      if (nextGroup.releases === group.releases && nextGroup.hiddenReleases === group.hiddenReleases) {
+        return state;
+      }
+
+      const bookResults = [...authorSearch.bookResults];
+      bookResults[groupIndex] = nextGroup;
+
+      return Object.assign({}, state, {
+        authorSearch: { ...authorSearch, bookResults }
+      });
+    }
 
     const updateList = (list) => {
       if (!list || !list.length) {

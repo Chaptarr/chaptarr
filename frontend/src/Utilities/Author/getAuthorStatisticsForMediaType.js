@@ -18,3 +18,14 @@ export function getAuthorBookProgress(statistics = {}) {
   // parts, so progress must count owned books rather than media files.
   return bookCount ? availableBookCount / bookCount * 100 : 100;
 }
+
+export function getAuthorSearchBookCount(author, selectedMediaType) {
+  const mediaTypes = selectedMediaType ? [selectedMediaType] : ['audiobook', 'ebook'];
+  return mediaTypes.reduce((count, mediaType) => {
+    if (author?.[`${mediaType}Monitored`] !== true || !(author?.[`${mediaType}QualityProfileId`] > 0)) {
+      return count;
+    }
+
+    return count + (author?.[`${mediaType}Statistics`]?.totalBookCount || 0);
+  }, 0);
+}

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NUnit.Framework;
@@ -76,6 +77,60 @@ namespace Chaptarr.Core.Test.IndexerSearch
             });
 
             Assert.That(releaseSearch.AllowUnmonitoredValues, Is.EqualTo(new[] { false, false }));
+        }
+
+        [TestCase(CommandTrigger.Manual)]
+        [TestCase(CommandTrigger.Unspecified)]
+        public void author_command_should_search_and_process_each_eligible_book_sequentially(CommandTrigger trigger)
+        {
+            var author = new Author
+            {
+                Id = 10,
+                AudiobookMonitored = true,
+                EbookMonitored = true,
+                AudiobookQualityProfileId = 1,
+                EbookQualityProfileId = 2
+            };
+            var catalog = Enumerable.Range(1, 6).Select(id => new Book
+            {
+                Id = id,
+                AuthorId = author.Id,
+                Author = author,
+                MediaType = id <= 2 ? BookMediaType.Audiobook : BookMediaType.Ebook,
+                AudiobookMonitored = id <= 2,
+                EbookMonitored = id > 2 && id <= 5
+            }).ToList();
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var bookProxy = (BookServiceProxy)(object)bookService;
+            bookProxy.AuthorBooks[author.Id] = catalog;
+            var operations = new List<string>();
+            var releaseSearch = new RecordingReleaseSearch
+            {
+                OnBookSearch = book => operations.Add($"search:{book.Id}")
+            };
+            var subject = new BookSearchService(releaseSearch, bookService, null, null,
+                new EmptyDecisionProcessor { OnProcess = () => operations.Add("process") },
+                LogManager.GetCurrentClassLogger());
+
+            Assert.That(subject, Is.InstanceOf<IExecute<AuthorSearchCommand>>());
+            ((IExecute<AuthorSearchCommand>)subject).Execute(new AuthorSearchCommand
+            {
+                AuthorId = author.Id,
+                Trigger = trigger
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(bookProxy.AuthorCatalogRequests, Is.EqualTo(new[] { author.Id }));
+                Assert.That(releaseSearch.BookSearchBooks.Select(book => book.Id), Is.EqualTo(new[] { 1, 2, 3, 4, 5 }));
+                Assert.That(releaseSearch.AuthorCatalogSizes, Is.All.EqualTo(6));
+                Assert.That(releaseSearch.AllowUnmonitoredValues, Is.All.False);
+                Assert.That(operations, Is.EqualTo(new[]
+                {
+                    "search:1", "process", "search:2", "process", "search:3", "process",
+                    "search:4", "process", "search:5", "process"
+                }));
+            });
         }
 
         [Test]
@@ -264,6 +319,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
         private sealed class RecordingReleaseSearch : ISearchForReleases
         {
+            public Action<Book> OnBookSearch { get; set; }
             public List<int> BookSearchIds { get; } = new();
             public List<Book> BookSearchBooks { get; } = new();
             public List<int> AuthorCatalogSizes { get; } = new();
@@ -286,15 +342,21 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
             public Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
             {
+                OnBookSearch?.Invoke(book);
                 BookSearchBooks.Add(book);
                 AuthorCatalogSizes.Add(authorCatalog?.Count ?? 0);
                 AllowUnmonitoredValues.Add(allowUnmonitored);
                 return Task.FromResult(new List<DownloadDecision>());
             }
 
-            public Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch)
+            public Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, CancellationToken cancellationToken)
             {
                 return Task.FromResult(new List<DownloadDecision>());
+            }
+
+            public Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, List<DownloadDecision>, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default)
+            {
+                return Task.CompletedTask;
             }
         }
 
@@ -374,8 +436,11 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
         private sealed class EmptyDecisionProcessor : IProcessDownloadDecisions
         {
+            public Action OnProcess { get; set; }
+
             public Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions)
             {
+                OnProcess?.Invoke();
                 return Task.FromResult(new ProcessedDecisions(new List<DownloadDecision>(), new List<DownloadDecision>(), new List<DownloadDecision>()));
             }
 

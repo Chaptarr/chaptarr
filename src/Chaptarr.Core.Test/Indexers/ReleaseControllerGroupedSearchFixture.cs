@@ -1,0 +1,623 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using Chaptarr.Api.V1.Indexers;
+using Chaptarr.Http.REST;
+using BadRequestException = Chaptarr.Http.REST.BadRequestException;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using NLog;
+using NUnit.Framework;
+using NzbDrone.Common.Cache;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.IndexerSearch;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Qualities;
+using NzbDrone.SignalR;
+
+namespace Chaptarr.Core.Test.Indexers
+{
+    [TestFixture]
+    public class ReleaseControllerGroupedSearchFixture
+    {
+        private const int AuthorId = 71;
+        private const int IndexerId = 9;
+        private const string SearchId = "7f2f1c72-3491-451a-946f-4222fc0dcb73";
+        private const string SharedGuid = "same-indexer-guid";
+
+        [Test]
+        public async Task empty_author_catalog_should_publish_an_empty_roster_and_complete_response()
+        {
+            var harness = CreateHarness();
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, _, _) =>
+            {
+                await onSearchStarted(Array.Empty<Book>());
+            };
+
+            var response = await GetGroupedResults(harness.Controller);
+            var messages = GroupedMessages(harness.Broadcaster);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.SearchId, Is.EqualTo(SearchId));
+                Assert.That(response.AuthorId, Is.EqualTo(AuthorId));
+                Assert.That(response.MediaType, Is.EqualTo("audiobook"));
+                Assert.That(response.BookResults, Is.Empty);
+                Assert.That(response.IsComplete, Is.True);
+                Assert.That(response.IsCancelled, Is.False);
+                Assert.That(messages, Has.Count.EqualTo(2));
+                Assert.That(messages[0].IsComplete, Is.False);
+                Assert.That(messages[0].BookResults, Is.Empty);
+                Assert.That(messages[1].IsComplete, Is.True);
+                Assert.That(messages[1].BookResults, Is.Empty);
+            });
+        }
+
+        [Test]
+        public async Task same_indexer_guid_should_remain_scoped_per_book_when_completions_arrive_out_of_order()
+        {
+            var harness = CreateHarness();
+            var author = CreateAuthor();
+            var firstBook = CreateBook(101, "The First Story", author);
+            var secondBook = CreateBook(202, "The Second Story", author);
+            var visibleRejectedDecision = CreateDecision(author, firstBook, "visible-rejected-guid",
+                new Rejection("Rejected by preference", RejectionType.Permanent, true, "Quality"));
+            var firstDecision = CreateDecision(author, firstBook, SharedGuid);
+            var hiddenIndexZeroDecision = CreateDecision(author, secondBook, "hidden-pack-guid",
+                new Rejection("Release contains multiple books", RejectionType.Permanent, true, "Pack"));
+            var secondDecision = CreateDecision(author, secondBook, SharedGuid);
+
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
+            {
+                await onSearchStarted(new[] { firstBook, secondBook });
+                await onBookCompleted(secondBook, new List<DownloadDecision> { hiddenIndexZeroDecision, secondDecision }, null);
+                await onBookCompleted(firstBook, new List<DownloadDecision> { visibleRejectedDecision, firstDecision }, null);
+            };
+
+            var response = await GetGroupedResults(harness.Controller);
+            var firstGroup = response.BookResults.Single(group => group.BookId == firstBook.Id);
+            var secondGroup = response.BookResults.Single(group => group.BookId == secondBook.Id);
+            var visibleRejectedRelease = firstGroup.Releases.Single(release => release.Guid == "visible-rejected-guid");
+            var firstRelease = firstGroup.Releases.Single(release => release.Guid == SharedGuid);
+            var secondRelease = secondGroup.Releases.Single(release => release.Guid == SharedGuid);
+            var hiddenIndexZeroRelease = secondGroup.HiddenReleases.Single();
+            var progress = GroupedMessages(harness.Broadcaster);
+            var streamedReleases = progress
+                .SelectMany(message => message.BookResults)
+                .SelectMany(group => group.Releases.Concat(group.HiddenReleases))
+                .ToList();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.IsComplete, Is.True);
+                Assert.That(firstGroup.Status, Is.EqualTo("complete"));
+                Assert.That(secondGroup.Status, Is.EqualTo("complete"));
+                Assert.That(firstRelease.Guid, Is.EqualTo(SharedGuid));
+                Assert.That(secondRelease.Guid, Is.EqualTo(SharedGuid));
+                Assert.That(firstRelease.IndexerId, Is.EqualTo(IndexerId));
+                Assert.That(secondRelease.IndexerId, Is.EqualTo(IndexerId));
+                Assert.That(firstRelease.SearchId, Is.EqualTo(SearchId));
+                Assert.That(secondRelease.SearchId, Is.EqualTo(SearchId));
+                Assert.That(firstRelease.SearchedBookId, Is.EqualTo(firstBook.Id));
+                Assert.That(secondRelease.SearchedBookId, Is.EqualTo(secondBook.Id));
+                Assert.That(firstRelease.BookId, Is.EqualTo(firstBook.Id));
+                Assert.That(secondRelease.BookId, Is.EqualTo(secondBook.Id));
+                Assert.That(visibleRejectedRelease.Approved, Is.False);
+                Assert.That(visibleRejectedRelease.IsPreferredChoice, Is.False);
+                Assert.That(firstRelease.Rank, Is.EqualTo(2));
+                Assert.That(secondRelease.Rank, Is.EqualTo(1));
+                Assert.That(firstRelease.IsPreferredChoice, Is.True);
+                Assert.That(secondRelease.IsPreferredChoice, Is.True);
+                Assert.That(hiddenIndexZeroRelease.Rank, Is.EqualTo(2));
+                Assert.That(hiddenIndexZeroRelease.IsPreferredChoice, Is.False);
+                Assert.That(firstRelease.DownloadUrl, Is.Null);
+                Assert.That(firstRelease.MagnetUrl, Is.Null);
+                Assert.That(secondRelease.DownloadUrl, Is.Null);
+                Assert.That(secondRelease.MagnetUrl, Is.Null);
+                Assert.That(streamedReleases, Has.Count.EqualTo(4));
+                Assert.That(streamedReleases.All(release => release.DownloadUrl == null && release.MagnetUrl == null), Is.True);
+                Assert.That(progress[0].BookResults.Select(book => book.Status), Is.All.EqualTo("pending"));
+                Assert.That(progress.Skip(1).SelectMany(message => message.BookResults).Select(book => book.BookId),
+                    Is.EqualTo(new[] { secondBook.Id, firstBook.Id }));
+                Assert.That(progress.Last().IsComplete, Is.True);
+            });
+
+            await Grab(harness.Controller, firstRelease);
+            await Grab(harness.Controller, secondRelease);
+
+            Assert.That(harness.Downloads.Reports.Select(report => report.RemoteBook.Books.Single().Id),
+                Is.EqualTo(new[] { firstBook.Id, secondBook.Id }));
+
+            harness.Search.CancellableFlatHandler = (_, _, _, _, _, _) => Task.FromResult(new List<DownloadDecision> { firstDecision });
+            var legacy = (ReleaseSearchResponse)await harness.Controller.GetReleases(null, AuthorId, mediaType: "audiobook");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(legacy.Releases, Has.Count.EqualTo(1));
+                Assert.That(legacy.Releases[0].DownloadUrl, Is.EqualTo("https://indexer.example/download/shared"));
+                Assert.That(legacy.Releases[0].MagnetUrl, Is.EqualTo("magnet:?xt=urn:btih:shared"));
+            });
+        }
+
+        [Test]
+        public async Task a_completed_book_can_be_grabbed_while_the_next_book_is_still_searching()
+        {
+            var harness = CreateHarness();
+            var author = CreateAuthor();
+            var firstBook = CreateBook(301, "Available Now", author);
+            var secondBook = CreateBook(302, "Still Searching", author);
+            var firstDecision = CreateDecision(author, firstBook, "early-grab-guid");
+            var secondDecision = CreateDecision(author, secondBook, "later-guid");
+            var firstBookPublished = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allowSecondBook = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Exception streamedGrabFailure = null;
+            harness.Broadcaster.OnBroadcast = async message =>
+            {
+                if (message.Body is AuthorReleaseSearchResponse envelope)
+                {
+                    var completedBook = envelope.BookResults.SingleOrDefault(group => group.BookId == firstBook.Id && group.Status == "complete");
+                    if (completedBook != null)
+                    {
+                        try
+                        {
+                            await Grab(harness.Controller, completedBook.Releases.Single());
+                        }
+                        catch (Exception ex)
+                        {
+                            streamedGrabFailure = ex;
+                        }
+                    }
+                }
+            };
+
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
+            {
+                await onSearchStarted(new[] { firstBook, secondBook });
+                await onBookCompleted(firstBook, new List<DownloadDecision> { firstDecision }, null);
+                firstBookPublished.TrySetResult(true);
+                await allowSecondBook.Task;
+                await onBookCompleted(secondBook, new List<DownloadDecision> { secondDecision }, null);
+            };
+
+            var searchTask = GetGroupedResults(harness.Controller);
+            await firstBookPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var firstBookUpdate = GroupedMessages(harness.Broadcaster)
+                .SelectMany(message => message.BookResults)
+                .Single(group => group.BookId == firstBook.Id && group.Status == "complete");
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstBookUpdate.Releases, Has.Count.EqualTo(1));
+                Assert.That(streamedGrabFailure, Is.Null);
+                Assert.That(harness.Downloads.Reports.Single().RemoteBook.Books.Single().Id, Is.EqualTo(firstBook.Id));
+            });
+
+            allowSecondBook.TrySetResult(true);
+            var finalResponse = await searchTask;
+            Assert.That(finalResponse.IsComplete, Is.True);
+            Assert.That(finalResponse.BookResults.All(group => group.Status == "complete"), Is.True);
+        }
+
+        [Test]
+        public void invalid_grouped_search_scope_or_id_should_fail_before_calling_the_search_service()
+        {
+            var harness = CreateHarness();
+            var invalidRequests = new (string mediaType, string searchId)[]
+            {
+                (null, SearchId),
+                ("invalid", SearchId),
+                ("audiobook", "not-a-uuid")
+            };
+
+            foreach (var (mediaType, searchId) in invalidRequests)
+            {
+                Assert.ThrowsAsync<BadRequestException>(() =>
+                    harness.Controller.GetReleases(null, AuthorId, mediaType: mediaType, searchId: searchId));
+            }
+
+            Assert.That(harness.Search.AuthorSearchCalls, Is.Zero);
+        }
+
+        [Test]
+        public async Task scoped_grab_should_reject_a_posted_book_id_that_differs_from_the_search_target()
+        {
+            var harness = CreateHarness();
+            var author = CreateAuthor();
+            var book = CreateBook(401, "Scoped Only", author);
+            var decision = CreateDecision(author, book, "scoped-mismatch-guid");
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
+            {
+                await onSearchStarted(new[] { book });
+                await onBookCompleted(book, new List<DownloadDecision> { decision }, null);
+            };
+
+            var response = await GetGroupedResults(harness.Controller);
+            var release = response.BookResults.Single().Releases.Single();
+            release.BookId = book.Id + 1;
+
+            var exception = Assert.ThrowsAsync<NzbDroneClientException>(() => Grab(harness.Controller, release));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(exception.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.Conflict));
+                Assert.That(harness.Downloads.Reports, Is.Empty);
+            });
+        }
+
+        [Test]
+        public async Task per_book_error_callback_should_publish_a_failed_group_and_complete_the_batch()
+        {
+            var harness = CreateHarness();
+            var author = CreateAuthor();
+            var firstBook = CreateBook(601, "Completed Before Failure", author);
+            var failingBook = CreateBook(602, "Failed Book", author);
+            var lastBook = CreateBook(603, "Completed After Failure", author);
+            var books = new[] { firstBook, failingBook, lastBook };
+            var decisions = new[]
+            {
+                CreateDecision(author, firstBook, "before-failure-guid"),
+                CreateDecision(author, lastBook, "after-failure-guid")
+            };
+            var failure = new InvalidOperationException("Per-book result mapping failed");
+
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
+            {
+                await onSearchStarted(books);
+                await onBookCompleted(firstBook, new List<DownloadDecision> { decisions[0] }, null);
+                await onBookCompleted(failingBook, new List<DownloadDecision>(), failure);
+                await onBookCompleted(lastBook, new List<DownloadDecision> { decisions[1] }, null);
+            };
+
+            var response = await GetGroupedResults(harness.Controller);
+            var firstGroup = response.BookResults.Single(group => group.BookId == firstBook.Id);
+            var failedGroup = response.BookResults.Single(group => group.BookId == failingBook.Id);
+            var lastGroup = response.BookResults.Single(group => group.BookId == lastBook.Id);
+            var finalMessage = GroupedMessages(harness.Broadcaster).Last();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstGroup.Status, Is.EqualTo("complete"));
+                Assert.That(firstGroup.Releases.Select(release => release.Guid), Is.EqualTo(new[] { "before-failure-guid" }));
+                Assert.That(failedGroup.Status, Is.EqualTo("failed"));
+                Assert.That(failedGroup.Releases, Is.Empty);
+                Assert.That(lastGroup.Status, Is.EqualTo("complete"));
+                Assert.That(lastGroup.Releases.Select(release => release.Guid), Is.EqualTo(new[] { "after-failure-guid" }));
+                Assert.That(response.IsComplete, Is.True);
+                Assert.That(finalMessage.IsComplete, Is.True);
+                Assert.That(finalMessage.IsCancelled, Is.False);
+            });
+        }
+
+        [Test]
+        public void unrecoverable_grouped_callback_failure_should_publish_failed_pending_groups()
+        {
+            var harness = CreateHarness();
+            var author = CreateAuthor();
+            var completedBook = CreateBook(611, "Already Completed", author);
+            var pendingBook = CreateBook(612, "Callback Failed", author);
+            var failure = new InvalidOperationException("Error result callback failed");
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
+            {
+                await onSearchStarted(new[] { completedBook, pendingBook });
+                await onBookCompleted(completedBook, new List<DownloadDecision> { CreateDecision(author, completedBook, "completed-before-error") }, null);
+                throw failure;
+            };
+
+            var thrown = Assert.ThrowsAsync<InvalidOperationException>(() => GetGroupedResults(harness.Controller));
+            var finalMessage = GroupedMessages(harness.Broadcaster).Last();
+            var failedGroup = finalMessage.BookResults.Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(thrown, Is.SameAs(failure));
+                Assert.That(finalMessage.IsComplete, Is.True);
+                Assert.That(finalMessage.IsCancelled, Is.False);
+                Assert.That(failedGroup.BookId, Is.EqualTo(pendingBook.Id));
+                Assert.That(failedGroup.Status, Is.EqualTo("failed"));
+            });
+        }
+
+        [Test]
+        public void request_cancellation_should_escape_the_grouped_api_without_becoming_a_server_error()
+        {
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            var harness = CreateHarness(cancellation.Token);
+            harness.Search.Handler = (_, _, _, _, _, _, _, token) =>
+            {
+                Assert.That(token, Is.EqualTo(cancellation.Token));
+                return Task.FromException(new OperationCanceledException(token));
+            };
+
+            Assert.ThrowsAsync<OperationCanceledException>(() => GetGroupedResults(harness.Controller));
+
+            var finalMessage = GroupedMessages(harness.Broadcaster).Last();
+            Assert.Multiple(() =>
+            {
+                Assert.That(finalMessage.IsComplete, Is.True);
+                Assert.That(finalMessage.IsCancelled, Is.True);
+            });
+        }
+
+        [Test]
+        public void cancellation_after_a_book_completes_should_preserve_its_streamed_result()
+        {
+            using var cancellation = new CancellationTokenSource();
+            var harness = CreateHarness(cancellation.Token);
+            var author = CreateAuthor();
+            var completedBook = CreateBook(621, "Completed Before Stop", author);
+            var pendingBook = CreateBook(622, "Pending At Stop", author);
+            var laterBook = CreateBook(623, "Not Started", author);
+            var completedDecision = CreateDecision(author, completedBook, "completed-before-stop");
+
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, token) =>
+            {
+                await onSearchStarted(new[] { completedBook, pendingBook, laterBook });
+                await onBookCompleted(completedBook, new List<DownloadDecision> { completedDecision }, null);
+                cancellation.Cancel();
+                token.ThrowIfCancellationRequested();
+            };
+
+            Assert.ThrowsAsync<OperationCanceledException>(() => GetGroupedResults(harness.Controller));
+
+            var messages = GroupedMessages(harness.Broadcaster);
+            var roster = messages[0];
+            var completedUpdate = messages[1];
+            var terminal = messages[^1];
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(roster.BookResults.Select(group => group.BookId),
+                    Is.EqualTo(new[] { completedBook.Id, pendingBook.Id, laterBook.Id }));
+                Assert.That(roster.BookResults, Has.All.Matches<BookReleaseSearchResult>(group => group.Status == "pending"));
+                Assert.That(completedUpdate.IsComplete, Is.False);
+                Assert.That(completedUpdate.IsCancelled, Is.False);
+                Assert.That(completedUpdate.BookResults, Has.Count.EqualTo(1));
+                Assert.That(completedUpdate.BookResults[0].BookId, Is.EqualTo(completedBook.Id));
+                Assert.That(completedUpdate.BookResults[0].Status, Is.EqualTo("complete"));
+                Assert.That(completedUpdate.BookResults[0].Releases.Select(release => release.Guid),
+                    Is.EqualTo(new[] { completedDecision.RemoteBook.Release.Guid }));
+                Assert.That(terminal.IsComplete, Is.True);
+                Assert.That(terminal.IsCancelled, Is.True);
+                Assert.That(terminal.BookResults, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void legacy_author_disconnect_should_not_be_wrapped_as_a_server_error()
+        {
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            var harness = CreateHarness(cancellation.Token);
+            var disconnected = new OperationCanceledException(cancellation.Token);
+            harness.Search.CancellableFlatHandler = (_, _, _, _, _, token) =>
+            {
+                Assert.That(token, Is.EqualTo(cancellation.Token));
+                return Task.FromException<List<DownloadDecision>>(disconnected);
+            };
+
+            var thrown = Assert.ThrowsAsync<OperationCanceledException>(() =>
+                harness.Controller.GetReleases(null, AuthorId, mediaType: "audiobook"));
+
+            Assert.That(thrown, Is.SameAs(disconnected));
+        }
+
+        private static Task<AuthorReleaseSearchResponse> GetGroupedResults(ReleaseController controller)
+        {
+            return CastGroupedResults(controller.GetReleases(null, AuthorId, mediaType: "audiobook", searchId: SearchId));
+        }
+
+        private static async Task<AuthorReleaseSearchResponse> CastGroupedResults(Task<object> response)
+        {
+            return (AuthorReleaseSearchResponse)await response;
+        }
+
+        private static async Task Grab(ReleaseController controller, ReleaseResource release)
+        {
+            controller.HttpContext.Request.Method = HttpMethods.Post;
+            await controller.DownloadRelease(release);
+        }
+
+        private static List<AuthorReleaseSearchResponse> GroupedMessages(RecordingBroadcaster broadcaster)
+        {
+            return broadcaster.Messages
+                .Where(message => message.Name == "AuthorSearchResults")
+                .Select(message => (AuthorReleaseSearchResponse)message.Body)
+                .ToList();
+        }
+
+        private static Author CreateAuthor()
+        {
+            return new Author { Id = AuthorId, Name = "Grouped Search Author" };
+        }
+
+        private static Book CreateBook(int id, string title, Author author)
+        {
+            return new Book
+            {
+                Id = id,
+                AuthorId = author.Id,
+                Author = author,
+                Title = title,
+                MediaType = BookMediaType.Audiobook
+            };
+        }
+
+        private static DownloadDecision CreateDecision(Author author, Book book, string guid, params Rejection[] rejections)
+        {
+            return new DownloadDecision(new RemoteBook
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                DownloadAllowed = true,
+                Release = new TorrentInfo
+                {
+                    Guid = guid,
+                    Title = $"{book.Title} audiobook",
+                    IndexerId = IndexerId,
+                    Indexer = "Test Indexer",
+                    DownloadUrl = "https://indexer.example/download/shared",
+                    MagnetUrl = "magnet:?xt=urn:btih:shared"
+                },
+                ParsedBookInfo = new ParsedBookInfo
+                {
+                    AuthorName = author.Name,
+                    BookTitle = book.Title,
+                    Quality = new QualityModel(Quality.MP3)
+                }
+            }, rejections);
+        }
+
+        private static Harness CreateHarness(CancellationToken cancellationToken = default)
+        {
+            var search = DispatchProxy.Create<ISearchForReleases, SearchServiceProxy>();
+            var prioritize = DispatchProxy.Create<IPrioritizeDownloadDecision, PrioritizeProxy>();
+            var broadcaster = new RecordingBroadcaster();
+            var downloads = new RecordingDownloadService();
+            var controller = new ReleaseController(
+                rssFetcherAndParser: null,
+                releaseSearchService: search,
+                downloadDecisionMaker: null,
+                prioritizeDownloadDecision: prioritize,
+                downloadService: downloads,
+                authorService: null,
+                bookService: null,
+                parsingService: null,
+                indexerFactory: null,
+                cacheManager: new CacheManager(),
+                logger: LogManager.GetLogger(nameof(ReleaseControllerGroupedSearchFixture)),
+                signalRBroadcaster: broadcaster);
+
+            var context = new DefaultHttpContext();
+            context.Request.Method = HttpMethods.Get;
+            context.Request.QueryString = new QueryString($"?authorId={AuthorId}");
+            context.RequestAborted = cancellationToken;
+            controller.ControllerContext = new ControllerContext { HttpContext = context };
+
+            return new Harness(controller, (SearchServiceProxy)(object)search, broadcaster, downloads);
+        }
+
+        private sealed class Harness
+        {
+            public Harness(ReleaseController controller, SearchServiceProxy search, RecordingBroadcaster broadcaster, RecordingDownloadService downloads)
+            {
+                Controller = controller;
+                Search = search;
+                Broadcaster = broadcaster;
+                Downloads = downloads;
+            }
+
+            public ReleaseController Controller { get; }
+            public SearchServiceProxy Search { get; }
+            public RecordingBroadcaster Broadcaster { get; }
+            public RecordingDownloadService Downloads { get; }
+        }
+
+        private delegate Task SearchHandler(
+            int authorId,
+            bool missingOnly,
+            bool userInvokedSearch,
+            bool interactiveSearch,
+            BookMediaType? mediaType,
+            Func<IReadOnlyList<Book>, Task> onSearchStarted,
+            Func<Book, List<DownloadDecision>, Exception, Task> onBookCompleted,
+            CancellationToken cancellationToken);
+
+        private delegate Task<List<DownloadDecision>> FlatSearchHandler(
+            int authorId,
+            bool missingOnly,
+            bool userInvokedSearch,
+            bool interactiveSearch,
+            BookMediaType? mediaType);
+
+        private delegate Task<List<DownloadDecision>> CancellableFlatSearchHandler(
+            int authorId,
+            bool missingOnly,
+            bool userInvokedSearch,
+            bool interactiveSearch,
+            BookMediaType? mediaType,
+            CancellationToken cancellationToken);
+
+        private class SearchServiceProxy : DispatchProxy
+        {
+            public SearchHandler Handler { get; set; }
+            public FlatSearchHandler FlatHandler { get; set; }
+            public CancellableFlatSearchHandler CancellableFlatHandler { get; set; }
+            public int AuthorSearchCalls { get; private set; }
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name != nameof(ISearchForReleases.AuthorSearch))
+                {
+                    throw new NotImplementedException(method.Name);
+                }
+
+                AuthorSearchCalls++;
+                if (args.Length == 5)
+                {
+                    return FlatHandler((int)args[0], (bool)args[1], (bool)args[2], (bool)args[3], (BookMediaType?)args[4]);
+                }
+
+                if (args.Length == 6)
+                {
+                    return CancellableFlatHandler((int)args[0], (bool)args[1], (bool)args[2], (bool)args[3], (BookMediaType?)args[4], (CancellationToken)args[5]);
+                }
+
+                return Handler(
+                    (int)args[0],
+                    (bool)args[1],
+                    (bool)args[2],
+                    (bool)args[3],
+                    (BookMediaType?)args[4],
+                    (Func<IReadOnlyList<Book>, Task>)args[5],
+                    (Func<Book, List<DownloadDecision>, Exception, Task>)args[6],
+                    (CancellationToken)args[7]);
+            }
+        }
+
+        private class PrioritizeProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name == nameof(IPrioritizeDownloadDecision.PrioritizeDecisions))
+                {
+                    return args[0];
+                }
+
+                throw new NotImplementedException(method.Name);
+            }
+        }
+
+        private sealed class RecordingBroadcaster : IBroadcastSignalRMessage
+        {
+            private readonly ConcurrentQueue<SignalRMessage> _messages = new();
+
+            public bool IsConnected => true;
+            public IReadOnlyList<SignalRMessage> Messages => _messages.ToArray();
+            public Func<SignalRMessage, Task> OnBroadcast { get; set; }
+
+            public Task BroadcastMessage(SignalRMessage message)
+            {
+                _messages.Enqueue(message);
+                return OnBroadcast?.Invoke(message) ?? Task.CompletedTask;
+            }
+        }
+
+        private sealed class RecordingDownloadService : IDownloadService
+        {
+            public List<(RemoteBook RemoteBook, int? DownloadClientId)> Reports { get; } = new();
+
+            public Task DownloadReport(RemoteBook remoteBook, int? downloadClientId)
+            {
+                Reports.Add((remoteBook, downloadClientId));
+                return Task.CompletedTask;
+            }
+        }
+    }
+}

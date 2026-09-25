@@ -1,6 +1,6 @@
 {
   "name": "chaptarr",
-  "version": "0.9.992",
+  "version": "0.9.993",
   "description": "Chaptarr",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
@@ -14,6 +14,7 @@
     "check-translations": "node frontend/build/check-missing-translation-keys.js",
     "check-author-photo": "node frontend/build/check-author-photo.cjs",
     "check-author-delete": "node frontend/build/check-author-delete.cjs",
+    "check-author-search": "node frontend/build/check-author-search.cjs",
     "check-mobile-toolbar": "node frontend/build/check-mobile-toolbar.cjs",
     "lint-browser-checks": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore \"frontend/build/check-*.cjs\" \"frontend/build/*-fixture.js\"",
     "stylelint-linux": "stylelint $(find frontend -name '*.css') --config frontend/.stylelintrc",

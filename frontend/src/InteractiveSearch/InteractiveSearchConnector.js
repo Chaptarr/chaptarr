@@ -98,13 +98,12 @@ class InteractiveSearchConnector extends Component {
   }
 
   getCacheKey(props) {
-    const { searchPayload, bypassFilters } = props;
+    const { searchPayload } = props;
 
     return [
       `book:${searchPayload.bookId ?? ''}`,
       `author:${searchPayload.authorId ?? ''}`,
-      `mediaType:${searchPayload.initialMediaType ?? ''}`,
-      `bypass:${bypassFilters ? 1 : 0}`
+      `mediaType:${searchPayload.mediaType ?? searchPayload.initialMediaType ?? ''}`
     ].join('|');
   }
 

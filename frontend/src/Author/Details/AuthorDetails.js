@@ -24,6 +24,7 @@ import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
 import OrganizePreviewModalConnector from 'Organize/OrganizePreviewModalConnector';
 import RetagPreviewModalConnector from 'Retag/RetagPreviewModalConnector';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
 import selectAll from 'Utilities/Table/selectAll';
@@ -595,8 +596,10 @@ class AuthorDetails extends Component {
                     />
                   </TabPanel>
 
-                  <TabPanel>
+                  <TabPanel forceRender={true} hidden={selectedTabIndex !== 3}>
                     <InteractiveSearchTable
+                      key={`${id}:${selectedMediaType}`}
+                      searchCount={selectedMediaType ? getAuthorSearchBookCount(this.props, selectedMediaType) : 0}
                       type="author"
                       authorId={id}
                       selectedMediaType={selectedMediaType}

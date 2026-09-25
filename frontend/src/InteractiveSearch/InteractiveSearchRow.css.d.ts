@@ -23,6 +23,8 @@ interface CssExports {
   'rank': string;
   'rejected': string;
   'size': string;
+  'summaryBook': string;
+  'summaryBookStatus': string;
   'title': string;
   'titleContent': string;
   'titleLink': string;

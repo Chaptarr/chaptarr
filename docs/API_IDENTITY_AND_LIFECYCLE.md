@@ -35,6 +35,79 @@ Chaptarr can have separate local rows for audiobook and eBook instances of the s
 
 When an API accepts a provider ID and a media type, the media type scopes the match. When a mutation receives a provider ID that matches more than one eligible local row and cannot be safely scoped, Chaptarr returns an ambiguity error instead of guessing.
 
+### Interactive Author Searches
+
+`GET /api/v1/release?authorId={localAuthorId}&mediaType=audiobook` restricts the
+search targets to monitored audiobook Book rows; `mediaType=ebook` does the same for
+ebooks. Scope is applied before per-book indexer dispatch, not only to the returned
+results. Each target retains its own media-scoped sibling catalog and per-book search timestamp.
+An omitted media type or `all` retains the existing all-enabled-sides behavior; an
+unknown value returns HTTP 400 before searching. `bookId` searches continue to use
+the explicitly selected row's own media type.
+
+The author detail Search tab supplies the selected media type and starts only after
+an explicit Search action, with confirmation above five eligible rows on that side.
+The toolbar Search Monitored command still searches all enabled sides sequentially.
+Interactive searches do not automatically grab. Author searches without `searchId` retain
+the existing single flat `ReleaseSearchResponse`, returned after a successful batch completes. A request to
+`/api/v1/release` without `bookId`, `authorId`, or `searchId` retains the existing
+recent RSS `ReleaseResource[]` response.
+
+The author Search tab adds a client-generated UUID `searchId` to opt into grouped
+results. This requires an explicit `audiobook` or `ebook` media type; missing scope,
+`all`, or an invalid UUID returns HTTP 400 before searching. The response shape
+is shown below; `authorId` and `bookId` are integer local request handles:
+
+```json
+{
+  "searchId": "<request UUID>",
+  "authorId": 123,
+  "mediaType": "ebook",
+  "bookResults": [
+    {
+      "bookId": 456,
+      "title": "<displayed edition title>",
+      "mediaType": "ebook",
+      "status": "pending | complete | failed",
+      "releases": [],
+      "hiddenReleases": []
+    }
+  ],
+  "isComplete": true,
+  "isCancelled": false
+}
+```
+
+`AuthorSearchResults` messages on the existing authenticated SignalR connection
+carry this envelope: the initial eligible roster, then one completed book group at
+a time, then completion. The final HTTP response contains all groups. A book with
+no returned releases still has a group. Indexer failures can currently return an
+empty list; an empty group is not proof that no releases exist.
+
+Each group is ranked independently with the existing prioritizer. `rank` and
+`isPreferredChoice` describe the backend ordering and do not change when the UI
+sorts rows. Preferred means the top approved, downloadable interactive result;
+automatic searches still apply their own cutoff and upgrade eligibility checks. A repeated release remains in each searched book's group. New grouped
+responses omit download and magnet URL values; existing flat responses retain them.
+
+Grouped release resources carry `searchId` and `searchedBookId`. A grab must echo
+both alongside the existing `guid`, `indexerId`, `authorId`, and mapped `bookId`.
+The existing decision cache is keyed by this request/book context before each
+result is published. Missing cache entries return 404; a cached target inconsistent
+with the requested book returns 409 without queuing a download. Local book handles
+here identify request targets, not cross-provider identity.
+
+The UI merges incremental and final results while preserving grab state. Search
+remains mounted but hidden when another tab on the same author page is selected;
+results and request ownership are separate from single-book search modals. Leaving
+the author page or changing media scope aborts that request and stops the remaining
+book searches at the next between-book checkpoint. The current book's indexer work
+may finish. Legacy flat author GET requests also stop remaining book searches on
+request abort, while their existing response shape stays unchanged. No caller
+cancellation enters the shared indexer HTTP failure path. Interrupted grouped
+results remain partial; neither reconnection nor a missed update restarts tracker
+searches automatically.
+
 ### Ambiguous Provider Identity
 
 Chaptarr-native mutations return HTTP `409` when a provider ID maps to multiple candidate rows and the request does not specify enough information to choose one.

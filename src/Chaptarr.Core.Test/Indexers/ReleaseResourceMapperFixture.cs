@@ -3,6 +3,8 @@ using Chaptarr.Api.V1.Indexers;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
@@ -12,6 +14,73 @@ namespace Chaptarr.Core.Test.Indexers
     [TestFixture]
     public class ReleaseResourceMapperFixture
     {
+        [Test]
+        public void structured_mam_author_mismatch_should_flow_to_interactive_search_rejection_reason()
+        {
+            var book = new Book
+            {
+                Title = "Galatea",
+                MediaType = BookMediaType.Ebook
+            };
+            var author = new Author
+            {
+                Name = "Philip Pullman",
+                Books = new System.Collections.Generic.List<Book> { book }
+            };
+            book.Author = author;
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new System.Collections.Generic.List<Book> { book },
+                InteractiveSearch = true
+            };
+            var remoteBook = new RemoteBook
+            {
+                Author = author,
+                Books = new System.Collections.Generic.List<Book> { book },
+                ParsedBookInfo = new ParsedBookInfo
+                {
+                    AuthorName = author.Name,
+                    BookTitle = book.Title,
+                    Quality = new QualityModel(Quality.Unknown)
+                },
+                Release = new ReleaseInfo
+                {
+                    Guid = "MAM-556642",
+                    Title = "Galatea",
+                    Author = "Madeline Miller",
+                    Indexer = "MyAnonaMouse",
+                    PublishDate = DateTime.UtcNow
+                }
+            };
+
+            var specification = new ReleaseTitleMatchSpecification(NLog.LogManager.GetCurrentClassLogger());
+            var specificationDecision = specification.IsSatisfiedBy(remoteBook, criteria);
+
+            Assert.That(specificationDecision.Accepted, Is.False);
+            Assert.That(specificationDecision.CanBypass, Is.True);
+            Assert.That(specificationDecision.Category, Is.EqualTo("Matching"));
+            Assert.That(specificationDecision.Reason, Is.EqualTo("Author mismatch: Madeline Miller"));
+
+            var rejection = new Rejection(
+                specificationDecision.Reason,
+                RejectionType.Permanent,
+                specificationDecision.CanBypass,
+                specificationDecision.Category,
+                specificationDecision.Severity);
+            var resource = new DownloadDecision(remoteBook, rejection).ToResource();
+
+            Assert.That(resource.Rejections, Does.Contain("Author mismatch: Madeline Miller"));
+            Assert.That(resource.RejectionDetails, Has.Count.EqualTo(1));
+            Assert.That(resource.RejectionDetails[0].Reason, Is.EqualTo("Author mismatch: Madeline Miller"));
+            Assert.That(resource.RejectionDetails[0].Category, Is.EqualTo("Matching"));
+            Assert.That(resource.RejectionDetails[0].CanBypass, Is.True);
+            Assert.That(resource.HasSoftFilters, Is.True);
+            Assert.That(resource.HasHardFilters, Is.False);
+            Assert.That(resource.CanBypassFilters, Is.True);
+        }
+
         [Test]
         public void structured_book_match_should_not_highlight_unrelated_release_title_offsets()
         {

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Reflection;
 using NLog;
 using NUnit.Framework;
@@ -42,6 +44,13 @@ namespace Chaptarr.Core.Test.IndexerSearch
                     Title = "Sibling Book",
                     Author = author,
                     MediaType = BookMediaType.Audiobook
+                },
+                new()
+                {
+                    Id = 103,
+                    Title = "Other Media Book",
+                    Author = author,
+                    MediaType = BookMediaType.Ebook
                 }
             };
 
@@ -192,6 +201,56 @@ namespace Chaptarr.Core.Test.IndexerSearch
             Assert.That(((DecisionMakerProxy)(object)decisionMaker).SearchBookIds, Is.EqualTo(new[] { 102 }));
         }
 
+        [TestCase(false, null, new[] { 1, 2, 3, 4, 5 })]
+        [TestCase(true, null, new[] { 1, 2, 3, 4, 5 })]
+        [TestCase(true, BookMediaType.Audiobook, new[] { 1, 2 })]
+        [TestCase(true, BookMediaType.Ebook, new[] { 3, 4, 5 })]
+        public void author_search_should_dispatch_and_record_each_book_with_its_own_media_catalog(bool interactiveSearch, BookMediaType? mediaType, int[] expectedIds)
+        {
+            var author = new Author
+            {
+                Id = 10, Name = "Frank Herbert", AudiobookMonitored = true, EbookMonitored = true,
+                AudiobookQualityProfileId = 1, EbookQualityProfileId = 2
+            };
+            author.Books = Enumerable.Range(1, 5)
+                .Select(id => BuildMonitoredBook(id, id <= 2 ? BookMediaType.Audiobook : BookMediaType.Ebook, author))
+                .ToList();
+            foreach (var book in author.Books)
+            {
+                book.Title = "Dune";
+                book.Editions = new List<Edition> { new() { Title = "Dune", Monitored = true } };
+            }
+
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var decisionMaker = DispatchProxy.Create<IMakeDownloadDecision, DecisionMakerProxy>();
+            var indexer = DispatchProxy.Create<IIndexer, IndexerProxy>();
+            var indexerFactory = DispatchProxy.Create<IIndexerFactory, IndexerFactoryProxy>();
+            ((IndexerFactoryProxy)(object)indexerFactory).Indexers.Add(indexer);
+            var subject = new ReleaseSearchService(indexerFactory, bookService,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), null, decisionMaker,
+                LogManager.GetCurrentClassLogger());
+
+            subject.AuthorSearch(author, false, true, interactiveSearch, mediaType).GetAwaiter().GetResult();
+
+            var criteria = ((DecisionMakerProxy)(object)decisionMaker).Criteria;
+            Assert.Multiple(() =>
+            {
+                Assert.That(criteria.Count, Is.EqualTo(expectedIds.Length));
+                Assert.That(criteria, Is.All.InstanceOf<BookSearchCriteria>());
+                Assert.That(criteria.Select(c => c.Books.Count), Is.All.EqualTo(1));
+                Assert.That(criteria.Select(c => c.Books.Single().Id), Is.EqualTo(expectedIds));
+                Assert.That(criteria.All(c => c.AuthorCatalog.All(b => b.MediaType == c.Books.Single().MediaType)), Is.True);
+                Assert.That(criteria.Select(c => c.AuthorCatalog.Count), Is.EqualTo(expectedIds.Select(id => id <= 2 ? 2 : 3)));
+                Assert.That(((IndexerProxy)(object)indexer).Searches, Is.EqualTo(criteria));
+                Assert.That(((DecisionMakerProxy)(object)decisionMaker).ReportTitles,
+                    Is.EqualTo(expectedIds.Select(id => id <= 2 ? "Frank Herbert - Dune MP3" : "Frank Herbert - Dune EPUB")));
+                Assert.That(((BookServiceProxy)(object)bookService).SearchTimeUpdates,
+                    Is.EqualTo(expectedIds.Select(id => id.ToString())));
+                Assert.That(author.Books.Where(book => book.LastSearchTime.HasValue).Select(book => book.Id), Is.EqualTo(expectedIds));
+                Assert.That(((BookServiceProxy)(object)bookService).CatalogLoads, Is.Zero);
+            });
+        }
+
         private static Book BuildMonitoredBook(int id, BookMediaType mediaType, Author author)
         {
             return new Book
@@ -220,9 +279,16 @@ namespace Chaptarr.Core.Test.IndexerSearch
         private class BookServiceProxy : DispatchProxy
         {
             public int CatalogLoads { get; private set; }
+            public List<string> SearchTimeUpdates { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod.Name == nameof(IBookService.UpdateLastSearchTime))
+                {
+                    SearchTimeUpdates.Add(string.Join(",", ((List<Book>)args[0]).Select(book => book.Id)));
+                    return null;
+                }
+
                 if (targetMethod.Name == nameof(IBookService.GetBooksByAuthor))
                 {
                     CatalogLoads++;
@@ -251,20 +317,49 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
         private class IndexerFactoryProxy : DispatchProxy
         {
+            public List<IIndexer> Indexers { get; } = new();
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod.Name == nameof(IIndexerFactory.AutomaticSearchEnabled) ||
                     targetMethod.Name == nameof(IIndexerFactory.InteractiveSearchEnabled))
                 {
-                    return new List<IIndexer>();
+                    return Indexers;
                 }
 
                 throw new NotImplementedException(targetMethod.Name);
             }
         }
 
+        private class IndexerProxy : DispatchProxy
+        {
+            public List<SearchCriteriaBase> Searches { get; } = new();
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name == "get_Definition")
+                {
+                    return new IndexerDefinition { Name = "Offline", Tags = new HashSet<int>() };
+                }
+
+                if (method.Name == nameof(IIndexer.Fetch))
+                {
+                    Searches.Add((SearchCriteriaBase)args[0]);
+                    return Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>
+                    {
+                        new() { Guid = "audio", Title = "Frank Herbert - Dune MP3", Indexer = "Offline" },
+                        new() { Guid = "ebook", Title = "Frank Herbert - Dune EPUB", Indexer = "Offline" }
+                    });
+                }
+
+                throw new NotImplementedException(method.Name);
+            }
+        }
+
         private class DecisionMakerProxy : DispatchProxy
         {
+            public List<SearchCriteriaBase> Criteria { get; } = new();
+            public List<string> ReportTitles { get; } = new();
             public int AuthorCatalogCount { get; private set; }
             public List<int> SearchBookIds { get; set; } = new();
             public bool MonitoredBooksOnly { get; private set; } = true;
@@ -274,6 +369,8 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 if (targetMethod.Name == nameof(IMakeDownloadDecision.GetSearchDecision))
                 {
                     var criteria = (SearchCriteriaBase)args[1];
+                    Criteria.Add(criteria);
+                    ReportTitles.AddRange(((IEnumerable<ReleaseInfo>)args[0]).Select(report => report.Title));
                     AuthorCatalogCount = criteria.AuthorCatalog?.Count ?? 0;
                     SearchBookIds = criteria.Books?.ConvertAll(book => book.Id) ?? new List<int>();
                     MonitoredBooksOnly = criteria.MonitoredBooksOnly;

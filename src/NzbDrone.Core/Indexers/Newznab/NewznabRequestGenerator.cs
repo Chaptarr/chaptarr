@@ -120,30 +120,6 @@ namespace NzbDrone.Core.Indexers.Newznab
             return pageableRequests;
         }
 
-        public virtual IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            if (SupportsBookSearch)
-            {
-                AddBookPageableRequests(pageableRequests,
-                    Settings.Categories,
-                    $"&author={NewsnabifyTitle(searchCriteria.AuthorQuery)}");
-            }
-
-            if (SupportsSearch)
-            {
-                pageableRequests.AddTier();
-
-                pageableRequests.Add(GetPagedRequests(MaxPages,
-                    Settings.Categories,
-                    "search",
-                    $"&q={NewsnabifyTitle(searchCriteria.AuthorQuery)}"));
-            }
-
-            return pageableRequests;
-        }
-
         private void AddBookPageableRequests(IndexerPageableRequestChain chain, IEnumerable<int> categories, string parameters)
         {
             chain.AddTier();

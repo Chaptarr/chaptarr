@@ -374,10 +374,7 @@ namespace Chaptarr.Core.Test.Indexers
         [Test]
         public void should_generate_ten_search_pages_and_stop_at_mam_query_limit()
         {
-            var chain = CreateGenerator().GetSearchRequests(new AuthorSearchCriteria
-            {
-                Author = new Author { Name = "Stephen King" }
-            });
+            var chain = CreateGenerator().GetSearchRequests(CreateAudiobookCriteria("en"));
 
             var requests = chain.GetTier(0).Single().ToList();
 
@@ -392,10 +389,7 @@ namespace Chaptarr.Core.Test.Indexers
             var generator = CreateGenerator();
             generator.Settings.MinimumSeeders = 0;
 
-            var payload = GetRequestPayloadObject(generator.GetSearchRequests(new AuthorSearchCriteria
-            {
-                Author = new Author { Name = "Author" }
-            }), 0);
+            var payload = GetRequestPayloadObject(generator.GetSearchRequests(CreateAudiobookCriteria("en")), 0);
 
             Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("all"));
         }
