@@ -99,14 +99,6 @@ namespace NzbDrone.Core.Books
         private readonly IEditionSelector _editionSelector;
         private readonly Logger _logger;
 
-        // PERF (chaptarr #163/#172): see the comment at BuildWorkGroups's call site in
-        // GetSyncUpdatesForMutations. Only ever populated/consulted when a caller passes a non-null
-        // authorBooksHint (i.e. RefreshBookService mid author-refresh); every other caller/code path
-        // never touches these fields, so this is inert everywhere else. Same single-disk-access-command
-        // safety invariant as RefreshBookService's _currentAuthorBooksHint.
-        private List<Book> _workGroupsCacheSource;
-        private List<List<Book>> _workGroupsCache;
-
         private sealed class MonitoredStateSnapshot
         {
             public bool AudiobookMonitored { get; set; }
@@ -1476,7 +1468,7 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private List<BookMonitoringSyncUpdate> GetSyncUpdatesForMutations(List<Book> changedBooks, Dictionary<int, Book> storedById, List<Book> authorBooksHint = null)
+        private List<BookMonitoringSyncUpdate> GetSyncUpdatesForMutations(List<Book> changedBooks, Dictionary<int, Book> storedById, AuthorBooksHint authorBooksHint = null)
         {
             var syncUpdates = new List<BookMonitoringSyncUpdate>();
             if (_authorService == null || changedBooks == null || changedBooks.Count == 0)
@@ -1503,7 +1495,7 @@ namespace NzbDrone.Core.Books
                 // N books this call otherwise runs up to N times per refresh, each doing O(N) work, i.e.
                 // O(N^2) overall. Only trust the hint when it actually covers this author; an empty/
                 // mismatched hint falls back to the original always-correct DB fetch.
-                var hintForAuthor = authorBooksHint?.Where(book => book?.AuthorId == authorBooks.Key).ToList();
+                var hintForAuthor = authorBooksHint?.Books.Where(book => book?.AuthorId == authorBooks.Key).ToList();
                 var repositoryBooks = hintForAuthor != null && hintForAuthor.Count > 0
                     ? hintForAuthor
                     : _bookRepository.GetBooksByAuthorId(authorBooks.Key) ?? new List<Book>();
@@ -1531,20 +1523,11 @@ namespace NzbDrone.Core.Books
                 // identity tokens, which don't change mid-refresh-pass for a given author, so it's safe to
                 // compute once per author (keyed on the same authorBooksHint reference already used above)
                 // and reuse for every subsequent book saved in this pass.
-                List<List<Book>> workGroups;
-                if (authorBooksHint != null && ReferenceEquals(_workGroupsCacheSource, authorBooksHint))
-                {
-                    workGroups = _workGroupsCache;
-                }
-                else
-                {
-                    workGroups = BuildWorkGroups(authorBooksById.Values.ToList());
-                    if (authorBooksHint != null)
-                    {
-                        _workGroupsCacheSource = authorBooksHint;
-                        _workGroupsCache = workGroups;
-                    }
-                }
+                // The grouping is reused only while the identity of every book it depends on is unchanged
+                // (see AuthorBooksHint.GetWorkGroups); a refresh can move or merge books in place mid-pass.
+                var workGroups = hintForAuthor != null && hintForAuthor.Count > 0
+                    ? authorBooksHint.GetWorkGroups(authorBooksById, BuildWorkGroups)
+                    : BuildWorkGroups(authorBooksById.Values.ToList());
 
                 foreach (var workGroup in workGroups)
                 {
@@ -1777,7 +1760,7 @@ namespace NzbDrone.Core.Books
         // implement a matching overload it has no use for. RefreshBookService (the only caller that
         // has this hint available) holds a concrete BookService reference check instead, so every other
         // caller/test double is completely unaffected and keeps calling the interface method as before.
-        public void UpdateMany(List<Book> books, List<Book> authorBooksHint)
+        internal void UpdateMany(List<Book> books, AuthorBooksHint authorBooksHint)
         {
             // Ensure unique TitleSlugs for duplicate books when updating
             EnsureUniqueTitleSlugs(books);
