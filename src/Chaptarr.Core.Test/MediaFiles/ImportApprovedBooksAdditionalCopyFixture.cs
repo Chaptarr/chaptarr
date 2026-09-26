@@ -479,6 +479,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             public long? AvailableSpace { get; set; }
             public string LastPath { get; private set; }
+            public List<string> FileExistsCalls { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -491,6 +492,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                 if (targetMethod?.Name == nameof(IDiskProvider.GetFileInfo))
                 {
                     return new System.IO.Abstractions.FileSystem().FileInfo.FromFileName((string)args[0]);
+                }
+
+                if (targetMethod?.Name == nameof(IDiskProvider.FileExists) && args.Length == 1)
+                {
+                    FileExistsCalls.Add((string)args[0]);
+                    return File.Exists((string)args[0]);
+                }
+
+                if (targetMethod?.Name == nameof(IDiskProvider.FolderExists))
+                {
+                    return Directory.Exists((string)args[0]);
                 }
 
                 throw new NotImplementedException($"Unexpected call to IDiskProvider.{targetMethod?.Name}");
@@ -1723,6 +1735,19 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void automatic_import_into_a_folder_that_does_not_exist_should_not_probe_the_destination_file()
+        {
+            // FileExists on a missing path falls back to enumerating every directory along the path looking for a
+            // case/normalisation match. When the destination's folder does not exist, no file can occupy it, so the
+            // pre-check must not pay for that on the ordinary success path.
+            var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, existingFileCount: 0, destinationFolderMissing: true);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
+            Assert.That(outcome.DestinationFileExistsProbes, Is.EqualTo(0));
+        }
+
+        [Test]
         public void automatic_import_onto_an_occupied_tracked_destination_should_be_a_duplicate()
         {
             var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, existingAtDestination: true);
@@ -1798,6 +1823,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool SourceFilesOnDisk { get; init; }
             public int TransferCalls { get; init; }
             public string DestinationContent { get; init; }
+            public int DestinationFileExistsProbes { get; init; }
         }
 
         private static string ExtensionForQuality(Quality quality)
@@ -1826,7 +1852,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             int? existingFileCount = null,
             bool existingAtDestination = false,
             int? existingEditionIdOverride = null,
-            bool existingUntracked = false)
+            bool existingUntracked = false,
+            bool destinationFolderMissing = false)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"duplicate-import-{Guid.NewGuid():N}");
             var libraryDir = Path.Combine(tempDir, "library");
@@ -1904,7 +1931,9 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 book.Editions = new List<Edition> { edition };
 
-                var destinationPath = Path.Combine(libraryDir, $"imported{ExtensionForQuality(incomingQuality)}");
+                var destinationPath = destinationFolderMissing
+                    ? Path.Combine(libraryDir, "new-book-folder", $"imported{ExtensionForQuality(incomingQuality)}")
+                    : Path.Combine(libraryDir, $"imported{ExtensionForQuality(incomingQuality)}");
 
                 var otherEdition = existingEditionIdOverride.HasValue
                     ? new Edition
@@ -1989,6 +2018,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                     }
                 }
 
+                var duplicateScenarioDisk = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+                var diskProxy = (DiskProviderProxy)(object)duplicateScenarioDisk;
+
                 var service = new ImportApprovedBooks(
                     mediaFileService,
                     new StubMetadataTagService(),
@@ -2008,6 +2040,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<IQualityProfileService>(),
                     Proxy<IM4bConversionService>(),
                     LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    diskProvider: duplicateScenarioDisk,
                     customFormatCalculationService: customFormats);
 
                 var results = service.Import(
@@ -2025,7 +2058,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     ExistingFilesOnDisk = existingPaths.All(File.Exists),
                     SourceFilesOnDisk = sourcePaths.All(File.Exists),
                     TransferCalls = mover.CopyCalls + mover.MoveCalls,
-                    DestinationContent = File.Exists(destinationPath) ? File.ReadAllText(destinationPath) : null
+                    DestinationContent = File.Exists(destinationPath) ? File.ReadAllText(destinationPath) : null,
+                    DestinationFileExistsProbes = diskProxy.FileExistsCalls.Count(call => call == destinationPath)
                 };
             }
             finally

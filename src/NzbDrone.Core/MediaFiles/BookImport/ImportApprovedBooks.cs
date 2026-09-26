@@ -1629,6 +1629,15 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return null;
             }
 
+            // FileExists on a missing path falls back to enumerating each directory along it for a
+            // case/normalisation match. Nothing can occupy a destination whose folder does not exist (the usual
+            // case for a new book), so skip that cost on the ordinary success path; the transfer keeps its own check.
+            var destinationDirectory = Path.GetDirectoryName(destinationPath);
+            if (destinationDirectory.IsNotNullOrWhiteSpace() && !DestinationFolderExists(destinationDirectory))
+            {
+                return null;
+            }
+
             if (!DestinationFileExists(destinationPath))
             {
                 return null;
@@ -3151,6 +3160,23 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return !retainedPath.IsNullOrWhiteSpace() &&
                        IsConversionWorkFolder(retainedPath) &&
                        File.Exists(retainedPath);
+            }
+
+            private bool DestinationFolderExists(string path)
+            {
+                if (path.IsNullOrWhiteSpace())
+                {
+                    return false;
+                }
+
+                try
+                {
+                    return _diskProvider?.FolderExists(path) ?? Directory.Exists(path);
+                }
+                catch
+                {
+                    return Directory.Exists(path);
+                }
             }
 
             private bool DestinationFileExists(string path)
