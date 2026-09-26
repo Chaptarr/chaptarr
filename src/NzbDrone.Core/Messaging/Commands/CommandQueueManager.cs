@@ -113,7 +113,13 @@ namespace NzbDrone.Core.Messaging.Commands
                     commandModels.Add(commandModel);
                 }
 
-                _repo.InsertMany(commandModels);
+                // InsertMany hands Dapper the runtime type of each Body (e.g. RefreshAuthorCommand), which has no
+                // type handler, so the batch insert throws NotSupportedException. Insert() maps by the declared
+                // Body column type, so use it per command (these batches are small).
+                foreach (var commandModel in commandModels)
+                {
+                    _repo.Insert(commandModel);
+                }
 
                 foreach (var commandModel in commandModels)
                 {
