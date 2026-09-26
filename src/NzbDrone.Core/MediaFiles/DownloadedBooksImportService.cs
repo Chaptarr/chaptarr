@@ -309,7 +309,9 @@ namespace NzbDrone.Core.MediaFiles
             // Leftovers only: re-run matching with the same path/filename evidence the manual import
             // preview is allowed to use, so the automatic path accepts exactly what the preview would
             // already resolve as a local match. See RunLocalPreviewParityPass for the safety rules.
-            if (!trackedPathFallbackAllowed)
+            // Completed downloads only: a folder with no download client item has no grabbed release and no author
+            // restriction to bound the path evidence, and nobody reviews the result the way the preview screen is reviewed.
+            if (downloadClientItem != null && !trackedPathFallbackAllowed)
             {
                 RunLocalPreviewParityPass(
                     matchResult.UnmatchedFiles,
@@ -1480,7 +1482,8 @@ namespace NzbDrone.Core.MediaFiles
         ///  - no provider (V5) identification, so nothing new is imported into the library,
         ///  - the matcher's own thresholds/proofs are unchanged; this only re-enables the evidence
         ///    source the preview already trusts, still gated by UsePathAsTagsFallback and strictness,
-        ///  - a multi-file leftover set that resolves to more than one book is discarded as ambiguous.
+        ///  - only completed downloads (a download client item) get the pass, not arbitrary folders,
+        ///  - a multi-file leftover set that resolves to more than one book, or only partly, is discarded.
         /// </summary>
         private void RunLocalPreviewParityPass(
             IEnumerable<UnmatchedFile> unmatchedFiles,
@@ -1520,6 +1523,16 @@ namespace NzbDrone.Core.MediaFiles
 
                 if (parityMatches.Count == 0)
                 {
+                    return;
+                }
+
+                // Path evidence is folder-level, so a genuine match covers every leftover file. Importing only some
+                // files of a multi-file set leaves the edition partially filled: the rest is rejected and a later
+                // attempt to add it fails with "Edition already has files".
+                if (leftovers.Length > 1 && parityMatches.Count < leftovers.Length)
+                {
+                    _logger.Debug("[DOWNLOAD-IMPORT] Discarding local preview-parity matches: only {0} of {1} leftover file(s) matched, which is too weak to import a partial set automatically",
+                        parityMatches.Count, leftovers.Length);
                     return;
                 }
 

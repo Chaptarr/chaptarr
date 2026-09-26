@@ -3037,6 +3037,138 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        private static DownloadedBooksImportService CreateParityReviewService(StubFileMatchingService matchingService, StubMetadataTagService tagsService, RecordingImportApprovedBooks importApproved)
+        {
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Book = new Book { Id = 5150, AuthorId = 4242, Title = "Galileo and the Solar System" };
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)(object)authorService).Author = new Author { Id = 4242, Name = "Paul Strathern" };
+            var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+            ((EditionServiceProxy)(object)editionService).Edition = new Edition { Id = 9101, BookId = 5150, Monitored = true, ReadingFormatId = 2 };
+            ((EditionServiceProxy)(object)editionService).EditionsByBook = new List<Edition> { ((EditionServiceProxy)(object)editionService).Edition };
+
+            return new DownloadedBooksImportService(
+                new StubDiskProvider(),
+                new StubDiskScanService(),
+                matchingService,
+                tagsService,
+                importApproved,
+                bookService,
+                authorService,
+                editionService,
+                DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                new StubAuthorLibraryService(),
+                new StubRootFolderService(),
+                ConfigServiceTestProxy.Create(),
+                DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                LogManager.GetCurrentClassLogger());
+        }
+
+        [Test]
+        public void should_not_run_the_preview_parity_pass_for_a_folder_that_is_not_a_tracked_download()
+        {
+            // The parity pass is described as a retry for completed downloads. A drop folder has no download client
+            // item, no grabbed release and no author restriction, so path evidence alone must not import it unattended.
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"),
+                "Paul Strathern - Galileo_And_The_Solar_System (2013)");
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Paul Strathern - Galileo_And_The_Solar_System (2013).mp3");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = new[] { CreateUnmatchedFile(filePath, tagsService.Tags, "No match") }
+                    },
+                    PathFallbackEnabledResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[] { CreateMatchedFile(filePath, tagsService.Tags, 4242, "Paul Strathern", 5150, "Galileo and the Solar System", 9101) },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+                var service = CreateParityReviewService(matchingService, tagsService, importApproved);
+
+                _ = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null, remoteBook: null);
+
+                Assert.That(matchingService.Calls, Has.Count.EqualTo(1), "only the strict pass runs for an untracked folder");
+                Assert.That(importApproved.Decisions.Any(d => d.Approved), Is.False);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_discard_a_partial_preview_parity_match_of_a_multi_file_download()
+        {
+            // Importing 2 of 3 files of one book leaves the edition partially filled: the remaining file is rejected and
+            // a later attempt to add it hits "Edition already has files". Path evidence is folder-level, so a genuine
+            // match should cover every leftover file; anything less is too weak to import unattended.
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"),
+                "Paul Strathern - Galileo_And_The_Solar_System (2013)");
+            Directory.CreateDirectory(tempDir);
+            var files = new[] { "Part 1.mp3", "Part 2.mp3", "Part 3.mp3" }.Select(n => Path.Combine(tempDir, n)).ToArray();
+            foreach (var f in files)
+            {
+                File.WriteAllBytes(f, new byte[] { 1, 2, 3, 4 });
+            }
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = files.Select(f => CreateUnmatchedFile(f, tagsService.Tags, "No match")).ToArray()
+                    },
+                    PathFallbackEnabledResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            CreateMatchedFile(files[0], tagsService.Tags, 4242, "Paul Strathern", 5150, "Galileo and the Solar System", 9101),
+                            CreateMatchedFile(files[1], tagsService.Tags, 4242, "Paul Strathern", 5150, "Galileo and the Solar System", 9101)
+                        },
+                        UnmatchedFiles = new[] { CreateUnmatchedFile(files[2], tagsService.Tags, "No match") }
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+                var service = CreateParityReviewService(matchingService, tagsService, importApproved);
+
+                _ = service.ProcessPath(
+                    tempDir,
+                    ImportMode.Auto,
+                    author: null,
+                    downloadClientItem: new DownloadClientItem
+                    {
+                        DownloadId = "download-partial",
+                        Title = "Paul Strathern - Galileo_And_The_Solar_System (2013)",
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                    },
+                    remoteBook: null);
+
+                Assert.That(importApproved.Decisions.Any(d => d.Approved), Is.False, "a partial leftover match must not import any file");
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(3), "every file is reported as rejected");
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
         private static Dictionary<string, List<string>> CreateAudioTags(string album, string title, string author, string narrator)
         {
             return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
