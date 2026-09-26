@@ -11,7 +11,11 @@ namespace NzbDrone.Core.Messaging.Commands
     public class CommandExecutor : IHandle<ApplicationStartedEvent>,
                                    IHandle<ApplicationShutdownRequested>
     {
-        private const int THREAD_LIMIT = 3;
+        internal const string ThreadLimitEnvVar = "CHAPTARR_COMMAND_THREADS";
+        internal const int DefaultThreadLimit = 3;
+        internal const int MaxThreadLimit = 32;
+
+        private static readonly int THREAD_LIMIT = ParseThreadLimit(Environment.GetEnvironmentVariable(ThreadLimitEnvVar));
 
         private readonly Logger _logger;
         private readonly IServiceFactory _serviceFactory;
@@ -189,6 +193,19 @@ namespace NzbDrone.Core.Messaging.Commands
             {
                 _eventAggregator.PublishEvent(new CommandUpdatedEvent(command));
             }
+        }
+
+        // The whole application shares these threads, so on a large library a few long refreshes can hold every
+        // slot and starve RSS sync, download processing and imports. Keep the upstream default of 3, allow an
+        // override for hosts with headroom.
+        internal static int ParseThreadLimit(string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value) && int.TryParse(value, out var parsed) && parsed >= 1)
+            {
+                return Math.Min(parsed, MaxThreadLimit);
+            }
+
+            return DefaultThreadLimit;
         }
 
         public void Handle(ApplicationStartedEvent message)
