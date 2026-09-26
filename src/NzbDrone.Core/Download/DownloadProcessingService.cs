@@ -19,6 +19,13 @@ namespace NzbDrone.Core.Download
         private readonly Logger _logger;
         private readonly IManageCommandQueue _commandQueueManager;
 
+        // A client that keeps a ManualImport queued at all times makes the yield below fire on every run, so
+        // without a bound the sweep never gets past its first download and the queue is never refreshed. Give up
+        // the slot at most this many runs in a row, then let the next run finish the remaining downloads.
+        private const int MaxConsecutiveYields = 3;
+
+        private int _consecutiveYields;
+
         public DownloadProcessingService(IConfigService configService,
                                          ICompletedDownloadService completedDownloadService,
                                          IFailedDownloadService failedDownloadService,
@@ -90,6 +97,8 @@ namespace NzbDrone.Core.Download
                                                           .ToList();
 
             var worked = 0;
+            var yieldAllowed = _consecutiveYields < MaxConsecutiveYields;
+            var yielded = false;
 
             foreach (var trackedDownload in trackedDownloads)
             {
@@ -106,9 +115,10 @@ namespace NzbDrone.Core.Download
                 // Only downloads that need real work count. Each run does at least one before yielding, so a
                 // steady stream of waiting commands cannot starve the sweep, and no-op entries at the front
                 // of the list cannot use up that guarantee.
-                if (worked > 0 && DiskCommandIsWaitingForSameSlot(message))
+                if (worked > 0 && yieldAllowed && DiskCommandIsWaitingForSameSlot(message))
                 {
                     _logger.Debug("ProcessMonitoredDownloads yielding the disk slot to a waiting command after {0} downloads", worked);
+                    yielded = true;
                     break;
                 }
 
@@ -129,6 +139,13 @@ namespace NzbDrone.Core.Download
                 {
                     _logger.Debug(e, "Failed to process download: {0}", trackedDownload.DownloadItem.Title);
                 }
+            }
+
+            _consecutiveYields = yielded ? _consecutiveYields + 1 : 0;
+
+            if (!yieldAllowed)
+            {
+                _logger.Debug("ProcessMonitoredDownloads ran {0} downloads without yielding after {1} consecutive yields", worked, MaxConsecutiveYields);
             }
 
             // Imported downloads are no longer trackable so process them after processing trackable downloads
