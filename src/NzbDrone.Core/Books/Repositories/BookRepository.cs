@@ -21,6 +21,7 @@ namespace NzbDrone.Core.Books
 		    public interface IBookRepository : IBasicRepository<Book>
 		    {
 		        List<Book> GetBooks(int authorId);
+                List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null) => throw new NotImplementedException();
                 // Tolerant lookup for drifting snapshots; unlike Get, missing rows are expected.
                 IEnumerable<Book> FindExisting(IEnumerable<int> ids) => throw new NotImplementedException();
 		        List<Book> GetLastBooks(IEnumerable<int> authorIds);
@@ -101,6 +102,44 @@ namespace NzbDrone.Core.Books
         public List<Book> GetBooks(int authorId)
         {
             return Query(s => s.AuthorId == authorId);
+        }
+
+        public List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null)
+        {
+            var requestedBookIds = bookIds?.Distinct().ToArray();
+            if (requestedBookIds != null && requestedBookIds.Length == 0)
+            {
+                return new List<int>();
+            }
+
+            var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
+            var sql = $@"SELECT b.""Id""
+                        FROM ""Books"" b
+                        WHERE (b.""AudiobookMonitored"" = {trueIndicator}
+                            OR b.""EbookMonitored"" = {trueIndicator}
+                            OR EXISTS (
+                                SELECT 1
+                                FROM ""Editions"" e
+                                INNER JOIN ""BookFiles"" bf ON bf.""EditionId"" = e.""Id""
+                                WHERE e.""BookId"" = b.""Id""))";
+
+            if (requestedBookIds == null)
+            {
+                return _database.Query<int>(sql).ToList();
+            }
+
+            if (_database.DatabaseType == DatabaseType.PostgreSQL)
+            {
+                return _database.Query<int>($@"{sql} AND b.""Id"" = ANY(@BookIds)", new { BookIds = requestedBookIds }).ToList();
+            }
+
+            var matchingBookIds = new List<int>();
+            foreach (var batch in requestedBookIds.Chunk(SqliteVariableLimit.MaxParameters))
+            {
+                matchingBookIds.AddRange(_database.Query<int>($@"{sql} AND b.""Id"" IN @BookIds", new { BookIds = batch }).ToList());
+            }
+
+            return matchingBookIds;
         }
 
 	        public List<Book> GetLastBooks(IEnumerable<int> authorIds)

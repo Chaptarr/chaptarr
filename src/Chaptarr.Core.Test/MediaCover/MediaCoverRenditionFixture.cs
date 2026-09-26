@@ -61,6 +61,21 @@ namespace Chaptarr.Core.Test.MediaCover
             }
         }
 
+        private class CoverScopeConfigProxy : DispatchProxy
+        {
+            public CoverDownloadScope Scope { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return targetMethod?.Name switch
+                {
+                    "get_CoverDownloadScope" => Scope,
+                    "get_MetadataServerUrl" => "https://images.example",
+                    _ => throw new NotImplementedException(targetMethod?.Name)
+                };
+            }
+        }
+
         private class DiskProviderProxy : DispatchProxy
         {
             public HashSet<string> ExistingPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -160,6 +175,7 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             public byte[] ResponseData { get; set; } = Array.Empty<byte>();
             public Queue<byte[]> ResponseQueue { get; } = new();
+            public List<string> RequestedUrls { get; } = new();
             public int Calls { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -167,6 +183,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 if (targetMethod?.Name == nameof(IHttpClient.Get) && args?[0] is HttpRequest request)
                 {
                     Calls++;
+                    RequestedUrls.Add(request.Url.FullUri);
                     var responseData = ResponseQueue.Count > 0 ? ResponseQueue.Dequeue() : ResponseData;
                     return new HttpResponse(request, new HttpHeader(), responseData);
                 }
@@ -210,8 +227,13 @@ namespace Chaptarr.Core.Test.MediaCover
         private sealed class MediaCoverProxyStub : IMediaCoverProxy
         {
             public int ProxyCalls { get; private set; }
+            public int RegisterCalls { get; private set; }
 
-            public string RegisterUrl(string url) => "/MediaCoverProxy/hash/cover.jpg";
+            public string RegisterUrl(string url)
+            {
+                RegisterCalls++;
+                return "/MediaCoverProxy/hash/cover.jpg";
+            }
 
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers)
             {
@@ -223,7 +245,7 @@ namespace Chaptarr.Core.Test.MediaCover
             }
 
             public string GetUrl(string hash) => throw new NotImplementedException();
-            public byte[] GetImage(string hash) => throw new NotImplementedException();
+            public byte[] GetImageFromUrl(string url) => throw new NotImplementedException();
         }
 
         private class AuthorServiceProxy : DispatchProxy
@@ -267,6 +289,18 @@ namespace Chaptarr.Core.Test.MediaCover
 
         private sealed class CoverMapperStub : IMapCoversToLocal
         {
+            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            {
+                foreach (var book in covers)
+                {
+                    ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value);
+                }
+            }
+
+            public void DeleteBookCovers(int bookId) => throw new NotImplementedException();
+
             public List<int> EnsuredAuthorIds { get; } = new();
             public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null) => throw new NotImplementedException();
 
@@ -285,6 +319,8 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             public List<Book> Books { get; set; } = new();
             public List<int> RequestedAuthorIds { get; } = new();
+            public List<int> EligibleLibraryBookIds { get; } = new();
+            public List<List<int>> LibraryBookIdQueries { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -294,8 +330,233 @@ namespace Chaptarr.Core.Test.MediaCover
                     return Books;
                 }
 
+                if (targetMethod?.Name == nameof(IBookService.GetLibraryBookIds))
+                {
+                    var requestedIds = (args?.FirstOrDefault() as IEnumerable<int>)?.Distinct().ToList() ?? new List<int>();
+                    LibraryBookIdQueries.Add(requestedIds);
+                    return requestedIds.Where(EligibleLibraryBookIds.Contains).ToList();
+                }
+
                 throw new NotImplementedException(targetMethod?.Name);
             }
+        }
+
+        private static MediaCoverService CreateBookCoverSubject(
+            CoverDownloadScope scope,
+            IEnumerable<int> eligibleBookIds,
+            out BookServiceProxy bookService,
+            out DiskProviderProxy disk,
+            out ImageHttpClientProxy httpClient,
+            out DeferredCoverProxy deferred, MediaCoverProxyStub proxy = null)
+        {
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var configFile = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var configService = DispatchProxy.Create<IConfigService, CoverScopeConfigProxy>();
+            ((CoverScopeConfigProxy)(object)configService).Scope = scope;
+            var bookServiceApi = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            bookService = (BookServiceProxy)(object)bookServiceApi;
+            bookService.EligibleLibraryBookIds.AddRange(eligibleBookIds ?? Enumerable.Empty<int>());
+            var diskApi = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            disk = (DiskProviderProxy)(object)diskApi;
+            var httpApi = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
+            httpClient = (ImageHttpClientProxy)(object)httpApi;
+            var deferredApi = DispatchProxy.Create<IDeferredCoverService, DeferredCoverProxy>();
+            deferred = (DeferredCoverProxy)(object)deferredApi;
+
+            return new MediaCoverService(
+                proxy ?? new MediaCoverProxyStub(),
+                null,
+                bookServiceApi,
+                httpApi,
+                diskApi,
+                appFolder,
+                null,
+                configService,
+                configFile,
+                null,
+                deferredApi,
+                LogManager.GetCurrentClassLogger());
+        }
+
+        private static Book CreateBookWithCover(int id, bool monitoredEdition, string coverUrl, bool audiobookMonitored = false)
+        {
+            return new Book
+            {
+                Id = id,
+                Title = $"Book {id}",
+                MediaType = BookMediaType.Audiobook,
+                AudiobookMonitored = audiobookMonitored,
+                Editions = new List<Edition>
+                {
+                    new()
+                    {
+                        Id = id * 10,
+                        Monitored = monitoredEdition,
+                        Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                        {
+                            new(MediaCoverTypes.Cover, coverUrl)
+                        }
+                    }
+                }
+            };
+        }
+
+        [Test]
+        public void library_cover_batch_should_query_eligibility_once_and_skip_nonlibrary_books()
+        {
+            var subject = CreateBookCoverSubject(
+                CoverDownloadScope.LibraryBooks,
+                new[] { 2 },
+                out var bookService,
+                out _,
+                out var httpClient,
+                out var deferred);
+            var books = new List<Book>
+            {
+                CreateBookWithCover(1, monitoredEdition: true, "https://images.example/unmonitored-one.jpg"),
+                CreateBookWithCover(2, monitoredEdition: true, "https://images.example/monitored.jpg", audiobookMonitored: true),
+                CreateBookWithCover(3, monitoredEdition: true, "https://images.example/unmonitored-two.jpg")
+            };
+
+            subject.EnsureBookCoversForBooks(books);
+
+            Assert.That(bookService.LibraryBookIdQueries, Has.Count.EqualTo(1));
+            Assert.That(bookService.LibraryBookIdQueries.Single(), Is.EqualTo(new[] { 1, 2, 3 }));
+            Assert.That(httpClient.RequestedUrls, Is.EqualTo(new[] { "https://images.example/monitored.jpg" }));
+            Assert.That(deferred.MarkedBookIds, Is.EqualTo(new[] { 2 }));
+        }
+
+        [Test]
+        public void all_books_cover_batch_should_not_query_library_eligibility()
+        {
+            var subject = CreateBookCoverSubject(
+                CoverDownloadScope.AllBooks,
+                Array.Empty<int>(),
+                out var bookService,
+                out _,
+                out var httpClient,
+                out _);
+            var books = new List<Book>
+            {
+                CreateBookWithCover(11, monitoredEdition: true, "https://images.example/all-one.jpg"),
+                CreateBookWithCover(12, monitoredEdition: true, "https://images.example/all-two.jpg")
+            };
+
+            subject.EnsureBookCoversForBooks(books);
+
+            Assert.That(bookService.LibraryBookIdQueries, Is.Empty);
+            Assert.That(httpClient.RequestedUrls, Is.EquivalentTo(new[]
+            {
+                "https://images.example/all-one.jpg",
+                "https://images.example/all-two.jpg"
+            }));
+        }
+
+        [Test]
+        public void import_cover_should_bypass_scope_and_deferral_but_use_only_the_monitored_edition()
+        {
+            var subject = CreateBookCoverSubject(
+                CoverDownloadScope.LibraryBooks,
+                Array.Empty<int>(),
+                out var bookService,
+                out _,
+                out var httpClient,
+                out var deferred);
+            deferred.ShouldDefer = true;
+            var book = new Book
+            {
+                Id = 20,
+                Title = "Imported book",
+                Editions = new List<Edition>
+                {
+                    new()
+                    {
+                        Id = 201,
+                        Monitored = false,
+                        Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                        {
+                            new(MediaCoverTypes.Cover, "https://images.example/unmonitored-edition.jpg")
+                        }
+                    },
+                    new()
+                    {
+                        Id = 202,
+                        Monitored = true,
+                        Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                        {
+                            new(MediaCoverTypes.Cover, "https://images.example/monitored-edition.jpg")
+                        }
+                    }
+                }
+            };
+
+            subject.EnsureBookCoversForImport(book);
+
+            Assert.That(bookService.LibraryBookIdQueries, Is.Empty);
+            Assert.That(deferred.MarkedBookIds, Is.Empty);
+            Assert.That(httpClient.RequestedUrls, Is.EqualTo(new[] { "https://images.example/monitored-edition.jpg" }));
+        }
+
+        [Test]
+        public void book_details_should_proxy_ineligible_cover_and_preserve_eligible_local_mapping()
+        {
+            var subject = CreateBookCoverSubject(
+                CoverDownloadScope.LibraryBooks,
+                new[] { 32 },
+                out var bookService,
+                out var disk,
+                out var httpClient,
+                out _);
+            var eligibleUrl = "https://images.example/eligible.jpg";
+            var metadataPath = Path.Combine(ConfigRoot, "MediaCover", "Books", "32", "cover-metadata.json");
+            disk.ExistingPaths.Add(metadataPath);
+            disk.TextByPath[metadataPath] = $"{{\"selectedEdition\":{{\"coverUrl\":\"{eligibleUrl}\",\"downloadedAt\":\"2026-08-07T01:02:03Z\"}}}}";
+            var ineligibleCover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example/detail-only.jpg");
+            var eligibleCover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, eligibleUrl);
+
+            subject.ConvertBookCoversToLocalUrls(new[]
+            {
+                new KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>(31, new List<NzbDrone.Core.MediaCover.MediaCover> { ineligibleCover }),
+                new KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>(32, new List<NzbDrone.Core.MediaCover.MediaCover> { eligibleCover })
+            });
+
+            Assert.That(bookService.LibraryBookIdQueries, Has.Count.EqualTo(1));
+            Assert.That(bookService.LibraryBookIdQueries.Single(), Is.EqualTo(new[] { 31, 32 }));
+            Assert.That(ineligibleCover.Url, Is.Null);
+            Assert.That(ineligibleCover.RemoteUrl, Is.EqualTo("https://images.example/detail-only.jpg"));
+            Assert.That(ineligibleCover.TemporaryUrl, Does.StartWith("/MediaCoverProxy/book/31/detail-only.jpg?v="));
+            Assert.That(eligibleCover.Url, Does.StartWith("/MediaCover/Books/32/cover.jpg?v="));
+            Assert.That(eligibleCover.TemporaryUrl, Is.Null);
+            Assert.That(httpClient.Calls, Is.Zero);
+
+            var systemTextJson = System.Text.Json.JsonSerializer.Serialize(ineligibleCover);
+            using var parsed = System.Text.Json.JsonDocument.Parse(systemTextJson);
+            Assert.That(parsed.RootElement.GetProperty("TemporaryUrl").GetString(), Is.EqualTo(ineligibleCover.TemporaryUrl));
+        }
+
+        [TestCase(CoverDownloadScope.AllBooks)]
+        [TestCase(CoverDownloadScope.LibraryBooks)]
+        public void saved_book_mapping_should_not_register_urls_and_should_version_changed_art(CoverDownloadScope scope)
+        {
+            var proxy = new MediaCoverProxyStub();
+            var subject = CreateBookCoverSubject(scope, Array.Empty<int>(), out var books, out _, out var http, out _, proxy);
+            var covers = Enumerable.Range(1, 1000).Select(id => new KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>(
+                id, new List<NzbDrone.Core.MediaCover.MediaCover> { new(MediaCoverTypes.Cover, $"https://images.example/{id}.jpg") })).ToList();
+
+            subject.ConvertBookCoversToLocalUrls(covers);
+            var firstUrl = covers[0].Value[0].TemporaryUrl ?? covers[0].Value[0].Url;
+            covers[0].Value[0].RemoteUrl = "https://images.example/new-edition.jpg";
+            subject.ConvertBookCoversToLocalUrls(covers);
+            var changedUrl = covers[0].Value[0].TemporaryUrl ?? covers[0].Value[0].Url;
+
+            Assert.That(firstUrl, Does.StartWith("/MediaCoverProxy/book/1/1.jpg?v="));
+            Assert.That(changedUrl, Does.StartWith("/MediaCoverProxy/book/1/new-edition.jpg?v="));
+            Assert.That(changedUrl.Split("?v=")[1], Is.Not.EqualTo(firstUrl.Split("?v=")[1]));
+            Assert.That(proxy.RegisterCalls, Is.Zero);
+            Assert.That(proxy.ProxyCalls, Is.Zero);
+            Assert.That(http.Calls, Is.Zero);
+            Assert.That(books.LibraryBookIdQueries.Count, Is.EqualTo(scope == CoverDownloadScope.LibraryBooks ? 2 : 0));
         }
 
         [TestCase(".jpg")]
@@ -1355,8 +1616,8 @@ namespace Chaptarr.Core.Test.MediaCover
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Book, new[] { cover });
 
-            Assert.That(cover.Url, Is.EqualTo("/MediaCoverProxy/hash/cover.jpg"));
-            Assert.That(proxy.ProxyCalls, Is.EqualTo(1));
+            Assert.That(cover.Url, Does.StartWith("/MediaCoverProxy/book/12/new.jpg?v="));
+            Assert.That(proxy.ProxyCalls, Is.Zero);
         }
 
         [Test]
@@ -1389,9 +1650,9 @@ namespace Chaptarr.Core.Test.MediaCover
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Book, new[] { secondCover });
 
-            Assert.That(firstCover.Url, Is.EqualTo("/MediaCoverProxy/hash/cover.jpg"));
+            Assert.That(firstCover.Url, Does.StartWith("/MediaCoverProxy/book/12/current.jpg?v="));
             Assert.That(secondCover.Url, Is.EqualTo(firstCover.Url));
-            Assert.That(proxy.ProxyCalls, Is.EqualTo(2));
+            Assert.That(proxy.ProxyCalls, Is.Zero);
             Assert.That(fileExistsCalls, Is.EqualTo(1));
             Assert.That(disk.GetCallCount(nameof(IDiskProvider.FileExists)), Is.EqualTo(fileExistsCalls));
             Assert.That(disk.GetCallCount(nameof(IDiskProvider.ReadAllText)), Is.Zero);

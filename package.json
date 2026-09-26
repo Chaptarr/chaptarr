@@ -1,6 +1,6 @@
 {
   "name": "chaptarr",
-  "version": "0.9.1009",
+  "version": "0.9.1010",
   "description": "Chaptarr",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
@@ -15,6 +15,8 @@
     "check-author-photo": "node frontend/build/check-author-photo.cjs",
     "check-author-delete": "node frontend/build/check-author-delete.cjs",
     "check-author-search": "node frontend/build/check-author-search.cjs",
+    "check-book-cover-scope": "node frontend/build/check-book-cover-scope.cjs",
+    "check-media-management-cover-scope": "node frontend/build/check-media-management-cover-scope.cjs",
     "check-confirm-modal": "node frontend/build/check-confirm-modal.cjs",
     "check-mobile-toolbar": "node frontend/build/check-mobile-toolbar.cjs",
     "lint-browser-checks": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore \"frontend/build/check-*.cjs\" \"frontend/build/*-fixture.js\"",

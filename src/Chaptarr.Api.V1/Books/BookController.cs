@@ -2158,7 +2158,7 @@ namespace Chaptarr.Api.V1.Books
         {
             foreach (var book in message.Book.GetBooksMatchingReleaseMediaType())
             {
-                var resource = book.ToResource();
+                var resource = MapToResource(book, false);
                 resource.Grabbed = true;
 
                 BroadcastResourceChange(ModelAction.Updated, resource);

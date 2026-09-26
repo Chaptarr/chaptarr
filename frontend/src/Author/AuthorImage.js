@@ -22,8 +22,13 @@ function getAvailableRenditionSizes(coverType) {
   return [250, 500];
 }
 
-function getUrl(image, coverType, size) {
-  const rawUrl = image?.url || image?.remoteUrl;
+function getUrl(image, coverType, size, allowTemporaryUrl) {
+  let rawUrl = image?.url || image?.remoteUrl;
+  const hasTemporaryUrl = image?.temporaryUrl !== undefined && image.temporaryUrl !== null;
+
+  if (hasTemporaryUrl) {
+    rawUrl = allowTemporaryUrl ? image.temporaryUrl : null;
+  }
 
   if (!rawUrl) {
     return null;
@@ -57,14 +62,15 @@ class AuthorImage extends Component {
     const {
       images,
       coverType,
-      size
+      size,
+      allowTemporaryUrl
     } = props;
 
     const image = findImage(images, coverType);
 
     this.state = {
       image,
-      url: getUrl(image, coverType, size),
+      url: getUrl(image, coverType, size, allowTemporaryUrl),
       isLoaded: false,
       hasError: false,
       retryCount: 0,
@@ -84,6 +90,7 @@ class AuthorImage extends Component {
       coverType,
       placeholder,
       size,
+      allowTemporaryUrl,
       onError
     } = this.props;
 
@@ -94,7 +101,7 @@ class AuthorImage extends Component {
     } = this.state;
 
     const nextImage = findImage(images, coverType);
-    const nextUrl = nextImage ? getUrl(nextImage, coverType, size) : null;
+    const nextUrl = nextImage ? getUrl(nextImage, coverType, size, allowTemporaryUrl) : null;
 
     if (nextUrl !== url) {
       // Clear any pending retry timer when image changes
@@ -120,10 +127,10 @@ class AuthorImage extends Component {
       if (onError) {
         onError();
       }
-    } else if (hasError && nextImage && url !== getUrl(nextImage, coverType, size)) {
+    } else if (hasError && nextImage && url !== getUrl(nextImage, coverType, size, allowTemporaryUrl)) {
       // If we had an error but the URL has changed (e.g., from external to local), retry
       this.setState({
-        url: getUrl(nextImage, coverType, size),
+        url: getUrl(nextImage, coverType, size, allowTemporaryUrl),
         hasError: false,
         isLoaded: false
       });
@@ -317,6 +324,7 @@ AuthorImage.propTypes = {
   overflow: PropTypes.bool.isRequired,
   blurBackground: PropTypes.bool.isRequired,
   showPlaceholderWhileLoading: PropTypes.bool.isRequired,
+  allowTemporaryUrl: PropTypes.bool,
   onError: PropTypes.func,
   onLoad: PropTypes.func
 };
@@ -326,7 +334,8 @@ AuthorImage.defaultProps = {
   lazy: true,
   overflow: false,
   blurBackground: false,
-  showPlaceholderWhileLoading: false
+  showPlaceholderWhileLoading: false,
+  allowTemporaryUrl: false
 };
 
 export default AuthorImage;

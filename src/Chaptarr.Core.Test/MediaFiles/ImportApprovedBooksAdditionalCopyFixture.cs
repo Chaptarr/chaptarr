@@ -477,6 +477,18 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private sealed class StubCoverMapper : IMapCoversToLocal
         {
+            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            {
+                foreach (var book in covers)
+                {
+                    ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value);
+                }
+            }
+
+            public void DeleteBookCovers(int bookId) => throw new NotImplementedException();
+
             public string CoverPath { get; set; }
             public int EnsureBookCoversCalls { get; private set; }
 

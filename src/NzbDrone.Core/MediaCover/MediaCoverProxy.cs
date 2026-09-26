@@ -18,7 +18,7 @@ namespace NzbDrone.Core.MediaCover
         void ProxyRemoteUrls(IEnumerable<MediaCover> covers);
 
         string GetUrl(string hash);
-        byte[] GetImage(string hash);
+        byte[] GetImageFromUrl(string url);
     }
 
     public class MediaCoverProxy : IMediaCoverProxy
@@ -63,7 +63,7 @@ namespace NzbDrone.Core.MediaCover
             return _configFileProvider.UrlBase + @"/MediaCoverProxy/" + hash + "/" + fileName;
         }
 
-        private static string GetProxyFileName(string url)
+        internal static string GetProxyFileName(string url)
         {
             var fileName = Uri.TryCreate(url, UriKind.Absolute, out var uri)
                 ? Path.GetFileName(uri.AbsolutePath)
@@ -108,10 +108,8 @@ namespace NzbDrone.Core.MediaCover
             return result;
         }
 
-        public byte[] GetImage(string hash)
+        public byte[] GetImageFromUrl(string url)
         {
-            var url = GetUrl(hash);
-
             if (!TryGetSafeImageUrl(url, out var currentUrl, out var reason))
             {
                 throw new WebException($"Blocked unsafe image URL '{url}': {reason}", WebExceptionStatus.ProtocolError);

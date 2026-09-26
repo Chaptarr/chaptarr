@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -28,6 +29,10 @@ namespace NzbDrone.Core.MediaCover
         string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null);
         void EnsureAuthorCovers(Author author);
         void EnsureBookCovers(Book book);
+        void EnsureBookCoversForBooks(List<Book> books);
+        void EnsureBookCoversForImport(Book book);
+        void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers);
+        void DeleteBookCovers(int bookId);
         Task<EnsureImageResult> EnsureAuthorImage(Author author, MediaCover cover);
     }
 
@@ -398,7 +403,30 @@ namespace NzbDrone.Core.MediaCover
             return Path.Combine(GetAuthorCoverPath(entityId), coverType.ToString().ToLower() + heightSuffix + GetExtension(coverType, extension));
         }
 
+        public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers)
+        {
+            var books = covers.ToList();
+            var eligible = LibraryCoversOnly
+                ? _bookService.GetLibraryBookIds(books.Select(book => book.Key)).ToHashSet()
+                : null;
+
+            foreach (var book in books)
+            {
+                ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value, null,
+                    eligible == null || eligible.Contains(book.Key));
+            }
+        }
+
+        private bool LibraryCoversOnly => _configService?.CoverDownloadScope == CoverDownloadScope.LibraryBooks;
+
         public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash = null)
+        {
+            var eligible = coverEntity != MediaCoverEntity.Book || entityId <= 0 || !LibraryCoversOnly ||
+                _bookService.GetLibraryBookIds(new[] { entityId }).Contains(entityId);
+            ConvertToLocalUrls(entityId, coverEntity, covers, selectedAuthorImageHash, eligible);
+        }
+
+        private void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash, bool cacheBookCover)
         {
             var coverList = covers?.Where(cover => cover != null).ToList() ?? new List<MediaCover>();
 
@@ -432,6 +460,14 @@ namespace NzbDrone.Core.MediaCover
 
                 var remoteUrl = mediaCover.RemoteUrl ?? mediaCover.Url;
                 mediaCover.RemoteUrl = remoteUrl;
+                mediaCover.TemporaryUrl = null;
+                if (coverEntity == MediaCoverEntity.Book && !cacheBookCover)
+                {
+                    mediaCover.TemporaryUrl = GetTemporaryBookCoverUrl(entityId, remoteUrl) ?? string.Empty;
+                    mediaCover.Url = null;
+                    continue;
+                }
+
                 string filePath = null;
                 string cacheToken = null;
 
@@ -477,13 +513,30 @@ namespace NzbDrone.Core.MediaCover
                 }
                 else if (!string.IsNullOrWhiteSpace(remoteUrl) && remoteUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                 {
-                    mediaCover.Url = remoteUrl;
-                    _mediaCoverProxy.ProxyRemoteUrls(new[] { mediaCover });
+                    if (coverEntity == MediaCoverEntity.Book)
+                    {
+                        mediaCover.Url = GetTemporaryBookCoverUrl(entityId, remoteUrl);
+                    }
+                    else
+                    {
+                        mediaCover.Url = remoteUrl;
+                        _mediaCoverProxy.ProxyRemoteUrls(new[] { mediaCover });
+                    }
                 }
             }
 
             // Selecting a local rendition must not reorder the provider list: carousel
             // positions and navigation must survive the resource update after each save.
+        }
+
+        private string GetTemporaryBookCoverUrl(int bookId, string remoteUrl)
+        {
+            if (string.IsNullOrWhiteSpace(remoteUrl) || MediaCoverRendition.IsKnownPlaceholderImageUrl(remoteUrl))
+            {
+                return null;
+            }
+
+            return $"{_configFileProvider.UrlBase}/MediaCoverProxy/book/{bookId}/{MediaCoverProxy.GetProxyFileName(remoteUrl)}?v={remoteUrl.SHA256Hash()}";
         }
 
         private string GetDeterministicLocalCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCover mediaCover)
@@ -984,14 +1037,59 @@ namespace NzbDrone.Core.MediaCover
 
         public void EnsureBookCovers(Book book)
         {
-            if (book == null || book.Id == 0)
+            if (book == null || book.Id <= 0)
+            {
+                return;
+            }
+
+            var eligible = !LibraryCoversOnly || _bookService.GetLibraryBookIds(new[] { book.Id }).Contains(book.Id);
+            EnsureBookCovers(book, eligible, forImport: false);
+        }
+
+        public void EnsureBookCoversForImport(Book book)
+        {
+            // An import needs its cover before the first file record can be committed.
+            EnsureBookCovers(book, eligible: true, forImport: true);
+        }
+
+        public void EnsureBookCoversForBooks(List<Book> books)
+        {
+            var candidates = books?.Where(book => book?.Id > 0).DistinctBy(book => book.Id).ToList() ?? new List<Book>();
+            var timer = Stopwatch.StartNew();
+            HashSet<int> eligible = null;
+            var skipped = 0;
+            foreach (var book in candidates)
+            {
+                var libraryOnly = LibraryCoversOnly;
+                if (libraryOnly && eligible == null)
+                {
+                    eligible = _bookService.GetLibraryBookIds(candidates.Select(candidate => candidate.Id)).ToHashSet();
+                }
+
+                var keep = !libraryOnly || eligible.Contains(book.Id);
+                if (!keep)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                EnsureBookCovers(book, eligible: true, forImport: false);
+            }
+
+            _logger.Debug("Book-cover batch: {0} considered, {1} eligible, {2} skipped in {3} ms",
+                candidates.Count, candidates.Count - skipped, skipped, timer.ElapsedMilliseconds);
+        }
+
+        private void EnsureBookCovers(Book book, bool eligible, bool forImport)
+        {
+            if (book == null || book.Id <= 0 || (!forImport && LibraryCoversOnly && !eligible))
             {
                 return;
             }
 
             // Atomically queue the cover when downloads are deferred. Import callers can
             // legitimately hand us a null/unsaved book during rollback.
-            if (_deferredCoverService.MarkBookForCoverDownload(book.Id))
+            if (!forImport && _deferredCoverService.MarkBookForCoverDownload(book.Id))
             {
                 _logger.Debug("Cover download deferred for book {0}: {1}", book.Id, book.Title);
                 return;
@@ -1204,19 +1302,21 @@ namespace NzbDrone.Core.MediaCover
                    storedCoverUrl.Equals(remoteUrl, StringComparison.OrdinalIgnoreCase);
         }
 
-        private void RemoveBookCoverArtifacts(int bookId)
+        public void DeleteBookCovers(int bookId)
         {
             _bookCoverMetadataByBookId.TryRemove(bookId, out _);
-
             var coverPath = GetBookCoverPath(bookId);
-            if (!_diskProvider.FolderExists(coverPath))
-            {
-                return;
-            }
-
-            try
+            if (_diskProvider.FolderExists(coverPath))
             {
                 _diskProvider.DeleteFolder(coverPath, recursive: true);
+            }
+        }
+
+        private void RemoveBookCoverArtifacts(int bookId)
+        {
+            try
+            {
+                DeleteBookCovers(bookId);
             }
             catch (Exception ex)
             {
@@ -1559,10 +1659,7 @@ namespace NzbDrone.Core.MediaCover
 
                 // Restore Readarr's eager child-cover lifecycle, while Chaptarr's
                 // selector restricts persistence to each book's monitored edition.
-                foreach (var book in _bookService.GetBooksByAuthor(message.Author.Id))
-                {
-                    EnsureBookCovers(book);
-                }
+                EnsureBookCoversForBooks(_bookService.GetBooksByAuthor(message.Author.Id));
 
 	            _eventAggregator.PublishEvent(new MediaCoversUpdatedEvent(message.Author));
 	        }
@@ -1584,12 +1681,7 @@ namespace NzbDrone.Core.MediaCover
 
         public void HandleAsync(BookDeletedEvent message)
         {
-            _bookCoverMetadataByBookId.TryRemove(message.Book.Id, out _);
-            var path = GetBookCoverPath(message.Book.Id);
-            if (_diskProvider.FolderExists(path))
-            {
-                _diskProvider.DeleteFolder(path, true);
-            }
+            DeleteBookCovers(message.Book.Id);
         }
 
 	        private static bool IsAudiobookEdition(Edition edition)

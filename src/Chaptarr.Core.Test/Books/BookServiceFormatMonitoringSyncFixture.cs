@@ -438,6 +438,122 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void bulk_monitoring_should_publish_individual_and_one_aggregate_edit_event()
+        {
+            var author = BuildAuthor(1, sync: false);
+            var first = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
+            var second = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: false);
+            var repository = new StubBookRepository(new[] { first, second });
+            var events = new StubEventAggregator();
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), events);
+
+            service.SetMonitored(new[] { first.Id, second.Id }, true);
+
+            var changes = events.Published.OfType<BookEditedEvent>().ToList();
+            var aggregate = events.Published.OfType<BooksEditedEvent>().Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(changes, Has.Count.EqualTo(2));
+                Assert.That(aggregate.Changes.Select(change => change.Book.Id), Is.EqualTo(new[] { first.Id, second.Id }));
+                Assert.That(events.Published.Last(), Is.SameAs(aggregate));
+            });
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void quiet_bulk_update_should_publish_only_aggregate_event_for_a_newly_monitored_book(BookMediaType mediaType)
+        {
+            var author = BuildAuthor(1, sync: false);
+            var storedBook = BuildBook(10, author.Id, mediaType, "hc:work-1", monitored: false);
+            var updatedBook = BuildBook(10, author.Id, mediaType, "hc:work-1", monitored: true);
+            var repository = new StubBookRepository(new[] { storedBook });
+            var events = new StubEventAggregator();
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), events);
+
+            service.UpdateMany(new List<Book> { updatedBook });
+
+            var aggregate = events.Published.OfType<BooksEditedEvent>().Single();
+            var change = aggregate.Changes.Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(change.Book.Id, Is.EqualTo(updatedBook.Id));
+                Assert.That(change.OldBook.IsMonitored(), Is.False);
+                Assert.That(change.Book.IsMonitored(), Is.True);
+                Assert.That(events.Published.OfType<BookEditedEvent>(), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void quiet_bulk_update_should_publish_sync_sibling_with_its_stored_monitoring_snapshot()
+        {
+            var author = BuildAuthor(1);
+            var storedAudiobook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
+            var storedEbook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: false);
+            var updatedAudiobook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
+            var repository = new StubBookRepository(new[] { storedAudiobook, storedEbook });
+            var events = new StubEventAggregator();
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), events);
+
+            service.UpdateMany(new List<Book> { updatedAudiobook });
+
+            var aggregate = events.Published.OfType<BooksEditedEvent>().Single();
+            var audiobookChange = aggregate.Changes.Single(change => change.Book.Id == storedAudiobook.Id);
+            var ebookChange = aggregate.Changes.Single(change => change.Book.Id == storedEbook.Id);
+            Assert.Multiple(() =>
+            {
+                Assert.That(audiobookChange.OldBook.AudiobookMonitored, Is.False);
+                Assert.That(audiobookChange.Book.AudiobookMonitored, Is.True);
+                Assert.That(ebookChange.OldBook.EbookMonitored, Is.False);
+                Assert.That(ebookChange.Book.EbookMonitored, Is.True);
+                Assert.That(ebookChange.OldBook, Is.Not.SameAs(storedEbook));
+                Assert.That(repository.Get(storedEbook.Id).EbookMonitored, Is.True);
+                Assert.That(events.Published.OfType<BookEditedEvent>(), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void quiet_bulk_update_should_not_publish_cover_event_for_unchanged_or_unmonitored_rows()
+        {
+            var author = BuildAuthor(1, sync: false);
+            var storedMonitored = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
+            var storedUnmonitored = BuildBook(11, author.Id, BookMediaType.Audiobook, "hc:work-2", monitored: false);
+            var updatedMonitored = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
+            var unchangedUnmonitored = BuildBook(11, author.Id, BookMediaType.Audiobook, "hc:work-2", monitored: false);
+            var repository = new StubBookRepository(new[] { storedMonitored, storedUnmonitored });
+            var events = new StubEventAggregator();
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), events);
+
+            service.UpdateMany(new List<Book> { updatedMonitored, unchangedUnmonitored });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(events.Published.OfType<BooksEditedEvent>(), Is.Empty);
+                Assert.That(events.Published.OfType<BookEditedEvent>(), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void quiet_bulk_update_should_ignore_rows_missing_from_the_repository()
+        {
+            var author = BuildAuthor(1, sync: false);
+            var storedBook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
+            var updatedBook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
+            var deletedBook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-2", monitored: true);
+            var repository = new StubBookRepository(new[] { storedBook });
+            var events = new StubEventAggregator();
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), events);
+
+            Assert.DoesNotThrow(() => service.UpdateMany(new List<Book> { updatedBook, deletedBook }));
+
+            var aggregate = events.Published.OfType<BooksEditedEvent>().Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(aggregate.Changes.Select(change => change.Book.Id), Is.EqualTo(new[] { updatedBook.Id }));
+                Assert.That(events.Published.OfType<BookEditedEvent>(), Is.Empty);
+            });
+        }
+
+        [Test]
         public void set_book_monitored_should_enable_one_sibling_format()
         {
             var author = BuildAuthor(1);

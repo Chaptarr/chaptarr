@@ -14,6 +14,8 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaCover;
 
@@ -86,12 +88,98 @@ namespace Chaptarr.Core.Test.MediaCover
 
             public string RegisterUrl(string url) => throw new NotImplementedException();
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers) => throw new NotImplementedException();
-            public string GetUrl(string hash) => throw new NotImplementedException();
-            public byte[] GetImage(string hash) => Missing
+            public string GetUrl(string hash) => Missing ? throw new KeyNotFoundException() : "https://images.example/cover.jpg";
+            public byte[] GetImageFromUrl(string url) => Missing
                 ? throw new KeyNotFoundException()
                 : Placeholder
                     ? throw new PlaceholderImageException("https://images.example/default.jpg", "known")
                     : new byte[] { 1, 2, 3 };
+        }
+
+        private class BookServiceProxy : DispatchProxy
+        {
+            public Book Book { get; set; }
+            public int Calls { get; private set; }
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name != nameof(IBookService.GetBook))
+                {
+                    throw new NotImplementedException(method.Name);
+                }
+
+                Calls++;
+                return Book ?? throw new ModelNotFoundException(typeof(Book), (int)args[0]);
+            }
+        }
+
+        private static IBookService BookServiceWithCover(bool monitored = true)
+        {
+            var service = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)service).Book = new Book
+            {
+                Id = 31,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 1, Monitored = false, Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                    {
+                        new(MediaCoverTypes.Cover, "http://127.0.0.1/unmonitored.jpg")
+                    } },
+                    new Edition { Id = 2, Monitored = monitored, Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                    {
+                        new(MediaCoverTypes.Cover, "https://1.1.1.1/monitored.jpg")
+                    } }
+                }
+            };
+            return service;
+        }
+
+        [Test]
+        public void saved_book_proxy_should_resolve_monitored_art_without_registration_after_restart()
+        {
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var books = BookServiceWithCover();
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, books, Logger);
+
+            var result = mapper.GetResponse("/MediaCoverProxy/book/31/cover.jpg?v=previous-image") as FileContentResult;
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(((HttpClientProxy)(object)httpClient).LastRequest.Url.ToString(), Is.EqualTo("https://1.1.1.1/monitored.jpg"));
+            Assert.That(((BookServiceProxy)(object)books).Calls, Is.EqualTo(1));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void saved_book_without_monitored_art_or_deleted_should_return_not_found(bool deleted)
+        {
+            var books = BookServiceWithCover(monitored: false);
+            if (deleted)
+            {
+                ((BookServiceProxy)(object)books).Book = null;
+            }
+
+            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub(), books, Logger);
+            var result = mapper.GetResponse("/MediaCoverProxy/book/31/cover.jpg") as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+        }
+
+        [Test]
+        public void saved_book_proxy_should_keep_the_existing_private_address_guard()
+        {
+            var books = BookServiceWithCover();
+            ((BookServiceProxy)(object)books).Book.Editions[1].Images[0].Url = "http://127.0.0.1/private.jpg";
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, books, Logger);
+
+            var result = mapper.GetResponse("/MediaCoverProxy/book/31/cover.jpg") as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+            Assert.That(((HttpClientProxy)(object)httpClient).LastRequest, Is.Null);
         }
 
         [Test]
@@ -141,7 +229,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/cover.jpg");
             var hash = proxyUrl.Split('/')[3];
 
-            Assert.Throws<InvalidDataException>(() => proxy.GetImage(hash));
+            Assert.Throws<InvalidDataException>(() => proxy.GetImageFromUrl(proxy.GetUrl(hash)));
         }
 
         [Test]
@@ -155,7 +243,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var proxyUrl = proxy.RegisterUrl(remoteUrl);
             var hash = proxyUrl.Split('/')[3];
 
-            Assert.Throws<PlaceholderImageException>(() => proxy.GetImage(hash));
+            Assert.Throws<PlaceholderImageException>(() => proxy.GetImageFromUrl(proxy.GetUrl(hash)));
             Assert.That(MediaCoverRendition.IsKnownPlaceholderImageUrl(remoteUrl), Is.True);
             Assert.That(proxy.RegisterUrl(remoteUrl), Is.Null);
         }
@@ -163,7 +251,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void expired_proxy_mapping_should_return_not_found()
         {
-            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Missing = true }, Logger);
+            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Missing = true }, null, Logger);
 
             var result = mapper.GetResponse("/MediaCoverProxy/missing/cover.jpg") as StatusCodeResult;
 
@@ -173,7 +261,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void placeholder_proxy_response_should_return_not_found()
         {
-            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Placeholder = true }, Logger);
+            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub { Placeholder = true }, null, Logger);
 
             var result = mapper.GetResponse("/MediaCoverProxy/placeholder/cover.jpg") as StatusCodeResult;
 
@@ -189,7 +277,7 @@ namespace Chaptarr.Core.Test.MediaCover
             client.FailureStatusCode = HttpStatusCode.Forbidden;
             var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
             var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/challenged.jfif");
-            var mapper = new MediaCoverProxyMapper(proxy, Logger);
+            var mapper = new MediaCoverProxyMapper(proxy, null, Logger);
 
             var result = mapper.GetResponse(proxyUrl.Substring(config.UrlBase.Length)) as StatusCodeResult;
 
@@ -206,7 +294,7 @@ namespace Chaptarr.Core.Test.MediaCover
             client.NetworkFailureStatus = WebExceptionStatus.Timeout;
             var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
             var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/timeout.jpg");
-            var mapper = new MediaCoverProxyMapper(proxy, Logger);
+            var mapper = new MediaCoverProxyMapper(proxy, null, Logger);
 
             var result = mapper.GetResponse(proxyUrl.Substring(config.UrlBase.Length)) as StatusCodeResult;
 
@@ -214,11 +302,12 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(client.LastRequest.LogHttpError, Is.False);
         }
 
-        [Test]
-        public async Task proxied_image_response_should_enable_private_browser_caching()
+        [TestCase("/MediaCoverProxy/found/cover.jpg")]
+        [TestCase("/MediaCoverProxy/book/31/cover.jpg?v=current")]
+        public async Task proxied_image_response_should_enable_private_browser_caching(string path)
         {
-            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub(), Logger);
-            var result = mapper.GetResponse("/MediaCoverProxy/found/cover.jpg");
+            var mapper = new MediaCoverProxyMapper(new MediaCoverProxyStub(), BookServiceWithCover(), Logger);
+            var result = mapper.GetResponse(path);
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddControllers();

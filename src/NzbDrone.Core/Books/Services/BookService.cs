@@ -132,6 +132,7 @@ namespace NzbDrone.Core.Books
             PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
             PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null) => GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
             List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null) => throw new NotImplementedException();
+            List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null) => throw new NotImplementedException();
         }
 
     public class BookService : IBookService,
@@ -1816,14 +1817,6 @@ namespace NzbDrone.Core.Books
             return syncUpdates;
         }
 
-        private void EnsureAuthorLoadedForEvent(Book book)
-        {
-            if (_authorService != null && book?.AuthorId > 0 && (book.Author == null || string.IsNullOrWhiteSpace(book.Author.Name)))
-            {
-                book.Author = _authorService.GetAuthor(book.AuthorId);
-            }
-        }
-
         private void PublishBookEditedEvents(IEnumerable<BookMonitoringSyncUpdate> updates)
         {
             var updateList = updates?.ToList() ?? new List<BookMonitoringSyncUpdate>();
@@ -1843,6 +1836,8 @@ namespace NzbDrone.Core.Books
                 authorsById[authorId] = _authorService.GetAuthor(authorId);
             }
 
+            var changes = new List<BookEditedEvent>();
+
             foreach (var update in updateList)
             {
                 if (update.Book?.AuthorId > 0 && authorsById.TryGetValue(update.Book.AuthorId, out var author))
@@ -1855,7 +1850,17 @@ namespace NzbDrone.Core.Books
                     update.Stored.Author = author;
                 }
 
-                _eventAggregator.PublishEvent(new BookEditedEvent(update.Book, update.Stored));
+                changes.Add(new BookEditedEvent(update.Book, update.Stored));
+            }
+
+            foreach (var change in changes)
+            {
+                _eventAggregator.PublishEvent(change);
+            }
+
+            if (changes.Count > 0)
+            {
+                _eventAggregator.PublishEvent(new BooksEditedEvent(changes));
             }
         }
 
@@ -1914,6 +1919,28 @@ namespace NzbDrone.Core.Books
 
             _bookRepository.UpdateMany(booksToUpdate);
             RefreshBookProviderAliases(booksToUpdate);
+
+            // Quiet saves notify aggregate consumers when a row becomes monitored without invoking per-book lifecycle listeners.
+            var newlyMonitoredBooks = books
+                .Select(book => new BookMonitoringSyncUpdate
+                {
+                    Book = book,
+                    Stored = storedById.GetValueOrDefault(book.Id)
+                })
+                .Concat(syncUpdates)
+                .GroupBy(update => update.Book.Id)
+                .Select(group => group.First())
+                .Where(update =>
+                    update.Stored != null &&
+                    ((!update.Stored.AudiobookMonitored && update.Book.AudiobookMonitored) ||
+                     (!update.Stored.EbookMonitored && update.Book.EbookMonitored)))
+                .Select(update => new BookEditedEvent(update.Book, update.Stored))
+                .ToList();
+
+            if (newlyMonitoredBooks.Count > 0)
+            {
+                _eventAggregator.PublishEvent(new BooksEditedEvent(newlyMonitoredBooks));
+            }
         }
 
         public void UpdateManyWithLifecycle(List<Book> books)
@@ -2274,15 +2301,10 @@ namespace NzbDrone.Core.Books
                 _bookRepository.UpdateMany(syncUpdates.Select(update => update.Book).ToList());
             }
 
-            // Ensure author relationship is loaded before publishing event
-            if (book.AuthorId > 0 && (book.Author == null || string.IsNullOrWhiteSpace(book.Author.Name)))
+            PublishBookEditedEvents(new[]
             {
-                book.Author = _authorService.GetAuthor(book.AuthorId);
-            }
-
-            // publish book edited event so author stats update
-            _eventAggregator.PublishEvent(new BookEditedEvent(book, storedBook));
-            PublishBookEditedEvents(syncUpdates);
+                new BookMonitoringSyncUpdate { Book = book, Stored = storedBook }
+            }.Concat(syncUpdates));
 
             _logger.Debug("Monitored flag for Book:{0} was set to {1}", bookId, monitored);
         }
@@ -2309,19 +2331,11 @@ namespace NzbDrone.Core.Books
                 _bookRepository.UpdateMany(booksToUpdate);
             }
 
-            // publish book edited event so author stats update
-            foreach (var book in books)
+            PublishBookEditedEvents(books.Select(book => new BookMonitoringSyncUpdate
             {
-                // Ensure author relationship is loaded before publishing event
-                if (book.AuthorId > 0 && (book.Author == null || string.IsNullOrWhiteSpace(book.Author.Name)))
-                {
-                    book.Author = _authorService.GetAuthor(book.AuthorId);
-                }
-
-                _eventAggregator.PublishEvent(new BookEditedEvent(book, storedById[book.Id]));
-            }
-
-            PublishBookEditedEvents(syncUpdates);
+                Book = book,
+                Stored = storedById[book.Id]
+            }).Concat(syncUpdates));
         }
 
         public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored)
@@ -2405,13 +2419,11 @@ namespace NzbDrone.Core.Books
                 _bookRepository.UpdateMany(booksToUpdate);
             }
 
-            foreach (var book in booksToMutate)
+            PublishBookEditedEvents(booksToMutate.Select(book => new BookMonitoringSyncUpdate
             {
-                EnsureAuthorLoadedForEvent(book);
-                _eventAggregator.PublishEvent(new BookEditedEvent(book, storedById[book.Id]));
-            }
-
-            PublishBookEditedEvents(syncUpdates);
+                Book = book,
+                Stored = storedById[book.Id]
+            }).Concat(syncUpdates));
         }
 
         public void UpdateLastSearchTime(List<Book> books)
@@ -3078,6 +3090,11 @@ namespace NzbDrone.Core.Books
             public List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null)
             {
                 return _bookRepository.GetBookIds(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+            }
+
+            public List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null)
+            {
+                return _bookRepository.GetLibraryBookIds(bookIds);
             }
 
                 public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null)

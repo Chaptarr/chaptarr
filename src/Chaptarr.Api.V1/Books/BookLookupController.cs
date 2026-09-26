@@ -216,6 +216,8 @@ namespace Chaptarr.Api.V1.Books
 
         private IEnumerable<BookResource> MapToResource(IEnumerable<NzbDrone.Core.Books.Book> books, ReadarrFacadeContext facadeContext)
         {
+            var resources = new List<BookResource>();
+
             foreach (var currentBook in books)
             {
                 var resource = currentBook.ToResource(new BookResourceMappingOptions { FacadeContext = facadeContext });
@@ -228,8 +230,6 @@ namespace Chaptarr.Api.V1.Books
                     .Select(x => x.ToLocalInstanceResource())
                     .Where(x => x != null)
                     .ToList();
-
-                _coverMapper.ConvertToLocalUrls(resource.Id, MediaCoverEntity.Book, resource.Images);
 
                 // Readarr/Seerr: lookup responses must include editions so clients can post them back on add.
                 resource.Editions = currentBook.Editions?.ToResource(facadeContext) ?? new List<EditionResource>();
@@ -250,8 +250,16 @@ namespace Chaptarr.Api.V1.Books
                     resource.RemoteCover = cover.Url;
                 }
 
-                yield return resource;
+                resources.Add(resource);
             }
+
+            if (resources.Count > 0)
+            {
+                _coverMapper.ConvertBookCoversToLocalUrls(resources.Select(resource =>
+                    new KeyValuePair<int, List<MediaCover>>(resource.Id, resource.Images)));
+            }
+
+            return resources;
         }
     }
 }

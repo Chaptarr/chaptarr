@@ -6963,7 +6963,7 @@
         }
       }
     },
-    "/api/v1/config/mediamanagement": {
+    "/api/v1/config/mediamanagement/covercleanup": {
       "get": {
         "tags": [
           "MediaManagementConfig"
@@ -6974,17 +6974,17 @@
             "content": {
               "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                  "$ref": "#/components/schemas/BookCoverCleanupResource"
                 }
               },
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                  "$ref": "#/components/schemas/BookCoverCleanupResource"
                 }
               },
               "text/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                  "$ref": "#/components/schemas/BookCoverCleanupResource"
                 }
               }
             }
@@ -7069,6 +7069,35 @@
             "description": "OK",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/mediamanagement": {
+      "get": {
+        "tags": [
+          "MediaManagementConfig"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                }
+              },
+              "text/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MediaManagementConfigResource"
                 }
@@ -13631,6 +13660,20 @@
         },
         "additionalProperties": false
       },
+      "BookCoverCleanupResource": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "bookCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
       "BookEditorResource": {
         "type": "object",
         "properties": {
@@ -14670,6 +14713,13 @@
           }
         },
         "additionalProperties": false
+      },
+      "CoverDownloadScope": {
+        "enum": [
+          "allBooks",
+          "libraryBooks"
+        ],
+        "type": "string"
       },
       "CustomFilterResource": {
         "type": "object",
@@ -17168,6 +17218,10 @@
             "type": "string",
             "nullable": true
           },
+          "temporaryUrl": {
+            "type": "string",
+            "nullable": true
+          },
           "hash": {
             "type": "string",
             "nullable": true
@@ -17229,6 +17283,9 @@
           },
           "autoUnmonitorPreviouslyDownloadedBooks": {
             "type": "boolean"
+          },
+          "coverDownloadScope": {
+            "$ref": "#/components/schemas/CoverDownloadScope"
           },
           "recycleBin": {
             "type": "string",

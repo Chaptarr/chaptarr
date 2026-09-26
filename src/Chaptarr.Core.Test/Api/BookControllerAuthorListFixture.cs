@@ -104,7 +104,8 @@ namespace Chaptarr.Core.Test.Api
                 mediaFileService: null,
                 coverMapper: Proxy<IMapCoversToLocal>(new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
-                    [nameof(IMapCoversToLocal.ConvertToLocalUrls)] = (_, _) => null
+                    [nameof(IMapCoversToLocal.ConvertToLocalUrls)] = (_, _) => null,
+                    [nameof(IMapCoversToLocal.ConvertBookCoversToLocalUrls)] = (_, _) => null
                 }),
                 upgradableSpecification: ThrowingProxy<IUpgradableSpecification>(),
                 signalRBroadcaster: null,
@@ -194,7 +195,8 @@ namespace Chaptarr.Core.Test.Api
                 mediaFileService: null,
                 coverMapper: Proxy<IMapCoversToLocal>(new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
-                    [nameof(IMapCoversToLocal.ConvertToLocalUrls)] = (_, _) => null
+                    [nameof(IMapCoversToLocal.ConvertToLocalUrls)] = (_, _) => null,
+                    [nameof(IMapCoversToLocal.ConvertBookCoversToLocalUrls)] = (_, _) => null
                 }),
                 upgradableSpecification: ThrowingProxy<IUpgradableSpecification>(),
                 signalRBroadcaster: null,
@@ -330,7 +332,8 @@ namespace Chaptarr.Core.Test.Api
                 mediaFileService: null,
                 coverMapper: Proxy<IMapCoversToLocal>(new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
-                    [nameof(IMapCoversToLocal.ConvertToLocalUrls)] = (_, _) => null
+                    [nameof(IMapCoversToLocal.ConvertToLocalUrls)] = (_, _) => null,
+                    [nameof(IMapCoversToLocal.ConvertBookCoversToLocalUrls)] = (_, _) => null
                 }),
                 upgradableSpecification: ThrowingProxy<IUpgradableSpecification>(),
                 signalRBroadcaster: Proxy<IBroadcastSignalRMessage>(new Dictionary<string, Func<MethodInfo, object[], object>>

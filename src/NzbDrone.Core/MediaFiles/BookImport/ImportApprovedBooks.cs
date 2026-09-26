@@ -2060,7 +2060,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 try
                 {
-                    _coverMapper.EnsureBookCovers(book);
+                    _coverMapper.EnsureBookCoversForImport(book);
                 }
                 catch (Exception ex)
                 {
@@ -3377,6 +3377,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         {
             try
             {
+                if (newDownload && bookFile?.CalibreId > 0 && bookFile.Edition?.Book != null)
+                {
+                    try
+                    {
+                        _coverMapper?.EnsureBookCoversForImport(bookFile.Edition.Book);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Debug(ex, "[{0}] Unable to ensure the imported Calibre book cover", route);
+                    }
+                }
+
                 _metadataTagService.WriteTags(bookFile, newDownload);
             }
             catch (Exception ex)

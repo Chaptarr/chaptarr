@@ -9,6 +9,7 @@ using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Core.Configuration.Events;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
@@ -538,6 +539,12 @@ namespace NzbDrone.Core.Configuration
         {
             get { return GetValue("AddNewDefaultMediaType", string.Empty); }
             set { SetValue("AddNewDefaultMediaType", (value ?? string.Empty).Trim().ToLowerInvariant()); }
+        }
+
+        public CoverDownloadScope CoverDownloadScope
+        {
+            get { return GetValueEnum("CoverDownloadScope", CoverDownloadScope.AllBooks); }
+            set { SetValue("CoverDownloadScope", value); }
         }
 
         public bool CleanupMetadataImages

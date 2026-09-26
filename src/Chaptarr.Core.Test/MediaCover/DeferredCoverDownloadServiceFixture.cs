@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Reflection;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
@@ -28,6 +30,7 @@ namespace Chaptarr.Core.Test.MediaCover
             }
 
             public List<int> RequestedBookIds { get; } = new();
+            public List<List<int>> RequestedFileBatches { get; } = new();
 
             public List<Book> GetBooks(IEnumerable<int> bookIds)
             {
@@ -64,7 +67,11 @@ namespace Chaptarr.Core.Test.MediaCover
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
+            public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds)
+            {
+                RequestedFileBatches.Add(fileIds.ToList());
+                return _booksById.Values.ToList();
+            }
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
             public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
@@ -101,6 +108,28 @@ namespace Chaptarr.Core.Test.MediaCover
             public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
         }
 
+        private class RecordingCommandQueue : DispatchProxy
+        {
+            public List<Command> Commands { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IManageCommandQueue.Push))
+                {
+                    Commands.Add((Command)args[0]);
+                    return null;
+                }
+
+                throw new NotImplementedException($"Unexpected command queue call: {targetMethod?.Name}");
+            }
+        }
+
+        private static (IManageCommandQueue Queue, RecordingCommandQueue Recorder) CreateCommandQueue()
+        {
+            var queue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueue>();
+            return (queue, (RecordingCommandQueue)(object)queue);
+        }
+
         private sealed class RecordingCoverMapper : IMapCoversToLocal
         {
             public List<int> EnsuredBookIds { get; } = new();
@@ -112,10 +141,116 @@ namespace Chaptarr.Core.Test.MediaCover
                 OnEnsureBook?.Invoke(book);
             }
 
+            public void EnsureBookCoversForBooks(List<Book> books)
+            {
+                foreach (var book in books)
+                {
+                    EnsureBookCovers(book);
+                }
+            }
+
+            public void EnsureBookCoversForImport(Book book)
+            {
+                EnsureBookCovers(book);
+            }
+
+            public void DeleteBookCovers(int bookId)
+            {
+                throw new NotImplementedException();
+            }
+
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            {
+                throw new NotImplementedException();
+            }
+
             public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null) => throw new NotImplementedException();
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null) => throw new NotImplementedException();
             public void EnsureAuthorCovers(Author author) => throw new NotImplementedException();
             public System.Threading.Tasks.Task<EnsureImageResult> EnsureAuthorImage(Author author, NzbDrone.Core.MediaCover.MediaCover cover) => throw new NotImplementedException();
+        }
+
+        [Test]
+        public void should_queue_one_batch_for_newly_monitored_books_in_an_aggregate_edit()
+        {
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var bookService = new RecordingBookService(new[]
+            {
+                new Book { Id = 1, Title = "One" },
+                new Book { Id = 2, Title = "Two" },
+                new Book { Id = 3, Title = "Three" }
+            });
+            var coverMapper = new RecordingCoverMapper();
+            var commandQueue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
+
+            service.Handle(new BooksEditedEvent(new[]
+            {
+                new BookEditedEvent(
+                    new Book { Id = 1, AudiobookMonitored = true },
+                    new Book { Id = 1, AudiobookMonitored = false }),
+                new BookEditedEvent(
+                    new Book { Id = 2, AudiobookMonitored = false },
+                    new Book { Id = 2, AudiobookMonitored = true }),
+                new BookEditedEvent(
+                    new Book { Id = 3, EbookMonitored = true },
+                    new Book { Id = 3, EbookMonitored = false })
+            }));
+
+            Assert.That(commandQueue.Recorder.Commands, Has.Count.EqualTo(1));
+            var command = commandQueue.Recorder.Commands.Single() as DownloadBookMediaCommand;
+            Assert.That(command.BookIds, Is.EqualTo(new[] { 1, 3 }));
+        }
+
+        [Test]
+        public void should_queue_one_batch_for_a_persisted_batch_of_added_files()
+        {
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var bookService = new RecordingBookService(new[]
+            {
+                new Book { Id = 1, Title = "One" },
+                new Book { Id = 3, Title = "Three" }
+            });
+            var coverMapper = new RecordingCoverMapper();
+            var commandQueue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
+
+            service.Handle(new BookFilesAddedEvent(new[]
+            {
+                new BookFile { Id = 11, Edition = new Edition { BookId = 1, Book = new Book { Id = 1 } } },
+                new BookFile { Id = 12, Edition = new Edition { BookId = 1, Book = new Book { Id = 1 } } },
+                new BookFile { Id = 13, Edition = new Edition { BookId = 3, Book = new Book { Id = 3 } } }
+            }));
+
+            Assert.That(commandQueue.Recorder.Commands, Has.Count.EqualTo(1));
+            var command = commandQueue.Recorder.Commands.Single() as DownloadBookMediaCommand;
+            Assert.That(command.BookIds, Is.EqualTo(new[] { 1, 3 }));
+        }
+
+        private sealed class UnloadedRelation<T> : LazyLoaded<T>
+        {
+            public override void LazyLoad() => throw new InvalidOperationException("Cover batching must not lazy-load each file's relations");
+        }
+
+        [Test]
+        public void file_covers_should_use_loaded_edition_foreign_keys_and_batch_unloaded_relations()
+        {
+            var books = new RecordingBookService(new[] { new Book { Id = 3 } });
+            var queue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(new DeferredCoverService(LogManager.GetCurrentClassLogger()),
+                books, queue.Queue, new RecordingCoverMapper(), LogManager.GetCurrentClassLogger());
+
+            service.Handle(new BookFilesAddedEvent(new[]
+            {
+                new BookFile { Id = 11, Edition = new Edition { BookId = 1, LazyBook = new UnloadedRelation<Book>() } },
+                new BookFile { Id = 12, LazyEdition = new UnloadedRelation<Edition>() },
+                new BookFile { Id = 13, LazyEdition = new UnloadedRelation<Edition>() }
+            }));
+
+            Assert.That(books.RequestedFileBatches, Has.Count.EqualTo(1));
+            Assert.That(books.RequestedFileBatches[0], Is.EqualTo(new[] { 12, 13 }));
+            Assert.That(queue.Recorder.Commands, Has.Count.EqualTo(1));
+            Assert.That(((DownloadBookMediaCommand)queue.Recorder.Commands.Single()).BookIds, Is.EqualTo(new[] { 1, 3 }));
         }
 
         [Test]
@@ -146,7 +281,8 @@ namespace Chaptarr.Core.Test.MediaCover
                 new Book { Id = 3, Title = "Three" }
             });
             var coverMapper = new RecordingCoverMapper();
-            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, coverMapper, LogManager.GetCurrentClassLogger());
+            var commandQueue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
 
             service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "start") { CommandId = 7 });
             deferredCoverService.MarkBooksForCoverDownload(new[] { 1, 2, 3 });
@@ -170,7 +306,8 @@ namespace Chaptarr.Core.Test.MediaCover
                 new Book { Id = 3, Title = "Three" }
             });
             var coverMapper = new RecordingCoverMapper();
-            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, coverMapper, LogManager.GetCurrentClassLogger());
+            var commandQueue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
 
             service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "start") { CommandId = 9 });
             deferredCoverService.MarkBooksForCoverDownload(new[] { 1, 2, 3 });
@@ -192,7 +329,8 @@ namespace Chaptarr.Core.Test.MediaCover
                 new Book { Id = 1, Title = "One" }
             });
             var coverMapper = new RecordingCoverMapper();
-            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, coverMapper, LogManager.GetCurrentClassLogger());
+            var commandQueue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
 
             service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "start") { CommandId = 15 });
             deferredCoverService.MarkBooksForCoverDownload(new[] { 1 });
@@ -216,7 +354,8 @@ namespace Chaptarr.Core.Test.MediaCover
                 new Book { Id = 2, Title = "Next import" }
             });
             var coverMapper = new RecordingCoverMapper();
-            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, coverMapper, LogManager.GetCurrentClassLogger());
+            var commandQueue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
 
             service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "first start") { CommandId = 21 });
             deferredCoverService.MarkBookForCoverDownload(1);

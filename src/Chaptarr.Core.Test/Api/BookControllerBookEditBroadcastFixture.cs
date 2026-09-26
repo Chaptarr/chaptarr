@@ -1,11 +1,19 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Books;
+using Chaptarr.Http;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Core.AuthorStats;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore.Events;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.MediaCover;
+using CoverImage = NzbDrone.Core.MediaCover.MediaCover;
 using NzbDrone.Core.Validation;
 using NzbDrone.SignalR;
 
@@ -26,19 +34,39 @@ namespace Chaptarr.Core.Test.Api
             }
         }
 
+        private class InterfaceProxy<T> : DispatchProxy where T : class
+        {
+            public Func<MethodInfo, object[], object> Handler { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return Handler(targetMethod, args);
+            }
+        }
+
+        private static T Proxy<T>(Func<MethodInfo, object[], object> handler) where T : class
+        {
+            var proxy = DispatchProxy.Create<T, InterfaceProxy<T>>();
+            ((InterfaceProxy<T>)(object)proxy).Handler = handler;
+            return proxy;
+        }
+
         private sealed class TestableBookController : BookController
         {
-            public TestableBookController(IBroadcastSignalRMessage broadcaster)
+            public TestableBookController(IBroadcastSignalRMessage broadcaster,
+                                          ISeriesBookLinkService seriesBookLinkService = null,
+                                          IAuthorStatisticsService authorStatisticsService = null,
+                                          IMapCoversToLocal coverMapper = null)
                 : base(
                     authorService: null,
                     bookService: null,
                     addBookService: null,
                     editionService: null,
                     editionSelector: null,
-                    seriesBookLinkService: null,
-                    authorStatisticsService: null,
+                    seriesBookLinkService: seriesBookLinkService,
+                    authorStatisticsService: authorStatisticsService,
                     mediaFileService: null,
-                    coverMapper: null,
+                    coverMapper: coverMapper,
                     upgradableSpecification: null,
                     signalRBroadcaster: broadcaster,
                     commandQueueManager: null,
@@ -64,6 +92,98 @@ namespace Chaptarr.Core.Test.Api
             {
                 FlushPendingBookEdits();
             }
+        }
+
+        [Test]
+        public void grabbed_book_broadcast_maps_ineligible_covers_without_changing_cached_book_state()
+        {
+            const int bookId = 101;
+            const string cachedUrl = "/MediaCover/Book/101/Cover.jpg";
+            const string remoteUrl = "https://covers.example/book.jpg";
+            var book = new Book
+            {
+                Id = bookId,
+                AuthorId = 202,
+                Title = "Fixture Book",
+                MediaType = BookMediaType.Audiobook,
+                AudiobookMonitored = false,
+                EbookMonitored = false,
+                Images = new List<CoverImage>
+                {
+                    new(MediaCoverTypes.Cover, cachedUrl)
+                    {
+                        RemoteUrl = remoteUrl,
+                        Hash = "saved-cover-hash"
+                    }
+                }
+            };
+            var mappedBookIds = new List<int>();
+            var authorStatistics = Proxy<IAuthorStatisticsService>((method, args) =>
+            {
+                if (method.Name == nameof(IAuthorStatisticsService.AuthorStatistics) && args.Length == 1)
+                {
+                    return new AuthorStatistics { BookStatistics = new List<BookStatistics>() };
+                }
+
+                throw new NotImplementedException(method.Name);
+            });
+            var seriesLinks = Proxy<ISeriesBookLinkService>((method, args) =>
+            {
+                if (method.Name == nameof(ISeriesBookLinkService.GetLinksByBook))
+                {
+                    return new List<SeriesBookLink>();
+                }
+
+                throw new NotImplementedException(method.Name);
+            });
+            var coverMapper = Proxy<IMapCoversToLocal>((method, args) =>
+            {
+                if (method.Name == nameof(IMapCoversToLocal.ConvertBookCoversToLocalUrls))
+                {
+                    var covers = ((IEnumerable<KeyValuePair<int, List<CoverImage>>>)args[0]).ToList();
+                    mappedBookIds.AddRange(covers.Select(entry => entry.Key));
+                    foreach (var cover in covers.SelectMany(entry => entry.Value))
+                    {
+                        cover.RemoteUrl ??= cover.Url;
+                        cover.Url = null;
+                        cover.TemporaryUrl = "/MediaCoverProxy/temporary-book-cover";
+                    }
+
+                    return null;
+                }
+
+                if (method.Name == nameof(IMapCoversToLocal.ConvertToLocalUrls))
+                {
+                    throw new AssertionException("Book resources must use the set-based cover mapper");
+                }
+
+                throw new NotImplementedException(method.Name);
+            });
+            var broadcaster = new RecordingSignalRBroadcaster();
+            var controller = new TestableBookController(broadcaster, seriesLinks, authorStatistics, coverMapper);
+
+            controller.Handle(new BookGrabbedEvent(new NzbDrone.Core.Parser.Model.RemoteBook
+            {
+                Books = new List<Book> { book }
+            }));
+
+            var message = (ResourceChangeMessage<BookResource>)broadcaster.Messages.Single().Body;
+            var broadcastBook = message.Resource;
+            Assert.Multiple(() =>
+            {
+                Assert.That(message.Action, Is.EqualTo(ModelAction.Updated));
+                Assert.That(broadcastBook.Id, Is.EqualTo(bookId));
+                Assert.That(broadcastBook.Grabbed, Is.True);
+                Assert.That(broadcastBook.Images.Single().Url, Is.Null);
+                Assert.That(broadcastBook.Images.Single().TemporaryUrl, Is.EqualTo("/MediaCoverProxy/temporary-book-cover"));
+                Assert.That(broadcastBook.Images.Single().RemoteUrl, Is.EqualTo(remoteUrl));
+                Assert.That(mappedBookIds, Is.EqualTo(new[] { bookId }));
+                Assert.That(book.Images.Single().Url, Is.EqualTo(cachedUrl));
+                Assert.That(book.Images.Single().Hash, Is.EqualTo("saved-cover-hash"));
+                Assert.That(book.Images.Single().TemporaryUrl, Is.Null);
+                Assert.That(book.AudiobookMonitored, Is.False);
+                Assert.That(book.EbookMonitored, Is.False);
+            });
         }
 
         [Test]

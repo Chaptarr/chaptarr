@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Security;
 
@@ -80,6 +81,7 @@ namespace NzbDrone.Core.Configuration
 
         //Internal
         bool CleanupMetadataImages { get; set; }
+        CoverDownloadScope CoverDownloadScope { get; set; }
         bool AudioProductionCustomFormatsSeeded { get; set; }
         string SeededBuiltInCustomFormatKeys { get; set; }
 

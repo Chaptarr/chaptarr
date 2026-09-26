@@ -134,6 +134,19 @@ namespace Chaptarr.Api.V1.Books
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
+        private static List<MediaCover> CloneImages(IEnumerable<MediaCover> images)
+        {
+            return (images ?? Enumerable.Empty<MediaCover>())
+                .Where(image => image != null && !string.IsNullOrWhiteSpace(image.Url))
+                .Select(image => new MediaCover(image.CoverType, image.Url)
+                {
+                    RemoteUrl = image.RemoteUrl,
+                    TemporaryUrl = image.TemporaryUrl,
+                    Hash = image.Hash
+                })
+                .ToList();
+        }
+
         public static BookResource ToResource(this Book model)
         {
             return ToResource(model, BookResourceMappingOptions.Rich());
@@ -220,9 +233,7 @@ namespace Chaptarr.Api.V1.Books
                 Overview = options.IncludeOverview && !string.IsNullOrWhiteSpace(selectedEdition?.Overview)
                     ? selectedEdition.Overview
                     : (options.IncludeOverview ? (model.Overview ?? string.Empty) : null),
-                Images = selectedEdition != null
-                    ? (selectedEdition.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList()
-                    : (model.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList(),
+                Images = CloneImages(selectedEdition != null ? selectedEdition.Images : model.Images),
                 Links = links,
                 Statistics = options.Statistics?.ToResource(),
                 AddOptions = model.AddOptions,

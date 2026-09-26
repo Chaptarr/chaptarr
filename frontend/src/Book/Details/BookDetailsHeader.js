@@ -214,6 +214,7 @@ class BookDetailsHeader extends Component {
             images={images}
             size={250}
             lazy={false}
+            allowTemporaryUrl={true}
           />
 
           <div className={styles.info}>

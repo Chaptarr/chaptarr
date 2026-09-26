@@ -20,6 +20,18 @@ namespace Chaptarr.Core.Test.Api
     {
         private sealed class CoverMapperStub : IMapCoversToLocal
         {
+            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            {
+                foreach (var book in covers)
+                {
+                    ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value);
+                }
+            }
+
+            public void DeleteBookCovers(int bookId) => throw new NotImplementedException();
+
             public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
             {
             }
@@ -49,7 +61,7 @@ namespace Chaptarr.Core.Test.Api
             }
 
             public string GetUrl(string hash) => throw new NotImplementedException();
-            public byte[] GetImage(string hash) => throw new NotImplementedException();
+            public byte[] GetImageFromUrl(string url) => throw new NotImplementedException();
         }
 
         private class BookServiceProxy : DispatchProxy

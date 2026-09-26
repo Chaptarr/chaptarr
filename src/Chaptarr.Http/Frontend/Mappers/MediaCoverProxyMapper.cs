@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -8,21 +10,25 @@ using Microsoft.AspNetCore.StaticFiles;
 using NLog;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Instrumentation;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaCover;
 
 namespace Chaptarr.Http.Frontend.Mappers
 {
     public class MediaCoverProxyMapper : IMapHttpRequestsToDisk
     {
-        private readonly Regex _regex = new Regex(@"/MediaCoverProxy/(?<hash>\w+)/(?<filename>[^/?]+)", RegexOptions.IgnoreCase);
+        private readonly Regex _regex = new Regex(@"^/MediaCoverProxy/(?:book/(?<bookId>[1-9][0-9]*)|(?<hash>\w+))/(?<filename>[^/?]+)(?:\?.*)?$", RegexOptions.IgnoreCase);
 
         private readonly IMediaCoverProxy _mediaCoverProxy;
+        private readonly IBookService _bookService;
         private readonly IContentTypeProvider _mimeTypeProvider;
         private readonly Logger _logger;
 
-        public MediaCoverProxyMapper(IMediaCoverProxy mediaCoverProxy, Logger logger)
+        public MediaCoverProxyMapper(IMediaCoverProxy mediaCoverProxy, IBookService bookService, Logger logger)
         {
             _mediaCoverProxy = mediaCoverProxy;
+            _bookService = bookService;
             _mimeTypeProvider = new FileExtensionContentTypeProvider();
             _logger = logger;
         }
@@ -47,12 +53,38 @@ namespace Chaptarr.Http.Frontend.Mappers
             }
 
             var hash = match.Groups["hash"].Value;
+            var bookIdText = match.Groups["bookId"].Value;
+            string imageUrl = null;
             var filename = match.Groups["filename"].Value;
 
             byte[] imageData;
             try
             {
-                imageData = _mediaCoverProxy.GetImage(hash);
+                if (bookIdText.Length > 0)
+                {
+                    if (!int.TryParse(bookIdText, NumberStyles.None, CultureInfo.InvariantCulture, out var bookId))
+                    {
+                        return new StatusCodeResult((int)HttpStatusCode.NotFound);
+                    }
+
+                    var book = _bookService.GetBook(bookId);
+                    imageUrl = MediaCoverRendition.SelectMonitoredBookCovers(book).FirstOrDefault()?.Cover.Url;
+                }
+                else
+                {
+                    imageUrl = _mediaCoverProxy.GetUrl(hash);
+                }
+
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                {
+                    return new StatusCodeResult((int)HttpStatusCode.NotFound);
+                }
+
+                imageData = _mediaCoverProxy.GetImageFromUrl(imageUrl);
+            }
+            catch (ModelNotFoundException)
+            {
+                return new StatusCodeResult((int)HttpStatusCode.NotFound);
             }
             catch (KeyNotFoundException)
             {
@@ -68,7 +100,7 @@ namespace Chaptarr.Http.Frontend.Mappers
             catch (HttpException e)
             {
                 LogUnavailableImage(e.Request?.Method?.ToString() ?? "GET",
-                    e.Request?.Url?.ToString() ?? _mediaCoverProxy.GetUrl(hash),
+                    e.Request?.Url?.ToString() ?? imageUrl,
                     e.Response?.StatusCode);
 
                 return new StatusCodeResult((int)HttpStatusCode.NotFound);
@@ -76,7 +108,7 @@ namespace Chaptarr.Http.Frontend.Mappers
             catch (WebException e)
             {
                 LogUnavailableImage("GET",
-                    _mediaCoverProxy.GetUrl(hash),
+                    imageUrl,
                     (e.Response as HttpWebResponse)?.StatusCode);
 
                 return new StatusCodeResult((int)HttpStatusCode.NotFound);

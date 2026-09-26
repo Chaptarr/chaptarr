@@ -86,6 +86,9 @@ namespace Chaptarr.Api.V1.Search
         {
             var isAudiobookProvider = string.Equals(provider, "audible", StringComparison.OrdinalIgnoreCase);
             var id = 1;
+            var resources = new List<SearchResource>();
+            var bookResources = new List<BookResource>();
+
             foreach (var result in results)
             {
                 var resource = new SearchResource();
@@ -192,21 +195,7 @@ namespace Chaptarr.Api.V1.Search
                         .ToList();
                     resource.ExistingLocalId = localBookIds.Count == 1 ? localBookIds[0] : (int?)null;
 
-                    // For search results, use MediaCoverProxy to proxy remote images
-                    if (resource.Book.Id == 0 && resource.Book.Images != null)
-                    {
-                        foreach (var image in resource.Book.Images)
-                        {
-                            if (!string.IsNullOrWhiteSpace(image.Url))
-                            {
-                                image.Url = _mediaCoverProxy.RegisterUrl(image.Url);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _coverMapper.ConvertToLocalUrls(resource.Book.Id, MediaCoverEntity.Book, resource.Book.Images);
-                    }
+                    bookResources.Add(resource.Book);
 
                     var cover = book.Editions.FirstOrDefault(x => x.Monitored)?.Images?.FirstOrDefault(c => c.CoverType == MediaCoverTypes.Cover);
 
@@ -292,8 +281,16 @@ namespace Chaptarr.Api.V1.Search
                     throw new NotImplementedException($"Bad response from search all proxy - unknown type: {result?.GetType()?.Name ?? "null"}");
                 }
 
-                yield return resource;
+                resources.Add(resource);
             }
+
+            if (bookResources.Count > 0)
+            {
+                _coverMapper.ConvertBookCoversToLocalUrls(bookResources.Select(book =>
+                    new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)));
+            }
+
+            return resources;
         }
 
         private NzbDrone.Core.Books.Author FindExistingAuthor(NzbDrone.Core.Books.Author searchAuthor)

@@ -242,6 +242,7 @@ namespace NzbDrone.Core.Update
                     {
                         New = new List<string>
                         {
+                            "New \"Library covers only\" option in Settings > Media Management keeps covers just for monitored books and books with files, and removes the rest when you save. \"Calculate savings\" estimates the space freed first. Other books show a placeholder in lists and a temporary cover on their details page.",
                             "Author Search (Search tab) searches each monitored book and groups results by book, with a preferred release per book and expandable alternatives. It follows the selected format, asks before searching more than five books, and has a Stop button that finishes the current book and skips the remaining searches.",
                             "Series labels, folder tokens and ebook/Calibre tags come from Goodreads-backed series memberships in a consistent order. Thanks @tillkruss (PR #48).",
                             "{Book SeriesPosition:00} zero-pads individual numeric series positions.",
@@ -274,7 +275,8 @@ namespace NzbDrone.Core.Update
                             "Newznab logs why a search was skipped when no configured category matches the media type.",
                             "Search result badges stay inside their cells and the table no longer collapses on narrow screens.",
                             "Empty or unavailable root folders are refused before an author's files are deleted.",
-                            "Full HTTP response bodies are restricted to Trace, with expanded credential and download-link redaction."
+                            "Full HTTP response bodies are restricted to Trace, with expanded credential and download-link redaction.",
+                            "Pressing Enter on a focused Cancel button in a confirmation dialog no longer also confirms it."
                             }
                     }
                 }

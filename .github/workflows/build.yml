@@ -218,6 +218,24 @@ jobs:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-confirm-modal
 
+    - name: Check book cover scope and settings
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: |
+        yarn check-book-cover-scope
+        yarn check-media-management-cover-scope
+
+    - name: Upload cover settings evidence
+      if: ${{ !cancelled() && runner.os == 'Linux' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: cover-settings-evidence
+        path: ${{ runner.temp }}/chaptarr-cover-scope-*.png
+        retention-days: 7
+        if-no-files-found: warn
+
     - name: Upload author delete evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
       uses: actions/upload-artifact@v4
@@ -307,7 +325,7 @@ jobs:
     - name: Test - PostgreSQL persistence
       env:
         CHAPTARR_TEST_POSTGRES_CONNECTION_STRING: "Host=localhost;Port=5432;Database=postgres;Username=chaptarr;Password=chaptarr;Pooling=false"
-      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --filter "FullyQualifiedName~ImportListExclusionServiceFixture|FullyQualifiedName~PendingAuthorImportRepositoryRetryFixture|FullyQualifiedName~MediaFileOwnershipFixture|FullyQualifiedName~SeriesRepositoryMediaTypeLinkingFixture|FullyQualifiedName~AuthorRepositoryAllAuthorPathsFixture|FullyQualifiedName~LibrarySearchServiceFixture|FullyQualifiedName~EditionFtsDeletionMigrationFixture|FullyQualifiedName~NormalizeComparisonKeysMigrationFixture|FullyQualifiedName~EditionFtsRepositoryStagedFixture"
+      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --filter "FullyQualifiedName~ImportListExclusionServiceFixture|FullyQualifiedName~PendingAuthorImportRepositoryRetryFixture|FullyQualifiedName~MediaFileOwnershipFixture|FullyQualifiedName~SeriesRepositoryMediaTypeLinkingFixture|FullyQualifiedName~AuthorRepositoryAllAuthorPathsFixture|FullyQualifiedName~LibrarySearchServiceFixture|FullyQualifiedName~EditionFtsDeletionMigrationFixture|FullyQualifiedName~NormalizeComparisonKeysMigrationFixture|FullyQualifiedName~EditionFtsRepositoryStagedFixture|FullyQualifiedName~BookRepositoryGetLibraryBookIdsFixture"
 
     - name: Smoke - migrate up on fresh PostgreSQL
       shell: bash

@@ -16,7 +16,8 @@ function BookCover(props) {
 }
 
 BookCover.propTypes = {
-  size: PropTypes.number.isRequired
+  size: PropTypes.number.isRequired,
+  allowTemporaryUrl: PropTypes.bool
 };
 
 BookCover.defaultProps = {

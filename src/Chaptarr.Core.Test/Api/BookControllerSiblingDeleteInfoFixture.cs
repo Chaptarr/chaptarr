@@ -210,7 +210,7 @@ namespace Chaptarr.Core.Test.Api
                 new Book { Id = 2, Title = "Ready Player Two", HardcoverBookId = "hc:427565", MediaType = selected == BookMediaType.Ebook ? BookMediaType.Audiobook : BookMediaType.Ebook }
             };
             var service = new StubBookService(id => books.Single(b => b.Id == id), _ => books);
-            var controller = new BookEditorController(service, null)
+            var controller = new BookEditorController(service, null, null)
             {
                 ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
             };
