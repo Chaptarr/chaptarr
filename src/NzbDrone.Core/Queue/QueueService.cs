@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -39,7 +40,7 @@ namespace NzbDrone.Core.Queue
         private readonly IConversionTrackingService _conversionTrackingService;
         private readonly IConversionJobService _conversionJobService;
         private readonly IDiskProvider _diskProvider;
-        private readonly Dictionary<string, QualityModel> _inferredQualityCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, QualityModel> _inferredQualityCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
         public QueueService(IEventAggregator eventAggregator,
@@ -766,7 +767,7 @@ namespace NzbDrone.Core.Queue
             {
                 if (!activeDownloadIds.Contains(cachedDownloadId))
                 {
-                    _inferredQualityCache.Remove(cachedDownloadId);
+                    _inferredQualityCache.TryRemove(cachedDownloadId, out _);
                 }
             }
         }
