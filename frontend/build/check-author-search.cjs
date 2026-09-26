@@ -314,9 +314,9 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     assert.deepEqual(pendingSearchState.bookResults.map((result) => result.title), pendingTitles,
       'The complete pending roster should be visible before any book result arrives');
     for (const title of pendingTitles) {
-      const row = page.getByRole('button', { name: 'Show other releases for ' + title, exact: true }).locator('xpath=ancestor::tr[1]');
-      assert.equal(await row.isVisible(), true, title + ' should be visible before the first result');
-      assert.match(await row.innerText(), /Waiting for results/, title + ' should be visible as waiting before the first result');
+      const row = page.getByRole('button', { name: `Show other releases for ${title}`, exact: true }).locator('xpath=ancestor::tr[1]');
+      assert.equal(await row.isVisible(), true, `${title} should be visible before the first result`);
+      assert.match(await row.innerText(), /Waiting for results/, `${title} should be visible as waiting before the first result`);
     }
 
     const firstRosterBook = pendingRoster[0];
@@ -336,9 +336,9 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     assert.deepEqual(pendingSearchState.bookResults.slice(1).map((result) => result.status), ['pending', 'pending', 'pending', 'pending', 'pending'],
       'Completing the first book must preserve all other roster entries as pending');
     for (const title of pendingTitles.slice(1)) {
-      const row = page.getByRole('button', { name: 'Show other releases for ' + title, exact: true }).locator('xpath=ancestor::tr[1]');
-      assert.equal(await row.isVisible(), true, title + ' should remain visible after the first result');
-      assert.match(await row.innerText(), /Waiting for results/, title + ' should remain visibly waiting after the first result');
+      const row = page.getByRole('button', { name: `Show other releases for ${title}`, exact: true }).locator('xpath=ancestor::tr[1]');
+      assert.equal(await row.isVisible(), true, `${title} should remain visible after the first result`);
+      assert.match(await row.innerText(), /Waiting for results/, `${title} should remain visibly waiting after the first result`);
     }
 
     await heldAuthorRoutes.get(pendingRosterSearchId).fulfill({ json: {
