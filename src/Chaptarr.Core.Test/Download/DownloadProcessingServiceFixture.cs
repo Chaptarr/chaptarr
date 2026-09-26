@@ -366,6 +366,75 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
+        public void sweep_should_yield_again_after_the_run_that_finished_the_backlog()
+        {
+            var completed = new ProgressingCompletedDownloadService();
+            var downloads = new List<TrackedDownload>
+            {
+                CreatePending("a"),
+                CreatePending("b"),
+                CreatePending("c"),
+                CreatePending("d"),
+                CreatePending("e"),
+                CreatePending("f")
+            };
+
+            var service = CreateProgressingService(completed, downloads, Queued(new ManualImportCommand()));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c" }));
+
+            // The bound is exhausted, so this run finishes the whole backlog.
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c", "d", "e", "f" }));
+
+            // A later sweep with new work steps aside for the waiting command again.
+            downloads.Add(CreatePending("g"));
+            downloads.Add(CreatePending("h"));
+            downloads.Add(CreatePending("i"));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c", "d", "e", "f", "g" }));
+        }
+
+        [Test]
+        public void cancelled_sweep_should_neither_consume_nor_reset_the_yield_bound()
+        {
+            var completed = new ProgressingCompletedDownloadService();
+            var downloads = new List<TrackedDownload>
+            {
+                CreatePending("a"),
+                CreatePending("b"),
+                CreatePending("c"),
+                CreatePending("d"),
+                CreatePending("e")
+            };
+
+            var service = CreateProgressingService(completed, downloads, Queued(new ManualImportCommand()));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b" }));
+
+            using (var cancelled = new CancellationTokenSource())
+            {
+                cancelled.Cancel();
+                Assert.Throws<OperationCanceledException>(() => service.Execute(new ProcessMonitoredDownloadsCommand(), cancelled.Token));
+            }
+
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b" }));
+
+            // Third yield still counts as the third, the next run is the unbounded one.
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c" }));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c", "d", "e" }));
+        }
+
+        [Test]
         public void sweep_should_process_everything_each_run_when_no_disk_command_is_waiting()
         {
             var completed = new ProgressingCompletedDownloadService();
