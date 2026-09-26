@@ -116,13 +116,13 @@ namespace NzbDrone.Core.Messaging.Commands
                 // InsertMany hands Dapper the runtime type of each Body (e.g. RefreshAuthorCommand), which has no
                 // type handler, so the batch insert throws NotSupportedException. Insert() maps by the declared
                 // Body column type, so use it per command (these batches are small).
+                //
+                // Unlike InsertMany this is not one transaction, so queue each command as soon as its row exists
+                // (as Push does): if a later insert throws, every row already written is still in the queue instead
+                // of sitting as Queued in the database, invisible to the executor, until the next restart.
                 foreach (var commandModel in commandModels)
                 {
                     _repo.Insert(commandModel);
-                }
-
-                foreach (var commandModel in commandModels)
-                {
                     _commandQueue.Add(commandModel);
                 }
 
