@@ -22,6 +22,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.History;
@@ -46,6 +47,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
     /// </summary>
     public class ImportApprovedBooks : IImportApprovedBooks
     {
+        public const string AlreadyImportedRejectionReason = "Already imported: this edition already has files of equal or better quality";
+
         private const string ConversionArtifactManifestFileName = "conversion-artifact.json";
         private static readonly string[] SourceCoverBaseNames = { "cover", "front", "folder", "album", "albumart" };
         private static readonly string[] SourceCoverExtensions = { ".jpg", ".jpeg", ".png" };
@@ -136,6 +139,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             private readonly IContainmentValidator _containmentValidator;
             private readonly IMapCoversToLocal _coverMapper;
             private readonly ICustomFormatCalculationService _customFormatCalculationService;
+            private readonly IUpgradableSpecification _upgradableSpecification;
             private readonly Logger _logger;
 
         public ImportApprovedBooks(
@@ -163,7 +167,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 IContainmentValidator containmentValidator = null,
                 IMapCoversToLocal coverMapper = null,
                 ICustomFormatCalculationService customFormatCalculationService = null,
-                IConversionJobService conversionJobService = null)
+                IConversionJobService conversionJobService = null,
+                IUpgradableSpecification upgradableSpecification = null)
             {
             _mediaFileService = mediaFileService;
             _metadataTagService = metadataTagService;
@@ -189,6 +194,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 _containmentValidator = containmentValidator;
                 _coverMapper = coverMapper;
                 _customFormatCalculationService = customFormatCalculationService;
+                _upgradableSpecification = upgradableSpecification ?? new UpgradableSpecification(configService, logger);
                 _logger = logger;
             }
 
@@ -1152,6 +1158,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return (new ImportResult(decision, "Edition already has files"), null);
                     }
 
+                    // An automatic import may only displace existing files when it is a real upgrade for this
+                    // edition; a row whose file is gone is not an existing copy that can be duplicated.
+                    if (filesToReplace.Any() && !manualReplaceExisting)
+                    {
+                        var presentFilesToReplace = filesToReplace.Where(f => File.Exists(f.Path)).ToList();
+                        var duplicateRejection = GetDuplicateImportRejectionReason(localBook, author, qualityProfile, presentFilesToReplace);
+                        if (duplicateRejection != null)
+                        {
+                            _logger.Debug("[ALREADY-IMPORTED] Edition {0} already has {1} file(s) of equal or better quality; not replacing for {2}",
+                                edition.Id, presentFilesToReplace.Count, localBook.Path);
+                            return (new ImportResult(decision, duplicateRejection), null);
+                        }
+                    }
+
                 // Note: Quality profile upgrade checks are now handled at the batch level in Import()
 
                 // Check quality upgrade
@@ -1546,6 +1566,30 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 _logger.Error(ex, "[CLEAN-IMPORT] Failed to import file: {0}", localBook.Path);
                 return (new ImportResult(decision, "Import failed: " + ex.Message), null);
             }
+        }
+
+        private string GetDuplicateImportRejectionReason(LocalBook localBook, Author author, QualityProfile qualityProfile, List<BookFile> filesToReplace)
+        {
+            if (localBook == null || qualityProfile == null || filesToReplace == null || filesToReplace.Count == 0)
+            {
+                return null;
+            }
+
+            localBook.Author ??= author;
+            var newFormats = _customFormatCalculationService?.ParseCustomFormat(localBook) ?? new List<CustomFormat>();
+
+            foreach (var existingFile in filesToReplace)
+            {
+                var existingFormats = _customFormatCalculationService?.ParseCustomFormat(existingFile, author) ?? new List<CustomFormat>();
+
+                if (!_upgradableSpecification.IsUpgradable(qualityProfile, existingFile.Quality, existingFormats, localBook.Quality, newFormats) ||
+                    !_upgradableSpecification.IsUpgradeAllowed(qualityProfile, existingFile.Quality, existingFormats, localBook.Quality, newFormats))
+                {
+                    return AlreadyImportedRejectionReason;
+                }
+            }
+
+            return null;
         }
 
         private string GetCustomFormatImportRejectionReason(LocalBook localBook, Author author, QualityProfile qualityProfile, bool downloadForced)

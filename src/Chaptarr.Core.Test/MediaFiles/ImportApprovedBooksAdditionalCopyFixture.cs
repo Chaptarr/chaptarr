@@ -1607,6 +1607,280 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        [Test]
+        public void automatic_import_should_not_replace_an_equal_quality_duplicate()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.M4B);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors, Does.Contain(ImportApprovedBooks.AlreadyImportedRejectionReason));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
+            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
+            Assert.That(outcome.RecycleBin.DeletedFiles, Is.Empty);
+            Assert.That(outcome.MediaFileService.FilesByBook.Select(f => f.Id), Is.EquivalentTo(new[] { 9001 }));
+            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
+            Assert.That(outcome.SourceFilesOnDisk, Is.True);
+        }
+
+        [Test]
+        public void automatic_import_should_not_replace_with_a_lower_quality_release()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.MP3);
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors, Does.Contain(ImportApprovedBooks.AlreadyImportedRejectionReason));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
+            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
+            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
+        }
+
+        [TestCase("mp3-to-m4b")]
+        [TestCase("epub-to-mobi")]
+        public void automatic_import_should_still_replace_a_true_upgrade(string scenario)
+        {
+            var outcome = scenario == "mp3-to-m4b"
+                ? RunDuplicateImportScenario(Quality.MP3, Quality.M4B)
+                : RunDuplicateImportScenario(Quality.EPUB, Quality.MOBI);
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(1));
+            Assert.That(outcome.MediaFileService.DeletedFiles.Select(d => d.File.Id), Is.EquivalentTo(new[] { 9001 }));
+        }
+
+        [Test]
+        public void automatic_import_should_replace_a_higher_revision_of_the_same_quality()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.M4B, incomingRevision: new Revision(2));
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void manual_replace_should_still_replace_an_equal_quality_copy()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.M4B, isManualImport: true);
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(1));
+            Assert.That(outcome.MediaFileService.DeletedFiles.Select(d => d.File.Id), Is.EquivalentTo(new[] { 9001 }));
+        }
+
+        [Test]
+        public void automatic_import_should_not_replace_a_multi_part_audiobook_duplicate()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.MP3, fileCount: 3);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(3));
+            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results.All(r => r.Errors.Contains(ImportApprovedBooks.AlreadyImportedRejectionReason)), Is.True);
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
+            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
+            Assert.That(outcome.MediaFileService.FilesByBook, Has.Count.EqualTo(3));
+            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
+            Assert.That(outcome.SourceFilesOnDisk, Is.True);
+        }
+
+        private sealed class DuplicateImportOutcome
+        {
+            public List<ImportResult> Results { get; init; }
+            public StubMediaFileService MediaFileService { get; init; }
+            public StubRecycleBinProvider RecycleBin { get; init; }
+            public bool ExistingFilesOnDisk { get; init; }
+            public bool SourceFilesOnDisk { get; init; }
+        }
+
+        private static string ExtensionForQuality(Quality quality)
+        {
+            if (quality == Quality.M4B)
+            {
+                return ".m4b";
+            }
+
+            if (quality == Quality.MP3)
+            {
+                return ".mp3";
+            }
+
+            return quality == Quality.MOBI ? ".mobi" : ".epub";
+        }
+
+        private static DuplicateImportOutcome RunDuplicateImportScenario(
+            Quality existingQuality,
+            Quality incomingQuality,
+            int fileCount = 1,
+            bool isManualImport = false,
+            Revision incomingRevision = null)
+        {
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"duplicate-import-{Guid.NewGuid():N}");
+            var libraryDir = Path.Combine(tempDir, "library");
+            var incomingDir = Path.Combine(tempDir, "incoming");
+            Directory.CreateDirectory(libraryDir);
+            Directory.CreateDirectory(incomingDir);
+
+            try
+            {
+                var audiobookProfile = new QualityProfile
+                {
+                    Id = 901,
+                    Name = "Audiobooks",
+                    ProfileType = ProfileType.Audiobook,
+                    UpgradeAllowed = true,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new() { Allowed = true, Quality = Quality.MP3 },
+                        new() { Allowed = true, Quality = Quality.M4B }
+                    }
+                };
+
+                var ebookProfile = new QualityProfile
+                {
+                    Id = 902,
+                    Name = "Ebooks",
+                    ProfileType = ProfileType.Ebook,
+                    UpgradeAllowed = true,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new() { Allowed = true, Quality = Quality.EPUB },
+                        new() { Allowed = true, Quality = Quality.MOBI }
+                    }
+                };
+
+                var isEbook = BookFile.DetermineMediaType(new QualityModel { Quality = incomingQuality }) == "ebook";
+
+                var author = new Author
+                {
+                    Id = 910,
+                    Name = "Christopher Rice",
+                    AudiobookRootFolderPath = Path.Combine(libraryDir, "audiobooks"),
+                    AudiobookPath = Path.Combine(libraryDir, "audiobooks", "Christopher Rice"),
+                    AudiobookQualityProfileId = audiobookProfile.Id,
+                    AudiobookQualityProfile = audiobookProfile,
+                    EbookRootFolderPath = Path.Combine(libraryDir, "ebooks"),
+                    EbookPath = Path.Combine(libraryDir, "ebooks", "Christopher Rice"),
+                    EbookQualityProfileId = ebookProfile.Id,
+                    EbookQualityProfile = ebookProfile
+                };
+
+                var book = new Book
+                {
+                    Id = 920,
+                    Title = "The Vines",
+                    TitleSlug = "the-vines",
+                    CleanTitle = "thevines",
+                    MediaType = isEbook ? BookMediaType.Ebook : BookMediaType.Audiobook,
+                    AnyEditionOk = true,
+                    Author = author,
+                    AuthorId = author.Id
+                };
+
+                var edition = new Edition
+                {
+                    Id = 930,
+                    BookId = book.Id,
+                    Book = book,
+                    Title = "The Vines",
+                    Format = isEbook ? "ebook" : "audiobook",
+                    IsEbook = isEbook,
+                    ReadingFormatId = isEbook ? 3 : 2,
+                    Monitored = true
+                };
+
+                book.Editions = new List<Edition> { edition };
+
+                var mediaFileService = new StubMediaFileService();
+                var existingPaths = new List<string>();
+                for (var i = 0; i < fileCount; i++)
+                {
+                    var existingPath = Path.Combine(libraryDir, $"The Vines - Part {i + 1}{ExtensionForQuality(existingQuality)}");
+                    File.WriteAllText(existingPath, "existing");
+                    existingPaths.Add(existingPath);
+                    mediaFileService.FilesByBook.Add(new BookFile
+                    {
+                        Id = 9001 + i,
+                        Path = existingPath,
+                        EditionId = edition.Id,
+                        Edition = edition,
+                        Part = i + 1,
+                        PartCount = fileCount,
+                        Quality = new QualityModel { Quality = existingQuality, Revision = new Revision() }
+                    });
+                }
+
+                var sourcePaths = new List<string>();
+                var decisions = new List<ImportDecision<LocalBook>>();
+                for (var i = 0; i < fileCount; i++)
+                {
+                    var sourcePath = Path.Combine(incomingDir, $"part-{i + 1}{ExtensionForQuality(incomingQuality)}");
+                    File.WriteAllText(sourcePath, "incoming");
+                    sourcePaths.Add(sourcePath);
+                    decisions.Add(new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = sourcePath,
+                        Book = book,
+                        Author = author,
+                        Edition = edition,
+                        Part = i + 1,
+                        PartCount = fileCount,
+                        Quality = new QualityModel { Quality = incomingQuality, Revision = incomingRevision ?? new Revision() },
+                        IsManualImport = isManualImport,
+                        Size = new FileInfo(sourcePath).Length,
+                        Modified = File.GetLastWriteTimeUtc(sourcePath)
+                    }));
+                }
+
+                var recycleBin = new StubRecycleBinProvider();
+                var (bookService, _) = CreateBookService(new List<Book> { book });
+                var service = new ImportApprovedBooks(
+                    mediaFileService,
+                    new StubMetadataTagService(),
+                    new StubMediaInfoExtractor(),
+                    Proxy<IAuthorService>(),
+                    bookService,
+                    CreateEditionService(new List<Edition> { edition }),
+                    recycleBin,
+                    Proxy<IExtraService>(),
+                    new StubMoveBookFiles
+                    {
+                        DestinationPath = Path.Combine(libraryDir, $"imported{ExtensionForQuality(incomingQuality)}"),
+                        TransferFilesOnDisk = true
+                    },
+                    Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                    new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(),
+                    Proxy<ISeriesBookLinkService>(),
+                    Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(),
+                    Proxy<IM4bConversionService>(),
+                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+
+                var results = service.Import(
+                    decisions,
+                    replaceExisting: true,
+                    downloadClientItem: new DownloadClientItem { DownloadId = "duplicate-copy" },
+                    importMode: ImportMode.Copy,
+                    cancellationToken: CancellationToken.None);
+
+                return new DuplicateImportOutcome
+                {
+                    Results = results,
+                    MediaFileService = mediaFileService,
+                    RecycleBin = recycleBin,
+                    ExistingFilesOnDisk = existingPaths.All(File.Exists),
+                    SourceFilesOnDisk = sourcePaths.All(File.Exists)
+                };
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void new_move_database_failure_should_restore_source_or_keep_destination_visible(bool sourcePathReoccupied)
