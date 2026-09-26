@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -27,9 +28,19 @@ namespace NzbDrone.Core.Http
                 .ThenByDescending(x => x.Id)
                 .ToList();
 
+            // Best effort: a failed cleanup (locked or read-only cache database) must not fail a lookup that
+            // already has its answer. The duplicates are retried on the next lookup of this URL.
             foreach (var stale in rows.Skip(1))
             {
-                Delete(stale);
+                try
+                {
+                    Delete(stale);
+                }
+                catch (Exception ex)
+                {
+                    NLog.LogManager.GetCurrentClassLogger().Debug(ex, "Could not remove a stale duplicate cache row for {0}", url);
+                    break;
+                }
             }
 
             return rows.FirstOrDefault();
