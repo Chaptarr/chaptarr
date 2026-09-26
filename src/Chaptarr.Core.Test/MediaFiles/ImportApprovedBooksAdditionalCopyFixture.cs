@@ -1791,6 +1791,18 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void manual_import_without_replace_onto_an_occupied_destination_should_be_rejected_not_throw()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, isManualImport: true, existingAtDestination: true, existingUntracked: true, replaceExisting: false);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors.Any(e => e.Contains("already occupies the managed destination")), Is.True);
+            Assert.That(outcome.TransferCalls, Is.EqualTo(0));
+            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
+        }
+
+        [Test]
         public void manual_import_onto_an_occupied_tracked_destination_should_still_replace()
         {
             var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, isManualImport: true, existingAtDestination: true);
@@ -1853,7 +1865,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             bool existingAtDestination = false,
             int? existingEditionIdOverride = null,
             bool existingUntracked = false,
-            bool destinationFolderMissing = false)
+            bool destinationFolderMissing = false,
+            bool replaceExisting = true)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"duplicate-import-{Guid.NewGuid():N}");
             var libraryDir = Path.Combine(tempDir, "library");
@@ -2045,7 +2058,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 var results = service.Import(
                     decisions,
-                    replaceExisting: true,
+                    replaceExisting: replaceExisting,
                     downloadClientItem: new DownloadClientItem { DownloadId = "duplicate-copy" },
                     importMode: ImportMode.Copy,
                     cancellationToken: CancellationToken.None);
