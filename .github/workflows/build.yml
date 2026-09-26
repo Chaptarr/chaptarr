@@ -211,6 +211,13 @@ jobs:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-author-search
 
+    - name: Check ConfirmModal Enter behavior
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-confirm-modal
+
     - name: Upload author delete evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
       uses: actions/upload-artifact@v4

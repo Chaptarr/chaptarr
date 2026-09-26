@@ -30,9 +30,18 @@ function ConfirmModal(props) {
 
   useEffect(() => {
     if (isOpen) {
-      bindShortcut('enter', onConfirm);
+      const onEnter = (event) => {
+        // Focused buttons own Enter, including secondary actions and Cancel.
+        if (event.target.closest('button')) {
+          return undefined;
+        }
 
-      return () => unbindShortcut('enter', onConfirm);
+        return onConfirm(event);
+      };
+
+      bindShortcut('enter', onEnter);
+
+      return () => unbindShortcut('enter', onEnter);
     }
   }, [bindShortcut, unbindShortcut, isOpen, onConfirm]);
 
