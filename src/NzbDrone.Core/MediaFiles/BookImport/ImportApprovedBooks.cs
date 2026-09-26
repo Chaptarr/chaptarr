@@ -1348,9 +1348,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
                 else
                 {
-                    // An automatic import must not reach the transfer with an occupied destination: the
-                    // transfer only reports that as DestinationAlreadyExistsException, after staging began.
-                    if ((!localBook.IsManualImport || !replaceExisting) && !downloadForced && relocateExistingFile == null)
+                    // An import must not reach the transfer with an occupied destination: the transfer never
+                    // overwrites and only reports that as DestinationAlreadyExistsException, after staging began.
+                    // A tracked file this import replaces is exempt (it is staged aside first), so this also applies to
+                    // a manual import that replaces: an untracked or other-edition file at the destination is not staged.
+                    if (!downloadForced && relocateExistingFile == null)
                     {
                         var occupiedDestinationRejection = GetOccupiedDestinationRejectionReason(bookFile, localBook, edition, filesToReplace);
                         if (occupiedDestinationRejection != null)

@@ -1803,6 +1803,19 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void manual_import_with_replace_onto_an_untracked_occupied_destination_should_be_rejected_not_throw()
+        {
+            // Replacing only stages aside files this import replaces (tracked rows); the transfer never overwrites, so an
+            // untracked file at the destination still made the transfer throw DestinationAlreadyExistsException.
+            var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, isManualImport: true, existingAtDestination: true, existingUntracked: true, replaceExisting: true);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors.Any(e => e.Contains("already occupies the managed destination")), Is.True);
+            Assert.That(outcome.TransferCalls, Is.EqualTo(0));
+        }
+
+        [Test]
         public void manual_import_onto_an_occupied_tracked_destination_should_still_replace()
         {
             var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, isManualImport: true, existingAtDestination: true);
