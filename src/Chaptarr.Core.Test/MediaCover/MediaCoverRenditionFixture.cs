@@ -62,6 +62,7 @@ namespace Chaptarr.Core.Test.MediaCover
         private class DiskProviderProxy : DispatchProxy
         {
             public HashSet<string> ExistingPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> MissingFolders { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, string> TextByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, byte[]> BinaryByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<string> DeletedFolders { get; } = new();
@@ -82,7 +83,7 @@ namespace Chaptarr.Core.Test.MediaCover
                     nameof(IDiskProvider.FileExists) => ExistingPaths.Contains(path),
                     nameof(IDiskProvider.GetFileSize) => BinaryByPath.TryGetValue(path, out var bytes) ? bytes.LongLength : ExistingPaths.Contains(path) ? 1024L : 0L,
                     nameof(IDiskProvider.FileGetLastWrite) => new DateTime(1234),
-                    nameof(IDiskProvider.FolderExists) => true,
+                    nameof(IDiskProvider.FolderExists) => !MissingFolders.Contains(path),
                     nameof(IDiskProvider.GetFiles) => ExistingPaths.Where(existing =>
                         string.Equals(Path.GetDirectoryName(existing), path, StringComparison.OrdinalIgnoreCase)).ToArray(),
                     nameof(IDiskProvider.EnsureFolder) => null,
@@ -841,6 +842,31 @@ namespace Chaptarr.Core.Test.MediaCover
             };
 
             Assert.That(MediaCoverRendition.SelectMonitoredBookCovers(book), Is.Empty);
+        }
+
+        [Test]
+        public void converting_a_book_without_a_cover_folder_should_not_probe_for_its_metadata_file()
+        {
+            // IDiskProvider.FileExists enumerates the whole MediaCover/Books directory when a file is
+            // missing, so a book with no cover folder must be answered from FolderExists alone.
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            disk.MissingFolders.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "900"));
+            var deferred = DispatchProxy.Create<IDeferredCoverService, DeferredCoverProxy>();
+            var subject = new MediaCoverService(null, null, null, null, diskProvider, appFolder, null, null, config, null, deferred, LogManager.GetCurrentClassLogger());
+            var covers = new List<NzbDrone.Core.MediaCover.MediaCover>
+            {
+                new() { CoverType = MediaCoverTypes.Cover, Url = "cover.jpg" }
+            };
+
+            subject.ConvertToLocalUrls(900, MediaCoverEntity.Book, covers);
+            subject.ConvertToLocalUrls(900, MediaCoverEntity.Book, covers);
+
+            Assert.That(disk.GetCallCount(nameof(IDiskProvider.FileExists)), Is.Zero);
+            Assert.That(covers[0].Url, Is.EqualTo("cover.jpg"));
         }
 
         [Test]

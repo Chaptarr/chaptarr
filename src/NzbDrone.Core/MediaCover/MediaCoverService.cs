@@ -1117,7 +1117,19 @@ namespace NzbDrone.Core.MediaCover
 
 	            try
 	            {
-	                var metadataPath = Path.Combine(GetBookCoverPath(bookId), "cover-metadata.json");
+	                var coverFolder = GetBookCoverPath(bookId);
+
+	                // Most books have no cover folder, and IDiskProvider.FileExists falls back to a
+	                // case-insensitive path resolution for a missing file that enumerates the whole
+	                // MediaCover/Books directory (one entry per book) for every such book. That made
+	                // GET /book?authorId=N quadratic in the catalogue size. FolderExists is a plain stat.
+	                if (!_diskProvider.FolderExists(coverFolder))
+	                {
+	                    _bookCoverMetadataByBookId[bookId] = new BookCoverMetadata();
+	                    return null;
+	                }
+
+	                var metadataPath = Path.Combine(coverFolder, "cover-metadata.json");
 	                if (!_diskProvider.FileExists(metadataPath))
 	                {
 	                    _bookCoverMetadataByBookId[bookId] = new BookCoverMetadata();
