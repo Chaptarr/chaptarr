@@ -55,12 +55,19 @@ namespace NzbDrone.Core.Books
         private readonly Dictionary<string, Author> _bookMetadataCache = new Dictionary<string, Author>();
 
         // chaptarr #182: the author-level match (SortChildren's GetMatchingExistingChildren), keyed by
-        // local book id, for the duration of one RefreshBookInfo(...) call - same reset-per-call pattern
-        // as _bookMetadataCache above. GetRemoteData consults it before falling back to independently
-        // re-deriving a match. Safe as instance state for the same reason as every other per-call hint
-        // field on this service: CommandQueue only runs one disk-access command at a time, so this method
-        // is never re-entered concurrently on this singleton service.
-        protected Dictionary<int, Book> _currentMatchedRemoteByLocalIdHint;
+        // local book id, for the duration of one RefreshBookInfo(...) call. GetRemoteData consults it before
+        // falling back to independently re-deriving a match.
+        //
+        // This service is a singleton and RefreshAuthor commands for different authors run concurrently
+        // (RefreshAuthorCommand neither requires disk access nor is type exclusive, and there are several
+        // command threads), so the hint must never be shared between refreshes: keep it per async flow.
+        private static readonly System.Threading.AsyncLocal<Dictionary<int, Book>> CurrentMatchedRemoteByLocalIdHint = new System.Threading.AsyncLocal<Dictionary<int, Book>>();
+
+        protected Dictionary<int, Book> _currentMatchedRemoteByLocalIdHint
+        {
+            get => CurrentMatchedRemoteByLocalIdHint.Value;
+            set => CurrentMatchedRemoteByLocalIdHint.Value = value;
+        }
 
         public RefreshBookService(IBookService bookService,
                                   IAuthorService authorService,

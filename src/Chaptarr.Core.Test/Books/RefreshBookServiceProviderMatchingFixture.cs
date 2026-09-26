@@ -121,10 +121,48 @@ namespace Chaptarr.Core.Test.Books
                 }
             }
 
+            public Dictionary<int, Book> HintForCurrentRefresh
+            {
+                get => _currentMatchedRemoteByLocalIdHint;
+                set => _currentMatchedRemoteByLocalIdHint = value;
+            }
+
             public bool ShouldDeletePublic(Book local)
             {
                 return ShouldDelete(local);
             }
+        }
+
+        [Test]
+        public void concurrent_refreshes_should_not_see_each_others_matched_remote_hint()
+        {
+            // The service is a singleton and RefreshAuthor commands for different authors run concurrently, so the
+            // per-refresh hint must be isolated per flow. Deterministic interleaving: A sets, B sets, A reads.
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var hintA = new Dictionary<int, Book> { [1] = new Book { Id = 1 } };
+            var hintB = new Dictionary<int, Book> { [2] = new Book { Id = 2 } };
+            using var aSet = new System.Threading.ManualResetEventSlim();
+            using var bSet = new System.Threading.ManualResetEventSlim();
+            Dictionary<int, Book> seenByA = null;
+
+            var a = System.Threading.Tasks.Task.Run(() =>
+            {
+                service.HintForCurrentRefresh = hintA;
+                aSet.Set();
+                bSet.Wait();
+                seenByA = service.HintForCurrentRefresh;
+            });
+            var b = System.Threading.Tasks.Task.Run(() =>
+            {
+                aSet.Wait();
+                service.HintForCurrentRefresh = hintB;
+                bSet.Set();
+            });
+
+            System.Threading.Tasks.Task.WaitAll(a, b);
+
+            Assert.That(seenByA, Is.SameAs(hintA));
+            Assert.That(service.HintForCurrentRefresh, Is.Null, "the calling flow never set a hint");
         }
 
         [Test]
