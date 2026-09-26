@@ -1348,6 +1348,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
                 else
                 {
+                    // An automatic import must not reach the transfer with an occupied destination: the
+                    // transfer only reports that as DestinationAlreadyExistsException, after staging began.
+                    if (!localBook.IsManualImport && !downloadForced && relocateExistingFile == null)
+                    {
+                        var occupiedDestinationRejection = GetOccupiedDestinationRejectionReason(bookFile, localBook, edition, filesToReplace);
+                        if (occupiedDestinationRejection != null)
+                        {
+                            _logger.Debug("[ALREADY-IMPORTED] Managed destination for '{0}' is already occupied — {1}",
+                                localBook.Path, occupiedDestinationRejection);
+                            return (new ImportResult(decision, occupiedDestinationRejection), null);
+                        }
+                    }
+
                     // Handle file move/copy for new downloads
                     bool copyOnly = !localBook.IsGeneratedConversion &&
                                     (importMode == ImportMode.Copy || !ShouldMoveFile(localBook, author));
@@ -1599,6 +1612,41 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             return null;
+        }
+
+        private string GetOccupiedDestinationRejectionReason(BookFile bookFile, LocalBook localBook, Edition edition, List<BookFile> filesToReplace)
+        {
+            var destinationPath = _bookFileMover.GetImportDestinationPath(bookFile, localBook);
+
+            if (destinationPath.IsNullOrWhiteSpace() || destinationPath.PathEquals(localBook.Path))
+            {
+                return null;
+            }
+
+            // A file this import is about to stage aside is an upgrade, not a duplicate.
+            if (filesToReplace.Any(f => f.Path.IsNotNullOrWhiteSpace() && f.Path.PathEquals(destinationPath)))
+            {
+                return null;
+            }
+
+            if (!DestinationFileExists(destinationPath))
+            {
+                return null;
+            }
+
+            var trackedAtDestination = _mediaFileService.GetFileWithPath(destinationPath);
+
+            if (trackedAtDestination == null)
+            {
+                return $"An untracked file already occupies the managed destination: {destinationPath}";
+            }
+
+            if (trackedAtDestination.EditionId == edition.Id)
+            {
+                return AlreadyImportedRejectionReason;
+            }
+
+            return $"A file tracked for another edition already occupies the managed destination: {destinationPath}";
         }
 
         private string GetCustomFormatImportRejectionReason(LocalBook localBook, Author author, QualityProfile qualityProfile, bool downloadForced)
