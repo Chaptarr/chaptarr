@@ -7,6 +7,7 @@ using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Events;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
@@ -87,6 +88,7 @@ namespace NzbDrone.Core.Books
 	        private readonly IBookRepository _bookRepository;
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IProviderAliasService _providerAliasService;
+        private readonly IConfigService _configService;
 
         // Single-author cache fields
         private volatile int _currentAuthorId = -1;
@@ -102,7 +104,8 @@ namespace NzbDrone.Core.Books
 	                             IBookRepository bookRepository,
 	                             IMediaFileService mediaFileService,
 	                             Logger logger,
-	                             IProviderAliasService providerAliasService = null)
+	                             IProviderAliasService providerAliasService = null,
+	                             IConfigService configService = null)
 	        {
 	            _authorRepository = authorRepository;
 	            _eventAggregator = eventAggregator;
@@ -116,6 +119,7 @@ namespace NzbDrone.Core.Books
 	            _bookRepository = bookRepository;
 	            _mediaFileService = mediaFileService;
 	            _providerAliasService = providerAliasService;
+	            _configService = configService;
 	        }
 
         private void EnsureAuthorDbFields(Author author, bool ensurePaths, bool requirePath)
@@ -248,6 +252,7 @@ namespace NzbDrone.Core.Books
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var rootFolders = _rootFolderService?.All();
 
+            ApplyDefaultRootFoldersOnAdd(newAuthor, rootFolders);
             ApplySyncMonitoredAcrossFormatsDefaultOnAdd(newAuthor, rootFolders);
             NormalizeOrValidateSyncMonitoredAcrossFormats(newAuthor, null, rootFolders);
             
@@ -275,6 +280,7 @@ namespace NzbDrone.Core.Books
             
             foreach (var author in newAuthors)
             {
+                ApplyDefaultRootFoldersOnAdd(author, rootFolders);
                 ApplySyncMonitoredAcrossFormatsDefaultOnAdd(author, rootFolders);
                 NormalizeOrValidateSyncMonitoredAcrossFormats(author, null, rootFolders);
                 EnsureAuthorDbFields(author, ensurePaths: true, requirePath: true);
@@ -1063,6 +1069,32 @@ namespace NzbDrone.Core.Books
             }
 
             TrySeedSyncMonitoredAcrossFormatsFromRootFolderDefaults(author, rootFolders, "when author became dual-format eligible");
+        }
+
+        // Import paths create an author for the one format being imported, leaving the other format's root folder
+        // blank, which makes the author ineligible for "sync monitored across formats". Fill each blank root from the
+        // effective default for that format; never overwrite an explicit value, and leave it blank when the default
+        // is missing or ambiguous.
+        internal void ApplyDefaultRootFoldersOnAdd(Author author, List<RootFolder> rootFolders)
+        {
+            if (author == null || rootFolders == null || rootFolders.Count == 0)
+            {
+                return;
+            }
+
+            if (author.AudiobookRootFolderPath.IsNullOrWhiteSpace() &&
+                RootFolderDefaultResolver.TryGetEffectiveDefaultRootFolder(rootFolders, FolderType.Audiobook, _configService?.DefaultAudiobookRootFolderPath, out var audiobookRoot, out _))
+            {
+                author.AudiobookRootFolderPath = audiobookRoot.Path;
+                _logger.Debug("Filled missing audiobook root folder for new author {0} from the default: {1}", author.Name, audiobookRoot.Path);
+            }
+
+            if (author.EbookRootFolderPath.IsNullOrWhiteSpace() &&
+                RootFolderDefaultResolver.TryGetEffectiveDefaultRootFolder(rootFolders, FolderType.Ebook, _configService?.DefaultEbookRootFolderPath, out var ebookRoot, out _))
+            {
+                author.EbookRootFolderPath = ebookRoot.Path;
+                _logger.Debug("Filled missing ebook root folder for new author {0} from the default: {1}", author.Name, ebookRoot.Path);
+            }
         }
 
         private void ApplySyncMonitoredAcrossFormatsDefaultOnAdd(Author author, List<RootFolder> rootFolders)
