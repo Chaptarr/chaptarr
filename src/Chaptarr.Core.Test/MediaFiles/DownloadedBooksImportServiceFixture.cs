@@ -3180,5 +3180,186 @@ namespace Chaptarr.Core.Test.MediaFiles
                 ["TITLE"] = new List<string> { title }
             };
         }
+
+        [Test]
+        public void should_accept_same_work_audiobook_pocket_when_ebook_pocket_was_grabbed()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 7);
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].Approved, Is.True);
+            Assert.That(decisions[0].Item.Book.Id, Is.EqualTo(290880));
+        }
+
+        [Test]
+        public void should_reject_pocket_match_for_a_different_work()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:999999", matchedAuthorId: 7);
+
+            Assert.That(decisions[0].Approved, Is.False);
+            Assert.That(decisions[0].Rejections.Select(r => r.Reason).ToList(),
+                Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_reject_pocket_match_for_a_different_author()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 99);
+
+            Assert.That(decisions[0].Approved, Is.False);
+        }
+
+        [Test]
+        public void should_reject_pocket_match_when_work_id_is_present_on_only_one_side()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", null, matchedAuthorId: 7);
+
+            Assert.That(decisions[0].Approved, Is.False);
+        }
+
+        private static List<ImportDecision<LocalBook>> RunSameWorkPocketScenario(
+            string grabbedWorkId,
+            string matchedWorkId,
+            int matchedAuthorId)
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "The Vines - Part 01.mp3");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService
+                {
+                    Tags = CreateAudioTags("The Vines (Unabridged)", "The Vines - Part 01", "Christopher Rice", "Corey Brill")
+                };
+
+                var grabbedAuthor = new Author { Id = 7, Name = "Christopher Rice" };
+                var matchedAuthor = matchedAuthorId == grabbedAuthor.Id
+                    ? new Author { Id = grabbedAuthor.Id, Name = grabbedAuthor.Name }
+                    : new Author { Id = matchedAuthorId, Name = "Someone Else" };
+
+                // Grabbed target: the ebook pocket of the work.
+                var grabbedBook = new Book
+                {
+                    Id = 166297,
+                    Author = grabbedAuthor,
+                    Title = "The Vines",
+                    AnyEditionOk = true,
+                    MediaType = BookMediaType.Ebook,
+                    HardcoverBookId = grabbedWorkId
+                };
+
+                // Matched: the audiobook pocket of the same provider work.
+                var matchedBook = new Book
+                {
+                    Id = 290880,
+                    Author = matchedAuthor,
+                    Title = "The Vines",
+                    AnyEditionOk = true,
+                    MediaType = BookMediaType.Audiobook,
+                    HardcoverBookId = matchedWorkId
+                };
+
+                var matchedEdition = new Edition
+                {
+                    Id = 290881,
+                    BookId = matchedBook.Id,
+                    Book = matchedBook,
+                    Title = "The Vines",
+                    Monitored = true,
+                    ReadingFormatId = 2
+                };
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+
+                var grabbedEdition = new Edition
+                {
+                    Id = 166298,
+                    BookId = grabbedBook.Id,
+                    Book = grabbedBook,
+                    Title = "The Vines",
+                    Monitored = true,
+                    ReadingFormatId = 3
+                };
+                grabbedBook.Editions = new List<Edition> { grabbedEdition };
+
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            CreateMatchedFile(filePath, tagsService.Tags, matchedAuthor.Id, matchedAuthor.Name, matchedBook.Id, "The Vines", matchedEdition.Id)
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.Book = matchedBook;
+                bookProxy.BooksById[matchedBook.Id] = matchedBook;
+                bookProxy.BooksById[grabbedBook.Id] = grabbedBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = matchedAuthor;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.Edition = matchedEdition;
+                editionProxy.EditionsById[matchedEdition.Id] = matchedEdition;
+                editionProxy.EditionsById[grabbedEdition.Id] = grabbedEdition;
+                editionProxy.EditionsByBook = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[matchedBook.Id] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[grabbedBook.Id] = new List<Edition> { grabbedEdition };
+
+                var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+                ((HistoryServiceProxy)(object)historyService).HistoryItems = new List<EntityHistory>();
+
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    historyService,
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = grabbedAuthor,
+                    Books = new List<Book> { grabbedBook }
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    Title = "Christopher Rice - The Vines (Unabridged)",
+                    DownloadId = "DOWNLOAD-POCKET",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, grabbedAuthor, downloadClientItem, remoteBook);
+
+                return importApproved.Decisions;
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
     }
 }

@@ -725,14 +725,73 @@ namespace NzbDrone.Core.MediaFiles
             var expectedBookIds = expectedBooks.Select(book => book.Id).ToHashSet();
             var expectedLabel = FormatBookListLabel(expectedBooks);
 
+            // An off-target match is only ever tolerated when every off-target file resolved to the same
+            // book row; more than one is an ambiguous multi-book match and stays rejected.
+            var offTargetBookIds = decisions
+                .Where(decision => decision?.Approved == true && decision.Item?.Book != null)
+                .Select(decision => decision.Item.Book.Id)
+                .Where(id => !expectedBookIds.Contains(id))
+                .Distinct()
+                .ToList();
+
+            var allowSameWorkPocket = offTargetBookIds.Count == 1;
+            List<Book> hydratedExpectedBooks = null;
+
             foreach (var decision in decisions.Where(decision => decision?.Approved == true))
             {
                 var matchedBook = decision.Item?.Book;
                 if (matchedBook == null || !expectedBookIds.Contains(matchedBook.Id))
                 {
+                    if (allowSameWorkPocket)
+                    {
+                        hydratedExpectedBooks ??= expectedBooks.Select(HydrateExpectedBook).ToList();
+
+                        if (IsSameWorkMediaPocketMatch(matchedBook, hydratedExpectedBooks, decision.Item))
+                        {
+                            _logger.Debug("Accepting completed download '{0}' matched to same-work {1} pocket {2} instead of grabbed {3}",
+                                downloadClientItem?.Title ?? downloadClientItem?.DownloadId ?? "<unknown>",
+                                matchedBook.MediaType,
+                                FormatBookLabel(matchedBook),
+                                expectedLabel);
+                            continue;
+                        }
+                    }
+
                     decision.Reject(new Rejection($"Completed download was grabbed for {expectedLabel}, but import matched {FormatBookLabel(matchedBook)}."));
                 }
             }
+        }
+
+        private static bool IsSameWorkMediaPocketMatch(Book matchedBook, List<Book> expectedBooks, LocalBook localBook)
+        {
+            if (matchedBook == null || matchedBook.Id <= 0 || localBook == null || expectedBooks == null)
+            {
+                return false;
+            }
+
+            var fileMediaType = BookFile.DetermineMediaType(localBook.Quality ?? new QualityModel()) == "ebook"
+                ? BookMediaType.Ebook
+                : BookMediaType.Audiobook;
+
+            if (matchedBook.MediaType != fileMediaType)
+            {
+                return false;
+            }
+
+            var matchedAuthorId = GetAuthorId(matchedBook);
+            if (matchedAuthorId <= 0)
+            {
+                return false;
+            }
+
+            var sameWorkTargets = expectedBooks
+                .Where(target => target != null &&
+                                 target.Id != matchedBook.Id &&
+                                 GetAuthorId(target) == matchedAuthorId &&
+                                 WorkIdMatcher.WorkProviderIdMatches(target, matchedBook))
+                .ToList();
+
+            return sameWorkTargets.Count == 1;
         }
 
         private void RetargetSameWorkMatchesToGrabbedBook(List<ImportDecision<LocalBook>> decisions, List<Book> expectedBooks, Author expectedAuthor, DownloadClientItem downloadClientItem)
