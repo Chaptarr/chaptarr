@@ -15,6 +15,7 @@ using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Extras;
+using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
@@ -1682,6 +1683,45 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(outcome.SourceFilesOnDisk, Is.True);
         }
 
+        [Test]
+        public void automatic_import_should_complete_an_edition_that_lost_parts_instead_of_calling_it_a_duplicate()
+        {
+            // Two of four parts survive (rows still declare PartCount 4); the complete set arrives again.
+            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.MP3, fileCount: 4, existingFileCount: 2);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(4));
+            Assert.That(outcome.Results.SelectMany(r => r.Errors), Has.None.EqualTo(ImportApprovedBooks.AlreadyImportedRejectionReason));
+            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
+        }
+
+        [Test]
+        public void multi_file_upgrade_should_parse_each_existing_files_custom_formats_once_per_batch()
+        {
+            var counter = new CountingCustomFormatCalculationService();
+
+            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.M4B, fileCount: 3, customFormats: counter);
+
+            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
+            Assert.That(counter.StoredFileParses, Is.LessThanOrEqualTo(3), "3 existing files x 3 incoming files must not re-parse every stored file for every incoming file");
+        }
+
+        private sealed class CountingCustomFormatCalculationService : ICustomFormatCalculationService
+        {
+            public int StoredFileParses { get; private set; }
+
+            public List<CustomFormat> ParseCustomFormat(RemoteBook remoteBook, long size) => new();
+            public List<CustomFormat> ParseCustomFormat(BookFile bookFile, Author artist)
+            {
+                StoredFileParses++;
+                return new List<CustomFormat>();
+            }
+
+            public List<CustomFormat> ParseCustomFormat(BookFile bookFile) => ParseCustomFormat(bookFile, bookFile?.Author);
+            public List<CustomFormat> ParseCustomFormat(Blocklist blocklist, Author artist) => new();
+            public List<CustomFormat> ParseCustomFormat(EntityHistory history, Author artist) => new();
+            public List<CustomFormat> ParseCustomFormat(LocalBook localBook) => new();
+        }
+
         private sealed class DuplicateImportOutcome
         {
             public List<ImportResult> Results { get; init; }
@@ -1711,7 +1751,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             Quality incomingQuality,
             int fileCount = 1,
             bool isManualImport = false,
-            Revision incomingRevision = null)
+            Revision incomingRevision = null,
+            bool upgradeAllowed = true,
+            ICustomFormatCalculationService customFormats = null,
+            int? existingFileCount = null)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"duplicate-import-{Guid.NewGuid():N}");
             var libraryDir = Path.Combine(tempDir, "library");
@@ -1726,7 +1769,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Id = 901,
                     Name = "Audiobooks",
                     ProfileType = ProfileType.Audiobook,
-                    UpgradeAllowed = true,
+                    UpgradeAllowed = upgradeAllowed,
                     Items = new List<QualityProfileQualityItem>
                     {
                         new() { Allowed = true, Quality = Quality.MP3 },
@@ -1739,7 +1782,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Id = 902,
                     Name = "Ebooks",
                     ProfileType = ProfileType.Ebook,
-                    UpgradeAllowed = true,
+                    UpgradeAllowed = upgradeAllowed,
                     Items = new List<QualityProfileQualityItem>
                     {
                         new() { Allowed = true, Quality = Quality.EPUB },
@@ -1791,7 +1834,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 var mediaFileService = new StubMediaFileService();
                 var existingPaths = new List<string>();
-                for (var i = 0; i < fileCount; i++)
+                for (var i = 0; i < (existingFileCount ?? fileCount); i++)
                 {
                     var existingPath = Path.Combine(libraryDir, $"The Vines - Part {i + 1}{ExtensionForQuality(existingQuality)}");
                     File.WriteAllText(existingPath, "existing");
@@ -1854,7 +1897,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     Proxy<IM4bConversionService>(),
-                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    customFormatCalculationService: customFormats);
 
                 var results = service.Import(
                     decisions,

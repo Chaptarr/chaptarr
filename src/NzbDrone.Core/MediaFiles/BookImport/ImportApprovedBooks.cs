@@ -1575,6 +1575,15 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return null;
             }
 
+            // An edition whose rows declare more parts than are still present lost files (for example to the
+            // same-path upgrade deletion). The complete set arriving again is a repair, not a duplicate, so let it
+            // replace the surviving partial set.
+            var declaredPartCount = filesToReplace.Max(f => f.PartCount);
+            if (declaredPartCount > filesToReplace.Count)
+            {
+                return null;
+            }
+
             localBook.Author ??= author;
             var newFormats = _customFormatCalculationService?.ParseCustomFormat(localBook) ?? new List<CustomFormat>();
 
