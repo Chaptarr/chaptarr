@@ -3217,10 +3217,34 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(decisions[0].Approved, Is.False);
         }
 
+        [Test]
+        public void should_reject_same_media_type_sibling_row_of_the_same_work_for_a_multi_book_grab()
+        {
+            // Both rows are audiobooks of the same work (for example two narrator rows). The pocket rule is only for
+            // a different media type; a same-format sibling must not be silently accepted just because
+            // the retarget step is skipped for a multi-book grab.
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 7,
+                grabbedMediaType: BookMediaType.Audiobook, alsoGrabUnrelatedBook: true);
+
+            Assert.That(decisions[0].Approved, Is.False);
+            Assert.That(decisions[0].Rejections.Select(r => r.Reason).ToList(), Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_still_accept_different_media_type_pocket_for_a_multi_book_grab()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 7,
+                grabbedMediaType: BookMediaType.Ebook, alsoGrabUnrelatedBook: true);
+
+            Assert.That(decisions[0].Approved, Is.True);
+        }
+
         private static List<ImportDecision<LocalBook>> RunSameWorkPocketScenario(
             string grabbedWorkId,
             string matchedWorkId,
-            int matchedAuthorId)
+            int matchedAuthorId,
+            BookMediaType grabbedMediaType = BookMediaType.Ebook,
+            bool alsoGrabUnrelatedBook = false)
         {
             var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
@@ -3246,7 +3270,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Author = grabbedAuthor,
                     Title = "The Vines",
                     AnyEditionOk = true,
-                    MediaType = BookMediaType.Ebook,
+                    MediaType = grabbedMediaType,
                     HardcoverBookId = grabbedWorkId
                 };
 
@@ -3337,10 +3361,27 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
                     LogManager.GetCurrentClassLogger());
 
+                var grabbedBooks = new List<Book> { grabbedBook };
+                if (alsoGrabUnrelatedBook)
+                {
+                    // A multi-book grab skips RetargetSameWorkMatchesToGrabbedBook, so only the pocket rule decides.
+                    var otherBook = new Book
+                    {
+                        Id = 166300,
+                        Author = grabbedAuthor,
+                        Title = "The Tiger",
+                        AnyEditionOk = true,
+                        MediaType = grabbedMediaType,
+                        HardcoverBookId = "hc:777777"
+                    };
+                    grabbedBooks.Add(otherBook);
+                    bookProxy.BooksById[otherBook.Id] = otherBook;
+                }
+
                 var remoteBook = new RemoteBook
                 {
                     Author = grabbedAuthor,
-                    Books = new List<Book> { grabbedBook }
+                    Books = grabbedBooks
                 };
 
                 var downloadClientItem = new DownloadClientItem

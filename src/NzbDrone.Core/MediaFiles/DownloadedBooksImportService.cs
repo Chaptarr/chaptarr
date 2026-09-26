@@ -787,6 +787,10 @@ namespace NzbDrone.Core.MediaFiles
             var sameWorkTargets = expectedBooks
                 .Where(target => target != null &&
                                  target.Id != matchedBook.Id &&
+                                 // Only a DIFFERENT media type pocket qualifies. A same-format sibling row of the work
+                                 // (for example another narrator's audiobook row) is handled by
+                                 // RetargetSameWorkMatchesToGrabbedBook, which is skipped for a multi-book grab.
+                                 target.MediaType != matchedBook.MediaType &&
                                  GetAuthorId(target) == matchedAuthorId &&
                                  WorkIdMatcher.WorkProviderIdMatches(target, matchedBook))
                 .ToList();
