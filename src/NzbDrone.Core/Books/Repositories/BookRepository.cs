@@ -26,6 +26,10 @@ namespace NzbDrone.Core.Books
 		        List<Book> GetLastBooks(IEnumerable<int> authorIds);
 		        List<Book> GetNextBooks(IEnumerable<int> authorIds);
 		        List<Book> GetBooksByAuthorId(int authorId);
+		        // Default keeps repository stubs working; BookRepository overrides it with a projection query.
+		        List<BookTitleSlug> GetTitleSlugsByAuthorId(int authorId) => GetBooksByAuthorId(authorId)
+		            .Select(book => new BookTitleSlug { Id = book.Id, TitleSlug = book.TitleSlug })
+		            .ToList();
 		        List<Book> GetBooksForRefresh(int authorId, IEnumerable<string> providerIds);
 		        List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
 		        Book FindByTitle(int authorId, string title);
@@ -192,6 +196,18 @@ namespace NzbDrone.Core.Books
 	                return Query(outer);
 	            }
 	        }
+
+        public List<BookTitleSlug> GetTitleSlugsByAuthorId(int authorId)
+        {
+            // Slug uniqueness only needs id + slug. Loading whole Book rows here made every single-book update
+            // read the author's entire catalogue (about 12,000 rows per call for a large author).
+            using (var connection = _database.OpenConnection())
+            {
+                return connection.Query<BookTitleSlug>(
+                    @"SELECT ""Id"", ""TitleSlug"" FROM ""Books"" WHERE ""AuthorId"" = @authorId AND ""TitleSlug"" IS NOT NULL AND ""TitleSlug"" <> ''",
+                    new { authorId }).ToList();
+            }
+        }
 
         public List<Book> GetBooksByAuthorId(int authorId)
         {
@@ -1131,5 +1147,11 @@ namespace NzbDrone.Core.Books
         {
             return GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, null, null, null);
         }
+    }
+
+    public class BookTitleSlug
+    {
+        public int Id { get; set; }
+        public string TitleSlug { get; set; }
     }
 }

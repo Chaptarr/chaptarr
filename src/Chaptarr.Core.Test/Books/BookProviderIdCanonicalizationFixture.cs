@@ -48,6 +48,11 @@ namespace Chaptarr.Core.Test.Books
                     return new List<Book>();
                 }
 
+                if (targetMethod?.Name == nameof(IBookRepository.GetTitleSlugsByAuthorId))
+                {
+                    return new List<BookTitleSlug>();
+                }
+
                 if (targetMethod?.Name == nameof(IBookRepository.Get))
                 {
                     return ((IEnumerable<int>)args[0])

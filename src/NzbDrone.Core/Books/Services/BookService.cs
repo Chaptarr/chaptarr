@@ -1142,7 +1142,7 @@ namespace NzbDrone.Core.Books
             foreach (var authorBooks in booksByAuthor)
             {
                 // Get existing books for this author
-                var existingBooks = _bookRepository.GetBooksByAuthorId(authorBooks.Key);
+                var existingBooks = _bookRepository.GetTitleSlugsByAuthorId(authorBooks.Key);
 
                 // Build a dictionary of existing slugs, excluding the books being updated
                 var bookIdsBeingUpdated = authorBooks.Where(b => b.Id > 0).Select(b => b.Id).ToHashSet();
