@@ -617,9 +617,11 @@ namespace NzbDrone.Core.MediaFiles
                     tags["authors"] = authors;
                 }
 
-                if (!string.IsNullOrWhiteSpace(book.Isbn))
+                // StripIsbn returns null for an unparseable/invalid ISBN; a null tag value must never be stored.
+                var strippedIsbn = StripIsbn(book.Isbn);
+                if (!string.IsNullOrWhiteSpace(strippedIsbn))
                 {
-                    tags["isbn"] = StripIsbn(book.Isbn);
+                    tags["isbn"] = strippedIsbn;
                 }
 
                 if (!string.IsNullOrWhiteSpace(book.Asin))
