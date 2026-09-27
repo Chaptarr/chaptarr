@@ -11,7 +11,33 @@ namespace NzbDrone.Core.Messaging.Commands
     public class CommandExecutor : IHandle<ApplicationStartedEvent>,
                                    IHandle<ApplicationShutdownRequested>
     {
-        private const int THREAD_LIMIT = 3;
+        private const int DefaultThreadLimit = 3;
+        private const string ThreadLimitEnvVar = "CHAPTARR_COMMAND_THREADS";
+
+        /// <summary>
+        /// Number of worker threads that execute queued commands.
+        /// Defaults to 3, matching the previous hardcoded value.
+        ///
+        /// This is the hard ceiling on command concurrency - raising
+        /// CHAPTARR_DISK_ACCESS_LIMIT alone has no effect if there are not enough
+        /// threads to run the commands it now permits. Worth raising on libraries
+        /// held on high-latency storage (FUSE/network mounts), where command threads
+        /// spend most of their time blocked on per-file I/O rather than working.
+        /// </summary>
+        private static int ThreadLimit
+        {
+            get
+            {
+                var value = Environment.GetEnvironmentVariable(ThreadLimitEnvVar);
+
+                if (!string.IsNullOrWhiteSpace(value) && int.TryParse(value, out var parsed) && parsed > 0)
+                {
+                    return parsed;
+                }
+
+                return DefaultThreadLimit;
+            }
+        }
 
         private readonly Logger _logger;
         private readonly IServiceFactory _serviceFactory;
@@ -195,7 +221,7 @@ namespace NzbDrone.Core.Messaging.Commands
         {
             _cancellationTokenSource = new CancellationTokenSource();
 
-            for (var i = 0; i < THREAD_LIMIT; i++)
+            for (var i = 0; i < ThreadLimit; i++)
             {
                 var thread = new Thread(ExecuteCommands);
                 thread.Start();
