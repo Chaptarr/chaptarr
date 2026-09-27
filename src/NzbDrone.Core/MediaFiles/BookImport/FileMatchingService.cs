@@ -58,6 +58,70 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private readonly AsyncLocal<RejectionCaptureContext> _rejectionCapture = new AsyncLocal<RejectionCaptureContext>();
         private readonly AsyncLocal<IMatchingTraceSink> _matchingTraceSink = new AsyncLocal<IMatchingTraceSink>();
 
+        // Per-file matching (manual import preview) runs the whole staged match once per file. Files of one
+        // audiobook usually produce identical recall/rank queries, so within ONE MatchFilesToLibraryAsync call the
+        // recall and rank results are memoized by their exact inputs. Values are stored serialized and returned as
+        // fresh copies, so callers can never observe or mutate shared instances. Not used when matching trace is on.
+        private readonly AsyncLocal<PerFileFtsMemo> _perFileFtsMemo = new AsyncLocal<PerFileFtsMemo>();
+
+        internal sealed class PerFileFtsMemo
+        {
+            private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _entries = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+
+            // The memo must never change behaviour: anything that cannot be keyed, serialized or deserialized
+            // (for example a NaN/Infinity score, which System.Text.Json refuses) falls back to computing directly.
+            public T GetOrCompute<T>(string kind, Func<string> keyFactory, Func<T> compute)
+            {
+                string fullKey;
+                try
+                {
+                    fullKey = kind + "\u001e" + keyFactory();
+                }
+                catch (Exception)
+                {
+                    return compute();
+                }
+
+                if (_entries.TryGetValue(fullKey, out var json))
+                {
+                    try
+                    {
+                        return System.Text.Json.JsonSerializer.Deserialize<T>(json);
+                    }
+                    catch (Exception)
+                    {
+                        // fall through and recompute
+                    }
+                }
+
+                var value = compute();
+                try
+                {
+                    _entries[fullKey] = System.Text.Json.JsonSerializer.Serialize(value);
+                }
+                catch (Exception)
+                {
+                    // not cacheable; return the freshly computed value
+                }
+
+                return value;
+            }
+        }
+
+        internal T WithPerFileFtsMemo<T>(bool enabled, Func<T> body)
+        {
+            var previous = _perFileFtsMemo.Value;
+            _perFileFtsMemo.Value = enabled ? new PerFileFtsMemo() : null;
+            try
+            {
+                return body();
+            }
+            finally
+            {
+                _perFileFtsMemo.Value = previous;
+            }
+        }
+
         private sealed class RejectionCaptureContext
         {
             public RejectionCaptureContext(string scope, List<CandidateRejection> rejections, int maxRejections)
@@ -587,6 +651,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         }
 
         public Task<FileMatchResult> MatchFilesToLibraryAsync(DiscoveredFileWithMetadata[] filesWithMetadata, int? restrictToAuthorId, MatchingContext context)
+        {
+            return WithPerFileFtsMemo(context?.PerFileMatching == true, () => MatchFilesToLibraryCoreAsync(filesWithMetadata, restrictToAuthorId, context));
+        }
+
+        private Task<FileMatchResult> MatchFilesToLibraryCoreAsync(DiscoveredFileWithMetadata[] filesWithMetadata, int? restrictToAuthorId, MatchingContext context)
         {
             var totalStopwatch = Stopwatch.StartNew();
             context ??= new MatchingContext();
@@ -5711,7 +5780,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         Step = "staged_matching",
                         Terms = tokens.ToList()
                     });
-                    var recalledBooks = stagedRepository.RecallBooks(authorId, tokens, mediaType, trace, limit: 20);
+                    var perFileMemo = trace == null ? _perFileFtsMemo.Value : null;
+                    var recalledBooks = perFileMemo != null
+                        ? perFileMemo.GetOrCompute(
+                            "recall",
+                            () => string.Join("\u001f", new[] { authorId?.ToString() ?? "-", ((int)mediaType).ToString() }.Concat(tokens ?? new List<string>())),
+                            () => stagedRepository.RecallBooks(authorId, tokens, mediaType, trace, limit: 20))
+                        : stagedRepository.RecallBooks(authorId, tokens, mediaType, trace, limit: 20);
                     var authorGateCache = new Dictionary<
                         string,
                         (bool Proven, bool TrustedScope, string ProvenName, IReadOnlyList<string> IdentityNames)>(
@@ -5881,7 +5956,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     stagedGroupFields = BuildCandidateRelativeGroupFields(
                         groupMemberTags,
                         authorNamesToConsume);
-                    ftsResults = stagedRepository.RankEditions(gatedBooks, stagedFieldQueries, mediaType, trace);
+                    ftsResults = perFileMemo != null
+                        ? perFileMemo.GetOrCompute(
+                            "rank",
+                            () => ((int)mediaType) + "\u001f" + System.Text.Json.JsonSerializer.Serialize(gatedBooks) + "\u001f" + System.Text.Json.JsonSerializer.Serialize(stagedFieldQueries),
+                            () => stagedRepository.RankEditions(gatedBooks, stagedFieldQueries, mediaType, trace))
+                        : stagedRepository.RankEditions(gatedBooks, stagedFieldQueries, mediaType, trace);
                     stagedStopwatch.Stop();
                     trace?.Invoke(new EditionFtsTraceEvent
                     {
