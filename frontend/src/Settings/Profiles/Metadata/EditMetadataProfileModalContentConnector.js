@@ -2,7 +2,7 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { fetchMetadataProfileSchema, saveMetadataProfile, setMetadataProfileValue } from 'Store/Actions/settingsActions';
+import { fetchMetadataProfileGenres, fetchMetadataProfileSchema, saveMetadataProfile, setMetadataProfileValue } from 'Store/Actions/settingsActions';
 import createProfileInUseSelector from 'Store/Selectors/createProfileInUseSelector';
 import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
 import EditMetadataProfileModalContent from './EditMetadataProfileModalContent';
@@ -11,10 +11,13 @@ function createMapStateToProps() {
   return createSelector(
     createProviderSettingsSelector('metadataProfiles'),
     createProfileInUseSelector('metadataProfileId'),
-    (metadataProfile, isInUse) => {
+    (state) => state.settings.metadataProfiles,
+    (metadataProfile, isInUse, metadataProfilesSection) => {
       return {
         ...metadataProfile,
-        isInUse
+        isInUse,
+        isGenresFetching: metadataProfilesSection.isGenresFetching,
+        isGenresPopulated: metadataProfilesSection.isGenresPopulated
       };
     }
   );
@@ -22,6 +25,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   fetchMetadataProfileSchema,
+  fetchMetadataProfileGenres,
   setMetadataProfileValue,
   saveMetadataProfile
 };
@@ -48,6 +52,10 @@ class EditMetadataProfileModalContentConnector extends Component {
     // Set profileType if creating a new profile
     if (!this.props.id && this.props.profileType) {
       this.props.setMetadataProfileValue({ name: 'profileType', value: this.props.profileType });
+    }
+
+    if (!this.props.isGenresPopulated && !this.props.isGenresFetching) {
+      this.props.fetchMetadataProfileGenres();
     }
   }
 
@@ -102,6 +110,9 @@ EditMetadataProfileModalContentConnector.propTypes = {
   item: PropTypes.object.isRequired,
   setMetadataProfileValue: PropTypes.func.isRequired,
   fetchMetadataProfileSchema: PropTypes.func.isRequired,
+  fetchMetadataProfileGenres: PropTypes.func.isRequired,
+  isGenresFetching: PropTypes.bool,
+  isGenresPopulated: PropTypes.bool,
   saveMetadataProfile: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

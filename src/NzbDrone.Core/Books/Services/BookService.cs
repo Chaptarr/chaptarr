@@ -109,6 +109,7 @@ namespace NzbDrone.Core.Books
         void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false);
         List<Book> GetAllBooks();
         List<Book> GetImportListBookIdentities();
+        List<string> GetAllGenres() => throw new NotImplementedException();
         Book UpdateBook(Book book);
         Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, Action<IDbConnection, IDbTransaction> writeRelated = null);
         void UpdateManyWithLifecycle(List<Book> books)
@@ -781,6 +782,11 @@ namespace NzbDrone.Core.Books
             var books = _bookRepository.All().ToList();
             LoadSeriesLinks(books);
             return books;
+        }
+
+        public List<string> GetAllGenres()
+        {
+            return _bookRepository.GetAllGenres();
         }
 
         public Book GetBook(int bookId)
