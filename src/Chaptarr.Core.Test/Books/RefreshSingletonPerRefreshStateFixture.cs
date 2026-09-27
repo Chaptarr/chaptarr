@@ -25,6 +25,8 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public Dictionary<string, Author> CacheOfCurrentRefresh => _bookMetadataCache;
+
+            public IDisposable OpenCacheScope() => BeginBookMetadataCacheScope();
         }
 
         private static T Uninitialized<T>() => (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
@@ -66,6 +68,30 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(seenByB, Is.False, "refresh B must not see refresh A's cached metadata");
             Assert.That(seenByAAfter, Is.True, "refresh A keeps its own cache");
+        }
+
+        [Test]
+        public void book_metadata_cache_scope_should_start_empty_and_restore_the_previous_cache_when_closed()
+        {
+            // Executor threads keep AsyncLocal values between commands, so an entry point that never closes its cache
+            // (the single-book refresh paths used the cache without any scope) would leave it on the thread.
+            var service = new TestableRefreshBookService();
+            service.CacheOfCurrentRefresh["outer"] = new Author();
+
+            using (service.OpenCacheScope())
+            {
+                Assert.That(service.CacheOfCurrentRefresh, Is.Empty, "a refresh must not see another refresh's entries");
+                service.CacheOfCurrentRefresh["inner"] = new Author();
+
+                using (service.OpenCacheScope())
+                {
+                    Assert.That(service.CacheOfCurrentRefresh, Is.Empty);
+                }
+
+                Assert.That(service.CacheOfCurrentRefresh.Keys, Is.EquivalentTo(new[] { "inner" }));
+            }
+
+            Assert.That(service.CacheOfCurrentRefresh.Keys, Is.EquivalentTo(new[] { "outer" }));
         }
 
         [Test]

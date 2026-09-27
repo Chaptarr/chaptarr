@@ -58,6 +58,31 @@ namespace NzbDrone.Core.Books
 
         protected Dictionary<string, Author> _bookMetadataCache => CurrentBookMetadataCache.Value ??= new Dictionary<string, Author>();
 
+        // Opens a fresh metadata cache for one refresh and restores the previous one when disposed (also on exceptions).
+        // Every entry point that reaches GetSkyhookData must open a scope: executor threads keep their AsyncLocal value
+        // between commands, so a cache that is never closed would live on the thread (stale results, unbounded growth).
+        protected IDisposable BeginBookMetadataCacheScope()
+        {
+            var previous = CurrentBookMetadataCache.Value;
+            CurrentBookMetadataCache.Value = new Dictionary<string, Author>();
+            return new BookMetadataCacheScope(previous);
+        }
+
+        private sealed class BookMetadataCacheScope : IDisposable
+        {
+            private readonly Dictionary<string, Author> _previous;
+
+            public BookMetadataCacheScope(Dictionary<string, Author> previous)
+            {
+                _previous = previous;
+            }
+
+            public void Dispose()
+            {
+                CurrentBookMetadataCache.Value = _previous;
+            }
+        }
+
         public RefreshBookService(IBookService bookService,
                                   IAuthorService authorService,
                                   IRootFolderService rootFolderService,
@@ -1201,7 +1226,7 @@ namespace NzbDrone.Core.Books
         public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
         {
             var updated = false;
-            CurrentBookMetadataCache.Value = new Dictionary<string, Author>();
+            using var metadataCacheScope = BeginBookMetadataCacheScope();
 
             // Defensive: the caller can accidentally include the same DB row multiple times (e.g. duplicate
             // matching during author refresh). De-dupe by database ID to avoid double-processing / double-deletes.
@@ -1272,11 +1297,13 @@ namespace NzbDrone.Core.Books
 
         public bool RefreshBookInfo(Book book, List<Book> remoteBooks, Author remoteData, bool forceUpdateFileTags)
         {
+            using var metadataCacheScope = BeginBookMetadataCacheScope();
             return RefreshEntityInfo(book, remoteBooks, remoteData, true, forceUpdateFileTags, null);
         }
 
         public bool RefreshBookInfo(Book book)
         {
+            using var metadataCacheScope = BeginBookMetadataCacheScope();
             var data = GetSkyhookData(book);
 
             if (data == null)
