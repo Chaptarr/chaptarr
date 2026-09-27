@@ -90,6 +90,38 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders) => throw new NotImplementedException();
         }
 
+        private class FolderExistsOnlyDiskProviderProxy : DispatchProxy
+        {
+            public HashSet<string> ExistingFolders { get; } = new(PathEqualityComparer.Instance);
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(IDiskProvider.FolderExists), StringComparison.Ordinal) &&
+                    args?.Length == 1 &&
+                    args[0] is string folderPath)
+                {
+                    return ExistingFolders.Contains(folderPath);
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IDiskProvider.{targetMethod?.Name}");
+            }
+        }
+
+        private class AllAuthorPathsOnlyAuthorServiceProxy : DispatchProxy
+        {
+            public Dictionary<int, string> Paths { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(IAuthorService.AllAuthorPaths), StringComparison.Ordinal))
+                {
+                    return Paths;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IAuthorService.{targetMethod?.Name}");
+            }
+        }
+
         private class ThrowingProxy<T> : DispatchProxy where T : class
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -528,6 +560,51 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.HandleAsync(new AuthorDeletedEvent(author, deleteFiles: true, addImportListExclusion: false)));
 
             Assert.That(recycleBinProvider.DeletedFolders, Is.Empty);
+            Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Not.Empty);
+        }
+
+        [Test]
+        public void should_delete_both_audiobook_and_ebook_folders_on_author_delete_when_they_differ()
+        {
+            // An author's legacy Path only ever pointed at one of AudiobookPath/EbookPath. Deleting
+            // just Path silently left the other format's entire folder - and every file in it -
+            // behind on disk, with no error, despite "delete files" having been requested.
+            var recycleBinProvider = new RecordingRecycleBinProvider();
+            var eventAggregator = new RecordingEventAggregator();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, FolderExistsOnlyDiskProviderProxy>();
+            var diskProxy = (FolderExistsOnlyDiskProviderProxy)(object)diskProvider;
+
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Jim Butcher",
+                Path = "/audiobooks/Jim Butcher",
+                AudiobookPath = "/audiobooks/Jim Butcher",
+                EbookPath = "/ebooks/Jim Butcher"
+            };
+
+            diskProxy.ExistingFolders.Add(author.AudiobookPath);
+            diskProxy.ExistingFolders.Add(author.EbookPath);
+
+            var rootFolderService = new StubRootFolderService(
+                new RootFolder { Path = "/audiobooks", FolderType = FolderType.Audiobook },
+                new RootFolder { Path = "/ebooks", FolderType = FolderType.Ebook });
+
+            var service = new MediaFileDeletionService(
+                diskProvider,
+                recycleBinProvider,
+                DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                DispatchProxy.Create<IAuthorService, AllAuthorPathsOnlyAuthorServiceProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                eventAggregator,
+                rootFolderService,
+                DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                LogManager.GetCurrentClassLogger());
+
+            service.HandleAsync(new AuthorDeletedEvent(author, deleteFiles: true, addImportListExclusion: false));
+
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.AudiobookPath));
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.EbookPath));
             Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Not.Empty);
         }
 

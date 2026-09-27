@@ -70,6 +70,13 @@ namespace NzbDrone.Core.Books
         void ReassignAuthor(List<Book> books, int authorId) { throw new NotImplementedException(); }
         void RefreshProviderAliases(Book book) { }
         void DeleteMany(List<Book> books);
+        // The default exists only for lightweight test doubles; BookService overrides it directly.
+        // Kept as an overload (not an added parameter on the line above) so the many hand-written
+        // IBookService test stubs that only implement the 1-arg form keep compiling unchanged.
+        void DeleteMany(List<Book> books, bool deleteFiles)
+        {
+            DeleteMany(books);
+        }
         void SetAddOptions(IEnumerable<Book> books);
         List<Book> GetAuthorBooksWithFiles(Author author);
             List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null);
@@ -2008,6 +2015,11 @@ namespace NzbDrone.Core.Books
 
         public void DeleteMany(List<Book> books)
         {
+            DeleteMany(books, false);
+        }
+
+        public void DeleteMany(List<Book> books, bool deleteFiles)
+        {
             var booksToDelete = (books ?? new List<Book>())
                 .Where(book => book != null)
                 .GroupBy(book => book.Id)
@@ -2018,7 +2030,7 @@ namespace NzbDrone.Core.Books
 
             foreach (var book in booksToDelete)
             {
-                _eventAggregator.PublishEvent(new BookDeletedEvent(book, false, false));
+                _eventAggregator.PublishEvent(new BookDeletedEvent(book, deleteFiles, false));
 
                 _providerAliasService?.DeleteAliases("Book", book.Id);
             }
@@ -2200,7 +2212,10 @@ namespace NzbDrone.Core.Books
         {
             var books = GetBooksByAuthorId(message.Author.Id);
 
-            DeleteMany(books);
+            // Previously hardcoded to false here regardless of what the author-level delete actually
+            // requested, so MediaFileService always unlinked (never deleted) each book's BookFile rows -
+            // leaving them behind as "unmapped files" even when the physical files really were deleted.
+            DeleteMany(books, message.DeleteFiles);
         }
 
         public void Execute(BulkSyncFormatMonitoringCommand message)

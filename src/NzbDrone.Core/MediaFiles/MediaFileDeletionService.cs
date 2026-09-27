@@ -188,41 +188,70 @@ namespace NzbDrone.Core.MediaFiles
 
                 if (!isCalibre)
                 {
-                    if (IsPathUnsafeToDelete(author.Path))
-                    {
-                        _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
-                            author.Path, author.Name);
-                        _eventAggregator.PublishEvent(new DeleteCompletedEvent());
-                        return;
-                    }
+                    // An author can have separate audiobook/ebook root folders (AudiobookPath, EbookPath)
+                    // in addition to the legacy single Path field. Only ever deleting Path left the other
+                    // format's entire folder - and every file in it - untouched on disk while the DB
+                    // treated the author as fully deleted, leaving those files' BookFile rows to surface
+                    // as "unmapped" even though they were never actually removed.
+                    var pathsToDelete = new[] { author.Path, author.AudiobookPath, author.EbookPath }
+                        .Where(p => !p.IsNullOrWhiteSpace())
+                        .Distinct()
+                        .ToList();
 
-                    var allAuthors = _authorService.AllAuthorPaths();
+                    // Fetched lazily, once, only if some path actually needs the other-authors check -
+                    // an author whose only path(s) are already refused as unsafe should never need it.
+                    Dictionary<int, string> allAuthors = null;
 
-                    foreach (var s in allAuthors)
+                    foreach (var path in pathsToDelete)
                     {
-                        if (s.Key == author.Id)
+                        if (IsPathUnsafeToDelete(path))
+                        {
+                            _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
+                                path, author.Name);
+                            continue;
+                        }
+
+                        allAuthors ??= _authorService.AllAuthorPaths();
+
+                        var blockedByOtherAuthor = false;
+
+                        foreach (var s in allAuthors)
+                        {
+                            if (s.Key == author.Id)
+                            {
+                                continue;
+                            }
+
+                            if (path.IsParentPath(s.Value))
+                            {
+                                _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", path);
+                                blockedByOtherAuthor = true;
+                                break;
+                            }
+
+                            if (path.PathEquals(s.Value))
+                            {
+                                _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", path);
+                                blockedByOtherAuthor = true;
+                                break;
+                            }
+                        }
+
+                        if (blockedByOtherAuthor)
                         {
                             continue;
                         }
 
-                        if (author.Path.IsParentPath(s.Value))
+                        if (_diskProvider.FolderExists(path))
                         {
-                            _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", author.Path);
-                            return;
-                        }
-
-                        if (author.Path.PathEquals(s.Value))
-                        {
-                            _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", author.Path);
-                            return;
+                            _recycleBinProvider.DeleteFolder(path);
                         }
                     }
 
-                    if (_diskProvider.FolderExists(message.Author.Path))
-                    {
-                        _recycleBinProvider.DeleteFolder(message.Author.Path);
-                    }
-
+                    // Always published once per author now, regardless of which (if any) path above was
+                    // refused - the previous single-path version only published this in some of those
+                    // cases, which could leave Plex's pending-refresh queue never flushed. ProcessQueue()
+                    // is a no-op against an empty queue, so publishing it unconditionally here is safe.
                     _eventAggregator.PublishEvent(new DeleteCompletedEvent());
                 }
             }
