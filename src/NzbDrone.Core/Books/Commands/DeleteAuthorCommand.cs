@@ -24,10 +24,11 @@ namespace NzbDrone.Core.Books.Commands
         public override bool IsLongRunning => true;
 
         // Scoped to DeleteFiles so a metadata-only delete isn't lumped into the "default" disk-access
-        // group at all. Note this only self-serializes against other RequiresDiskAccess commands that
-        // opt into the same group (see PR #188) - as of this PR that's just this command, so it does
-        // not yet protect against a concurrent move/rename touching the same author's files. Widening
-        // which commands opt in is a separate change.
+        // group at all. When it does apply, it lands in the same "default" group every other
+        // RequiresDiskAccess command uses via Command's own default DiskAccessGroup (MoveAuthorCommand,
+        // RenameAuthorCommand, BulkMoveAuthorCommand, RescanFoldersCommand, ManualImportCommand, ...),
+        // so CommandQueue's disk-access serialization (see PR #188) already keeps this from running
+        // concurrently with a move/rename touching the same author's files.
         public override bool RequiresDiskAccess => DeleteFiles;
     }
 }

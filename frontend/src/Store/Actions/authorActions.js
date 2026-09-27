@@ -341,7 +341,9 @@ export const actionHandlers = handleThunks({
     return abortRequest;
   },
   [SAVE_AUTHOR]: createSaveProviderHandler(section, '/author', { getAjaxOptions: getSaveAjaxOptions }),
-  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author'),
+  // A large author delete runs as a background command and responds 202 (queued, not done yet)
+  // instead of a completed 2xx - see AuthorService.DeleteAuthorsSyncOrQueue.
+  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author', { allowQueuedResponse: true }),
 
   [TOGGLE_AUTHOR_MONITORED]: (getState, payload, dispatch) => {
     const {
