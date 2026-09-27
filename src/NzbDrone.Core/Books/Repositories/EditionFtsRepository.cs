@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -458,22 +459,31 @@ namespace NzbDrone.Core.Books
 
         private static string BuildPostgresTsQuery(IEnumerable<string> tokens)
         {
+            var parts = ExtractPostgresLexemes(tokens);
+            return parts.Count == 0 ? string.Empty : string.Join(" | ", parts);
+        }
+
+        /// <summary>
+        /// Split the caller's tokens into the individual lexemes a 'simple' tsquery is built from.
+        /// Each returned lexeme is safe to hand to to_tsquery on its own, which is what the
+        /// document-frequency probe relies on.
+        /// </summary>
+        internal static List<string> ExtractPostgresLexemes(IEnumerable<string> tokens)
+        {
             if (tokens == null)
             {
-                return string.Empty;
+                return new List<string>();
             }
 
-            // Build a safe tsquery string (OR'ed terms) using Unicode-aware lexeme extraction.
+            // Unicode-aware lexeme extraction.
             // \p{L} = any Unicode letter, \p{Nd} = any Unicode digit
             // This supports Chinese, Japanese, Korean, Arabic, Cyrillic, etc.
-            var parts = tokens
+            return tokens
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .SelectMany(t => Regex.Matches(t, @"[\p{L}\p{Nd}]+").Cast<Match>().Select(m => m.Value))
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-
-            return parts.Count == 0 ? string.Empty : string.Join(" | ", parts);
         }
 
         /// <summary>
@@ -636,8 +646,258 @@ namespace NzbDrone.Core.Books
             }
 
             return _dbType == DatabaseType.PostgreSQL
-                ? RecallBooksPostgres(authorId, terms, mediaType, trace, limit, monitoredOnly)
+                ? RecallBooksPostgres(authorId, DropRecallStopwords(terms), mediaType, trace, limit, monitoredOnly)
                 : RecallBooksSqlite(authorId, terms, mediaType, trace, limit, monitoredOnly);
+        }
+
+        // The Postgres recall ORs every token under the 'simple' text search configuration, which has no stopword
+        // list, so a bare "and"/"the" matches tens of thousands of editions (measured: "and" alone matched 57k
+        // editions; an 11-term query pulled 80k candidates and 38k books before LIMIT 20, about 1.2s per file). A
+        // sweep issues this once per file, so a several-hundred-file audiobook kept Postgres busy for minutes. Words
+        // that carry no title identity are not useful recall keys. Digits and series words (part, book, volume) stay:
+        // they distinguish books in a series. If nothing but stopwords remains, keep the original terms.
+        private static readonly HashSet<string> RecallStopwords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "a", "an", "and", "the", "of", "in", "to"
+        };
+
+        internal static List<string> DropRecallStopwords(List<string> terms)
+        {
+            var kept = terms.Where(term => !RecallStopwords.Contains(term)).ToList();
+            return kept.Count == 0 ? terms : kept;
+        }
+
+        // Dropping function words is not enough. On a 346k-book library the remaining generic tokens still
+        // dominate: measured with pg_stat_statements, the Postgres recall was 59k calls, mean 266ms, 15.8k CPU
+        // seconds, enough to push host load past 100 and lock up the web UI. EXPLAIN for the tsquery
+        // "legend | of | drizzt | book | passage | to | dawn" recalled 47,645 candidate books and then computed
+        // ts_rank over ~105k edition rows (344k buffer hits, parallel workers) only to return LIMIT 20. The
+        // expensive tokens are the ones that carry no identity: "book", "part", "volume", "dawn", bare digits.
+        //
+        // So the recall now measures each lexeme's document frequency (how many editions its title matches) and
+        // keeps that measurement in a process-wide cache, then drops the lexemes that are too common to be a
+        // useful recall key. A token appearing in more than RecallTokenDocumentFrequencyFraction of the editions
+        // cannot narrow anything down, and every token that survives still bounds the candidate fan-out to that
+        // same fraction of the library.
+        internal const double RecallTokenDocumentFrequencyFraction = 0.01;
+        internal const int MinRecallTokenDocumentFrequencyThreshold = 500;
+
+        // If every lexeme is common we must still recall something, so the least common few are kept.
+        internal const int MinKeptCommonRecallTokens = 2;
+
+        private static readonly TimeSpan RecallDocumentFrequencyTtl = TimeSpan.FromHours(1);
+        private static readonly ConcurrentDictionary<string, (int Df, DateTime At)> _recallDocumentFrequencies =
+            new ConcurrentDictionary<string, (int Df, DateTime At)>(StringComparer.OrdinalIgnoreCase);
+        private static int _recallDocumentFrequencyThreshold;
+        private static DateTime _recallEditionCountAt = DateTime.MinValue;
+        private static bool _recallDocumentFrequencyProbeFailed;
+
+        internal static int RecallDocumentFrequencyThreshold(long editionCount)
+        {
+            if (editionCount <= 0)
+            {
+                return 0;
+            }
+
+            var relative = (int)Math.Min(int.MaxValue, (long)(editionCount * RecallTokenDocumentFrequencyFraction));
+            return Math.Max(MinRecallTokenDocumentFrequencyThreshold, relative);
+        }
+
+        /// <summary>
+        /// Drop the lexemes whose document frequency exceeds <paramref name="threshold"/>, as long as at least one
+        /// lexeme below the threshold remains. A lexeme with no measured frequency counts as rare, so a failed or
+        /// skipped measurement can never remove a recall key. If every lexeme is common the least common
+        /// <see cref="MinKeptCommonRecallTokens"/> are kept instead of all of them.
+        /// </summary>
+        /// <param name="lexemes">The recall lexemes, in query order.</param>
+        /// <param name="documentFrequencies">Case-insensitive lexeme -> edition-title match count.</param>
+        /// <param name="threshold">Highest document frequency a lexeme may have and still be used for recall.</param>
+        internal static List<string> PruneCommonRecallTokens(
+            IReadOnlyList<string> lexemes,
+            IReadOnlyDictionary<string, int> documentFrequencies,
+            int threshold)
+        {
+            var terms = lexemes?.ToList() ?? new List<string>();
+            if (terms.Count <= 1 || documentFrequencies == null || documentFrequencies.Count == 0 || threshold <= 0)
+            {
+                return terms;
+            }
+
+            int Frequency(string term) =>
+                term != null && documentFrequencies.TryGetValue(term, out var df) ? df : -1;
+
+            var rare = terms.Where(term => Frequency(term) <= threshold).ToList();
+            if (rare.Count > 0)
+            {
+                return rare;
+            }
+
+            return terms
+                .Select((term, index) => new { Term = term, Df = Frequency(term), Index = index })
+                .OrderBy(entry => entry.Df)
+                .ThenBy(entry => entry.Index)
+                .Take(Math.Min(MinKeptCommonRecallTokens, terms.Count))
+                .OrderBy(entry => entry.Index)
+                .Select(entry => entry.Term)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Lexemes to drive the Postgres candidate recall with. Never throws: any failure to measure leaves the
+        /// caller's lexemes untouched, which is the pre-pruning behaviour.
+        /// </summary>
+        private List<string> PruneCommonRecallTokensPostgres(IDbConnection connection, List<string> lexemes)
+        {
+            if (lexemes == null || lexemes.Count <= 1)
+            {
+                return lexemes;
+            }
+
+            try
+            {
+                var threshold = ResolveRecallDocumentFrequencyThreshold(connection);
+                if (threshold <= 0)
+                {
+                    return lexemes;
+                }
+
+                var frequencies = LoadRecallDocumentFrequencies(connection, lexemes, threshold);
+                var pruned = PruneCommonRecallTokens(lexemes, frequencies, threshold);
+                if (pruned.Count != lexemes.Count)
+                {
+                    _logger.Debug(
+                        "FTS recall dropped {0} common token(s) above a document frequency of {1}: {2}",
+                        lexemes.Count - pruned.Count,
+                        threshold,
+                        string.Join(", ", lexemes.Except(pruned, StringComparer.OrdinalIgnoreCase)));
+                }
+
+                return pruned;
+            }
+            catch (Exception ex)
+            {
+                // A broken probe degrades silently back to the slow query, so say so out loud the first time
+                // rather than leaving the regression to be rediscovered from pg_stat_statements.
+                if (!_recallDocumentFrequencyProbeFailed)
+                {
+                    _recallDocumentFrequencyProbeFailed = true;
+                    _logger.Warn(ex, "FTS recall could not measure token document frequencies; recall will use every token.");
+                }
+                else
+                {
+                    _logger.Debug(ex, "FTS recall could not measure token document frequencies; recall will use every token.");
+                }
+
+                return lexemes;
+            }
+        }
+
+        private int ResolveRecallDocumentFrequencyThreshold(IDbConnection connection)
+        {
+            if (_recallDocumentFrequencyThreshold > 0 &&
+                DateTime.UtcNow - _recallEditionCountAt < RecallDocumentFrequencyTtl)
+            {
+                return _recallDocumentFrequencyThreshold;
+            }
+
+            // The planner's own row estimate is free; only fall back to a real count when the table has never
+            // been analysed.
+            var editionCount = connection.QuerySingleOrDefault<long?>(
+                @"SELECT GREATEST(reltuples::bigint, 0) FROM pg_class WHERE oid = '""Editions""'::regclass") ?? 0;
+            if (editionCount <= 0)
+            {
+                editionCount = connection.QuerySingleOrDefault<long?>(@"SELECT count(*) FROM ""Editions""") ?? 0;
+            }
+
+            var threshold = RecallDocumentFrequencyThreshold(editionCount);
+
+            // Cached frequencies are counted only up to the threshold that was in force, so they cannot be
+            // compared against a different one.
+            if (threshold != _recallDocumentFrequencyThreshold)
+            {
+                _recallDocumentFrequencies.Clear();
+                _recallDocumentFrequencyThreshold = threshold;
+            }
+
+            _recallEditionCountAt = DateTime.UtcNow;
+            return threshold;
+        }
+
+        private Dictionary<string, int> LoadRecallDocumentFrequencies(
+            IDbConnection connection,
+            IReadOnlyList<string> lexemes,
+            int threshold)
+        {
+            var frequencies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var missing = new List<string>();
+            var now = DateTime.UtcNow;
+
+            foreach (var lexeme in lexemes)
+            {
+                if (_recallDocumentFrequencies.TryGetValue(lexeme, out var cached) &&
+                    now - cached.At < RecallDocumentFrequencyTtl)
+                {
+                    frequencies[lexeme] = cached.Df;
+                }
+                else if (!missing.Contains(lexeme, StringComparer.OrdinalIgnoreCase))
+                {
+                    missing.Add(lexeme);
+                }
+            }
+
+            if (missing.Count == 0)
+            {
+                return frequencies;
+            }
+
+            // Every unmeasured lexeme is probed in one round trip, as a UNION ALL of independent scalar
+            // subqueries. Each branch repeats the exact predicate the recall itself uses - the expression matches
+            // idx_editions_matching_title_fts (migration 013) literally, so the GIN index is usable - and takes a
+            // plain scalar parameter, which keeps Dapper from rewriting it the way it rewrites list parameters.
+            //
+            // The probe stops counting at the threshold, so it reads at most threshold+1 index entries per lexeme
+            // rather than the whole posting list: it only has to decide whether the lexeme is above the line, not
+            // by how much. The answer is then cached for an hour, so a sweep pays for a lexeme once.
+            var probeParameters = new DynamicParameters();
+            probeParameters.Add("probeLimit", threshold + 1);
+            var branches = new List<string>(missing.Count);
+            for (var i = 0; i < missing.Count; i++)
+            {
+                probeParameters.Add($"lexeme{i}", missing[i]);
+                branches.Add($@"
+                    SELECT {i} AS ""Ordinal"", (
+                        SELECT count(*) FROM (
+                            SELECT 1
+                            FROM ""Editions"" e
+                            WHERE to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ to_tsquery('simple', @lexeme{i})
+                            LIMIT @probeLimit) probe) AS ""Df""");
+            }
+
+            var rows = connection.Query<RecallDocumentFrequencyRow>(
+                string.Join(" UNION ALL ", branches),
+                probeParameters);
+
+            var measuredAt = DateTime.UtcNow;
+            foreach (var row in rows)
+            {
+                if (row.Ordinal < 0 || row.Ordinal >= missing.Count)
+                {
+                    continue;
+                }
+
+                var lexeme = missing[row.Ordinal];
+                var df = (int)Math.Min(int.MaxValue, row.Df);
+                frequencies[lexeme] = df;
+                _recallDocumentFrequencies[lexeme] = (df, measuredAt);
+            }
+
+            return frequencies;
+        }
+
+        private class RecallDocumentFrequencyRow
+        {
+            public int Ordinal { get; set; }
+            public long Df { get; set; }
         }
 
         public List<EditionFtsMatch> RankEditions(
@@ -740,11 +1000,13 @@ namespace NzbDrone.Core.Books
             int limit,
             bool monitoredOnly)
         {
-            var query = BuildPostgresTsQuery(terms);
-            if (string.IsNullOrWhiteSpace(query))
+            var lexemes = ExtractPostgresLexemes(terms);
+            if (lexemes.Count == 0)
             {
                 return new List<BookFtsMatch>();
             }
+
+            var query = string.Join(" | ", lexemes);
 
             EmitFtsTrace(trace, new EditionFtsTraceEvent
             {
@@ -756,11 +1018,21 @@ namespace NzbDrone.Core.Books
             });
 
             using var connection = _database.OpenConnection();
+
+            // Only the candidate recall is pruned. Ranking keeps the full tsquery, so a book that is still
+            // recalled scores exactly what it scored before and the ordering the caller sees is unchanged.
+            var candidateQuery = string.Join(" | ", PruneCommonRecallTokensPostgres(connection, lexemes));
+            if (string.IsNullOrWhiteSpace(candidateQuery))
+            {
+                candidateQuery = query;
+            }
+
             var monitoredBooks = monitoredOnly ? BuildMonitoredBookIds(mediaType) : null;
             var parameters = monitoredBooks == null
                 ? new DynamicParameters()
                 : new DynamicParameters(monitoredBooks.Parameters);
             parameters.Add("tsQuery", query);
+            parameters.Add("candidateQuery", candidateQuery);
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
             if (authorId.HasValue)
@@ -771,21 +1043,25 @@ namespace NzbDrone.Core.Books
             // Postgres can only combine OR'd index predicates with a BitmapOr when they sit on the
             // same relation, so recalling the candidate ids per table keeps the GIN indexes from
             // migration 013 usable. Scoring still runs over the joined row, so results are unchanged.
+            //
+            // Every branch recalls with @candidateQuery (the tokens that are rare enough to be worth an index
+            // probe) while the ranking below keeps @tsQuery, so pruning shrinks how many editions ts_rank has to
+            // be evaluated over without changing any surviving book's score.
             var sql = $@"
                 WITH candidates AS (
                     SELECT e.""BookId"" AS ""Id""
                     FROM ""Editions"" e
-                    WHERE to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ to_tsquery('simple', @tsQuery)
+                    WHERE to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ to_tsquery('simple', @candidateQuery)
                       {(monitoredOnly ? "AND e.\"Monitored\" = true" : string.Empty)}
                     UNION
                     SELECT b.""Id""
                     FROM ""Books"" b
-                    WHERE to_tsvector('simple', COALESCE(b.""SeriesName"", '')) @@ to_tsquery('simple', @tsQuery)
+                    WHERE to_tsvector('simple', COALESCE(b.""SeriesName"", '')) @@ to_tsquery('simple', @candidateQuery)
                     UNION
                     SELECT b.""Id""
                     FROM ""Books"" b
                     INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
-                    WHERE to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @tsQuery)
+                    WHERE to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @candidateQuery)
                 )
                 SELECT
                     b.""Id"" AS BookId,
