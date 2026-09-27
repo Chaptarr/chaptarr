@@ -51,7 +51,10 @@ class GenreTagInputConnector extends Component {
     } = this.props;
 
     const newValue = [...valueArray];
-    const newTags = tag.name.startsWith('/') ? [tag.name] : split(tag.name);
+    // Unlike the Ignored title-terms field, genre values are never regex patterns
+    // (matching is a plain case-insensitive equality check), so always split - no
+    // leading-slash passthrough exception needed here.
+    const newTags = split(tag.name);
 
     newTags.forEach((newTag) => {
       newValue.push(newTag.trim());

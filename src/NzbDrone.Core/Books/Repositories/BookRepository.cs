@@ -667,8 +667,10 @@ namespace NzbDrone.Core.Books
         {
             using (var conn = _database.OpenConnection())
             {
+                // Ordered so which casing wins a case-insensitive dedupe below is deterministic
+                // across runs/installs, instead of depending on unordered SELECT row order.
                 var rawGenreLists = conn.Query<string>(
-                    "SELECT \"Genres\" FROM \"Books\" WHERE \"Genres\" IS NOT NULL AND \"Genres\" <> '' AND \"Genres\" <> '[]'");
+                    "SELECT \"Genres\" FROM \"Books\" WHERE \"Genres\" IS NOT NULL AND \"Genres\" <> '' AND \"Genres\" <> '[]' ORDER BY \"Id\"");
 
                 var genres = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
