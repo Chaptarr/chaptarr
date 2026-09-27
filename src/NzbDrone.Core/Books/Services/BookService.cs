@@ -70,12 +70,14 @@ namespace NzbDrone.Core.Books
         void ReassignAuthor(List<Book> books, int authorId) { throw new NotImplementedException(); }
         void RefreshProviderAliases(Book book) { }
         void DeleteMany(List<Book> books);
-        // The default exists only for lightweight test doubles; BookService overrides it directly.
-        // Kept as an overload (not an added parameter on the line above) so the many hand-written
-        // IBookService test stubs that only implement the 1-arg form keep compiling unchanged.
+        // The default exists only for lightweight test doubles. Kept as an overload (not an added
+        // parameter on the line above) so the many hand-written IBookService test stubs that only
+        // implement the 1-arg form keep compiling unchanged. Throws rather than silently forwarding
+        // to the 1-arg overload (which would drop deleteFiles) - every production implementation
+        // must override this directly, same as AllAuthorMediaPaths() elsewhere in this change.
         void DeleteMany(List<Book> books, bool deleteFiles)
         {
-            DeleteMany(books);
+            throw new NotSupportedException();
         }
         void SetAddOptions(IEnumerable<Book> books);
         List<Book> GetAuthorBooksWithFiles(Author author);

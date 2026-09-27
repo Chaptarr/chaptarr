@@ -107,6 +107,37 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        private class GetFilesByAuthorOnlyMediaFileServiceProxy : DispatchProxy
+        {
+            public List<BookFile> Files { get; set; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(IMediaFileService.GetFilesByAuthor), StringComparison.Ordinal))
+                {
+                    return Files;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IMediaFileService.{targetMethod?.Name}");
+            }
+        }
+
+        private class RecordingCalibreProxy : DispatchProxy
+        {
+            public List<(List<BookFile> Books, CalibreSettings Settings)> DeleteBooksCalls { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(ICalibreProxy.DeleteBooks), StringComparison.Ordinal))
+                {
+                    DeleteBooksCalls.Add(((List<BookFile>)args[0], (CalibreSettings)args[1]));
+                    return null;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement ICalibreProxy.{targetMethod?.Name}");
+            }
+        }
+
         private class AllAuthorPathsOnlyAuthorServiceProxy : DispatchProxy
         {
             public List<KeyValuePair<int, string>> Paths { get; } = new();
@@ -661,6 +692,77 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.AudiobookPath));
             Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.EbookPath));
             Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Not.Empty);
+        }
+
+        [Test]
+        public void should_route_each_path_through_calibre_or_recycle_bin_independently_when_only_one_format_is_calibre_managed()
+        {
+            // Calibre status must be decided per path, not once for the whole author from Path
+            // alone: a non-Calibre AudiobookPath must never be recycle-binned as if it were part of
+            // an EbookPath that happens to be Calibre-managed (or vice versa) - either direction
+            // would either corrupt Calibre's own metadata.db or leave a format's folder untouched.
+            var recycleBinProvider = new RecordingRecycleBinProvider();
+            var eventAggregator = new RecordingEventAggregator();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, FolderExistsOnlyDiskProviderProxy>();
+            var diskProxy = (FolderExistsOnlyDiskProviderProxy)(object)diskProvider;
+            var calibreProxy = DispatchProxy.Create<ICalibreProxy, RecordingCalibreProxy>();
+            var calibreRecorder = (RecordingCalibreProxy)(object)calibreProxy;
+
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Jim Butcher",
+                Path = "/audiobooks/Jim Butcher",
+                AudiobookPath = "/audiobooks/Jim Butcher",
+                EbookPath = "/calibre-ebooks/Jim Butcher"
+            };
+
+            diskProxy.ExistingFolders.Add(author.AudiobookPath);
+            diskProxy.ExistingFolders.Add(author.EbookPath);
+
+            var calibreSettings = new CalibreSettings();
+            var calibreRootFolder = new RootFolder
+            {
+                Path = "/calibre-ebooks",
+                FolderType = FolderType.Ebook,
+                IsCalibreLibrary = true,
+                CalibreSettings = calibreSettings
+            };
+
+            var rootFolderService = new StubRootFolderService(
+                new RootFolder { Path = "/audiobooks", FolderType = FolderType.Audiobook },
+                calibreRootFolder);
+
+            var ebookFile = new BookFile { Id = 1, Path = author.EbookPath + "/Storm Front.epub" };
+            var audiobookFile = new BookFile { Id = 2, Path = author.AudiobookPath + "/Storm Front.m4b" };
+
+            var mediaFileService = DispatchProxy.Create<IMediaFileService, GetFilesByAuthorOnlyMediaFileServiceProxy>();
+            ((GetFilesByAuthorOnlyMediaFileServiceProxy)(object)mediaFileService).Files = new List<BookFile> { ebookFile, audiobookFile };
+
+            var service = new MediaFileDeletionService(
+                diskProvider,
+                recycleBinProvider,
+                mediaFileService,
+                DispatchProxy.Create<IAuthorService, AllAuthorPathsOnlyAuthorServiceProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                eventAggregator,
+                rootFolderService,
+                calibreProxy,
+                LogManager.GetCurrentClassLogger());
+
+            var authorDeletedEvent = new AuthorDeletedEvent(author, deleteFiles: true, addImportListExclusion: false);
+            service.Handle(authorDeletedEvent);
+            service.HandleAsync(authorDeletedEvent);
+
+            // The plain audiobook folder goes through the recycle bin, and only that folder.
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.AudiobookPath));
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Not.Contain(author.EbookPath));
+
+            // The Calibre-managed ebook folder goes through _calibre.DeleteBooks instead, with only
+            // the file(s) actually under that path, using that path's own CalibreSettings.
+            var calibreCall = calibreRecorder.DeleteBooksCalls.Single();
+            Assert.That(calibreCall.Settings, Is.SameAs(calibreSettings));
+            Assert.That(calibreCall.Books.Select(b => b.Id), Is.EquivalentTo(new[] { ebookFile.Id }));
         }
 
         [Test]

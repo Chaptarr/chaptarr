@@ -158,6 +158,22 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
+        // An author can have separate audiobook/ebook root folders (AudiobookPath, EbookPath) in
+        // addition to the legacy single Path field, and each one can independently be a Calibre
+        // library or not (e.g. ebooks under Calibre, audiobooks under a plain folder). Deriving
+        // "is this author's stuff Calibre-managed" from author.Path alone and applying that one
+        // verdict to every path is wrong in both directions: a non-Calibre Path with a Calibre
+        // EbookPath would recycle-bin the Calibre library directly instead of going through
+        // _calibre.DeleteBook(s) (corrupting its metadata.db), while a Calibre Path with a
+        // non-Calibre AudiobookPath would skip deleting the audiobook folder entirely.
+        private static List<string> DistinctAuthorPaths(Author author)
+        {
+            return new[] { author.Path, author.AudiobookPath, author.EbookPath }
+                .Where(p => !p.IsNullOrWhiteSpace())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         [EventHandleOrder(EventHandleOrder.First)]
         public void Handle(AuthorDeletedEvent message)
         {
@@ -165,14 +181,28 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var author = message.Author;
 
-                var rootFolder = _rootFolderService.GetBestRootFolder(message.Author.Path);
-                var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
+                List<BookFile> allFiles = null;
 
-                if (isCalibre)
+                foreach (var path in DistinctAuthorPaths(author))
                 {
-                    // use authorId for the query
-                    var books = _mediaFileService.GetFilesByAuthor(author.Id);
-                    _calibre.DeleteBooks(books, rootFolder.CalibreSettings);
+                    var rootFolder = _rootFolderService.GetBestRootFolder(path);
+                    var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
+
+                    if (!isCalibre)
+                    {
+                        continue;
+                    }
+
+                    allFiles ??= _mediaFileService.GetFilesByAuthor(author.Id);
+
+                    var booksUnderPath = allFiles
+                        .Where(file => file?.Path != null && (path.IsParentPath(file.Path) || path.PathEquals(file.Path)))
+                        .ToList();
+
+                    if (booksUnderPath.Any())
+                    {
+                        _calibre.DeleteBooks(booksUnderPath, rootFolder.CalibreSettings);
+                    }
                 }
             }
         }
@@ -183,91 +213,92 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var author = message.Author;
 
-                var rootFolder = _rootFolderService.GetBestRootFolder(message.Author.Path);
-                var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
+                // An author can have separate audiobook/ebook root folders (AudiobookPath, EbookPath)
+                // in addition to the legacy single Path field. Only ever deleting Path left the other
+                // format's entire folder - and every file in it - untouched on disk while the DB
+                // treated the author as fully deleted, leaving those files' BookFile rows to surface
+                // as "unmapped" even though they were never actually removed.
+                var pathsToDelete = DistinctAuthorPaths(author);
 
-                if (!isCalibre)
+                // Fetched lazily, once, only if some path actually needs the other-authors check -
+                // an author whose only path(s) are already refused as unsafe should never need it.
+                // Uses AllAuthorMediaPaths (Path + AudiobookPath + EbookPath), not the legacy
+                // single-path AllAuthorPaths - otherwise a dual-format author's AudiobookPath could
+                // collide with another author's separately-configured EbookPath and never be caught.
+                List<KeyValuePair<int, string>> allAuthors = null;
+
+                foreach (var path in pathsToDelete)
                 {
-                    // An author can have separate audiobook/ebook root folders (AudiobookPath, EbookPath)
-                    // in addition to the legacy single Path field. Only ever deleting Path left the other
-                    // format's entire folder - and every file in it - untouched on disk while the DB
-                    // treated the author as fully deleted, leaving those files' BookFile rows to surface
-                    // as "unmapped" even though they were never actually removed.
-                    var pathsToDelete = new[] { author.Path, author.AudiobookPath, author.EbookPath }
-                        .Where(p => !p.IsNullOrWhiteSpace())
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
+                    var rootFolder = _rootFolderService.GetBestRootFolder(path);
+                    var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
 
-                    // Fetched lazily, once, only if some path actually needs the other-authors check -
-                    // an author whose only path(s) are already refused as unsafe should never need it.
-                    // Uses AllAuthorMediaPaths (Path + AudiobookPath + EbookPath), not the legacy
-                    // single-path AllAuthorPaths - otherwise a dual-format author's AudiobookPath could
-                    // collide with another author's separately-configured EbookPath and never be caught.
-                    List<KeyValuePair<int, string>> allAuthors = null;
-
-                    foreach (var path in pathsToDelete)
+                    if (isCalibre)
                     {
-                        if (IsPathUnsafeToDelete(path))
-                        {
-                            _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
-                                path, author.Name);
-                            continue;
-                        }
+                        // Calibre-managed paths are cleaned up via _calibre.DeleteBook(s) in the sync
+                        // Handle() above, not a raw recycle-bin folder delete.
+                        continue;
+                    }
 
-                        allAuthors ??= _authorService.AllAuthorMediaPaths();
+                    if (IsPathUnsafeToDelete(path))
+                    {
+                        _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
+                            path, author.Name);
+                        continue;
+                    }
 
-                        var blockedByOtherAuthor = false;
+                    allAuthors ??= _authorService.AllAuthorMediaPaths();
 
-                        foreach (var s in allAuthors)
-                        {
-                            if (s.Key == author.Id)
-                            {
-                                continue;
-                            }
+                    var blockedByOtherAuthor = false;
 
-                            if (path.IsParentPath(s.Value))
-                            {
-                                _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", path);
-                                blockedByOtherAuthor = true;
-                                break;
-                            }
-
-                            if (path.PathEquals(s.Value))
-                            {
-                                _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", path);
-                                blockedByOtherAuthor = true;
-                                break;
-                            }
-                        }
-
-                        if (blockedByOtherAuthor)
+                    foreach (var s in allAuthors)
+                    {
+                        if (s.Key == author.Id)
                         {
                             continue;
                         }
 
-                        try
+                        if (path.IsParentPath(s.Value))
                         {
-                            if (_diskProvider.FolderExists(path))
-                            {
-                                _recycleBinProvider.DeleteFolder(path);
-                            }
+                            _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", path);
+                            blockedByOtherAuthor = true;
+                            break;
                         }
-                        catch (Exception ex)
+
+                        if (path.PathEquals(s.Value))
                         {
-                            // Don't let one path's failure (permissions, a momentarily-unavailable NFS
-                            // mount, ...) abort the rest of this author's paths or skip the
-                            // DeleteCompletedEvent below - a partially-deleted author still needs its
-                            // Plex refresh queue flushed.
-                            _logger.Error(ex, "Failed to delete '{0}' for author '{1}'.", path, author.Name);
+                            _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", path);
+                            blockedByOtherAuthor = true;
+                            break;
                         }
                     }
 
-                    // Always published once per author now, regardless of which (if any) path above was
-                    // refused - the previous single-path version only published this in some of those
-                    // cases, which could leave Plex's pending-refresh queue never flushed. ProcessQueue()
-                    // is a no-op against an empty queue, so publishing it unconditionally here is safe.
-                    _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+                    if (blockedByOtherAuthor)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (_diskProvider.FolderExists(path))
+                        {
+                            _recycleBinProvider.DeleteFolder(path);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Don't let one path's failure (permissions, a momentarily-unavailable NFS
+                        // mount, ...) abort the rest of this author's paths or skip the
+                        // DeleteCompletedEvent below - a partially-deleted author still needs its
+                        // Plex refresh queue flushed.
+                        _logger.Error(ex, "Failed to delete '{0}' for author '{1}'.", path, author.Name);
+                    }
                 }
+
+                // Always published once per author now, regardless of which (if any) path above was
+                // refused/Calibre-routed - the previous single-path version only published this in
+                // some cases, which could leave Plex's pending-refresh queue never flushed.
+                // ProcessQueue() is a no-op against an empty queue, so this is safe unconditionally.
+                _eventAggregator.PublishEvent(new DeleteCompletedEvent());
             }
         }
 
