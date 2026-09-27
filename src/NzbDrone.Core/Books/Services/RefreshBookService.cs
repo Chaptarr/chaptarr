@@ -51,8 +51,12 @@ namespace NzbDrone.Core.Books
         private readonly Logger _logger;
         private EditionRefreshMatchingIndex _editionRefreshMatchingIndex;
 
-        // Cache for book metadata during refresh
-        private readonly Dictionary<string, Author> _bookMetadataCache = new Dictionary<string, Author>();
+        // Cache for book metadata during one refresh. This service is a singleton and RefreshAuthor commands for different
+        // authors run concurrently (they neither require disk access nor are type exclusive), so the cache is held per
+        // async flow, never shared between refreshes (a plain Dictionary shared across threads can also be corrupted).
+        private static readonly System.Threading.AsyncLocal<Dictionary<string, Author>> CurrentBookMetadataCache = new System.Threading.AsyncLocal<Dictionary<string, Author>>();
+
+        protected Dictionary<string, Author> _bookMetadataCache => CurrentBookMetadataCache.Value ??= new Dictionary<string, Author>();
 
         public RefreshBookService(IBookService bookService,
                                   IAuthorService authorService,
@@ -918,13 +922,16 @@ namespace NzbDrone.Core.Books
 
         private EditionRefreshMatchingIndex GetEditionRefreshMatchingIndex(List<Edition> existingChildren)
         {
-            if (_editionRefreshMatchingIndex?.Source == existingChildren)
+            // Read the shared one-entry memo once: another refresh can replace the field between the check and the return.
+            var current = _editionRefreshMatchingIndex;
+            if (current?.Source == existingChildren)
             {
-                return _editionRefreshMatchingIndex;
+                return current;
             }
 
-            _editionRefreshMatchingIndex = EditionRefreshMatchingIndex.Build(existingChildren, _logger);
-            return _editionRefreshMatchingIndex;
+            var built = EditionRefreshMatchingIndex.Build(existingChildren, _logger);
+            _editionRefreshMatchingIndex = built;
+            return built;
         }
 
         private sealed class EditionRefreshMatchingIndex
@@ -1194,7 +1201,7 @@ namespace NzbDrone.Core.Books
         public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
         {
             var updated = false;
-            _bookMetadataCache.Clear();
+            CurrentBookMetadataCache.Value = new Dictionary<string, Author>();
 
             // Defensive: the caller can accidentally include the same DB row multiple times (e.g. duplicate
             // matching during author refresh). De-dupe by database ID to avoid double-processing / double-deletes.
