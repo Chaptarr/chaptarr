@@ -1679,6 +1679,20 @@ namespace NzbDrone.Core.Books
             }
         }
 
+        // See RefreshEntityServiceBase.SortChildren for why this needs to be deterministic: without it,
+        // ambiguous same-titled remote pockets (e.g. several "Dune" editions) can claim a different local
+        // row on every refresh purely because the metadata source didn't return them in the same order,
+        // producing spurious "N books updated/deleted" churn even when nothing actually changed. Sorting by
+        // the remote item's own stable identity tokens makes claim order a function of the data itself.
+        protected override List<Book> OrderRemoteChildrenForMatching(List<Book> remoteChildren)
+        {
+            return (remoteChildren ?? new List<Book>())
+                .OrderBy(b => BookIdentity.GetStableWorkProviderIdentityTokens(b).OrderBy(t => t, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(b => b?.ForeignEditionId ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(b => b?.Title ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         protected override Tuple<Book, List<Book>> GetMatchingExistingChildren(List<Book> existingChildren, Book remote)
         {
             // Match work-first. Shared edition aliases (ASIN, GB, providerIdsAll, etc.) are not enough to merge
