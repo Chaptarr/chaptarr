@@ -64,7 +64,17 @@ namespace NzbDrone.Core.Books
         private readonly IMainDatabase _mainDatabase;
         private readonly Logger _logger;
         private BookRefreshMatchingIndex _bookRefreshMatchingIndex;
-        private List<Book> _authorRefreshRehomeBlueprint;
+
+        // The remote book snapshot of the author refresh in progress. RefreshAuthor commands for different authors run
+        // concurrently on this singleton, so it is held per async flow: a shared field let one refresh re-home editions
+        // using another author's snapshot, or null it under a refresh still using it.
+        private static readonly System.Threading.AsyncLocal<List<Book>> CurrentAuthorRefreshRehomeBlueprint = new System.Threading.AsyncLocal<List<Book>>();
+
+        private List<Book> _authorRefreshRehomeBlueprint
+        {
+            get => CurrentAuthorRefreshRehomeBlueprint.Value;
+            set => CurrentAuthorRefreshRehomeBlueprint.Value = value;
+        }
 
         private static readonly SemaphoreSlim AuthorMetadataRefreshGate = new SemaphoreSlim(1, 1);
         // SMS /authors/diff hard-rejects requests above 10,000 items and caps the body at 1MB;
@@ -1564,13 +1574,16 @@ namespace NzbDrone.Core.Books
 
         private BookRefreshMatchingIndex GetBookRefreshMatchingIndex(List<Book> existingChildren)
         {
-            if (_bookRefreshMatchingIndex?.Source == existingChildren)
+            // Read the shared one-entry memo once: another refresh can replace the field between the check and the return.
+            var current = _bookRefreshMatchingIndex;
+            if (current?.Source == existingChildren)
             {
-                return _bookRefreshMatchingIndex;
+                return current;
             }
 
-            _bookRefreshMatchingIndex = BookRefreshMatchingIndex.Build(existingChildren, _logger);
-            return _bookRefreshMatchingIndex;
+            var built = BookRefreshMatchingIndex.Build(existingChildren, _logger);
+            _bookRefreshMatchingIndex = built;
+            return built;
         }
 
         private sealed class BookRefreshMatchingIndex
