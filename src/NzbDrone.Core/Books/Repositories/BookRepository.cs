@@ -30,6 +30,8 @@ namespace NzbDrone.Core.Books
 		        List<BookTitleSlug> GetTitleSlugsByAuthorId(int authorId) => GetBooksByAuthorId(authorId)
 		            .Select(book => new BookTitleSlug { Id = book.Id, TitleSlug = book.TitleSlug })
 		            .ToList();
+		        // Candidate variant: only slugs that could collide with the given base slugs. Default keeps stubs working.
+		        List<BookTitleSlug> GetTitleSlugsByAuthorId(int authorId, IReadOnlyCollection<string> candidateBaseSlugs) => GetTitleSlugsByAuthorId(authorId);
 		        List<Book> GetBooksForRefresh(int authorId, IEnumerable<string> providerIds);
 		        List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
 		        Book FindByTitle(int authorId, string title);
@@ -196,6 +198,44 @@ namespace NzbDrone.Core.Books
 	                return Query(outer);
 	            }
 	        }
+
+        private const int MaxCandidateBaseSlugs = 200;
+
+        public List<BookTitleSlug> GetTitleSlugsByAuthorId(int authorId, IReadOnlyCollection<string> candidateBaseSlugs)
+        {
+            // A slug can only collide with a base slug when it equals it or is "<base>_<n>" (that is how the
+            // suffix is generated), so only those rows need to leave the database. The collision set is compared
+            // case-insensitively, and lower() is only reliable for ASCII in both databases, so anything else
+            // (non-ASCII slugs, no candidates, very large batches) uses the full projection.
+            var bases = candidateBaseSlugs?
+                .Where(slug => !string.IsNullOrEmpty(slug))
+                .Select(slug => slug.ToLowerInvariant())
+                .Distinct()
+                .ToList();
+
+            if (bases == null || bases.Count == 0 || bases.Count > MaxCandidateBaseSlugs || bases.Any(slug => slug.Any(c => c > 127)))
+            {
+                return GetTitleSlugsByAuthorId(authorId);
+            }
+
+            var parameters = new DynamicParameters();
+            parameters.Add("authorId", authorId);
+            var clauses = new List<string>(bases.Count);
+
+            for (var i = 0; i < bases.Count; i++)
+            {
+                parameters.Add($"exact{i}", bases[i]);
+                parameters.Add($"like{i}", bases[i].Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "\\_%");
+                clauses.Add($@"(lower(""TitleSlug"") = @exact{i} OR lower(""TitleSlug"") LIKE @like{i} ESCAPE '\')");
+            }
+
+            var sql = $@"SELECT ""Id"", ""TitleSlug"" FROM ""Books"" WHERE ""AuthorId"" = @authorId AND ""TitleSlug"" IS NOT NULL AND ""TitleSlug"" <> '' AND ({string.Join(" OR ", clauses)})";
+
+            using (var connection = _database.OpenConnection())
+            {
+                return connection.Query<BookTitleSlug>(sql, parameters).ToList();
+            }
+        }
 
         public List<BookTitleSlug> GetTitleSlugsByAuthorId(int authorId)
         {
