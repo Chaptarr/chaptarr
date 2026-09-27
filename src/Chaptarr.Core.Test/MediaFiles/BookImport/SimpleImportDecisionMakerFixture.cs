@@ -43,6 +43,36 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
         }
 
+        private class SlowCountingTagServiceProxy : DispatchProxy
+        {
+            private int _current;
+            private int _max;
+            private int _calls;
+
+            public int MaxConcurrent => _max;
+            public int Calls => _calls;
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name != nameof(IMetadataTagService.ReadAllTagsAndDuration))
+                {
+                    throw new NotImplementedException($"Test proxy does not implement IMetadataTagService.{targetMethod?.Name}");
+                }
+
+                var now = System.Threading.Interlocked.Increment(ref _current);
+                System.Threading.Interlocked.Increment(ref _calls);
+                int seen;
+                while (now > (seen = _max))
+                {
+                    System.Threading.Interlocked.CompareExchange(ref _max, now, seen);
+                }
+
+                System.Threading.Thread.Sleep(100);
+                System.Threading.Interlocked.Decrement(ref _current);
+                return (new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { ["title"] = new List<string> { "T" } }, (int?)null);
+            }
+        }
+
         private class AuthorServiceProxy : DispatchProxy
         {
             public Author LocalAuthor { get; set; }
@@ -155,6 +185,116 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IEditionService.{targetMethod?.Name}");
+            }
+        }
+
+        private class PrefetchThreadCountingTagServiceProxy : DispatchProxy
+        {
+            private int _prefetchThreadCalls;
+            public int TestThreadId { get; set; }
+            public int PrefetchThreadCalls => _prefetchThreadCalls;
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name != nameof(IMetadataTagService.ReadAllTagsAndDuration))
+                {
+                    throw new NotImplementedException($"Test proxy does not implement IMetadataTagService.{targetMethod?.Name}");
+                }
+
+                if (System.Threading.Thread.CurrentThread.ManagedThreadId != TestThreadId)
+                {
+                    System.Threading.Interlocked.Increment(ref _prefetchThreadCalls);
+                }
+
+                return (new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { ["title"] = new List<string> { "T" } }, (int?)null);
+            }
+        }
+
+        [Test]
+        public void multi_file_preview_should_not_prefetch_more_files_than_the_tag_cache_can_hold()
+        {
+            // The tag cache clears itself entirely past 1,000 entries, so warming more files than that wipes
+            // its own work mid-prefetch and every file is read again by the loop.
+            var dir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"prefetch-cap-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+
+            try
+            {
+                var files = Enumerable.Range(0, 1200).Select(i =>
+                {
+                    var p = Path.Combine(dir, $"part-{i}.mp3");
+                    File.WriteAllText(p, "audio");
+                    return (IFileInfo)new FileSystem().FileInfo.FromFileName(p);
+                }).ToList();
+
+                var tagService = DispatchProxy.Create<IMetadataTagService, PrefetchThreadCountingTagServiceProxy>();
+                var counting = (PrefetchThreadCountingTagServiceProxy)(object)tagService;
+                counting.TestThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
+                var sut = new SimpleImportDecisionMaker(
+                    metadataTagService: tagService,
+                    fileMatchingService: DispatchProxy.Create<IFileMatchingService, FileMatchingServiceProxy>(),
+                    authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                    bookService: DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                    logger: LogManager.GetCurrentClassLogger());
+
+                sut.GetImportDecisions(
+                    files,
+                    idOverrides: null,
+                    itemInfo: new ImportDecisionMakerInfo(),
+                    config: new ImportDecisionMakerConfig { Filter = FilterFilesType.None, NewDownload = true, IncludeExisting = true });
+
+                Assert.That(counting.PrefetchThreadCalls, Is.LessThanOrEqualTo(SimpleImportDecisionMaker.TagPrefetchMaxFiles));
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void multi_file_preview_should_prefetch_tags_in_parallel()
+        {
+            var dir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"prefetch-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+
+            try
+            {
+                var files = Enumerable.Range(0, 8).Select(i =>
+                {
+                    var p = Path.Combine(dir, $"part-{i}.mp3");
+                    File.WriteAllText(p, "audio");
+                    return (IFileInfo)new FileSystem().FileInfo.FromFileName(p);
+                }).ToList();
+
+                var tagService = DispatchProxy.Create<IMetadataTagService, SlowCountingTagServiceProxy>();
+                var sut = new SimpleImportDecisionMaker(
+                    metadataTagService: tagService,
+                    fileMatchingService: DispatchProxy.Create<IFileMatchingService, FileMatchingServiceProxy>(),
+                    authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                    bookService: DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                    logger: LogManager.GetCurrentClassLogger());
+
+                var decisions = sut.GetImportDecisions(
+                    files,
+                    idOverrides: null,
+                    itemInfo: new ImportDecisionMakerInfo(),
+                    config: new ImportDecisionMakerConfig { Filter = FilterFilesType.None, NewDownload = true, IncludeExisting = true });
+
+                var counting = (SlowCountingTagServiceProxy)(object)tagService;
+                Assert.Multiple(() =>
+                {
+                    Assert.That(decisions, Has.Count.EqualTo(8));
+                    Assert.That(counting.MaxConcurrent, Is.GreaterThan(1), "the prefetch should read tags concurrently");
+                    Assert.That(counting.Calls, Is.GreaterThanOrEqualTo(8));
+                });
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
             }
         }
 

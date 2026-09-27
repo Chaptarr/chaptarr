@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
@@ -53,6 +54,41 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             _logger = logger;
         }
 
+        private const int TagPrefetchParallelism = 4;
+        internal const int TagPrefetchMaxFiles = 800;
+
+        // Tag/duration extraction (ffprobe or TagLib on network storage) is the dominant cost of a multi-file
+        // preview and ran strictly one file at a time. Warm the tag cache with bounded parallelism; the loop
+        // below then reads every file from the cache. Failures are ignored here and surface, as before, when
+        // the loop reads the same file.
+        private void PrefetchTags(List<IFileInfo> files, CancellationToken cancellationToken)
+        {
+            if (files == null || files.Count < 2)
+            {
+                return;
+            }
+
+            // The tag cache clears itself entirely once it passes 1,000 entries, so warming more files than it can
+            // hold wipes its own work mid-prefetch and the loop re-reads everything. Warm at most
+            // TagPrefetchMaxFiles; the rest are read by the loop as before.
+            var toPrefetch = files.Count > TagPrefetchMaxFiles ? files.Take(TagPrefetchMaxFiles).ToList() : files;
+
+            Parallel.ForEach(
+                toPrefetch,
+                new ParallelOptions { MaxDegreeOfParallelism = TagPrefetchParallelism, CancellationToken = cancellationToken },
+                file =>
+                {
+                    try
+                    {
+                        _metadataTagService.ReadAllTagsAndDuration(file);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Trace(ex, "Tag prefetch failed for '{0}'", file?.FullName);
+                    }
+                });
+        }
+
         public List<ImportDecision<LocalBook>> GetImportDecisions(
             List<IFileInfo> musicFiles, 
             IdentificationOverrides idOverrides, 
@@ -75,6 +111,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var manualPreviewCandidates = new List<ManualPreviewCandidate>();
             
             _logger.Debug("SimpleImportDecisionMaker processing {0} files", musicFiles.Count);
+
+            PrefetchTags(musicFiles, cancellationToken);
 
             foreach (var file in musicFiles)
             {
