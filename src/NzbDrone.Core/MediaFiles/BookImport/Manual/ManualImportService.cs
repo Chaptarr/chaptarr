@@ -769,8 +769,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 }
 
                 var isExplicitRemoteEditionSelection =
-                    first.Request.SelectionSource == ManualImportSelectionSource.UserMetadataSuggestion &&
-                    !string.IsNullOrWhiteSpace(first.Request.ForeignEditionId);
+                    first.Request.SelectionSource == ManualImportSelectionSource.UserMetadataSuggestion;
                 UserSelectedEditionMaterialization explicitMaterialization = null;
                 if (groupRejection == null && isExplicitRemoteEditionSelection)
                 {
@@ -784,6 +783,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                                     AuthorProviderId = first.Request.ForeignAuthorId,
                                     WorkProviderId = first.Request.ForeignBookId,
                                     EditionProviderId = first.Request.ForeignEditionId,
+                                    EditionTitle = first.Request.ForeignEditionTitle,
                                     MediaType = first.MediaType
                                 },
                                 config)
@@ -796,7 +796,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                             ex,
                             "Manual import could not materialize explicitly selected provider edition '{0}'",
                             first.Request.ForeignEditionId);
-                        groupRejection = ex.Message;
+                        if (!string.IsNullOrWhiteSpace(first.Request.ForeignEditionId))
+                        {
+                            groupRejection = ex.Message;
+                        }
                     }
                 }
 
