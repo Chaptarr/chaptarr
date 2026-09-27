@@ -636,7 +636,7 @@ namespace NzbDrone.Core.Books
                         }
 
                         skipped++;
-                        logger?.Error("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
+                        logger?.Debug("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
                             logContext,
                             book?.Title ?? "Unknown",
                             local?.Name ?? "Unknown",
