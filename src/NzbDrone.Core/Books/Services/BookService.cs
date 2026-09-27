@@ -1141,8 +1141,21 @@ namespace NzbDrone.Core.Books
 
             foreach (var authorBooks in booksByAuthor)
             {
-                // Get existing books for this author
-                var existingBooks = _bookRepository.GetBooksByAuthorId(authorBooks.Key);
+                // Ensure every book has a slug before the lookup so the candidate base slugs are known
+                // (consistent with AddBook).
+                foreach (var book in authorBooks)
+                {
+                    if (string.IsNullOrEmpty(book.TitleSlug))
+                    {
+                        book.TitleSlug = book.Title?.ToLowerInvariant().Replace(" ", "-") ?? $"book-{book.Id}";
+                        _logger.Debug("Generated TitleSlug for book '{0}': {1}", book.Title, book.TitleSlug);
+                    }
+                }
+
+                // Only slugs that could collide with these bases are needed ("<base>" or "<base>_<n>"), so do not
+                // read the author's whole catalogue on every single-book update.
+                var existingBooks = _bookRepository.GetTitleSlugsByAuthorId(authorBooks.Key, authorBooks.Select(b => b.TitleSlug).ToList())
+                    ?? new List<BookTitleSlug>();
 
                 // Build a dictionary of existing slugs, excluding the books being updated
                 var bookIdsBeingUpdated = authorBooks.Where(b => b.Id > 0).Select(b => b.Id).ToHashSet();
