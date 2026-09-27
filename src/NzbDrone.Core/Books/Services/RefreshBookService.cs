@@ -54,6 +54,21 @@ namespace NzbDrone.Core.Books
         // Cache for book metadata during refresh
         private readonly Dictionary<string, Author> _bookMetadataCache = new Dictionary<string, Author>();
 
+        // chaptarr #182: the author-level match (SortChildren's GetMatchingExistingChildren), keyed by
+        // local book id, for the duration of one RefreshBookInfo(...) call. GetRemoteData consults it before
+        // falling back to independently re-deriving a match.
+        //
+        // This service is a singleton and RefreshAuthor commands for different authors run concurrently
+        // (RefreshAuthorCommand neither requires disk access nor is type exclusive, and there are several
+        // command threads), so the hint must never be shared between refreshes: keep it per async flow.
+        private static readonly System.Threading.AsyncLocal<Dictionary<int, Book>> CurrentMatchedRemoteByLocalIdHint = new System.Threading.AsyncLocal<Dictionary<int, Book>>();
+
+        protected Dictionary<int, Book> _currentMatchedRemoteByLocalIdHint
+        {
+            get => CurrentMatchedRemoteByLocalIdHint.Value;
+            set => CurrentMatchedRemoteByLocalIdHint.Value = value;
+        }
+
         public RefreshBookService(IBookService bookService,
                                   IAuthorService authorService,
                                   IRootFolderService rootFolderService,
@@ -284,18 +299,37 @@ namespace NzbDrone.Core.Books
             var result = new RemoteData();
             var hasAuthorScopedRemoteSnapshot = remote != null;
 
+            // chaptarr #182: prefer the match the author-level refresh already made (SortChildren's
+            // GetMatchingExistingChildren) over independently re-deriving one below. When the remote list
+            // has more than one plausible candidate for this book, re-deriving here can disagree with that
+            // already-made decision, which desyncs "is this book classified as changed" (decided once,
+            // upstream) from "what remote data actually gets applied" (decided again, here) - see the hint
+            // parameter's own doc comment on the RefreshBookInfo overload that sets it.
+            Book book = null;
+            if (local?.Id > 0 &&
+                _currentMatchedRemoteByLocalIdHint != null &&
+                _currentMatchedRemoteByLocalIdHint.TryGetValue(local.Id, out var hintedBook) &&
+                hintedBook != null &&
+                HasUsableRemoteEditions(local, hintedBook, "author-refresh match hint"))
+            {
+                book = hintedBook;
+            }
+
             // Find matching book by any provider ID.
             // With dual-instance architecture, remote can contain both audiobook and ebook instances that share provider IDs,
             // so prefer matching by MediaType to avoid cross-contaminating metadata/editions between instances.
-            var matchingBooks = BookIdentity.FindWorkFirstMatches(
-                remote?.Where(x => x.MediaType == local.MediaType),
-                local);
-
-            var book = matchingBooks.FirstOrDefault();
-
-            if (book != null && !HasUsableRemoteEditions(local, book, "author payload"))
+            if (book == null)
             {
-                book = null;
+                var matchingBooks = BookIdentity.FindWorkFirstMatches(
+                    remote?.Where(x => x.MediaType == local.MediaType),
+                    local);
+
+                book = matchingBooks.FirstOrDefault();
+
+                if (book != null && !HasUsableRemoteEditions(local, book, "author payload"))
+                {
+                    book = null;
+                }
             }
 
             if (book == null && !hasAuthorScopedRemoteSnapshot)
@@ -1192,6 +1226,38 @@ namespace NzbDrone.Core.Books
         }
 
         public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        {
+            return RefreshBookInfoCore(books, remoteBooks, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+        }
+
+        // PERF/correctness (chaptarr #182): not part of IRefreshBookService - same reasoning as
+        // BookService.UpdateMany's non-interface hint overload (see that class for why adding a
+        // parameter to the interface method would break every hand-written IBookService test double).
+        // RefreshAuthorService (the only caller that has this hint available - it's the same match
+        // SortChildren already decided in GetMatchingExistingChildren) holds a concrete RefreshBookService
+        // reference check instead, so every other caller/test double is completely unaffected.
+        //
+        // Without this, GetRemoteData independently re-derives "which remote item matches this local
+        // book" via BookIdentity.FindWorkFirstMatches over the raw remote list - a second matching pass
+        // that can disagree with the one SortChildren already did, when the remote list has more than one
+        // plausible candidate for a book (e.g. the metadata source returning two entries that share a
+        // provider id). When they disagree, the book gets classified as changed on every single refresh
+        // (SortChildren's pass sees a real diff) but the field write never lands (GetRemoteData's own pass
+        // resolves to a different, already-matching remote item) - an unfixable "N books updated" loop.
+        public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, Dictionary<int, Book> matchedRemoteByLocalIdHint)
+        {
+            _currentMatchedRemoteByLocalIdHint = matchedRemoteByLocalIdHint;
+            try
+            {
+                return RefreshBookInfoCore(books, remoteBooks, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+            }
+            finally
+            {
+                _currentMatchedRemoteByLocalIdHint = null;
+            }
+        }
+
+        private bool RefreshBookInfoCore(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
         {
             var updated = false;
             _bookMetadataCache.Clear();

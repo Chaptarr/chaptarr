@@ -108,10 +108,61 @@ namespace Chaptarr.Core.Test.Books
                 return GetRemoteData(local, remote, null).Entity;
             }
 
+            public Book MatchRemoteWithHint(Book local, List<Book> remote, Dictionary<int, Book> matchedRemoteByLocalIdHint)
+            {
+                _currentMatchedRemoteByLocalIdHint = matchedRemoteByLocalIdHint;
+                try
+                {
+                    return GetRemoteData(local, remote, null).Entity;
+                }
+                finally
+                {
+                    _currentMatchedRemoteByLocalIdHint = null;
+                }
+            }
+
+            public Dictionary<int, Book> HintForCurrentRefresh
+            {
+                get => _currentMatchedRemoteByLocalIdHint;
+                set => _currentMatchedRemoteByLocalIdHint = value;
+            }
+
             public bool ShouldDeletePublic(Book local)
             {
                 return ShouldDelete(local);
             }
+        }
+
+        [Test]
+        public void concurrent_refreshes_should_not_see_each_others_matched_remote_hint()
+        {
+            // The service is a singleton and RefreshAuthor commands for different authors run concurrently, so the
+            // per-refresh hint must be isolated per flow. Deterministic interleaving: A sets, B sets, A reads.
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var hintA = new Dictionary<int, Book> { [1] = new Book { Id = 1 } };
+            var hintB = new Dictionary<int, Book> { [2] = new Book { Id = 2 } };
+            using var aSet = new System.Threading.ManualResetEventSlim();
+            using var bSet = new System.Threading.ManualResetEventSlim();
+            Dictionary<int, Book> seenByA = null;
+
+            var a = System.Threading.Tasks.Task.Run(() =>
+            {
+                service.HintForCurrentRefresh = hintA;
+                aSet.Set();
+                bSet.Wait();
+                seenByA = service.HintForCurrentRefresh;
+            });
+            var b = System.Threading.Tasks.Task.Run(() =>
+            {
+                aSet.Wait();
+                service.HintForCurrentRefresh = hintB;
+                bSet.Set();
+            });
+
+            System.Threading.Tasks.Task.WaitAll(a, b);
+
+            Assert.That(seenByA, Is.SameAs(hintA));
+            Assert.That(service.HintForCurrentRefresh, Is.Null, "the calling flow never set a hint");
         }
 
         [Test]
@@ -176,6 +227,72 @@ namespace Chaptarr.Core.Test.Books
             var match = service.MatchRemote(local, new List<Book> { remoteEbook, remoteAudiobook });
 
             Assert.That(match, Is.SameAs(remoteAudiobook));
+        }
+
+        [Test]
+        public void should_use_the_author_refresh_match_hint_over_independently_re_deriving_one()
+        {
+            // chaptarr #182: two remote candidates that both legitimately match this local book by
+            // provider id and media type - exactly the ambiguity that let GetRemoteData's own
+            // independent re-match (FindWorkFirstMatches(...).FirstOrDefault()) disagree with whatever
+            // SortChildren's GetMatchingExistingChildren already decided upstream.
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+
+            var local = new Book
+            {
+                Id = 1,
+                MediaType = BookMediaType.Ebook,
+                HardcoverBookId = "hc:428649"
+            };
+
+            var candidateA = new Book
+            {
+                Title = "Candidate A",
+                MediaType = BookMediaType.Ebook,
+                HardcoverBookId = "hc:428649",
+                Editions = new List<Edition> { new Edition { ForeignEditionId = "hc-ed:a", Title = "A", ReadingFormatId = 1 } }
+            };
+
+            var candidateB = new Book
+            {
+                Title = "Candidate B",
+                MediaType = BookMediaType.Ebook,
+                HardcoverBookId = "hc:428649",
+                Editions = new List<Edition> { new Edition { ForeignEditionId = "hc-ed:b", Title = "B", ReadingFormatId = 1 } }
+            };
+
+            var remoteList = new List<Book> { candidateA, candidateB };
+
+            // No hint: independent re-derivation is order-dependent (picks whichever comes first).
+            Assert.That(service.MatchRemote(local, remoteList), Is.SameAs(candidateA));
+
+            // With a hint pointing at the OTHER candidate, the hint wins regardless of list order -
+            // this is the fix: the already-made upstream decision is authoritative, not re-derived.
+            var hint = new Dictionary<int, Book> { { local.Id, candidateB } };
+            Assert.That(service.MatchRemoteWithHint(local, remoteList, hint), Is.SameAs(candidateB));
+
+            // The hint is scoped to one call - MatchRemote (no hint) afterward is unaffected.
+            Assert.That(service.MatchRemote(local, remoteList), Is.SameAs(candidateA));
+        }
+
+        [Test]
+        public void should_ignore_hint_for_a_different_book_id_and_fall_back_to_independent_match()
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+
+            var local = new Book { Id = 1, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:1" };
+            var remote = new Book
+            {
+                MediaType = BookMediaType.Ebook,
+                HardcoverBookId = "hc:1",
+                Editions = new List<Edition> { new Edition { ForeignEditionId = "hc-ed:1", Title = "Remote", ReadingFormatId = 1 } }
+            };
+
+            var hintForSomeOtherBook = new Dictionary<int, Book> { { 999, remote } };
+
+            var match = service.MatchRemoteWithHint(local, new List<Book> { remote }, hintForSomeOtherBook);
+
+            Assert.That(match, Is.SameAs(remote), "No hint entry for this book's id - must fall back to normal matching, not return null");
         }
 
         [Test]

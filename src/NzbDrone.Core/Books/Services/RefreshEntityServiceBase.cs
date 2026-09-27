@@ -8,6 +8,7 @@ namespace NzbDrone.Core.Books
 {
     public abstract class RefreshEntityServiceBase<TEntity, TChild>
         where TEntity : ModelBase
+        where TChild : ModelBase
     {
         private readonly Logger _logger;
         protected RefreshEntityServiceBase(Logger logger)
@@ -31,6 +32,7 @@ namespace NzbDrone.Core.Books
                 Updated = new List<TChild>();
                 Merged = new List<Tuple<TChild, TChild>>();
                 Deleted = new List<TChild>();
+                MatchedRemoteByLocalId = new Dictionary<int, TChild>();
             }
 
             public List<TChild> UpToDate { get; set; }
@@ -38,6 +40,14 @@ namespace NzbDrone.Core.Books
             public List<TChild> Updated { get; set; }
             public List<Tuple<TChild, TChild>> Merged { get; set; }
             public List<TChild> Deleted { get; set; }
+
+            // chaptarr #182: the exact remote item this refresh matched to each surviving local child
+            // (keyed by the local child's own Id), captured at the one place that actually decided the
+            // match. Callers that need to know "what did remote say about this specific local row" should
+            // use this instead of independently re-deriving a match from the raw remote list - see
+            // RefreshBookService.GetRemoteData for why re-derivation can disagree with the match already
+            // made here.
+            public Dictionary<int, TChild> MatchedRemoteByLocalId { get; set; }
 
             public List<TChild> All => UpToDate.Concat(Added).Concat(Updated).Concat(Merged.Select(x => x.Item1)).Concat(Deleted).ToList();
             public List<TChild> Future => UpToDate.Concat(Added).Concat(Updated).ToList();
@@ -241,6 +251,11 @@ namespace NzbDrone.Core.Books
                     // This prevents the same DB row from ending up in multiple buckets (Updated/Merged/Deleted)
                     // during a single refresh pass.
                     localChildren.Remove(existingChild);
+
+                    if (existingChild.Id > 0)
+                    {
+                        sortedChildren.MatchedRemoteByLocalId[existingChild.Id] = remoteChild;
+                    }
 
                     PrepareExistingChild(existingChild, remoteChild, entity);
 

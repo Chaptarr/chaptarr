@@ -2055,6 +2055,14 @@ namespace NzbDrone.Core.Books
                     .Select(g => g.First())
                     .ToList();
 
+                // chaptarr #182: hand the already-decided match down instead of letting RefreshBookService
+                // re-derive it independently - see RefreshBookService.RefreshBookInfo's hint-overload doc
+                // comment and GetRemoteData for why re-deriving it separately can disagree.
+                if (_refreshBookService is RefreshBookService concreteRefreshBookService)
+                {
+                    return concreteRefreshBookService.RefreshBookInfo(booksToRefresh, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, localChildren.MatchedRemoteByLocalId);
+                }
+
                 return _refreshBookService.RefreshBookInfo(booksToRefresh, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
             }
 
