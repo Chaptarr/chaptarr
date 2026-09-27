@@ -238,6 +238,7 @@ namespace NzbDrone.Core.Profiles.Metadata
                 FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipSeriesSecondary || !seriesLinks.ContainsKey(x) || seriesLinks[x].Any(y => y.IsPrimary), "book is a secondary series item");
                 FilterByPredicate(hash, GetBookKey, localHash, profile, OmnibusAllowedByProfile, "book is an omnibus/collection");
                 FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.Ignored.Any(i => MatchesTerms(x.Title, i)), "contains ignored terms");
+                FilterByPredicate(hash, GetBookKey, localHash, profile, BookGenreAllowedByProfile, "book has an ignored genre (e.g. comics/graphic novels)");
 
                 foreach (var book in hash)
                 {
@@ -579,6 +580,17 @@ namespace NzbDrone.Core.Profiles.Metadata
             }
 
             return !profile.SkipMissingIdentifierOmnibus || BookHasIdentifier(book);
+        }
+
+        private static bool BookGenreAllowedByProfile(Book book, MetadataProfile profile)
+        {
+            if (profile.IgnoredGenres == null || profile.IgnoredGenres.Count == 0 || book.Genres == null)
+            {
+                return true;
+            }
+
+            return !book.Genres.Any(genre =>
+                profile.IgnoredGenres.Any(ignored => string.Equals(genre, ignored, StringComparison.OrdinalIgnoreCase)));
         }
 
         private static bool BookHasIdentifier(Book book)

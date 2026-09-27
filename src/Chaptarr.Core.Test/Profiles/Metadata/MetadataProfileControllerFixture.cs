@@ -40,6 +40,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                     CreateProfile(2, MetadataProfileType.Audiobook),
                     CreateProfile(3, MetadataProfileType.Ebook)),
                 authorService: null,
+                bookService: null,
                 commandQueueManager: null);
 
             var resources = controller.GetAll();
@@ -56,6 +57,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                     CreateProfile(2, MetadataProfileType.Audiobook),
                     CreateProfile(3, MetadataProfileType.Ebook)),
                 authorService: null,
+                bookService: null,
                 commandQueueManager: null);
 
             var resources = controller.GetAll("audiobook");
@@ -72,6 +74,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                     CreateProfile(2, MetadataProfileType.Audiobook),
                     CreateProfile(3, MetadataProfileType.Ebook)),
                 authorService: null,
+                bookService: null,
                 commandQueueManager: null);
 
             var resources = controller.GetAll("ebook");
@@ -85,6 +88,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             var controller = new MetadataApi.MetadataProfileController(
                 new StubMetadataProfileService(),
                 authorService: null,
+                bookService: null,
                 commandQueueManager: null);
 
             var exception = Assert.Throws<BadRequestException>(() => controller.GetAll("audio"));

@@ -22,14 +22,17 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
         private readonly IMetadataProfileService _profileService;
         private readonly IAuthorService _authorService;
+        private readonly IBookService _bookService;
         private readonly IManageCommandQueue _commandQueueManager;
 
         public MetadataProfileController(IMetadataProfileService profileService,
                                        IAuthorService authorService,
+                                       IBookService bookService,
                                        IManageCommandQueue commandQueueManager)
         {
             _profileService = profileService;
             _authorService = authorService;
+            _bookService = bookService;
             _commandQueueManager = commandQueueManager;
 
             SharedValidator.RuleFor(c => c.Name)
@@ -142,6 +145,12 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
             return profiles.ToResource();
         }
 
+        [HttpGet("genres")]
+        public ActionResult<List<string>> GetAvailableGenres()
+        {
+            return Ok(_bookService.GetAllGenres());
+        }
+
         [HttpGet("languages")]
         public ActionResult GetAvailableLanguages()
         {
@@ -208,6 +217,7 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
 
             if (!NormalizedAllowedLanguagesEquals(previous.AllowedLanguages, current.AllowedLanguages)) return true;
             if (!NormalizedTokenSetEquals(previous.Ignored, current.Ignored)) return true;
+            if (!NormalizedTokenSetEquals(previous.IgnoredGenres, current.IgnoredGenres)) return true;
 
             return false;
         }
