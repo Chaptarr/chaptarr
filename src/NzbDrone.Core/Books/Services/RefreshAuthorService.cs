@@ -3049,13 +3049,47 @@ namespace NzbDrone.Core.Books
 
         private bool TryMergeAuthorsWithoutDataLoss(Author source, Author target, string canonicalId, out string reason)
         {
+            var originalTargetProviderIds = new
+            {
+                target.HardcoverAuthorId,
+                target.GoodreadsAuthorId,
+                target.AudnexusAuthorId,
+                target.OpenLibraryAuthorId,
+                target.GoogleBooksAuthorId
+            };
+
             try
             {
                 MergeIntoSurvivor(target, source, canonicalId);
+
+                // Persist the survivor WITHOUT the unique provider ids first: a failure
+                // here still leaves the source author untouched (the data-loss guarantee
+                // this method is named for). Saving them now would collide with the
+                // source row, which still owns the same values under the UX_Authors_*
+                // unique indexes - the ids are handed over atomically below instead.
+                var mergedHardcoverId = target.HardcoverAuthorId;
+                var mergedGoodreadsId = target.GoodreadsAuthorId;
+                var mergedAudnexusId = target.AudnexusAuthorId;
+                var mergedOpenLibraryId = target.OpenLibraryAuthorId;
+                var mergedGoogleBooksId = target.GoogleBooksAuthorId;
+
+                target.HardcoverAuthorId = originalTargetProviderIds.HardcoverAuthorId;
+                target.GoodreadsAuthorId = originalTargetProviderIds.GoodreadsAuthorId;
+                target.AudnexusAuthorId = originalTargetProviderIds.AudnexusAuthorId;
+                target.OpenLibraryAuthorId = originalTargetProviderIds.OpenLibraryAuthorId;
+                target.GoogleBooksAuthorId = originalTargetProviderIds.GoogleBooksAuthorId;
                 _authorService.UpdateAuthor(target);
+
+                target.HardcoverAuthorId = mergedHardcoverId;
+                target.GoodreadsAuthorId = mergedGoodreadsId;
+                target.AudnexusAuthorId = mergedAudnexusId;
+                target.OpenLibraryAuthorId = mergedOpenLibraryId;
+                target.GoogleBooksAuthorId = mergedGoogleBooksId;
 
                 using var connection = _mainDatabase.OpenConnection();
                 using var transaction = connection.BeginTransaction();
+
+                ReleaseAndTransferUniqueProviderIds(connection, transaction, source.Id, target);
 
                 ReassignAuthorId(connection, transaction, "Books", source.Id, target.Id);
                 ReassignAuthorId(connection, transaction, "AuthorSeries", source.Id, target.Id);
@@ -3087,6 +3121,42 @@ namespace NzbDrone.Core.Books
                 reason = ex.Message;
                 return false;
             }
+        }
+
+        // The unique provider-id handoff has to happen inside the merge transaction:
+        // release the ids on the source row before the survivor takes them over, so
+        // the UX_Authors_* unique indexes never see both rows holding the same value.
+        internal static void ReleaseAndTransferUniqueProviderIds(System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, int sourceId, Author target)
+        {
+            connection.Execute(
+                @"UPDATE ""Authors"" SET
+                    ""HardcoverAuthorId"" = NULL,
+                    ""GoodreadsAuthorId"" = NULL,
+                    ""AudnexusAuthorId"" = NULL,
+                    ""OpenLibraryAuthorId"" = NULL,
+                    ""GoogleBooksAuthorId"" = NULL
+                  WHERE ""Id"" = @Id;",
+                new { Id = sourceId },
+                transaction);
+
+            connection.Execute(
+                @"UPDATE ""Authors"" SET
+                    ""HardcoverAuthorId"" = @HardcoverAuthorId,
+                    ""GoodreadsAuthorId"" = @GoodreadsAuthorId,
+                    ""AudnexusAuthorId"" = @AudnexusAuthorId,
+                    ""OpenLibraryAuthorId"" = @OpenLibraryAuthorId,
+                    ""GoogleBooksAuthorId"" = @GoogleBooksAuthorId
+                  WHERE ""Id"" = @Id;",
+                new
+                {
+                    target.HardcoverAuthorId,
+                    target.GoodreadsAuthorId,
+                    target.AudnexusAuthorId,
+                    target.OpenLibraryAuthorId,
+                    target.GoogleBooksAuthorId,
+                    Id = target.Id
+                },
+                transaction);
         }
 
         private void MergeIntoSurvivor(Author survivor, Author source, string canonicalId)
