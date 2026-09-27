@@ -287,7 +287,13 @@ namespace NzbDrone.Core.Datastore
             SqlMapper.RemoveTypeMap(typeof(Guid));
             SqlMapper.RemoveTypeMap(typeof(Guid?));
             SqlMapper.AddTypeHandler(new GuidConverter());
-            SqlMapper.AddTypeHandler(new CommandConverter());
+            var commandConverter = new CommandConverter();
+            SqlMapper.AddTypeHandler(commandConverter);
+            foreach (var commandType in CommandConverter.ConcreteCommandTypes)
+            {
+                SqlMapper.AddTypeHandler(commandType, commandConverter);
+            }
+
             SqlMapper.AddTypeHandler(new SystemVersionConverter());
             SqlMapper.AddTypeHandler(new FolderTypeIntConverter());
         }
