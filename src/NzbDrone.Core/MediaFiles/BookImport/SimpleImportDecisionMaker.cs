@@ -55,6 +55,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         }
 
         private const int TagPrefetchParallelism = 4;
+        internal const int TagPrefetchMaxFiles = 800;
 
         // Tag/duration extraction (ffprobe or TagLib on network storage) is the dominant cost of a multi-file
         // preview and ran strictly one file at a time. Warm the tag cache with bounded parallelism; the loop
@@ -67,8 +68,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return;
             }
 
+            // The tag cache clears itself entirely once it passes 1,000 entries, so warming more files than it can
+            // hold wipes its own work mid-prefetch and the loop re-reads everything. Warm at most
+            // TagPrefetchMaxFiles; the rest are read by the loop as before.
+            var toPrefetch = files.Count > TagPrefetchMaxFiles ? files.Take(TagPrefetchMaxFiles).ToList() : files;
+
             Parallel.ForEach(
-                files,
+                toPrefetch,
                 new ParallelOptions { MaxDegreeOfParallelism = TagPrefetchParallelism, CancellationToken = cancellationToken },
                 file =>
                 {
