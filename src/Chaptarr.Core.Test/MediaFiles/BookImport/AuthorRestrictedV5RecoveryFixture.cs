@@ -677,5 +677,88 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 questionsWithoutSuggestion ?? new HashSet<string>(StringComparer.Ordinal)
             });
         }
+
+        [Test]
+        public async Task author_restricted_mode_should_link_v5_suggested_author_that_already_exists_when_import_disallowed()
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var containment = new ContainmentValidator(new TagNormalizer(), logger);
+            var v5 = new RecordingV5MatchingService
+            {
+                OnSearch = (_, tags, _, _) =>
+                {
+                    var artistValues = tags.TryGetValue("ARTIST", out var artist) ? artist : new List<string>();
+                    if (artistValues.Any(v => string.Equals(v, "Frank Herbert", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return new List<V5MatchedAuthor>
+                        {
+                            new V5MatchedAuthor
+                            {
+                                id = "hc:frank-herbert",
+                                name = "Frank Herbert",
+                                edition_hardcover_id = "hc-ed-675"
+                            }
+                        };
+                    }
+
+                    return new List<V5MatchedAuthor>();
+                }
+            };
+            var fts = new RecordingEditionFtsRepository();
+            var authorService = new StubAuthorService(
+                (new Author { Id = 31, Name = "Brian Herbert", Path = "/audiobooks/Brian Herbert" }, "hc", "brian-herbert"),
+                (new Author { Id = 6, Name = "Frank Herbert", Path = "/audiobooks/Frank Herbert" }, "hc", "frank-herbert"));
+
+            var svc = new FileMatchingService(
+                matchingLogger: new NullMatchingUploadLogger(),
+                v5MatchingService: v5,
+                containmentValidator: containment,
+                pendingAuthorImportService: null,
+                commandQueue: null,
+                authorFolderMatchingService: null,
+                rootFolderService: null,
+                configService: ConfigServiceTestProxy.Create(strictness: BookMatchingStrictness.Balanced, usePathAsTagsFallback: true),
+                authorService: authorService,
+                eventAggregator: null,
+                authorLibraryService: null,
+                editionFtsRepository: fts,
+                bookService: null,
+                editionService: null,
+                editionRepository: null,
+                mediaInfoExtractor: null,
+                logger: logger);
+
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/audiobooks/Brian Herbert/Whipping Star/Whipping Star.m4b",
+                DurationSeconds = 36010,
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    { "TITLE", new List<string> { "Whipping Star" } },
+                    { "ARTIST", new List<string> { "Frank Herbert" } }
+                }
+            };
+
+            // Downloaded-import style context: V5 identification on, author
+            // import off. The suggested author already exists in the library,
+            // so the file must still link to it.
+            var context = new MatchingContext
+            {
+                AllowV5Identification = true,
+                AllowAuthorImport = false,
+                DeferUnmatchedToAuthorReady = false,
+                AllowUnscopedFallback = false,
+                DisablePathFallback = true,
+                PerFileMatching = false
+            };
+
+            var result = await svc.MatchFilesToLibraryAsync(new[] { file }, restrictToAuthorId: 31, context);
+
+            Assert.That(result.UnmatchedFiles, Is.Empty);
+            Assert.That(result.MatchedFiles, Has.Length.EqualTo(1));
+            Assert.That(result.MatchedFiles[0].AuthorId, Is.EqualTo(6));
+            Assert.That(result.MatchedFiles[0].BookTitle, Is.EqualTo("Whipping Star"));
+        }
+
     }
 }
