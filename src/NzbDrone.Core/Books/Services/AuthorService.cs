@@ -6,6 +6,7 @@ using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
@@ -72,7 +73,7 @@ namespace NzbDrone.Core.Books
         void ClearAuthorCache();
     }
 
-    public class AuthorService : IAuthorService
+    public class AuthorService : IAuthorService, IExecute<DeleteAuthorCommand>
     {
         private readonly IAuthorRepository _authorRepository;
         private readonly IEventAggregator _eventAggregator;
@@ -318,6 +319,11 @@ namespace NzbDrone.Core.Books
 	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
 	        {
 	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false);
+	        }
+
+	        public void Execute(DeleteAuthorCommand message)
+	        {
+	            DeleteAuthors(message.AuthorIds, message.DeleteFiles, message.AddImportListExclusion);
 	        }
 
 	        private List<int> DeleteAuthorsInternal(

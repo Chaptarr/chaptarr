@@ -340,7 +340,13 @@ namespace Chaptarr.Api.V1.Author
         [HttpDelete]
         public object DeleteAuthor([FromBody] AuthorEditorResource resource)
         {
-            _authorService.DeleteAuthors(resource.AuthorIds, false);
+            // See AuthorController.DeleteAuthor - a bulk selection can add up to just as many books
+            // as one huge author, so this goes through the same background command instead of
+            // blocking the request on every synchronous BookDeletedEvent subscriber.
+            _commandQueueManager.Push(
+                new DeleteAuthorCommand(resource.AuthorIds, false),
+                CommandPriority.Normal,
+                CommandTrigger.Manual);
 
             return new { };
         }
