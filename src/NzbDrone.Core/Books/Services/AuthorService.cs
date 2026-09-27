@@ -57,6 +57,11 @@ namespace NzbDrone.Core.Books
         }
         List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder);
         Dictionary<int, string> AllAuthorPaths();
+        // The default exists only for lightweight test doubles. Every production implementation must override it.
+        List<KeyValuePair<int, string>> AllAuthorMediaPaths()
+        {
+            throw new NotSupportedException();
+        }
         bool AuthorPathExists(string folder);
         void RemoveAddOptions(Author author);
         void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored);
@@ -592,6 +597,11 @@ namespace NzbDrone.Core.Books
         public Dictionary<int, string> AllAuthorPaths()
         {
             return _authorRepository.AllAuthorPaths();
+        }
+
+        public List<KeyValuePair<int, string>> AllAuthorMediaPaths()
+        {
+            return _authorRepository.AllAuthorMediaPaths();
         }
 
         public List<Author> AllForTag(int tagId)

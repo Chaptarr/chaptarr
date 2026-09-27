@@ -119,7 +119,10 @@ namespace NzbDrone.Core.Extras.Files
 
             var authorId = book.AuthorId;
 
-            if (message.DeleteFiles)
+            // SkipDiskCleanup means this book is being deleted as part of a larger author delete,
+            // whose own handler already recursively removes the author's whole folder(s) - recycling
+            // extras individually here too would just race that and duplicate recycle-bin entries.
+            if (message.DeleteFiles && !message.SkipDiskCleanup)
             {
                 var author = book.Author ?? GetAuthorOrNull(authorId);
 

@@ -195,12 +195,15 @@ namespace NzbDrone.Core.MediaFiles
                     // as "unmapped" even though they were never actually removed.
                     var pathsToDelete = new[] { author.Path, author.AudiobookPath, author.EbookPath }
                         .Where(p => !p.IsNullOrWhiteSpace())
-                        .Distinct()
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
                     // Fetched lazily, once, only if some path actually needs the other-authors check -
                     // an author whose only path(s) are already refused as unsafe should never need it.
-                    Dictionary<int, string> allAuthors = null;
+                    // Uses AllAuthorMediaPaths (Path + AudiobookPath + EbookPath), not the legacy
+                    // single-path AllAuthorPaths - otherwise a dual-format author's AudiobookPath could
+                    // collide with another author's separately-configured EbookPath and never be caught.
+                    List<KeyValuePair<int, string>> allAuthors = null;
 
                     foreach (var path in pathsToDelete)
                     {
@@ -211,7 +214,7 @@ namespace NzbDrone.Core.MediaFiles
                             continue;
                         }
 
-                        allAuthors ??= _authorService.AllAuthorPaths();
+                        allAuthors ??= _authorService.AllAuthorMediaPaths();
 
                         var blockedByOtherAuthor = false;
 
@@ -242,9 +245,20 @@ namespace NzbDrone.Core.MediaFiles
                             continue;
                         }
 
-                        if (_diskProvider.FolderExists(path))
+                        try
                         {
-                            _recycleBinProvider.DeleteFolder(path);
+                            if (_diskProvider.FolderExists(path))
+                            {
+                                _recycleBinProvider.DeleteFolder(path);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Don't let one path's failure (permissions, a momentarily-unavailable NFS
+                            // mount, ...) abort the rest of this author's paths or skip the
+                            // DeleteCompletedEvent below - a partially-deleted author still needs its
+                            // Plex refresh queue flushed.
+                            _logger.Error(ex, "Failed to delete '{0}' for author '{1}'.", path, author.Name);
                         }
                     }
 
@@ -291,7 +305,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public void HandleAsync(BookDeletedEvent message)
         {
-            if (!message.DeleteFiles)
+            if (!message.DeleteFiles || message.SkipDiskCleanup)
             {
                 return;
             }

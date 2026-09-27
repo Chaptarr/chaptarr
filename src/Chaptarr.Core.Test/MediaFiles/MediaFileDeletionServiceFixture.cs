@@ -109,11 +109,11 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private class AllAuthorPathsOnlyAuthorServiceProxy : DispatchProxy
         {
-            public Dictionary<int, string> Paths { get; } = new();
+            public List<KeyValuePair<int, string>> Paths { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (string.Equals(targetMethod?.Name, nameof(IAuthorService.AllAuthorPaths), StringComparison.Ordinal))
+                if (string.Equals(targetMethod?.Name, nameof(IAuthorService.AllAuthorMediaPaths), StringComparison.Ordinal))
                 {
                     return Paths;
                 }
@@ -415,6 +415,61 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(diskProxy.SubfolderCleanups, Does.Contain(author.EbookPath));
             Assert.That(diskProxy.SubfolderCleanups, Does.Contain(author.AudiobookPath));
             Assert.That(diskProxy.DeletedFolders, Does.Contain(author.EbookPath));
+        }
+
+        [Test]
+        public void should_do_no_disk_work_on_book_delete_when_an_author_delete_already_covers_it()
+        {
+            // A book delete published as part of a larger author delete (SkipDiskCleanup) relies on
+            // MediaFileDeletionService's own AuthorDeletedEvent handler to recursively remove the
+            // whole author folder. Doing per-file work here too would race that and duplicate
+            // recycle-bin entries for the same files.
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Jim Butcher",
+                Path = "/ebooks/Jim Butcher",
+                EbookPath = "/ebooks/Jim Butcher"
+            };
+
+            var bookFolder = "/ebooks/Jim Butcher/Captains Fury";
+
+            var diskProvider = DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>();
+            var recycleBinProvider = new RecordingRecycleBinProvider();
+
+            var service = new MediaFileDeletionService(
+                diskProvider,
+                recycleBinProvider,
+                DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                new RecordingEventAggregator(),
+                new StubRootFolderService(new RootFolder { Id = 1, Path = "/ebooks" }),
+                DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                LogManager.GetCurrentClassLogger());
+
+            var book = new Book
+            {
+                Id = 5792,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Captain's Fury",
+                MediaType = BookMediaType.Ebook,
+                BookFiles = new List<BookFile>
+                {
+                    new()
+                    {
+                        Id = 1,
+                        Path = bookFolder + "/Captains Fury.epub",
+                        Author = author
+                    }
+                }
+            };
+
+            Assert.DoesNotThrow(() =>
+                service.HandleAsync(new BookDeletedEvent(book, deleteFiles: true, addImportListExclusion: false, skipDiskCleanup: true)));
+
+            Assert.That(recycleBinProvider.DeletedFiles, Is.Empty);
         }
 
         [Test]
