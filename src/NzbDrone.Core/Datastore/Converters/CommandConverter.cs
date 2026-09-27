@@ -46,6 +46,11 @@ namespace NzbDrone.Core.Datastore.Converters
             parameter.Value = value == null ? null : JsonSerializer.Serialize((object)value, SerializerSettings);
         }
 
+        // Dapper resolves a type handler from the runtime type of a parameter value. A handler registered only for
+        // the base type Command is therefore not found when a batch insert binds a derived command's Body, so the
+        // handler is also registered for every concrete command type (see TableMapping).
+        public static IEnumerable<Type> ConcreteCommandTypes => AllowedCommandTypes.Values.Concat(new[] { typeof(UnknownCommand) }).Distinct();
+
         private static IReadOnlyDictionary<string, Type> BuildAllowedCommandTypes()
         {
             return typeof(Command).Assembly.GetTypes()
