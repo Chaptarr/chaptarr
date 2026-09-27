@@ -38,7 +38,7 @@ namespace Chaptarr.Core.Test.Datastore
                 ");
 
                 var migrationController = new MigrationController(LogManager.GetLogger("HttpResponseUniqueUrlMigrationFixture"), null);
-                migrationController.Migrate(connectionString, new MigrationContext(MigrationType.Cache, 108), DatabaseType.SQLite);
+                migrationController.Migrate(connectionString, new MigrationContext(MigrationType.Cache, 109), DatabaseType.SQLite);
 
                 Assert.That(connection.QuerySingle<int>(@"SELECT COUNT(*) FROM ""HttpResponse"""), Is.EqualTo(3));
                 Assert.That(connection.QuerySingle<string>(@"SELECT ""Value"" FROM ""HttpResponse"" WHERE ""Url"" = 'a'"), Is.EqualTo("newest"));
