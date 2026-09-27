@@ -1352,9 +1352,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     // overwrites and only reports that as DestinationAlreadyExistsException, after staging began.
                     // A tracked file this import replaces is exempt (it is staged aside first), so this also applies to
                     // a manual import that replaces: an untracked or other-edition file at the destination is not staged.
-                    if (!downloadForced && relocateExistingFile == null)
+                    //
+                    // A forced import overrides quality and duplicate rejections, but it cannot make the transfer
+                    // overwrite a file, so it gets the same classification with a message that says how to proceed.
+                    if (relocateExistingFile == null)
                     {
                         var occupiedDestinationRejection = GetOccupiedDestinationRejectionReason(bookFile, localBook, edition, filesToReplace);
+                        if (occupiedDestinationRejection != null && downloadForced)
+                        {
+                            occupiedDestinationRejection += " A forced import cannot overwrite it: remove or track that file first, or replace the tracked file.";
+                        }
+
                         if (occupiedDestinationRejection != null)
                         {
                             _logger.Debug("[ALREADY-IMPORTED] Managed destination for '{0}' is already occupied — {1}",

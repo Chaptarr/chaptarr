@@ -1839,6 +1839,37 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(outcome.MediaFileService.FilesByBook.Single().Quality.Revision.Version, Is.EqualTo(2));
         }
 
+        [Test]
+        public void forced_import_onto_an_occupied_untracked_destination_should_be_rejected_not_throw()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, existingAtDestination: true, existingUntracked: true, replaceExisting: false, downloadForced: true);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors.Single(), Does.Contain("untracked file already occupies").And.Contain("forced import cannot overwrite"));
+            Assert.That(outcome.TransferCalls, Is.EqualTo(0));
+            Assert.That(outcome.DestinationContent, Is.EqualTo("existing"));
+        }
+
+        [Test]
+        public void forced_import_onto_an_occupied_destination_tracked_for_another_edition_should_be_rejected_not_throw()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, existingAtDestination: true, existingEditionIdOverride: 931, replaceExisting: false, downloadForced: true);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors.Single(), Does.Contain("another edition").And.Contain("forced import cannot overwrite"));
+            Assert.That(outcome.TransferCalls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void forced_replacing_import_should_still_replace_the_tracked_file_at_the_destination()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.M4B, existingAtDestination: true, downloadForced: true);
+
+            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
+        }
+
         private sealed class DuplicateImportOutcome
         {
             public List<ImportResult> Results { get; init; }
@@ -1879,7 +1910,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             int? existingEditionIdOverride = null,
             bool existingUntracked = false,
             bool destinationFolderMissing = false,
-            bool replaceExisting = true)
+            bool replaceExisting = true,
+            bool downloadForced = false)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"duplicate-import-{Guid.NewGuid():N}");
             var libraryDir = Path.Combine(tempDir, "library");
@@ -2072,7 +2104,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var results = service.Import(
                     decisions,
                     replaceExisting: replaceExisting,
-                    downloadClientItem: new DownloadClientItem { DownloadId = "duplicate-copy" },
+                    downloadClientItem: new DownloadClientItem { DownloadId = "duplicate-copy", DownloadForced = downloadForced },
                     importMode: ImportMode.Copy,
                     cancellationToken: CancellationToken.None);
 
