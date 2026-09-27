@@ -567,6 +567,10 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public ConversionJob Get(string downloadId) => Job;
 
+            public List<ConversionJob> GetNonCompleted() => Job == null || Job.Status == ConversionJobStatus.Completed
+                ? new List<ConversionJob>()
+                : new List<ConversionJob> { Job };
+
             public ConversionJob Enqueue(ConversionJobRequest request)
             {
                 Request = request;

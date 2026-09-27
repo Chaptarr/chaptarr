@@ -771,21 +771,36 @@ namespace NzbDrone.Core.Books
             // Postgres can only combine OR'd index predicates with a BitmapOr when they sit on the
             // same relation, so recalling the candidate ids per table keeps the GIN indexes from
             // migration 013 usable. Scoring still runs over the joined row, so results are unchanged.
+            //
+            // The media-type and author-scope predicates are repeated inside every candidate branch.
+            // The outer query applies the same predicates to the recalled books, so candidates that
+            // fail them can never reach the result: discarding them before ranking cannot change the
+            // returned rows or their scores, it only keeps the CTE from materialising the whole
+            // library's FTS hits.
+            var candidateMediaTypeFilter = "AND cb.\"MediaType\" = @mediaType";
+            var candidateAuthorFilter = authorId.HasValue ? "AND cb.\"AuthorId\" = @authorId" : string.Empty;
             var sql = $@"
                 WITH candidates AS (
                     SELECT e.""BookId"" AS ""Id""
                     FROM ""Editions"" e
+                    INNER JOIN ""Books"" cb ON cb.""Id"" = e.""BookId""
                     WHERE to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) @@ to_tsquery('simple', @tsQuery)
+                      {candidateMediaTypeFilter}
+                      {candidateAuthorFilter}
                       {(monitoredOnly ? "AND e.\"Monitored\" = true" : string.Empty)}
                     UNION
-                    SELECT b.""Id""
-                    FROM ""Books"" b
-                    WHERE to_tsvector('simple', COALESCE(b.""SeriesName"", '')) @@ to_tsquery('simple', @tsQuery)
+                    SELECT cb.""Id""
+                    FROM ""Books"" cb
+                    WHERE to_tsvector('simple', COALESCE(cb.""SeriesName"", '')) @@ to_tsquery('simple', @tsQuery)
+                      {candidateMediaTypeFilter}
+                      {candidateAuthorFilter}
                     UNION
-                    SELECT b.""Id""
-                    FROM ""Books"" b
-                    INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
+                    SELECT cb.""Id""
+                    FROM ""Books"" cb
+                    INNER JOIN ""Authors"" a ON a.""Id"" = cb.""AuthorId""
                     WHERE to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @tsQuery)
+                      {candidateMediaTypeFilter}
+                      {candidateAuthorFilter}
                 )
                 SELECT
                     b.""Id"" AS BookId,

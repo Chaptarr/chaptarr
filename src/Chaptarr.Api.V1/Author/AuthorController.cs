@@ -106,6 +106,8 @@ namespace Chaptarr.Api.V1.Author
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IRootFolderService _rootFolderService;
         private readonly IProviderAliasService _providerAliasService;
+        private readonly IEditionService _editionService;
+        private readonly IMediaFileService _mediaFileService;
         private readonly IEventAggregator _eventAggregator;
 	        private readonly IAppFolderInfo _appFolderInfo;
 	        private readonly IBuildFileNames _fileNameBuilder;
@@ -139,7 +141,9 @@ namespace Chaptarr.Api.V1.Author
                             QualityProfileExistsValidator qualityProfileExistsValidator,
                             MetadataProfileExistsValidator metadataProfileExistsValidator,
                             AuthorFolderAsRootFolderValidator authorFolderAsRootFolderValidator,
-                            IProviderAliasService providerAliasService = null)
+                            IProviderAliasService providerAliasService = null,
+                            IEditionService editionService = null,
+                            IMediaFileService mediaFileService = null)
             : base(signalRBroadcaster)
         {
             _authorService = authorService;
@@ -154,6 +158,8 @@ namespace Chaptarr.Api.V1.Author
             _logger = logger;
             _rootFolderService = rootFolderService;
             _providerAliasService = providerAliasService;
+            _editionService = editionService;
+            _mediaFileService = mediaFileService;
             _eventAggregator = eventAggregator;
             _appFolderInfo = appFolderInfo;
             _fileNameBuilder = fileNameBuilder;
@@ -341,7 +347,7 @@ namespace Chaptarr.Api.V1.Author
             var resource = author.ToResource(HttpContext.GetReadarrFacadeContext());
             MapCoversToLocal(resource);
             FetchAndLinkAuthorStatistics(resource, HttpContext.GetReadarrFacadeContext()?.MediaType);
-            LinkNextPreviousBooks(resource);
+            LinkNextPreviousBooks(new[] { author }, resource);
 
             LinkRootFolderPath(new[] { author }, resource);
 
@@ -364,9 +370,10 @@ namespace Chaptarr.Api.V1.Author
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
             var authors = _authorService.GetAllAuthors();
             var authorResources = authors.ToResource(HttpContext.GetReadarrFacadeContext());
+            var authorResourceArray = authorResources.ToArray();
 
-            MapCoversToLocal(authorResources.ToArray());
-            LinkNextPreviousBooks(authorResources.ToArray());
+            MapCoversToLocal(authorResourceArray);
+            LinkNextPreviousBooks(authors, authorResourceArray);
 
             if (normalizedMediaType == null)
             {
@@ -380,7 +387,7 @@ namespace Chaptarr.Api.V1.Author
                 LinkAuthorStatistics(authorResources, authorStatistics);
             }
 
-            LinkRootFolderPath(authors, authorResources.ToArray());
+            LinkRootFolderPath(authors, authorResourceArray);
 
             return authorResources;
         }
@@ -1262,16 +1269,192 @@ namespace Chaptarr.Api.V1.Author
             }
         }
 
-        private void LinkNextPreviousBooks(params AuthorResource[] authors)
+        private void LinkNextPreviousBooks(IEnumerable<NzbDrone.Core.Books.Author> authorModels, params AuthorResource[] authors)
         {
-            var nextBooks = _bookService.GetNextBooksByAuthorId(authors.Select(x => x.Id));
-            var lastBooks = _bookService.GetLastBooksByAuthorId(authors.Select(x => x.Id));
+            var authorIds = authors.Where(x => x != null).Select(x => x.Id).ToList();
+            var nextBooks = _bookService.GetNextBooksByAuthorId(authorIds);
+            var lastBooks = _bookService.GetLastBooksByAuthorId(authorIds);
+
+            PreloadAuthorIndexBooks(authorModels,
+                                    (nextBooks ?? new List<Book>()).Concat(lastBooks ?? new List<Book>()),
+                                    _editionService == null ? null : ids => _editionService.GetEditionsByBook(ids),
+                                    _mediaFileService == null ? null : ids => _mediaFileService.GetFilesByBooks(ids));
+
+            var nextByAuthor = FirstBookPerAuthor(nextBooks);
+            var lastByAuthor = FirstBookPerAuthor(lastBooks);
 
             foreach (var authorResource in authors)
             {
-                authorResource.NextBook = ToAuthorIndexBookResource(nextBooks.FirstOrDefault(x => x.AuthorId == authorResource.Id));
-                authorResource.LastBook = ToAuthorIndexBookResource(lastBooks.FirstOrDefault(x => x.AuthorId == authorResource.Id));
+                if (authorResource == null)
+                {
+                    continue;
+                }
+
+                authorResource.NextBook = ToAuthorIndexBookResource(nextByAuthor.GetValueOrDefault(authorResource.Id));
+                authorResource.LastBook = ToAuthorIndexBookResource(lastByAuthor.GetValueOrDefault(authorResource.Id));
             }
+        }
+
+        private static Dictionary<int, Book> FirstBookPerAuthor(List<Book> books)
+        {
+            var result = new Dictionary<int, Book>();
+
+            foreach (var book in books ?? new List<Book>())
+            {
+                if (book == null)
+                {
+                    continue;
+                }
+
+                if (!result.ContainsKey(book.AuthorId))
+                {
+                    result[book.AuthorId] = book;
+                }
+            }
+
+            return result;
+        }
+
+        internal static void PreloadAuthorIndexBooks(IEnumerable<NzbDrone.Core.Books.Author> authorModels,
+                                                     IEnumerable<Book> books,
+                                                     Func<List<int>, List<Edition>> editionLoader,
+                                                     Func<List<int>, List<BookFile>> bookFileLoader)
+        {
+            var bookList = new List<Book>();
+            var seenBookIds = new HashSet<int>();
+
+            foreach (var book in books ?? Enumerable.Empty<Book>())
+            {
+                if (book != null && book.Id > 0 && seenBookIds.Add(book.Id))
+                {
+                    bookList.Add(book);
+                }
+            }
+
+            if (bookList.Count == 0)
+            {
+                return;
+            }
+
+            var authorsById = new Dictionary<int, NzbDrone.Core.Books.Author>();
+
+            foreach (var author in authorModels ?? Enumerable.Empty<NzbDrone.Core.Books.Author>())
+            {
+                if (author != null)
+                {
+                    authorsById[author.Id] = author;
+                }
+            }
+
+            foreach (var book in bookList)
+            {
+                if (book.LazyAuthor?.IsLoaded == true)
+                {
+                    continue;
+                }
+
+                if (authorsById.TryGetValue(book.AuthorId, out var author))
+                {
+                    book.Author = author;
+                }
+            }
+
+            if (editionLoader != null)
+            {
+                var pendingEditionBooks = bookList.Where(x => x.LazyEditions?.IsLoaded != true).ToList();
+
+                if (pendingEditionBooks.Count > 0)
+                {
+                    var editionsByBook = GroupBy(editionLoader(pendingEditionBooks.Select(x => x.Id).ToList()), edition => edition.BookId);
+
+                    foreach (var book in pendingEditionBooks)
+                    {
+                        book.Editions = editionsByBook.GetValueOrDefault(book.Id) ?? new List<Edition>();
+                    }
+                }
+            }
+
+            if (bookFileLoader != null)
+            {
+                var pendingFileBooks = bookList.Where(x => x.LazyBookFiles?.IsLoaded != true && x.Editions != null).ToList();
+
+                if (pendingFileBooks.Count > 0)
+                {
+                    var bookIdByEditionId = new Dictionary<int, int>();
+
+                    foreach (var book in bookList)
+                    {
+                        foreach (var edition in book.Editions ?? new List<Edition>())
+                        {
+                            if (edition != null)
+                            {
+                                bookIdByEditionId[edition.Id] = book.Id;
+                            }
+                        }
+                    }
+
+                    var filesByBook = new Dictionary<int, List<BookFile>>();
+
+                    foreach (var file in bookFileLoader(pendingFileBooks.Select(x => x.Id).ToList()) ?? new List<BookFile>())
+                    {
+                        if (file == null)
+                        {
+                            continue;
+                        }
+
+                        int? bookId = file.LazyEdition?.IsLoaded == true ? file.LazyEdition.Value?.BookId : null;
+
+                        if (bookId == null && bookIdByEditionId.TryGetValue(file.EditionId, out var mappedBookId))
+                        {
+                            bookId = mappedBookId;
+                        }
+
+                        if (bookId == null)
+                        {
+                            continue;
+                        }
+
+                        if (!filesByBook.TryGetValue(bookId.Value, out var list))
+                        {
+                            list = new List<BookFile>();
+                            filesByBook[bookId.Value] = list;
+                        }
+
+                        list.Add(file);
+                    }
+
+                    foreach (var book in pendingFileBooks)
+                    {
+                        book.BookFiles = filesByBook.GetValueOrDefault(book.Id) ?? new List<BookFile>();
+                    }
+                }
+            }
+        }
+
+        private static Dictionary<int, List<T>> GroupBy<T>(List<T> items, Func<T, int> keySelector)
+            where T : class
+        {
+            var result = new Dictionary<int, List<T>>();
+
+            foreach (var item in items ?? new List<T>())
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+
+                var key = keySelector(item);
+
+                if (!result.TryGetValue(key, out var list))
+                {
+                    list = new List<T>();
+                    result[key] = list;
+                }
+
+                list.Add(item);
+            }
+
+            return result;
         }
 
         private static BookResource ToAuthorIndexBookResource(Book book)
@@ -1281,7 +1464,7 @@ namespace Chaptarr.Api.V1.Author
                 return null;
             }
 
-            var resource = book.ToResource();
+            var resource = book.ToResource(BookResourceMappingOptions.Lean());
             resource.Author = null;
             return resource;
         }

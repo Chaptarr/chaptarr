@@ -19,6 +19,7 @@ namespace NzbDrone.Core.MediaFiles
     {
         int WorkerConcurrency { get; }
         ConversionJob Get(string downloadId);
+        List<ConversionJob> GetNonCompleted();
         ConversionJob Enqueue(ConversionJobRequest request);
         bool IsActive(string downloadId);
         bool Cancel(string downloadId);
@@ -70,6 +71,11 @@ namespace NzbDrone.Core.MediaFiles
         public ConversionJob Get(string downloadId)
         {
             return _repository.FindByDownloadId(downloadId);
+        }
+
+        public List<ConversionJob> GetNonCompleted()
+        {
+            return _repository.NonCompleted();
         }
 
         public ConversionJob Enqueue(ConversionJobRequest request)
