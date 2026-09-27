@@ -25,6 +25,7 @@ export const TAG = 'tag';
 export const TEXT = 'text';
 export const TEXT_AREA = 'textArea';
 export const TEXT_TAG = 'textTag';
+export const GENRE_TAG = 'genreTag';
 export const TAG_SELECT = 'tagSelect';
 export const UMASK = 'umask';
 
@@ -55,6 +56,7 @@ export const all = [
   TEXT,
   TEXT_AREA,
   TEXT_TAG,
+  GENRE_TAG,
   TAG_SELECT,
   UMASK
 ];
