@@ -174,6 +174,48 @@ namespace NzbDrone.Core.MediaFiles
                 .ToList();
         }
 
+        // Shared by both handlers below so a Calibre-routed path gets exactly the same refusal
+        // checks as a plain recycle-bin path - it used to skip them entirely, which only mattered
+        // for the single legacy Path but now applies to up to three paths per author.
+        // allAuthorsCache is fetched lazily, once per method call, only if some path actually needs
+        // it - an author whose only path(s) are already refused as unsafe should never touch it.
+        // Uses AllAuthorMediaPaths (Path + AudiobookPath + EbookPath), not the legacy single-path
+        // AllAuthorPaths - otherwise a dual-format author's AudiobookPath could collide with another
+        // author's separately-configured EbookPath and never be caught.
+        private bool ShouldRefuseToDeletePath(string path, Author author, ref List<KeyValuePair<int, string>> allAuthorsCache)
+        {
+            if (IsPathUnsafeToDelete(path))
+            {
+                _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
+                    path, author.Name);
+                return true;
+            }
+
+            allAuthorsCache ??= _authorService.AllAuthorMediaPaths();
+
+            foreach (var s in allAuthorsCache)
+            {
+                if (s.Key == author.Id)
+                {
+                    continue;
+                }
+
+                if (path.IsParentPath(s.Value))
+                {
+                    _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", path);
+                    return true;
+                }
+
+                if (path.PathEquals(s.Value))
+                {
+                    _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", path);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         [EventHandleOrder(EventHandleOrder.First)]
         public void Handle(AuthorDeletedEvent message)
         {
@@ -182,6 +224,7 @@ namespace NzbDrone.Core.MediaFiles
                 var author = message.Author;
 
                 List<BookFile> allFiles = null;
+                List<KeyValuePair<int, string>> allAuthors = null;
 
                 foreach (var path in DistinctAuthorPaths(author))
                 {
@@ -193,10 +236,15 @@ namespace NzbDrone.Core.MediaFiles
                         continue;
                     }
 
+                    if (ShouldRefuseToDeletePath(path, author, ref allAuthors))
+                    {
+                        continue;
+                    }
+
                     allFiles ??= _mediaFileService.GetFilesByAuthor(author.Id);
 
                     var booksUnderPath = allFiles
-                        .Where(file => file?.Path != null && (path.IsParentPath(file.Path) || path.PathEquals(file.Path)))
+                        .Where(file => file?.Path != null && path.IsParentPath(file.Path))
                         .ToList();
 
                     if (!booksUnderPath.Any())
@@ -230,16 +278,9 @@ namespace NzbDrone.Core.MediaFiles
                 // format's entire folder - and every file in it - untouched on disk while the DB
                 // treated the author as fully deleted, leaving those files' BookFile rows to surface
                 // as "unmapped" even though they were never actually removed.
-                var pathsToDelete = DistinctAuthorPaths(author);
-
-                // Fetched lazily, once, only if some path actually needs the other-authors check -
-                // an author whose only path(s) are already refused as unsafe should never need it.
-                // Uses AllAuthorMediaPaths (Path + AudiobookPath + EbookPath), not the legacy
-                // single-path AllAuthorPaths - otherwise a dual-format author's AudiobookPath could
-                // collide with another author's separately-configured EbookPath and never be caught.
                 List<KeyValuePair<int, string>> allAuthors = null;
 
-                foreach (var path in pathsToDelete)
+                foreach (var path in DistinctAuthorPaths(author))
                 {
                     var rootFolder = _rootFolderService.GetBestRootFolder(path);
                     var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
@@ -251,40 +292,7 @@ namespace NzbDrone.Core.MediaFiles
                         continue;
                     }
 
-                    if (IsPathUnsafeToDelete(path))
-                    {
-                        _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
-                            path, author.Name);
-                        continue;
-                    }
-
-                    allAuthors ??= _authorService.AllAuthorMediaPaths();
-
-                    var blockedByOtherAuthor = false;
-
-                    foreach (var s in allAuthors)
-                    {
-                        if (s.Key == author.Id)
-                        {
-                            continue;
-                        }
-
-                        if (path.IsParentPath(s.Value))
-                        {
-                            _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", path);
-                            blockedByOtherAuthor = true;
-                            break;
-                        }
-
-                        if (path.PathEquals(s.Value))
-                        {
-                            _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", path);
-                            blockedByOtherAuthor = true;
-                            break;
-                        }
-                    }
-
-                    if (blockedByOtherAuthor)
+                    if (ShouldRefuseToDeletePath(path, author, ref allAuthors))
                     {
                         continue;
                     }
