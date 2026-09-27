@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Dapper;
 using NLog;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -135,7 +136,7 @@ namespace NzbDrone.Core.Books
                 return conn.Query<AuthorPathRow>(strSql)
                     .SelectMany(row => new[] { row.Path, row.AudiobookPath, row.EbookPath }
                         .Where(p => !string.IsNullOrWhiteSpace(p))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Distinct(StringComparer.FromComparison(DiskProviderBase.PathStringComparison))
                         .Select(p => new KeyValuePair<int, string>(row.Id, p)))
                     .ToList();
             }

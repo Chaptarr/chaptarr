@@ -170,7 +170,7 @@ namespace NzbDrone.Core.MediaFiles
         {
             return new[] { author.Path, author.AudiobookPath, author.EbookPath }
                 .Where(p => !p.IsNullOrWhiteSpace())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Distinct(StringComparer.FromComparison(DiskProviderBase.PathStringComparison))
                 .ToList();
         }
 
@@ -199,9 +199,21 @@ namespace NzbDrone.Core.MediaFiles
                         .Where(file => file?.Path != null && (path.IsParentPath(file.Path) || path.PathEquals(file.Path)))
                         .ToList();
 
-                    if (booksUnderPath.Any())
+                    if (!booksUnderPath.Any())
+                    {
+                        continue;
+                    }
+
+                    try
                     {
                         _calibre.DeleteBooks(booksUnderPath, rootFolder.CalibreSettings);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Don't let one Calibre-managed path's failure (server down, timeout, locked
+                        // metadata.db) stop another distinct Calibre path on this same author from
+                        // being attempted - same isolation as the recycle-bin loop in HandleAsync.
+                        _logger.Error(ex, "Failed to delete Calibre books at '{0}' for author '{1}'.", path, author.Name);
                     }
                 }
             }
