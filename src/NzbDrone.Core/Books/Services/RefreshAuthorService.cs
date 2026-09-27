@@ -2063,7 +2063,7 @@ namespace NzbDrone.Core.Books
             _eventAggregator.PublishEvent(new AuthorUpdatedEvent(entity));
         }
 
-        protected override void PublishRefreshCompleteEvent(Author entity)
+        protected override void PublishRefreshCompleteEvent(Author entity, bool anyChanges)
         {
             _logger.Debug("[SERIES-DEBUG] PublishRefreshCompleteEvent called for author '{0}' (ID: {1})",
                 entity.Name, entity.Id);
@@ -2072,7 +2072,7 @@ namespace NzbDrone.Core.Books
                 // IMPORTANT: We don't process series here anymore because books might not be committed to DB yet
                 // Series processing is now handled in a separate event handler after books are guaranteed to be in the database
 
-            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity));
+            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity, anyChanges));
         }
 
         protected override void PublishChildrenUpdatedEvent(Author entity, List<Book> newChildren, List<Book> updateChildren, List<Book> deleteChildren)
