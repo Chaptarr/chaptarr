@@ -8,6 +8,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public int IndexerId { get; set; }
         public string TorrentId { get; set; }
         public DateTime ReservedUtc { get; set; }
+        public DateTime? FirstReservedUtc { get; set; }
         public DateTime? ConfirmedUtc { get; set; }
     }
 }
