@@ -9,6 +9,8 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.MediaFiles
@@ -146,7 +148,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
                 DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(),
+                null);
 
             Assert.DoesNotThrow(() => subject.UpgradeBookFile(replacement, localBook));
 
@@ -157,5 +160,125 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(mover.Moved, Is.True);
             });
         }
+
+        private class QualityProfileServiceProxy : DispatchProxy
+        {
+            public static QualityProfile Profile { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == "Get")
+                {
+                    return Profile;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IQualityProfileService.{targetMethod?.Name}");
+            }
+        }
+
+        private static QualityProfile AudiobookProfile()
+        {
+            return new QualityProfile
+            {
+                Id = 7,
+                Name = "Audiobook",
+                UpgradeAllowed = true,
+                Cutoff = Quality.M4B.Id,
+                Items = new List<QualityProfileQualityItem>
+                {
+                    new QualityProfileQualityItem { Quality = Quality.MP3, Allowed = true },
+                    new QualityProfileQualityItem { Quality = Quality.M4B, Allowed = true }
+                }
+            };
+        }
+
+        private static (UpgradeMediaFileService subject, RecordingRecycleBinProvider bin, MediaFileServiceProxy media, StubBookFileMover mover) BuildGuardedSubject()
+        {
+            QualityProfileServiceProxy.Profile = AudiobookProfile();
+            var recycleBin = new RecordingRecycleBinProvider();
+            var mediaFileService = DispatchProxy.Create<IMediaFileService, MediaFileServiceProxy>();
+            var mediaProxy = (MediaFileServiceProxy)(object)mediaFileService;
+            var mover = new StubBookFileMover();
+            var subject = new UpgradeMediaFileService(
+                recycleBin,
+                mediaFileService,
+                DispatchProxy.Create<IMetadataTagService, NoOpProxy<IMetadataTagService>>(),
+                mover,
+                DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
+                DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
+                DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                LogManager.GetCurrentClassLogger(),
+                DispatchProxy.Create<NzbDrone.Core.Profiles.Qualities.IQualityProfileService, QualityProfileServiceProxy>());
+            return (subject, recycleBin, mediaProxy, mover);
+        }
+
+        private static LocalBook BuildLocalBook(BookFile existing, string incomingPath)
+        {
+            var author = new Author { Id = 1, Path = "/books/Author", AudiobookQualityProfileId = 7 };
+            var book = new Book
+            {
+                Id = 2,
+                Author = author,
+                MediaType = BookMediaType.Audiobook,
+                BookFiles = new List<BookFile> { existing }
+            };
+            return new LocalBook { Author = author, Book = book, Path = incomingPath };
+        }
+
+        [Test]
+        public void should_refuse_to_delete_existing_file_that_outranks_the_incoming_file()
+        {
+            var existingM4b = new BookFile
+            {
+                Id = 1,
+                Path = "/books/Author/Book (2003)/Book.m4b",
+                Quality = new QualityModel(Quality.M4B)
+            };
+            var incomingMp3 = new BookFile
+            {
+                Id = 2,
+                Path = "/downloads/Book.mp3",
+                Quality = new QualityModel(Quality.MP3)
+            };
+            var localBook = BuildLocalBook(existingM4b, incomingMp3.Path);
+            var (subject, bin, media, mover) = BuildGuardedSubject();
+
+            Assert.Throws<InvalidOperationException>(() => subject.UpgradeBookFile(incomingMp3, localBook));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(bin.DeletedFiles, Is.Empty);
+                Assert.That(media.Deleted, Is.Empty);
+                Assert.That(mover.Moved, Is.False);
+            });
+        }
+
+        [Test]
+        public void should_still_replace_existing_file_when_incoming_file_is_an_upgrade()
+        {
+            var existingMp3 = new BookFile
+            {
+                Id = 1,
+                Path = "/books/Author/Book (2003)/Book.mp3",
+                Quality = new QualityModel(Quality.MP3)
+            };
+            var incomingM4b = new BookFile
+            {
+                Id = 2,
+                Path = "/downloads/Book.m4b",
+                Quality = new QualityModel(Quality.M4B)
+            };
+            var localBook = BuildLocalBook(existingMp3, incomingM4b.Path);
+            var (subject, bin, media, mover) = BuildGuardedSubject();
+
+            Assert.DoesNotThrow(() => subject.UpgradeBookFile(incomingM4b, localBook));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(media.Deleted, Is.EqualTo(new[] { existingMp3 }));
+                Assert.That(mover.Moved, Is.True);
+            });
+        }
+
     }
 }
