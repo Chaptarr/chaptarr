@@ -2,6 +2,7 @@ const loose = true;
 
 module.exports = {
   plugins: [
+    'lodash',
     '@babel/plugin-transform-logical-assignment-operators',
 
     // Stage 1
@@ -28,6 +29,14 @@ module.exports = {
     },
     production: {
       presets: [
+        ['@babel/env', {
+          targets: {
+            browsers: ['last 2 versions']
+          },
+          // The magic sauce
+          modules: false,
+          loose: true
+        }],
         '@babel/preset-react',
         '@babel/preset-typescript'
       ],

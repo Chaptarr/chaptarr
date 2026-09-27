@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React from 'react';
 import AgendaEventConnector from './AgendaEventConnector';
@@ -13,9 +13,9 @@ function Agenda(props) {
     <div className={styles.agenda}>
       {
         items.map((item, index) => {
-          const momentDate = moment(item.releaseDate);
+          const dayjsDate = dayjs(item.releaseDate);
           const showDate = index === 0 ||
-            !moment(items[index - 1].releaseDate).isSame(momentDate, 'day');
+            !dayjs(items[index - 1].releaseDate).isSame(dayjsDate, 'day');
 
           return (
             <AgendaEventConnector

@@ -1,17 +1,17 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function isAfter(date, offsets = {}) {
   if (!date) {
     return false;
   }
 
-  const offsetTime = moment();
+  let offsetTime = dayjs();
 
   Object.keys(offsets).forEach((key) => {
-    offsetTime.add(offsets[key], key);
+    offsetTime = offsetTime.add(offsets[key], key);
   });
 
-  return moment(date).isAfter(offsetTime);
+  return dayjs(date).isAfter(offsetTime);
 }
 
 export default isAfter;

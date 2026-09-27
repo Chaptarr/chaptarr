@@ -1,4 +1,4 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import formatTime from 'Utilities/Date/formatTime';
 import isInNextWeek from 'Utilities/Date/isInNextWeek';
 import isToday from 'Utilities/Date/isToday';
@@ -18,7 +18,7 @@ function getRelativeDate(date, shortDateFormat, showRelativeDates, { timeFormat,
   }
 
   if (!showRelativeDates) {
-    return moment(date).format(shortDateFormat);
+    return dayjs(date).format(shortDateFormat);
   }
 
   if (isYesterday(date)) {
@@ -34,10 +34,10 @@ function getRelativeDate(date, shortDateFormat, showRelativeDates, { timeFormat,
   }
 
   if (isInNextWeek(date)) {
-    return moment(date).format('dddd');
+    return dayjs(date).format('dddd');
   }
 
-  return moment(date).format(shortDateFormat);
+  return dayjs(date).format(shortDateFormat);
 }
 
 export default getRelativeDate;

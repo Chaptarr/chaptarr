@@ -1,8 +1,8 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
 import { update } from 'Store/Actions/baseActions';
 
 function updateBooks(section, books, bookIds, options) {
-  const data = _.reduce(books, (result, item) => {
+  const data = reduce(books, (result, item) => {
     if (bookIds.indexOf(item.id) > -1) {
       result.push({
         ...item,

@@ -8,13 +8,17 @@
     "clean": "npx rimraf ./_output/UI && npx rimraf --glob \"**/*.js.map\"",
     "start": "webpack --watch --config ./frontend/build/webpack.config.js",
     "watch": "webpack --watch --config ./frontend/build/webpack.config.js",
-    "typecheck": "tsc -p frontend/tsconfig.json",
+    "typecheck": "tsc -p frontend/tsconfig.json && tsc -p frontend/tsconfig.sw.json",
     "lint": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore frontend/",
     "lint-fix": "yarn lint --fix",
     "check-translations": "node frontend/build/check-missing-translation-keys.js",
+    "analyze": "ANALYZER=true webpack --env production --config ./frontend/build/webpack.config.js",
     "stylelint-linux": "stylelint $(find frontend -name '*.css') --config frontend/.stylelintrc",
     "stylelint-windows": "stylelint \"frontend/**/*.css\" --config frontend/.stylelintrc"
   },
+  "sideEffects": [
+    "**/*.css"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/Chaptarr/chaptarr.git"
@@ -38,12 +42,14 @@
     "@microsoft/signalr": "6.0.25",
     "@sentry/browser": "7.119.1",
     "@sentry/integrations": "7.119.1",
+    "@tanstack/react-query": "^4",
     "@types/node": "20.16.11",
     "@types/react": "18.2.79",
     "@types/react-dom": "18.2.25",
     "classnames": "2.5.1",
     "clipboard": "2.0.11",
     "connected-react-router": "6.9.3",
+    "dayjs": "1.11.21",
     "element-class": "0.2.2",
     "filesize": "10.1.6",
     "fuse.js": "6.6.2",
@@ -51,8 +57,8 @@
     "jdu": "1.0.0",
     "jquery": "3.7.1",
     "lodash": "4.17.23",
+    "lodash-es": "4.18.1",
     "mobile-detect": "1.4.5",
-    "moment": "2.30.1",
     "mousetrap": "1.6.5",
     "normalize.css": "8.0.1",
     "prop-types": "15.8.1",
@@ -106,6 +112,7 @@
     "autoprefixer": "10.4.20",
     "babel-loader": "9.2.1",
     "babel-plugin-inline-classnames": "2.0.1",
+    "babel-plugin-lodash": "3.3.4",
     "babel-plugin-transform-react-remove-prop-types": "0.4.24",
     "core-js": "3.39.0",
     "css-loader": "6.8.1",
@@ -142,8 +149,10 @@
     "typescript-plugin-css-modules": "5.0.1",
     "url-loader": "4.1.1",
     "webpack": "5.102.0",
+    "webpack-bundle-analyzer": "5.3.1",
     "webpack-cli": "6.0.1",
     "webpack-livereload-plugin": "3.0.2",
+    "workbox-webpack-plugin": "7.4.1",
     "worker-loader": "3.0.8"
   },
   "resolutions": {

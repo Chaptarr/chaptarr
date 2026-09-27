@@ -1,4 +1,7 @@
-import _ from 'lodash';
+import isEqual from 'lodash/isEqual';
+import keyBy from 'lodash/keyBy';
+import mapValues from 'lodash/mapValues';
+import uniq from 'lodash/uniq';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
@@ -27,11 +30,11 @@ const columns = [
 
 function normalizeShelfIds(value) {
   if (Array.isArray(value)) {
-    return _.uniq(value.map((v) => `${v}`.trim()).filter((v) => v.length > 0));
+    return uniq(value.map((v) => `${v}`.trim()).filter((v) => v.length > 0));
   }
 
   if (typeof value === 'string') {
-    return _.uniq(value.split(',').map((v) => v.trim()).filter((v) => v.length > 0));
+    return uniq(value.split(',').map((v) => v.trim()).filter((v) => v.length > 0));
   }
 
   return [];
@@ -45,7 +48,7 @@ class BookshelfInput extends Component {
   constructor(props, context) {
     super(props, context);
 
-    const initialSelection = _.mapValues(_.keyBy(normalizeShelfIds(props.value)), () => true);
+    const initialSelection = mapValues(keyBy(normalizeShelfIds(props.value)), () => true);
 
     this.state = {
       allSelected: false,
@@ -66,14 +69,14 @@ class BookshelfInput extends Component {
     const prevValue = normalizeShelfIds(prevProps.value).sort();
     const nextValue = normalizeShelfIds(this.props.value).sort();
 
-    if (!_.isEqual(prevValue, nextValue)) {
+    if (!isEqual(prevValue, nextValue)) {
       const currentSelected = this.getSelectedIds().sort();
 
-      if (!_.isEqual(currentSelected, nextValue)) {
+      if (!isEqual(currentSelected, nextValue)) {
         this.setState({
           allSelected: false,
           allUnselected: nextValue.length === 0,
-          selectedState: _.mapValues(_.keyBy(nextValue), () => true)
+          selectedState: mapValues(keyBy(nextValue), () => true)
         });
 
         return;
@@ -83,8 +86,8 @@ class BookshelfInput extends Component {
     const oldSelected = getSelectedIds(prevState.selectedState, { parseIds: false }).sort();
     const newSelected = this.getSelectedIds().sort();
 
-    if (!_.isEqual(oldSelected, newSelected)) {
-      if (!_.isEqual(newSelected, normalizeShelfIds(this.props.value).sort())) {
+    if (!isEqual(oldSelected, newSelected)) {
+      if (!isEqual(newSelected, normalizeShelfIds(this.props.value).sort())) {
         onChange({
           name,
           value: newSelected
@@ -127,7 +130,7 @@ class BookshelfInput extends Component {
 
     this.setState((state, props) => {
       const items = props.items || [];
-      const knownIds = _.keyBy(items, 'id');
+      const knownIds = keyBy(items, 'id');
       const displayItems = [...items];
 
       Object.keys(state.selectedState).forEach((selectedId) => {
@@ -186,7 +189,7 @@ class BookshelfInput extends Component {
     } = this.state;
 
     const displayItems = [...items];
-    const knownIds = _.keyBy(items, 'id');
+    const knownIds = keyBy(items, 'id');
 
     Object.keys(selectedState).forEach((id) => {
       if (!knownIds[id]) {

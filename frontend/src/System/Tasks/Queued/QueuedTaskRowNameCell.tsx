@@ -40,7 +40,7 @@ export default function QueuedTaskRowNameCell(
   }
 
   const authors = useSelector(createMultiAuthorsSelector(movieIds));
-  const sortedAuthors = authors.sort((a, b) =>
+  const sortedAuthors = [...authors].sort((a, b) =>
     a.sortName.localeCompare(b.sortName)
   );
 

@@ -1,14 +1,14 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function formatReadableDuration(timeSpan) {
   if (!timeSpan) {
     return '';
   }
 
-  const duration = moment.duration(timeSpan);
+  const duration = dayjs.duration(timeSpan);
 
   const totalHours = Math.floor(duration.asHours());
-  const minutes = duration.minutes(); // Only the minute portion, not total minutes
+  const minutes = duration.get('minutes'); // Only the minute portion, not total minutes
 
   const parts = [];
 

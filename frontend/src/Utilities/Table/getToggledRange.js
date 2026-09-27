@@ -1,8 +1,8 @@
-import _ from 'lodash';
+import findIndex from 'lodash/findIndex';
 
 function getToggledRange(items, id, lastToggled) {
-  const lastToggledIndex = _.findIndex(items, { id: lastToggled });
-  const changedIndex = _.findIndex(items, { id });
+  const lastToggledIndex = findIndex(items, { id: lastToggled });
+  const changedIndex = findIndex(items, { id });
 
   if (lastToggledIndex === -1 || changedIndex === -1) {
     return {

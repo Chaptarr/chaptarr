@@ -1,11 +1,11 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 
 function formatTime(date, timeFormat, { includeMinuteZero = false, includeSeconds = false } = {}) {
   if (!date) {
     return '';
   }
 
-  const time = moment(date);
+  const time = dayjs(date);
 
   if (includeSeconds) {
     timeFormat = timeFormat.replace(/\(?:mm\)?/, ':mm:ss');

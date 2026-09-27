@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -22,7 +22,7 @@ function createMapStateToProps() {
 
       const filteredItems = items.filter((item) => item.protocol === protocolFilter);
 
-      const values = _.map(filteredItems.sort(sortByName), (downloadClient) => {
+      const values = map(filteredItems.sort(sortByName), (downloadClient) => {
         return {
           key: downloadClient.id,
           value: downloadClient.name,

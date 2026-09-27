@@ -1,5 +1,5 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -123,13 +123,13 @@ function createMapStateToProps() {
 
         const primaryOrder = books.sortDirection === 'ascending' ? 'asc' : 'desc';
         // Always sort title ascending for readability as a tie-breaker
-        sortedBooks = _.orderBy(booksInGroup, [statusClause, titleClause], [primaryOrder, 'asc']);
+        sortedBooks = orderBy(booksInGroup, [statusClause, titleClause], [primaryOrder, 'asc']);
       } else {
         const sortClause = predicateFn
           ? (item) => predicateFn(item, books.sortDirection, effectiveMediaType)
           : (item) => (item && item[books.sortKey] !== undefined ? item[books.sortKey] : '');
         const primaryOrder = books.sortDirection === 'ascending' ? 'asc' : 'desc';
-        sortedBooks = _.orderBy(booksInGroup, [sortClause], [primaryOrder]);
+        sortedBooks = orderBy(booksInGroup, [sortClause], [primaryOrder]);
       }
 
       // Select appropriate columns based on media type

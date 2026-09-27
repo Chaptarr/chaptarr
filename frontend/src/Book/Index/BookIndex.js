@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import MediaTypeToggle from 'Author/Details/MediaTypeToggle';
@@ -210,7 +210,7 @@ class BookIndex extends Component {
       return;
     }
 
-    const characters = _.reduce(items, (acc, item) => {
+    const characters = reduce(items, (acc, item) => {
       const value = typeof item[sortKey] === 'string' ? item[sortKey] : '';
       if (!value) {
         return acc;

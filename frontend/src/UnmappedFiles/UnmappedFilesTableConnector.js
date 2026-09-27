@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -36,7 +36,7 @@ function createMapStateToProps() {
         ...otherProps
       } = bookFiles;
 
-      const unmappedFiles = _.filter(items, { bookId: 0 });
+      const unmappedFiles = filter(items, { bookId: 0 });
 
       return {
         items: unmappedFiles,

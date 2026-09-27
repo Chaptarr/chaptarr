@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -20,7 +20,7 @@ function createMapStateToProps() {
       return {
         ...qualityDefinitions,
         items,
-        hasPendingChanges: !_.isEmpty(qualityDefinitions.pendingChanges),
+        hasPendingChanges: !isEmpty(qualityDefinitions.pendingChanges),
         advancedSettings
       };
     }

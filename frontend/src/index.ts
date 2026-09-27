@@ -141,6 +141,29 @@ async function start() {
   __webpack_public_path__ = `${window.Chaptarr.urlBase}/`;
   /* eslint-enable no-undef, @typescript-eslint/ban-ts-comment */
 
+  // ── Service Worker registration ──────────────────────────
+  // Register the service worker in production only.  During dev,
+  // HMR / LiveReload handles updates and a caching SW would mask
+  // changes.  We also gate on HTTPS (or localhost) since browsers
+  // reject SW registration on plain HTTP origins.
+  // No workbox-window dependency — plain navigator.serviceWorker
+  // keeps the main bundle small.
+  if (
+    'serviceWorker' in navigator &&
+    process.env.NODE_ENV === 'production' &&
+    (location.protocol === 'https:' ||
+      location.hostname === 'localhost' ||
+      location.hostname === '127.0.0.1')
+  ) {
+    const urlBase = window.Chaptarr.urlBase || '';
+    const swUrl = `${urlBase.replace(/\/+$/, '')}/sw.js`;
+    try {
+      await navigator.serviceWorker.register(swUrl);
+    } catch (err) {
+      console.warn('[Chaptarr] Service worker registration failed:', err);
+    }
+  }
+
   try {
     const { bootstrap } = await import('./bootstrap');
     await bootstrap();

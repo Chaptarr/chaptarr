@@ -1,5 +1,5 @@
 import classNames from 'classnames';
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import CalendarEventQueueDetails from 'Calendar/Events/CalendarEventQueueDetails';
@@ -54,7 +54,7 @@ class AgendaEvent extends Component {
       colorImpairedMode
     } = this.props;
 
-    const startTime = moment(releaseDate);
+    const startTime = dayjs(releaseDate);
     // const endTime = startTime.add(author.runtime, 'minutes');
     const downloading = !!(queueItem || grabbed);
     const isMonitored = author.monitored && monitored;

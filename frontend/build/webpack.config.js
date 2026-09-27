@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 const path = require('path');
 const webpack = require('webpack');
 const FileManagerPlugin = require('filemanager-webpack-plugin');
@@ -6,6 +7,8 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 const LiveReloadPlugin = require('webpack-livereload-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
+const { InjectManifest } = require('workbox-webpack-plugin');
+
 // Temporarily disabled due to ajv compatibility issue in Docker build
 // const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 
@@ -81,17 +84,36 @@ module.exports = (env) => {
       splitChunks: {
         chunks: 'all',
         cacheGroups: {
-          defaultVendors: {
+          react: {
+            test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            name: 'vendor-react',
+            chunks: 'all',
+            priority: 20
+          },
+          vendors: {
             test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            chunks: 'all',
+            priority: 10
+          },
+          lodash: {
+            test: /[\\/]node_modules[\\/](lodash|lodash-es)[\\/]/,
+            chunks: 'all',
+            priority: 15,
+            reuseExistingChunk: true
+          },
+          asyncVendors: {
+            test: /[\\/]node_modules[\\/]/,
+            chunks: 'async',
+            minSize: 20000,
             priority: -10,
-            reuseExistingChunk: true,
-            name: 'vendors'
+            reuseExistingChunk: true
           },
           default: {
+            chunks: 'async',
             minChunks: 2,
             priority: -20,
-            reuseExistingChunk: true,
-            name: 'common'
+            reuseExistingChunk: true
           }
         }
       }
@@ -110,6 +132,12 @@ module.exports = (env) => {
         __DEV__: !isProduction,
         'process.env.NODE_ENV': isProduction ? JSON.stringify('production') : JSON.stringify('development')
       }),
+
+      new webpack.IgnorePlugin({ resourceRegExp: /^tough-cookie$/ }),
+      new webpack.IgnorePlugin({ resourceRegExp: /^psl$/ }),
+      new webpack.IgnorePlugin({ resourceRegExp: /^fetch-cookie$/ }),
+
+      process.env.ANALYZER === 'true' ? new BundleAnalyzerPlugin() : null,
 
       new MiniCssExtractPlugin({
         filename: isProduction ? 'Content/styles-[contenthash].css' : 'Content/styles.css',
@@ -172,8 +200,24 @@ module.exports = (env) => {
       //   }
       // }),
 
-      new LiveReloadPlugin()
-    ],
+      new LiveReloadPlugin(),
+
+      // Service worker — production only (conflicts with HMR/LiveReload in dev).
+      // InjectManifest bundles frontend/src/sw.js and inlines the precache manifest
+      // so the emitted sw.js can be served at ${urlBase}/sw.js.
+      isProduction
+        ? new InjectManifest({
+            swSrc: path.join(srcFolder, 'sw.js'),
+            swDest: 'sw.js',
+            // Do NOT include large font/image copies that FileManagerPlugin handles
+            // separately — only webpack-emitted JS/CSS chunks go into the manifest.
+            exclude: [
+              /\.(?:png|jpe?g|gif|svg|ico|woff2?|ttf|otf|eot)$/i,
+              /robots\.txt$/,
+            ],
+          })
+        : null
+    ].filter(Boolean),
 
     resolveLoader: {
       modules: [
@@ -202,19 +246,7 @@ module.exports = (env) => {
               loader: 'babel-loader',
               options: {
                 configFile: `${frontendFolder}/babel.config.js`,
-                envName: isProduction ? 'production' : 'development',
-                presets: [
-                  [
-                    '@babel/preset-env',
-                    {
-                      modules: false,
-                      loose: true,
-                      debug: false,
-                      useBuiltIns: 'entry',
-                      corejs: '3.39'
-                    }
-                  ]
-                ]
+                envName: isProduction ? 'production' : 'development'
               }
             }
           ]

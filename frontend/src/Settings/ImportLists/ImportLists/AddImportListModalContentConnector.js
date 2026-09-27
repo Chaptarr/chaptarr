@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import groupBy from 'lodash/groupBy';
+import sortBy from 'lodash/sortBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -17,10 +18,7 @@ function createMapStateToProps() {
         schema
       } = importLists;
 
-      const listGroups = _.chain(schema)
-        .sortBy((o) => (o.name || '').toLowerCase())
-        .groupBy('listType')
-        .value();
+      const listGroups = groupBy(sortBy(schema, (o) => (o.name || '').toLowerCase()), 'listType');
 
       return {
         isSchemaFetching,

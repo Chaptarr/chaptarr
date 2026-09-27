@@ -1,5 +1,5 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -158,7 +158,7 @@ class BookFileEditorTableContentConnector extends Component {
 
   onQualityChange = (bookFileIds, qualityId) => {
     const quality = {
-      quality: _.find(this.props.qualities, { id: qualityId }),
+      quality: find(this.props.qualities, { id: qualityId }),
       revision: {
         version: 1,
         real: 0

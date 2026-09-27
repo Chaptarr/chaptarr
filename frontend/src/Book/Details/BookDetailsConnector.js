@@ -1,5 +1,9 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import first from 'lodash/first';
+import isEqual from 'lodash/isEqual';
+import last from 'lodash/last';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -88,8 +92,8 @@ function createMapStateToProps() {
           bookFiles: bookFileItems
         } = bookFiles;
 
-        const previousBook = sortedBooks[bookIndex - 1] || _.last(sortedBooks) || book;
-        const nextBook = sortedBooks[bookIndex + 1] || _.first(sortedBooks) || book;
+        const previousBook = sortedBooks[bookIndex - 1] || last(sortedBooks) || book;
+        const nextBook = sortedBooks[bookIndex + 1] || first(sortedBooks) || book;
         const hasBookNavigation = sortedBooks.length > 1 && bookIndex !== -1;
         const isRefreshingCommand = findCommand(commands, { name: commandNames.REFRESH_BOOK });
         const isRefreshing = (
@@ -175,7 +179,7 @@ const mapDispatchToProps = {
 };
 
 function getMonitoredEditions(props) {
-  return _.map(_.filter(props.editions, { monitored: true }), 'id').sort();
+  return map(filter(props.editions, { monitored: true }), 'id').sort();
 }
 
 class BookDetailsConnector extends Component {
@@ -198,7 +202,7 @@ class BookDetailsConnector extends Component {
       (prevProps.isRefreshing && !isRefreshing) ||
       (prevProps.isRenamingFiles && !isRenamingFiles) ||
       (prevProps.isRenamingAuthor && !isRenamingAuthor) ||
-      !_.isEqual(getMonitoredEditions(prevProps), getMonitoredEditions(this.props)) ||
+      !isEqual(getMonitoredEditions(prevProps), getMonitoredEditions(this.props)) ||
       (prevProps.anyReleaseOk === false && anyReleaseOk === true)
     ) {
       this.unpopulate();

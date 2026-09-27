@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -19,7 +19,7 @@ function createMapStateToProps() {
         items
       } = indexers;
 
-      const values = _.map([...items].sort(sortByName), (indexer) => {
+      const values = map([...items].sort(sortByName), (indexer) => {
         return {
           key: indexer.id,
           value: indexer.name

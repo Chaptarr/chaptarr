@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import some from 'lodash/some';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
@@ -59,7 +59,7 @@ class GeneralSettings extends Component {
 
     const prevSettings = prevProps.settings;
 
-    const pendingRestart = _.some(requiresRestartKeys, (key) => {
+    const pendingRestart = some(requiresRestartKeys, (key) => {
       const setting = settings[key];
       const prevSetting = prevSettings[key];
 
