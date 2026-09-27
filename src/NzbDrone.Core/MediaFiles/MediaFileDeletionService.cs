@@ -158,22 +158,6 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        // An author can have separate audiobook/ebook root folders (AudiobookPath, EbookPath) in
-        // addition to the legacy single Path field, and each one can independently be a Calibre
-        // library or not (e.g. ebooks under Calibre, audiobooks under a plain folder). Deriving
-        // "is this author's stuff Calibre-managed" from author.Path alone and applying that one
-        // verdict to every path is wrong in both directions: a non-Calibre Path with a Calibre
-        // EbookPath would recycle-bin the Calibre library directly instead of going through
-        // _calibre.DeleteBook(s) (corrupting its metadata.db), while a Calibre Path with a
-        // non-Calibre AudiobookPath would skip deleting the audiobook folder entirely.
-        private static List<string> DistinctAuthorPaths(Author author)
-        {
-            return new[] { author.Path, author.AudiobookPath, author.EbookPath }
-                .Where(p => !p.IsNullOrWhiteSpace())
-                .Distinct(StringComparer.FromComparison(DiskProviderBase.PathStringComparison))
-                .ToList();
-        }
-
         // Shared by both handlers below so a Calibre-routed path gets exactly the same refusal
         // checks as a plain recycle-bin path - it used to skip them entirely, which only mattered
         // for the single legacy Path but now applies to up to three paths per author.
@@ -226,7 +210,13 @@ namespace NzbDrone.Core.MediaFiles
                 List<BookFile> allFiles = null;
                 List<KeyValuePair<int, string>> allAuthors = null;
 
-                foreach (var path in DistinctAuthorPaths(author))
+                // An author can have separate audiobook/ebook root folders (AudiobookPath, EbookPath)
+                // in addition to the legacy single Path field, and each one can independently be a
+                // Calibre library or not. Deriving Calibre status from just one path and applying it
+                // to the rest is wrong in both directions, so each path here is checked individually.
+                // ExtraFilePathHelper.GetAuthorBasePaths is the existing helper for exactly this
+                // {Path, AudiobookPath, EbookPath} dedup - reused here rather than reimplemented.
+                foreach (var path in ExtraFilePathHelper.GetAuthorBasePaths(author))
                 {
                     var rootFolder = _rootFolderService.GetBestRootFolder(path);
                     var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
@@ -280,7 +270,7 @@ namespace NzbDrone.Core.MediaFiles
                 // as "unmapped" even though they were never actually removed.
                 List<KeyValuePair<int, string>> allAuthors = null;
 
-                foreach (var path in DistinctAuthorPaths(author))
+                foreach (var path in ExtraFilePathHelper.GetAuthorBasePaths(author))
                 {
                     var rootFolder = _rootFolderService.GetBestRootFolder(path);
                     var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
