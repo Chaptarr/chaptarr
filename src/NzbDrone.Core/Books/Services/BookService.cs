@@ -1219,7 +1219,13 @@ namespace NzbDrone.Core.Books
                 CleanTitle = book.CleanTitle,
                 TitleSlug = book.TitleSlug,
                 MediaType = book.MediaType,
-                Author = book.Author,
+                // PERF (chaptarr #163): Book.Author is a lazy-loaded property - reading it here on a
+                // freshly-queried row fires a per-book "Authors JOIN Books WHERE Books.Id = $1" query,
+                // on EVERY book save (SaveEntity/UpdateMany run unconditionally, not just when a book
+                // actually changed). Every place that later actually needs Author on a cloned/stored book
+                // (PublishBookEditedEvents) re-fetches it explicitly and cheaply via GetAuthor(authorId)
+                // before use, so this copy was dead weight - never keep it loaded here.
+                AuthorId = book.AuthorId,
                 Narrator = book.Narrator,
                 Monitored = book.Monitored,
                 AudiobookMonitored = book.AudiobookMonitored,
@@ -1229,8 +1235,11 @@ namespace NzbDrone.Core.Books
                 GoodreadsWorkId = book.GoodreadsWorkId,
                 HardcoverBookId = book.HardcoverBookId,
                 OpenLibraryWorkId = book.OpenLibraryWorkId,
-                ASIN = BookEditionIdentity.GetAsin(book),
-                AudibleASIN = BookEditionIdentity.GetAudibleAsin(book)
+                // PERF (chaptarr #163): GetAsin/GetAudibleAsin read book.Editions (also lazy-loaded,
+                // "SELECT Editions WHERE BookId = $1" per book) to prefer an edition-level ASIN over the
+                // book-level field - another per-book query on every save. Neither ASIN nor AudibleASIN
+                // on this cloned snapshot is read anywhere (HasMonitoringChanged only compares the
+                // monitored flags), so this was pure overhead; dropped entirely.
             };
         }
 
