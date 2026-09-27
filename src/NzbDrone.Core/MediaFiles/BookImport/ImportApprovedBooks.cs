@@ -1358,9 +1358,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     if (relocateExistingFile == null)
                     {
                         var occupiedDestinationRejection = GetOccupiedDestinationRejectionReason(bookFile, localBook, edition, filesToReplace);
-                        if (occupiedDestinationRejection != null && downloadForced)
+                        if (occupiedDestinationRejection != null && downloadForced && occupiedDestinationRejection != AlreadyImportedRejectionReason)
                         {
-                            occupiedDestinationRejection += " A forced import cannot overwrite it: remove or track that file first, or replace the tracked file.";
+                            occupiedDestinationRejection += ". A forced import cannot overwrite it: remove or track that file first, or replace the tracked file.";
                         }
 
                         if (occupiedDestinationRejection != null)

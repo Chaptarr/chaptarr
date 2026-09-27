@@ -1863,6 +1863,17 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void forced_import_onto_a_destination_tracked_for_the_same_edition_should_be_rejected_without_the_overwrite_hint()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.EPUB, Quality.EPUB, existingAtDestination: true, replaceExisting: false, downloadForced: true);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors.Single(), Does.Not.Contain("cannot overwrite"), "the file is already tracked for this edition; 'remove or track that file first' would be wrong advice");
+            Assert.That(outcome.TransferCalls, Is.EqualTo(0));
+        }
+
+        [Test]
         public void forced_replacing_import_should_still_replace_the_tracked_file_at_the_destination()
         {
             var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.M4B, existingAtDestination: true, downloadForced: true);
