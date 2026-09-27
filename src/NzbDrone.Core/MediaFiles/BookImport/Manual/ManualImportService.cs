@@ -509,7 +509,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
             item.Quality = decision.Item.Quality;
             item.IndexerFlags = (int)decision.Item.IndexerFlags;
-            item.Size = fileInfo.Length;
+            item.Size = fileInfo.Exists ? fileInfo.Length : 0;
             item.Rejections = decision.Rejections;
             item.Tags = decision.Item.RawTags?.AllTags ?? new Dictionary<string, List<string>>();
             item.AdditionalFile = decision.Item.AdditionalFile;
