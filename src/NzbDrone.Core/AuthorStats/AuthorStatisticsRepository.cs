@@ -36,7 +36,7 @@ namespace NzbDrone.Core.AuthorStats
 
         public List<BookStatistics> AuthorStatistics(int authorId)
         {
-            return Query(Builder(_database.DatabaseType).Where<Author>(author => author.Id == authorId));
+            return Query(Builder(_database.DatabaseType, authorId).Where<Author>(author => author.Id == authorId));
         }
 
         public List<BookStatistics> AuthorStatistics(string mediaType)
@@ -48,7 +48,7 @@ namespace NzbDrone.Core.AuthorStats
 
         public List<BookStatistics> AuthorStatistics(int authorId, string mediaType)
         {
-            var builder = Builder(_database.DatabaseType).Where<Author>(author => author.Id == authorId);
+            var builder = Builder(_database.DatabaseType, authorId).Where<Author>(author => author.Id == authorId);
             ApplyMediaTypeFilter(builder, mediaType);
             return Query(builder);
         }
@@ -80,12 +80,16 @@ namespace NzbDrone.Core.AuthorStats
             }
         }
 
-        private static SqlBuilder Builder(DatabaseType databaseType)
+        private static SqlBuilder Builder(DatabaseType databaseType, int? authorId = null)
         {
+            var fileStatisticsJoin = authorId.HasValue
+                ? "(" + BookFileStatisticsSql.GroupedByBookForAuthor(authorId.Value) + @") AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""Books"".""Id"""
+                : _fileStatisticsJoin;
+
             return new SqlBuilder(databaseType)
                 .Select(BuildStatisticsSelect(databaseType, includeAuthorId: true))
                 .Join<Book, Author>((book, author) => book.AuthorId == author.Id)
-                .LeftJoin(_fileStatisticsJoin)
+                .LeftJoin(fileStatisticsJoin)
                 .AddParameters(new { currentDate = DateTime.UtcNow });
         }
 

@@ -250,6 +250,30 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void books_without_files_total_should_equal_the_distinct_books_the_page_lists()
+        {
+            WithRepository(sut =>
+            {
+                foreach (var mediaType in new BookMediaType?[] { BookMediaType.Ebook, BookMediaType.Audiobook, null })
+                {
+                    var spec = new PagingSpec<Book>
+                    {
+                        Page = 1,
+                        PageSize = 100,
+                        SortKey = "Books.Id",
+                        SortDirection = SortDirection.Ascending
+                    };
+                    spec.FilterExpressions.Add(AuthorExtensions.GetBookMonitoringFilter(mediaType, monitored: true));
+
+                    var result = sut.BooksWithoutFiles(spec);
+
+                    Assert.That(result.Records, Is.Not.Empty, $"media type {mediaType}");
+                    Assert.That(result.TotalRecords, Is.EqualTo(result.Records.Select(book => book.Id).Distinct().Count()), $"media type {mediaType}");
+                }
+            });
+        }
+
+        [Test]
         public void find_existing_should_return_partial_results_without_weakening_strict_get()
         {
             WithRepository(sut =>

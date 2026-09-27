@@ -394,12 +394,19 @@ namespace NzbDrone.Core.Books
             .Where<Book>(a => a.ReleaseDate <= currentTime);
 #pragma warning restore CS0472
 
+        // A semi-join answers "does this book have a monitored edition without files" without
+        // materialising and sorting one row per edition just to count distinct books.
+        private SqlBuilder BooksWithoutFilesCountBuilder(DateTime currentTime) => Builder()
+            .Join<Book, Author>((l, r) => l.AuthorId == r.Id)
+            .Where("EXISTS (SELECT 1 FROM \"Editions\" \"CountEditions\" WHERE \"CountEditions\".\"BookId\" = \"Books\".\"Id\" AND \"CountEditions\".\"Monitored\" = true AND NOT EXISTS (SELECT 1 FROM \"BookFiles\" \"CountFiles\" WHERE \"CountFiles\".\"EditionId\" = \"CountEditions\".\"Id\"))")
+            .Where<Book>(a => a.ReleaseDate <= currentTime);
+
         public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec)
         {
             var currentTime = DateTime.UtcNow;
 
             pagingSpec.Records = GetPagedRecords(BooksWithoutFilesBuilder(currentTime), pagingSpec, QueryBooksWithAuthor);
-            pagingSpec.TotalRecords = GetPagedRecordCount(BooksWithoutFilesBuilder(currentTime).SelectCountDistinct<Book>(x => x.Id), pagingSpec);
+            pagingSpec.TotalRecords = GetPagedRecordCount(BooksWithoutFilesCountBuilder(currentTime).SelectCount(), pagingSpec);
 
             return pagingSpec;
         }
