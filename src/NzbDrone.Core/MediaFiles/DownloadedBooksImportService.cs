@@ -746,7 +746,7 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var localBook = decision.Item;
                 var matchedBook = localBook?.Book;
-                if (!CanRetargetSameWorkMatch(targetBook, matchedBook))
+                if (!IsSameWorkRetargetCandidate(targetBook, matchedBook))
                 {
                     continue;
                 }
@@ -755,8 +755,15 @@ namespace NzbDrone.Core.MediaFiles
                 var targetEdition = FindEquivalentEditionForTargetBook(targetBook, matchedEdition);
                 if (targetEdition == null)
                 {
-                    decision.Reject(new Rejection(
-                        $"Completed download was grabbed for {FormatBookLabel(targetBook)} and matched same-work sibling {FormatBookLabel(matchedBook)}, but no equivalent edition exists under the grabbed book row. Refresh metadata and retry."));
+                    // Rows that share a work id are the same work by definition, so a missing edition is
+                    // worth telling the user about. Rows that share neither a work id nor an equivalent
+                    // edition are not provably the same work; leave them to the tracked-download check.
+                    if (CanRetargetSameWorkMatch(targetBook, matchedBook))
+                    {
+                        decision.Reject(new Rejection(
+                            $"Completed download was grabbed for {FormatBookLabel(targetBook)} and matched same-work sibling {FormatBookLabel(matchedBook)}, but no equivalent edition exists under the grabbed book row. Refresh metadata and retry."));
+                    }
+
                     continue;
                 }
 
@@ -803,6 +810,14 @@ namespace NzbDrone.Core.MediaFiles
 
         private static bool CanRetargetSameWorkMatch(Book targetBook, Book matchedBook)
         {
+            return IsSameWorkRetargetCandidate(targetBook, matchedBook) &&
+                   WorkIdMatcher.WorkProviderIdMatches(targetBook, matchedBook);
+        }
+
+        // Two different rows for the same author and media type. Whether they are the same work is
+        // decided by a shared work id, or failing that by an equivalent edition under the grabbed row.
+        private static bool IsSameWorkRetargetCandidate(Book targetBook, Book matchedBook)
+        {
             if (targetBook == null ||
                 matchedBook == null ||
                 targetBook.Id <= 0 ||
@@ -819,12 +834,7 @@ namespace NzbDrone.Core.MediaFiles
 
             var targetAuthorId = GetAuthorId(targetBook);
             var matchedAuthorId = GetAuthorId(matchedBook);
-            if (targetAuthorId <= 0 || matchedAuthorId <= 0 || targetAuthorId != matchedAuthorId)
-            {
-                return false;
-            }
-
-            return WorkIdMatcher.WorkProviderIdMatches(targetBook, matchedBook);
+            return targetAuthorId > 0 && matchedAuthorId > 0 && targetAuthorId == matchedAuthorId;
         }
 
         private Edition FindEquivalentEditionForTargetBook(Book targetBook, Edition matchedEdition)
@@ -845,7 +855,69 @@ namespace NzbDrone.Core.MediaFiles
                 editions = _editionService.GetEditionsByBook(targetBook.Id) ?? new List<Edition>();
             }
 
-            return editions.FirstOrDefault(edition => BookEditionIdentity.EditionsMatch(edition, matchedEdition));
+            var identityMatch = editions.FirstOrDefault(edition => BookEditionIdentity.EditionsMatch(edition, matchedEdition));
+            if (identityMatch != null)
+            {
+                return identityMatch;
+            }
+
+            return FindMetadataEquivalentEdition(editions, matchedEdition);
+        }
+
+        // Twin rows: the same book stored twice because two catalogue listings were never linked. Such
+        // rows share no work id, and their editions share no ISBN, ASIN or edition id, so the identity
+        // checks above can never recognise them. What they do share is what a person sees: the same
+        // author and media type (checked by the caller), the same edition title and the same narrator.
+        internal static Edition FindMetadataEquivalentEdition(IEnumerable<Edition> candidates, Edition matchedEdition)
+        {
+            var title = NormalizeEditionText(matchedEdition?.Title);
+            if (title.Length == 0 || GenericEditionTitles.Contains(title))
+            {
+                return null;
+            }
+
+            var narrator = NormalizeEditionText(matchedEdition.Narrator);
+            var format = matchedEdition.Format;
+
+            var sameTitle = (candidates ?? Enumerable.Empty<Edition>())
+                .Where(edition => edition != null && edition.Id > 0)
+                .Where(edition => NormalizeEditionText(edition.Title) == title)
+                .Where(edition => FormatsCompatible(edition.Format, format))
+                .ToList();
+
+            // A known, different narrator is a different recording, never an equivalent edition. An
+            // unknown narrator on either side is not evidence against the match. Exact narrator matches
+            // win over unknowns; within each group the monitored edition wins.
+            var exactNarrator = sameTitle
+                .Where(edition => narrator.Length > 0 && NormalizeEditionText(edition.Narrator) == narrator);
+            var unknownNarrator = sameTitle
+                .Where(edition => narrator.Length == 0 || NormalizeEditionText(edition.Narrator).Length == 0);
+
+            return PreferMonitored(exactNarrator) ?? PreferMonitored(unknownNarrator);
+        }
+
+        private static readonly HashSet<string> GenericEditionTitles = new(StringComparer.Ordinal) { "untitled", "unknown", "unknown title" };
+
+        private static Edition PreferMonitored(IEnumerable<Edition> editions)
+        {
+            return editions
+                .OrderByDescending(edition => edition.Monitored)
+                .ThenBy(edition => edition.Id)
+                .FirstOrDefault();
+        }
+
+        private static string NormalizeEditionText(string value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? string.Empty
+                : NzbDrone.Core.Parser.Parser.NormalizeTitle(value);
+        }
+
+        private static bool FormatsCompatible(string left, string right)
+        {
+            return string.IsNullOrWhiteSpace(left) ||
+                   string.IsNullOrWhiteSpace(right) ||
+                   string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
         }
 
         private static Author ResolveTargetAuthor(Book targetBook, Book matchedBook, Author expectedAuthor, Author localAuthor)

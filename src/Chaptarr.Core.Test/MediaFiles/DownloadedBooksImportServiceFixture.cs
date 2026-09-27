@@ -1868,6 +1868,247 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        // Twin rows: the same book stored twice because two catalogue listings were never linked.
+        // The rows share no work id and their editions share no ISBN/ASIN/edition id, but a human
+        // sees the same author, media type, edition title and narrator. Modelled on real data:
+        // 6698 (hc:429306, German work title) and 6875 (gr:6231171) for Chamber of Secrets.
+        private static RecordingImportApprovedBooks RunTrackedImportForTwinRows(Author author, Book targetBook, List<Edition> targetEditions, Book matchedBook, Edition matchedEdition)
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Expected.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            new FileMatch
+                            {
+                                File = new DiscoveredFileWithMetadata { Path = filePath, Size = 4, Modified = DateTime.UtcNow, AllTags = tagsService.Tags },
+                                AuthorId = author.Id,
+                                AuthorName = author.Name,
+                                BookId = matchedBook.Id,
+                                BookTitle = matchedBook.Title,
+                                EditionId = matchedEdition.Id
+                            }
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                matchedEdition.Book = matchedBook;
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+                foreach (var edition in targetEditions)
+                {
+                    edition.Book = targetBook;
+                }
+
+                targetBook.Editions = targetEditions;
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.BooksById[matchedBook.Id] = matchedBook;
+                bookProxy.BooksById[targetBook.Id] = targetBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = author;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.EditionsById[matchedEdition.Id] = matchedEdition;
+                editionProxy.EditionsByBookId[matchedBook.Id] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[targetBook.Id] = targetEditions;
+                foreach (var edition in targetEditions)
+                {
+                    editionProxy.EditionsById[edition.Id] = edition;
+                }
+
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = author,
+                    Books = new List<Book>
+                    {
+                        new Book { Id = targetBook.Id, AuthorId = author.Id, Title = targetBook.Title, AnyEditionOk = true, MediaType = targetBook.MediaType, HardcoverBookId = targetBook.HardcoverBookId, GoodreadsWorkId = targetBook.GoodreadsWorkId }
+                    }
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    DownloadId = "DOWNLOAD-TWIN-ROWS",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "SABnzbd", Type = "Sabnzbd" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, author, downloadClientItem, remoteBook);
+
+                return importApproved;
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        private static Author TwinRowsAuthor() => new Author { Id = 16, Name = "J.K. Rowling" };
+
+        private static Book TwinRowsGrabbedBook() => new Book
+        {
+            Id = 6698,
+            AuthorId = 16,
+            Title = "Harry Potter und die Kammer des Schreckens - Gesprochen von Rufus Beck",
+            AnyEditionOk = true,
+            MediaType = BookMediaType.Audiobook,
+            HardcoverBookId = "hc:429306",
+            GoodreadsWorkId = "gr:167643570"
+        };
+
+        private static Book TwinRowsMatchedBook() => new Book
+        {
+            Id = 6875,
+            AuthorId = 16,
+            Title = "Harry Potter and the Chamber of Secrets",
+            AnyEditionOk = true,
+            MediaType = BookMediaType.Audiobook,
+            GoodreadsWorkId = "gr:6231171"
+        };
+
+        private static Edition TwinRowsEdition(int id, int bookId, string title, string narrator, string asin, bool monitored = false) => new Edition
+        {
+            Id = id,
+            BookId = bookId,
+            Title = title,
+            Narrator = narrator,
+            Format = "audiobook",
+            AudibleASIN = asin,
+            ReadingFormatId = 2,
+            Monitored = monitored
+        };
+
+        [Test]
+        public void should_retarget_twin_row_match_by_edition_title_and_narrator_when_no_ids_are_shared()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28198, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.True, string.Join(" | ", result.Decisions[0].Rejections.Select(r => r.Reason)));
+            Assert.That(result.Decisions[0].Item.Book.Id, Is.EqualTo(6698));
+            Assert.That(result.Decisions[0].Item.Edition.Id, Is.EqualTo(28198));
+        }
+
+        [Test]
+        public void should_not_retarget_twin_row_match_when_the_narrators_are_different()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28201, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Jim Dale", "B0000HC0002", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.False);
+            Assert.That(result.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_not_retarget_twin_row_match_when_the_edition_titles_are_different()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28300, grabbed.Id, "Harry Potter and the Prisoner of Azkaban", "Stephen Fry", "B0000HC0003", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.False);
+            Assert.That(result.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_treat_typographic_and_plain_apostrophes_as_the_same_edition_title()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Philosopher's Stone", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28198, grabbed.Id, "Harry Potter and the Philosopher’s Stone", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.True, string.Join(" | ", result.Decisions[0].Rejections.Select(r => r.Reason)));
+            Assert.That(result.Decisions[0].Item.Edition.Id, Is.EqualTo(28198));
+        }
+
+        [Test]
+        public void should_prefer_the_monitored_edition_when_the_matched_narrator_is_unknown()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", string.Empty, "B0000GR0001");
+            var jimDale = TwinRowsEdition(28201, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Jim Dale", "B0000HC0002");
+            var stephenFry = TwinRowsEdition(28198, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { jimDale, stephenFry }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.True, string.Join(" | ", result.Decisions[0].Rejections.Select(r => r.Reason)));
+            Assert.That(result.Decisions[0].Item.Edition.Id, Is.EqualTo(28198));
+        }
+
+        [Test]
+        public void should_not_treat_two_untitled_editions_as_the_same_work()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Untitled", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28198, grabbed.Id, "Untitled", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.False);
+            Assert.That(result.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+        }
+
         [Test]
         public void should_reject_same_work_sibling_match_when_grabbed_book_has_no_equivalent_edition()
         {
