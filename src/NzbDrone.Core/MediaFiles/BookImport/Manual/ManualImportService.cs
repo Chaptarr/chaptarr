@@ -938,6 +938,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     _logger.Warn("Manual import recovered file path '{0}' as '{1}' during execution", requestedPath, actualPath);
                 }
 
+                if (!fileInfo.Exists)
+                {
+                    // The file was selected in the preview but is gone now. Reading its size would throw and abort the
+                    // whole batch, so reject just this file (as the grouped-suggestion path above does) and go on.
+                    var vanishedDecision = new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = actualPath,
+                        Part = 1,
+                        PartCount = 1,
+                        Quality = file.Quality,
+                        IndexerFlags = (IndexerFlags)file.IndexerFlags
+                    });
+                    vanishedDecision.Reject(new Rejection($"Selected file no longer exists: '{requestedPath}'."));
+                    decisions.Add(vanishedDecision);
+                    fileCount += 1;
+
+                    continue;
+                }
+
                 var fileRootFolder = _rootFolderService.GetBestRootFolder(actualPath);
                 var mediaType = GetMediaTypeFromPath(actualPath);
 
