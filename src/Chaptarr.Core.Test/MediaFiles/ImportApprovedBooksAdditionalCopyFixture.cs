@@ -15,6 +15,7 @@ using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Extras;
+using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
@@ -115,8 +116,18 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason)
             {
                 DeletedFiles.Add((bookFile, reason));
-                FilesByPath.Remove(bookFile.Path);
-                FilesByBook.Remove(bookFile);
+
+                // The repository deletes by Id, so a row reused by another object is still removed.
+                var index = bookFile.Id > 0 ? FilesByBook.FindIndex(file => file.Id == bookFile.Id) : FilesByBook.IndexOf(bookFile);
+                if (index >= 0)
+                {
+                    FilesByPath.Remove(FilesByBook[index].Path);
+                    FilesByBook.RemoveAt(index);
+                }
+                else
+                {
+                    FilesByPath.Remove(bookFile.Path);
+                }
             }
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public List<System.IO.Abstractions.IFileInfo> FilterUnchangedFiles(List<System.IO.Abstractions.IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
@@ -138,6 +149,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubMoveBookFiles : IMoveBookFiles
         {
             public string DestinationPath { get; set; }
+            public Dictionary<string, string> DestinationsBySource { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int MoveCalls { get; private set; }
             public int CopyCalls { get; private set; }
             public int PreviewCalls { get; private set; }
@@ -163,9 +175,19 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile CopyBookFile(BookFile bookFile, LocalBook localBook)
             {
                 CopyCalls++;
-                bookFile.Path = DestinationPath ?? bookFile.Path;
+                bookFile.Path = ResolveDestination(localBook.Path) ?? bookFile.Path;
                 TransferFile(localBook.Path, bookFile.Path, copy: true);
                 return bookFile;
+            }
+
+            private string ResolveDestination(string sourcePath)
+            {
+                if (sourcePath != null && DestinationsBySource.TryGetValue(sourcePath, out var mapped))
+                {
+                    return mapped;
+                }
+
+                return DestinationPath;
             }
 
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook)
@@ -1233,6 +1255,667 @@ namespace Chaptarr.Core.Test.MediaFiles
 	                    Assert.That(metadataTagService.Writes.Single().NewDownload, Is.True);
                 }
 	            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+        }
+
+        [Test]
+        public void replaceable_existing_file_selection_should_protect_files_this_batch_already_imported()
+        {
+            var batchState = new ImportApprovedBooks.BookImportBatchState();
+            batchState.ProtectedDestinationPaths.Add("/library/book (001).mp3");
+            batchState.ProtectedFileIds.Add(4242);
+
+            var otherOldFile = new BookFile { Id = 11, Path = "/library/book (002).mp3", EditionId = 900 };
+            var alreadyImportedPath = new BookFile { Id = 12, Path = "/library/book (001).mp3", EditionId = 900 };
+            var alreadyDisplaced = new BookFile { Id = 4242, Path = "/library/book (003).mp3", EditionId = 900 };
+            var otherEdition = new BookFile { Id = 13, Path = "/library/book (004).mp3", EditionId = 901 };
+            var importSource = new BookFile { Id = 14, Path = "/downloads/incoming.mp3", EditionId = 900 };
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ImportApprovedBooks.IsReplaceableExistingFile(otherOldFile, "/downloads/incoming.mp3", 900, false, batchState), Is.True);
+                Assert.That(ImportApprovedBooks.IsReplaceableExistingFile(alreadyImportedPath, "/downloads/incoming.mp3", 900, false, batchState), Is.False);
+                Assert.That(ImportApprovedBooks.IsReplaceableExistingFile(alreadyDisplaced, "/downloads/incoming.mp3", 900, false, batchState), Is.False);
+                Assert.That(ImportApprovedBooks.IsReplaceableExistingFile(otherEdition, "/downloads/incoming.mp3", 900, false, batchState), Is.False);
+                Assert.That(ImportApprovedBooks.IsReplaceableExistingFile(otherEdition, "/downloads/incoming.mp3", 900, true, batchState), Is.True);
+                Assert.That(ImportApprovedBooks.IsReplaceableExistingFile(importSource, "/downloads/incoming.mp3", 900, true, batchState), Is.False);
+            });
+        }
+
+        [Test]
+        public void multi_file_upgrade_should_keep_one_row_per_imported_destination_when_some_destinations_are_already_tracked()
+        {
+            const int partCount = 3;
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"multi-file-rows-{Guid.NewGuid():N}");
+            var downloadDir = Path.Combine(tempDir, "downloads");
+            var libraryRoot = Path.Combine(tempDir, "audiobooks");
+            var bookDir = Path.Combine(libraryRoot, "Arthur Conan Doyle", "The Complete Sherlock Holmes");
+            Directory.CreateDirectory(downloadDir);
+            Directory.CreateDirectory(bookDir);
+
+            // Parts 1 and 3 still have a tracked row and a file at the destination path; part 2 does not.
+            var trackedParts = new[] { 1, 3 };
+            var sourcePaths = new List<string>();
+            var destinationPaths = new List<string>();
+
+            for (var part = 1; part <= partCount; part++)
+            {
+                var sourcePath = Path.Combine(downloadDir, $"sherlock-part-{part:000}.mp3");
+                var destinationPath = Path.Combine(bookDir, $"The Complete Sherlock Holmes ({part:000}).mp3");
+                File.WriteAllText(sourcePath, $"new part {part}");
+                sourcePaths.Add(sourcePath);
+                destinationPaths.Add(destinationPath);
+
+                if (trackedParts.Contains(part))
+                {
+                    File.WriteAllText(destinationPath, $"old part {part}");
+                }
+            }
+
+            try
+            {
+                var qualityProfile = new QualityProfile
+                {
+                    Id = 2,
+                    Name = "Audiobooks",
+                    ProfileType = ProfileType.Audiobook,
+                    UpgradeAllowed = true,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new() { Allowed = true, Quality = Quality.MP3 }
+                    }
+                };
+
+                var author = new Author
+                {
+                    Id = 77,
+                    Name = "Arthur Conan Doyle",
+                    AudiobookRootFolderPath = libraryRoot,
+                    AudiobookPath = Path.Combine(libraryRoot, "Arthur Conan Doyle"),
+                    AudiobookQualityProfileId = qualityProfile.Id,
+                    AudiobookQualityProfile = qualityProfile
+                };
+
+                var book = new Book
+                {
+                    Id = 387000,
+                    Title = "The Complete Sherlock Holmes",
+                    TitleSlug = "the-complete-sherlock-holmes",
+                    CleanTitle = "thecompletesherlockholmes",
+                    MediaType = BookMediaType.Audiobook,
+                    Author = author,
+                    AuthorId = author.Id
+                };
+
+                var edition = new Edition
+                {
+                    Id = 387736,
+                    BookId = book.Id,
+                    Book = book,
+                    Title = "The Complete Sherlock Holmes",
+                    IsEbook = false
+                };
+
+                var mediaFileService = new StubMediaFileService { AllowUpdates = true };
+                foreach (var part in trackedParts)
+                {
+                    mediaFileService.AddMany(new List<BookFile>
+                    {
+                        new BookFile
+                        {
+                            Id = 3000 + part,
+                            Path = destinationPaths[part - 1],
+                            EditionId = edition.Id,
+                            Edition = edition,
+                            Part = part,
+                            PartCount = partCount,
+                            MediaType = "audiobook",
+                            Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
+                        }
+                    });
+                }
+
+                var recycleBin = new StubRecycleBinProvider();
+                var mover = new StubMoveBookFiles { TransferFilesOnDisk = true };
+                for (var part = 1; part <= partCount; part++)
+                {
+                    mover.DestinationsBySource[sourcePaths[part - 1]] = destinationPaths[part - 1];
+                }
+
+                var service = new ImportApprovedBooks(
+                    mediaFileService,
+                    new StubMetadataTagService(),
+                    new StubMediaInfoExtractor(),
+                    Proxy<IAuthorService>(),
+                    Proxy<IBookService>(),
+                    CreateEditionService(new List<Edition> { edition }),
+                    recycleBin,
+                    Proxy<IExtraService>(),
+                    mover,
+                    Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                    new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(),
+                    Proxy<ISeriesBookLinkService>(),
+                    Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(),
+                    Proxy<IM4bConversionService>(),
+                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+
+                var decisions = sourcePaths.Select((sourcePath, index) => new ImportDecision<LocalBook>(new LocalBook
+                {
+                    Path = sourcePath,
+                    Book = book,
+                    Author = author,
+                    Edition = edition,
+                    Part = index + 1,
+                    PartCount = partCount,
+                    Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision(2) },
+                    Size = new FileInfo(sourcePath).Length,
+                    Modified = File.GetLastWriteTimeUtc(sourcePath)
+                })).ToList();
+
+                var results = service.Import(
+                    decisions,
+                    replaceExisting: true,
+                    downloadClientItem: null,
+                    importMode: ImportMode.Copy,
+                    cancellationToken: CancellationToken.None);
+
+                Assert.That(results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
+
+                foreach (var destinationPath in destinationPaths)
+                {
+                    Assert.That(File.Exists(destinationPath), Is.True, $"imported file missing: {destinationPath}");
+                    Assert.That(File.ReadAllText(destinationPath), Does.StartWith("new part"), $"destination still holds old content: {destinationPath}");
+                    Assert.That(mediaFileService.FilesByBook.Count(f => f.Path == destinationPath), Is.EqualTo(1),
+                        $"expected exactly one BookFiles row for {destinationPath}");
+                }
+
+                Assert.That(mediaFileService.FilesByBook, Has.Count.EqualTo(partCount));
+
+                // Nothing the batch just imported may be reported as a deleted book file.
+                Assert.That(mediaFileService.DeletedFiles.Select(d => d.File.Path).Intersect(destinationPaths), Is.Empty);
+                Assert.That(recycleBin.DeletedFiles, Has.Count.EqualTo(trackedParts.Length));
+                Assert.That(Directory.GetFiles(bookDir), Is.EquivalentTo(destinationPaths));
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+        }
+
+        [Test]
+        public void multi_file_upgrade_should_keep_every_newly_imported_part_at_a_replaced_path()
+        {
+            const int partCount = 3;
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"multi-file-upgrade-{Guid.NewGuid():N}");
+            var downloadDir = Path.Combine(tempDir, "downloads");
+            var libraryRoot = Path.Combine(tempDir, "audiobooks");
+            var bookDir = Path.Combine(libraryRoot, "Arthur Conan Doyle", "The Complete Sherlock Holmes");
+            Directory.CreateDirectory(downloadDir);
+            Directory.CreateDirectory(bookDir);
+
+            var sourcePaths = new List<string>();
+            var destinationPaths = new List<string>();
+
+            for (var part = 1; part <= partCount; part++)
+            {
+                var sourcePath = Path.Combine(downloadDir, $"sherlock-part-{part:000}.mp3");
+                var destinationPath = Path.Combine(bookDir, $"The Complete Sherlock Holmes ({part:000}).mp3");
+                File.WriteAllText(sourcePath, $"new part {part}");
+                File.WriteAllText(destinationPath, $"old part {part}");
+                sourcePaths.Add(sourcePath);
+                destinationPaths.Add(destinationPath);
+            }
+
+            try
+            {
+                var qualityProfile = new QualityProfile
+                {
+                    Id = 2,
+                    Name = "Audiobooks",
+                    ProfileType = ProfileType.Audiobook,
+                    UpgradeAllowed = true,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new() { Allowed = true, Quality = Quality.MP3 }
+                    }
+                };
+
+                var author = new Author
+                {
+                    Id = 77,
+                    Name = "Arthur Conan Doyle",
+                    AudiobookRootFolderPath = libraryRoot,
+                    AudiobookPath = Path.Combine(libraryRoot, "Arthur Conan Doyle"),
+                    AudiobookQualityProfileId = qualityProfile.Id,
+                    AudiobookQualityProfile = qualityProfile
+                };
+
+                var book = new Book
+                {
+                    Id = 611000,
+                    Title = "The Complete Sherlock Holmes",
+                    TitleSlug = "the-complete-sherlock-holmes",
+                    CleanTitle = "thecompletesherlockholmes",
+                    MediaType = BookMediaType.Audiobook,
+                    Author = author,
+                    AuthorId = author.Id
+                };
+
+                var edition = new Edition
+                {
+                    Id = 611637,
+                    BookId = book.Id,
+                    Book = book,
+                    Title = "The Complete Sherlock Holmes",
+                    IsEbook = false
+                };
+
+                var mediaFileService = new StubMediaFileService();
+                for (var part = 1; part <= partCount; part++)
+                {
+                    mediaFileService.FilesByBook.Add(new BookFile
+                    {
+                        Id = 2000 + part,
+                        Path = destinationPaths[part - 1],
+                        EditionId = edition.Id,
+                        Edition = edition,
+                        Part = part,
+                        PartCount = partCount,
+                        MediaType = "audiobook",
+                        Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
+                    });
+                }
+
+                var recycleBin = new StubRecycleBinProvider();
+                var mover = new StubMoveBookFiles { TransferFilesOnDisk = true };
+                for (var part = 1; part <= partCount; part++)
+                {
+                    mover.DestinationsBySource[sourcePaths[part - 1]] = destinationPaths[part - 1];
+                }
+
+                var service = new ImportApprovedBooks(
+                    mediaFileService,
+                    new StubMetadataTagService(),
+                    new StubMediaInfoExtractor(),
+                    Proxy<IAuthorService>(),
+                    Proxy<IBookService>(),
+                    CreateEditionService(new List<Edition> { edition }),
+                    recycleBin,
+                    Proxy<IExtraService>(),
+                    mover,
+                    Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                    new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(),
+                    Proxy<ISeriesBookLinkService>(),
+                    Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(),
+                    Proxy<IM4bConversionService>(),
+                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+
+                var decisions = sourcePaths.Select((sourcePath, index) => new ImportDecision<LocalBook>(new LocalBook
+                {
+                    Path = sourcePath,
+                    Book = book,
+                    Author = author,
+                    Edition = edition,
+                    Part = index + 1,
+                    PartCount = partCount,
+                    Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision(2) },
+                    Size = new FileInfo(sourcePath).Length,
+                    Modified = File.GetLastWriteTimeUtc(sourcePath)
+                })).ToList();
+
+                var results = service.Import(
+                    decisions,
+                    replaceExisting: true,
+                    downloadClientItem: null,
+                    importMode: ImportMode.Copy,
+                    cancellationToken: CancellationToken.None);
+
+                Assert.That(results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
+
+                foreach (var destinationPath in destinationPaths)
+                {
+                    Assert.That(File.Exists(destinationPath), Is.True, $"newly imported file was deleted: {destinationPath}");
+                    Assert.That(File.ReadAllText(destinationPath), Does.StartWith("new part"), $"destination still holds old content: {destinationPath}");
+                }
+
+                Assert.That(mediaFileService.FilesByBook.Select(f => f.Path), Is.EquivalentTo(destinationPaths));
+                Assert.That(mediaFileService.DeletedFiles.Select(d => d.File.Id), Is.EquivalentTo(new[] { 2001, 2002, 2003 }));
+                Assert.That(mediaFileService.DeletedFiles.Select(d => d.Reason), Is.All.EqualTo(DeleteMediaFileReason.Upgrade));
+                Assert.That(recycleBin.DeletedFiles, Has.Count.EqualTo(partCount));
+                Assert.That(Directory.GetFiles(bookDir), Is.EquivalentTo(destinationPaths));
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+        }
+
+        [Test]
+        public void automatic_import_should_not_replace_an_equal_quality_duplicate()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.M4B);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(1));
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors, Does.Contain(ImportApprovedBooks.AlreadyImportedRejectionReason));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
+            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
+            Assert.That(outcome.RecycleBin.DeletedFiles, Is.Empty);
+            Assert.That(outcome.MediaFileService.FilesByBook.Select(f => f.Id), Is.EquivalentTo(new[] { 9001 }));
+            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
+            Assert.That(outcome.SourceFilesOnDisk, Is.True);
+        }
+
+        [Test]
+        public void automatic_import_should_not_replace_with_a_lower_quality_release()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.MP3);
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results[0].Errors, Does.Contain(ImportApprovedBooks.AlreadyImportedRejectionReason));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
+            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
+            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
+        }
+
+        [TestCase("mp3-to-m4b")]
+        [TestCase("epub-to-mobi")]
+        public void automatic_import_should_still_replace_a_true_upgrade(string scenario)
+        {
+            var outcome = scenario == "mp3-to-m4b"
+                ? RunDuplicateImportScenario(Quality.MP3, Quality.M4B)
+                : RunDuplicateImportScenario(Quality.EPUB, Quality.MOBI);
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(1));
+            Assert.That(outcome.MediaFileService.DeletedFiles.Select(d => d.File.Id), Is.EquivalentTo(new[] { 9001 }));
+        }
+
+        [Test]
+        public void automatic_import_should_replace_a_higher_revision_of_the_same_quality()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.M4B, incomingRevision: new Revision(2));
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void manual_replace_should_still_replace_an_equal_quality_copy()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.M4B, isManualImport: true);
+
+            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(1));
+            Assert.That(outcome.MediaFileService.DeletedFiles.Select(d => d.File.Id), Is.EquivalentTo(new[] { 9001 }));
+        }
+
+        [Test]
+        public void automatic_import_should_not_replace_a_multi_part_audiobook_duplicate()
+        {
+            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.MP3, fileCount: 3);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(3));
+            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Skipped));
+            Assert.That(outcome.Results.All(r => r.Errors.Contains(ImportApprovedBooks.AlreadyImportedRejectionReason)), Is.True);
+            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
+            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
+            Assert.That(outcome.MediaFileService.FilesByBook, Has.Count.EqualTo(3));
+            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
+            Assert.That(outcome.SourceFilesOnDisk, Is.True);
+        }
+
+        [Test]
+        public void automatic_import_should_complete_an_edition_that_lost_parts_instead_of_calling_it_a_duplicate()
+        {
+            // Two of four parts survive (rows still declare PartCount 4); the complete set arrives again.
+            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.MP3, fileCount: 4, existingFileCount: 2);
+
+            Assert.That(outcome.Results, Has.Count.EqualTo(4));
+            Assert.That(outcome.Results.SelectMany(r => r.Errors), Has.None.EqualTo(ImportApprovedBooks.AlreadyImportedRejectionReason));
+            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
+        }
+
+        [Test]
+        public void multi_file_upgrade_should_parse_each_existing_files_custom_formats_once_per_batch()
+        {
+            var counter = new CountingCustomFormatCalculationService();
+
+            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.M4B, fileCount: 3, customFormats: counter);
+
+            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
+            Assert.That(counter.StoredFileParses, Is.LessThanOrEqualTo(3), "3 existing files x 3 incoming files must not re-parse every stored file for every incoming file");
+        }
+
+        private sealed class CountingCustomFormatCalculationService : ICustomFormatCalculationService
+        {
+            public int StoredFileParses { get; private set; }
+
+            public List<CustomFormat> ParseCustomFormat(RemoteBook remoteBook, long size) => new();
+            public List<CustomFormat> ParseCustomFormat(BookFile bookFile, Author artist)
+            {
+                StoredFileParses++;
+                return new List<CustomFormat>();
+            }
+
+            public List<CustomFormat> ParseCustomFormat(BookFile bookFile) => ParseCustomFormat(bookFile, bookFile?.Author);
+            public List<CustomFormat> ParseCustomFormat(Blocklist blocklist, Author artist) => new();
+            public List<CustomFormat> ParseCustomFormat(EntityHistory history, Author artist) => new();
+            public List<CustomFormat> ParseCustomFormat(LocalBook localBook) => new();
+        }
+
+        private sealed class DuplicateImportOutcome
+        {
+            public List<ImportResult> Results { get; init; }
+            public StubMediaFileService MediaFileService { get; init; }
+            public StubRecycleBinProvider RecycleBin { get; init; }
+            public bool ExistingFilesOnDisk { get; init; }
+            public bool SourceFilesOnDisk { get; init; }
+        }
+
+        private static string ExtensionForQuality(Quality quality)
+        {
+            if (quality == Quality.M4B)
+            {
+                return ".m4b";
+            }
+
+            if (quality == Quality.MP3)
+            {
+                return ".mp3";
+            }
+
+            return quality == Quality.MOBI ? ".mobi" : ".epub";
+        }
+
+        private static DuplicateImportOutcome RunDuplicateImportScenario(
+            Quality existingQuality,
+            Quality incomingQuality,
+            int fileCount = 1,
+            bool isManualImport = false,
+            Revision incomingRevision = null,
+            bool upgradeAllowed = true,
+            ICustomFormatCalculationService customFormats = null,
+            int? existingFileCount = null)
+        {
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"duplicate-import-{Guid.NewGuid():N}");
+            var libraryDir = Path.Combine(tempDir, "library");
+            var incomingDir = Path.Combine(tempDir, "incoming");
+            Directory.CreateDirectory(libraryDir);
+            Directory.CreateDirectory(incomingDir);
+
+            try
+            {
+                var audiobookProfile = new QualityProfile
+                {
+                    Id = 901,
+                    Name = "Audiobooks",
+                    ProfileType = ProfileType.Audiobook,
+                    UpgradeAllowed = upgradeAllowed,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new() { Allowed = true, Quality = Quality.MP3 },
+                        new() { Allowed = true, Quality = Quality.M4B }
+                    }
+                };
+
+                var ebookProfile = new QualityProfile
+                {
+                    Id = 902,
+                    Name = "Ebooks",
+                    ProfileType = ProfileType.Ebook,
+                    UpgradeAllowed = upgradeAllowed,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new() { Allowed = true, Quality = Quality.EPUB },
+                        new() { Allowed = true, Quality = Quality.MOBI }
+                    }
+                };
+
+                var isEbook = BookFile.DetermineMediaType(new QualityModel { Quality = incomingQuality }) == "ebook";
+
+                var author = new Author
+                {
+                    Id = 910,
+                    Name = "Christopher Rice",
+                    AudiobookRootFolderPath = Path.Combine(libraryDir, "audiobooks"),
+                    AudiobookPath = Path.Combine(libraryDir, "audiobooks", "Christopher Rice"),
+                    AudiobookQualityProfileId = audiobookProfile.Id,
+                    AudiobookQualityProfile = audiobookProfile,
+                    EbookRootFolderPath = Path.Combine(libraryDir, "ebooks"),
+                    EbookPath = Path.Combine(libraryDir, "ebooks", "Christopher Rice"),
+                    EbookQualityProfileId = ebookProfile.Id,
+                    EbookQualityProfile = ebookProfile
+                };
+
+                var book = new Book
+                {
+                    Id = 920,
+                    Title = "The Vines",
+                    TitleSlug = "the-vines",
+                    CleanTitle = "thevines",
+                    MediaType = isEbook ? BookMediaType.Ebook : BookMediaType.Audiobook,
+                    AnyEditionOk = true,
+                    Author = author,
+                    AuthorId = author.Id
+                };
+
+                var edition = new Edition
+                {
+                    Id = 930,
+                    BookId = book.Id,
+                    Book = book,
+                    Title = "The Vines",
+                    Format = isEbook ? "ebook" : "audiobook",
+                    IsEbook = isEbook,
+                    ReadingFormatId = isEbook ? 3 : 2,
+                    Monitored = true
+                };
+
+                book.Editions = new List<Edition> { edition };
+
+                var mediaFileService = new StubMediaFileService();
+                var existingPaths = new List<string>();
+                for (var i = 0; i < (existingFileCount ?? fileCount); i++)
+                {
+                    var existingPath = Path.Combine(libraryDir, $"The Vines - Part {i + 1}{ExtensionForQuality(existingQuality)}");
+                    File.WriteAllText(existingPath, "existing");
+                    existingPaths.Add(existingPath);
+                    mediaFileService.FilesByBook.Add(new BookFile
+                    {
+                        Id = 9001 + i,
+                        Path = existingPath,
+                        EditionId = edition.Id,
+                        Edition = edition,
+                        Part = i + 1,
+                        PartCount = fileCount,
+                        Quality = new QualityModel { Quality = existingQuality, Revision = new Revision() }
+                    });
+                }
+
+                var sourcePaths = new List<string>();
+                var decisions = new List<ImportDecision<LocalBook>>();
+                for (var i = 0; i < fileCount; i++)
+                {
+                    var sourcePath = Path.Combine(incomingDir, $"part-{i + 1}{ExtensionForQuality(incomingQuality)}");
+                    File.WriteAllText(sourcePath, "incoming");
+                    sourcePaths.Add(sourcePath);
+                    decisions.Add(new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = sourcePath,
+                        Book = book,
+                        Author = author,
+                        Edition = edition,
+                        Part = i + 1,
+                        PartCount = fileCount,
+                        Quality = new QualityModel { Quality = incomingQuality, Revision = incomingRevision ?? new Revision() },
+                        IsManualImport = isManualImport,
+                        Size = new FileInfo(sourcePath).Length,
+                        Modified = File.GetLastWriteTimeUtc(sourcePath)
+                    }));
+                }
+
+                var recycleBin = new StubRecycleBinProvider();
+                var (bookService, _) = CreateBookService(new List<Book> { book });
+                var service = new ImportApprovedBooks(
+                    mediaFileService,
+                    new StubMetadataTagService(),
+                    new StubMediaInfoExtractor(),
+                    Proxy<IAuthorService>(),
+                    bookService,
+                    CreateEditionService(new List<Edition> { edition }),
+                    recycleBin,
+                    Proxy<IExtraService>(),
+                    new StubMoveBookFiles
+                    {
+                        DestinationPath = Path.Combine(libraryDir, $"imported{ExtensionForQuality(incomingQuality)}"),
+                        TransferFilesOnDisk = true
+                    },
+                    Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                    new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(),
+                    Proxy<ISeriesBookLinkService>(),
+                    Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(),
+                    Proxy<IM4bConversionService>(),
+                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    customFormatCalculationService: customFormats);
+
+                var results = service.Import(
+                    decisions,
+                    replaceExisting: true,
+                    downloadClientItem: new DownloadClientItem { DownloadId = "duplicate-copy" },
+                    importMode: ImportMode.Copy,
+                    cancellationToken: CancellationToken.None);
+
+                return new DuplicateImportOutcome
+                {
+                    Results = results,
+                    MediaFileService = mediaFileService,
+                    RecycleBin = recycleBin,
+                    ExistingFilesOnDisk = existingPaths.All(File.Exists),
+                    SourceFilesOnDisk = sourcePaths.All(File.Exists)
+                };
+            }
             finally
             {
                 if (Directory.Exists(tempDir))
