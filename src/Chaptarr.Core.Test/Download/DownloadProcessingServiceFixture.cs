@@ -10,6 +10,7 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MediaFiles.BookImport.Manual;
 
 namespace Chaptarr.Core.Test.Download
 {
@@ -133,6 +134,324 @@ namespace Chaptarr.Core.Test.Download
 
             Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "conversion-pending", "native-ready" }));
             Assert.That(completed.NativeProcessedWhileConversionActive, Is.True);
+        }
+
+        [Test]
+        public void cancelled_sweep_should_stop_importing_instead_of_running_to_completion()
+        {
+            using var conversionFinished = new ManualResetEventSlim(false);
+            using var cts = new CancellationTokenSource();
+            var completed = new CancellingCompletedDownloadService(cts);
+            var tracked = new StaticTrackedDownloadService
+            {
+                Downloads = new List<TrackedDownload>
+                {
+                    CreatePending("first"),
+                    CreatePending("second"),
+                    CreatePending("third")
+                }
+            };
+            var service = new DownloadProcessingService(
+                DispatchProxy.Create<IConfigService, ConfigProxy>(),
+                completed,
+                new NoOpFailedDownloadService(),
+                tracked,
+                new NoOpEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            Assert.Throws<OperationCanceledException>(() => service.Execute(new ProcessMonitoredDownloadsCommand(), cts.Token));
+
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "first" }));
+        }
+
+        private sealed class CancellingCompletedDownloadService : ICompletedDownloadService
+        {
+            private readonly CancellationTokenSource _cts;
+
+            public CancellingCompletedDownloadService(CancellationTokenSource cts)
+            {
+                _cts = cts;
+            }
+
+            public List<string> ImportedDownloadIds { get; } = new();
+
+            public void Check(TrackedDownload trackedDownload)
+            {
+            }
+
+            public void Import(TrackedDownload trackedDownload)
+            {
+                ImportedDownloadIds.Add(trackedDownload.DownloadItem.DownloadId);
+                _cts.Cancel();
+            }
+
+            public bool VerifyImport(TrackedDownload trackedDownload, List<NzbDrone.Core.MediaFiles.BookImport.ImportResult> importResults)
+            {
+                return true;
+            }
+        }
+
+        private class QueueProxy : DispatchProxy
+        {
+            public List<CommandModel> Commands { get; set; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == "All")
+                {
+                    return Commands;
+                }
+
+                throw new NotImplementedException($"Unexpected queue call: {targetMethod?.Name}");
+            }
+        }
+
+        private static CommandModel Queued(Command body)
+        {
+            return new CommandModel { Name = body.Name, Body = body, Status = CommandStatus.Queued };
+        }
+
+        private static List<string> RunSweep(List<TrackedDownload> downloads, params CommandModel[] queued)
+        {
+            var completed = new RecordingCompletedDownloadService(new ManualResetEventSlim(true));
+            var queue = DispatchProxy.Create<IManageCommandQueue, QueueProxy>();
+            ((QueueProxy)(object)queue).Commands = new List<CommandModel>(queued);
+            var service = new DownloadProcessingService(
+                DispatchProxy.Create<IConfigService, ConfigProxy>(),
+                completed,
+                new NoOpFailedDownloadService(),
+                new StaticTrackedDownloadService { Downloads = downloads },
+                new NoOpEventAggregator(),
+                LogManager.GetCurrentClassLogger(),
+                queue);
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            return completed.ImportedDownloadIds;
+        }
+
+        [Test]
+        public void sweep_should_yield_after_one_download_when_a_disk_command_is_waiting_for_the_same_slot()
+        {
+            var imported = RunSweep(
+                new List<TrackedDownload> { CreatePending("a"), CreatePending("b"), CreatePending("c") },
+                Queued(new ManualImportCommand()));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a" }));
+        }
+
+        [Test]
+        public void sweep_should_not_yield_for_a_command_that_does_not_need_the_disk_slot()
+        {
+            var imported = RunSweep(
+                new List<TrackedDownload> { CreatePending("a"), CreatePending("b") },
+                Queued(new RefreshMonitoredDownloadsCommand()));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a", "b" }));
+        }
+
+        [Test]
+        public void sweep_should_not_yield_for_a_different_disk_access_group()
+        {
+            var imported = RunSweep(
+                new List<TrackedDownload> { CreatePending("a"), CreatePending("b") },
+                Queued(new RetryFailedImportCommand { DownloadId = "x" }));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a", "b" }));
+        }
+
+        [Test]
+        public void entries_that_need_no_work_should_not_use_up_the_one_download_guarantee()
+        {
+            var noWork = new TrackedDownload
+            {
+                DownloadItem = new DownloadClientItem { DownloadId = "done", Title = "done" },
+                State = TrackedDownloadState.Imported,
+                IsTrackable = true
+            };
+
+            var imported = RunSweep(
+                new List<TrackedDownload> { noWork, noWork, CreatePending("a"), CreatePending("b") },
+                Queued(new ManualImportCommand()));
+
+            Assert.That(imported, Is.EqualTo(new[] { "a" }));
+        }
+
+        private sealed class ProgressingCompletedDownloadService : ICompletedDownloadService
+        {
+            public List<string> ImportedDownloadIds { get; } = new();
+
+            public void Check(TrackedDownload trackedDownload)
+            {
+            }
+
+            public void Import(TrackedDownload trackedDownload)
+            {
+                ImportedDownloadIds.Add(trackedDownload.DownloadItem.DownloadId);
+                trackedDownload.State = TrackedDownloadState.Imported;
+            }
+
+            public bool VerifyImport(TrackedDownload trackedDownload, List<NzbDrone.Core.MediaFiles.BookImport.ImportResult> importResults)
+            {
+                return true;
+            }
+        }
+
+        private static DownloadProcessingService CreateProgressingService(ProgressingCompletedDownloadService completed, List<TrackedDownload> downloads, params CommandModel[] queued)
+        {
+            var queue = DispatchProxy.Create<IManageCommandQueue, QueueProxy>();
+            ((QueueProxy)(object)queue).Commands = new List<CommandModel>(queued);
+
+            return new DownloadProcessingService(
+                DispatchProxy.Create<IConfigService, ConfigProxy>(),
+                completed,
+                new NoOpFailedDownloadService(),
+                new StaticTrackedDownloadService { Downloads = downloads },
+                new NoOpEventAggregator(),
+                LogManager.GetCurrentClassLogger(),
+                queue);
+        }
+
+        [Test]
+        public void sweep_should_keep_making_progress_while_a_disk_command_is_always_waiting()
+        {
+            var completed = new ProgressingCompletedDownloadService();
+            var downloads = new List<TrackedDownload>
+            {
+                CreatePending("a"),
+                CreatePending("b"),
+                CreatePending("c"),
+                CreatePending("d"),
+                CreatePending("e"),
+                CreatePending("f")
+            };
+
+            var service = CreateProgressingService(completed, downloads, Queued(new ManualImportCommand()));
+
+            var perRun = new List<int>();
+
+            for (var run = 0; run < 4; run++)
+            {
+                var before = completed.ImportedDownloadIds.Count;
+                service.Execute(new ProcessMonitoredDownloadsCommand());
+                perRun.Add(completed.ImportedDownloadIds.Count - before);
+            }
+
+            Assert.That(perRun, Has.All.GreaterThanOrEqualTo(1));
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c", "d", "e", "f" }));
+        }
+
+        [Test]
+        public void sweep_should_still_yield_to_a_waiting_disk_command_until_the_bound_is_reached()
+        {
+            var completed = new ProgressingCompletedDownloadService();
+            var downloads = new List<TrackedDownload>
+            {
+                CreatePending("a"),
+                CreatePending("b"),
+                CreatePending("c"),
+                CreatePending("d"),
+                CreatePending("e")
+            };
+
+            var service = CreateProgressingService(completed, downloads, Queued(new ManualImportCommand()));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a" }));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b" }));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c" }));
+        }
+
+        [Test]
+        public void sweep_should_yield_again_after_the_run_that_finished_the_backlog()
+        {
+            var completed = new ProgressingCompletedDownloadService();
+            var downloads = new List<TrackedDownload>
+            {
+                CreatePending("a"),
+                CreatePending("b"),
+                CreatePending("c"),
+                CreatePending("d"),
+                CreatePending("e"),
+                CreatePending("f")
+            };
+
+            var service = CreateProgressingService(completed, downloads, Queued(new ManualImportCommand()));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c" }));
+
+            // The bound is exhausted, so this run finishes the whole backlog.
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c", "d", "e", "f" }));
+
+            // A later sweep with new work steps aside for the waiting command again.
+            downloads.Add(CreatePending("g"));
+            downloads.Add(CreatePending("h"));
+            downloads.Add(CreatePending("i"));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c", "d", "e", "f", "g" }));
+        }
+
+        [Test]
+        public void cancelled_sweep_should_neither_consume_nor_reset_the_yield_bound()
+        {
+            var completed = new ProgressingCompletedDownloadService();
+            var downloads = new List<TrackedDownload>
+            {
+                CreatePending("a"),
+                CreatePending("b"),
+                CreatePending("c"),
+                CreatePending("d"),
+                CreatePending("e")
+            };
+
+            var service = CreateProgressingService(completed, downloads, Queued(new ManualImportCommand()));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b" }));
+
+            using (var cancelled = new CancellationTokenSource())
+            {
+                cancelled.Cancel();
+                Assert.Throws<OperationCanceledException>(() => service.Execute(new ProcessMonitoredDownloadsCommand(), cancelled.Token));
+            }
+
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b" }));
+
+            // Third yield still counts as the third, the next run is the unbounded one.
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c" }));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c", "d", "e" }));
+        }
+
+        [Test]
+        public void sweep_should_process_everything_each_run_when_no_disk_command_is_waiting()
+        {
+            var completed = new ProgressingCompletedDownloadService();
+            var downloads = new List<TrackedDownload>
+            {
+                CreatePending("a"),
+                CreatePending("b"),
+                CreatePending("c")
+            };
+
+            var service = CreateProgressingService(completed, downloads);
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c" }));
+
+            service.Execute(new ProcessMonitoredDownloadsCommand());
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "a", "b", "c" }));
         }
 
         private static TrackedDownload CreatePending(string downloadId)
