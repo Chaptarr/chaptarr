@@ -149,5 +149,21 @@ namespace Chaptarr.Core.Test.Datastore
             {
             }
         }
+
+        [Test]
+        public void every_concrete_command_type_should_have_the_command_handler_registered()
+        {
+            // Guards against a command type being added that the discovery in CommandConverter silently skips
+            // (another assembly, or a name that does not end in 'Command'): its batch insert would fail again on Postgres.
+            var commandTypes = typeof(Command).Assembly.GetTypes()
+                .Where(t => typeof(Command).IsAssignableFrom(t) && t.IsClass && !t.IsAbstract && !t.IsGenericTypeDefinition)
+                .ToList();
+
+            Assert.That(commandTypes, Is.Not.Empty);
+
+            var notRegistered = commandTypes.Where(t => !SqlMapper.HasTypeHandler(t)).Select(t => t.FullName).ToList();
+
+            Assert.That(notRegistered, Is.Empty, "command types without the Dapper command type handler: " + string.Join(", ", notRegistered));
+        }
     }
 }
