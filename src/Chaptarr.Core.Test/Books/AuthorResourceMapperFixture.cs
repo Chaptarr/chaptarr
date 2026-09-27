@@ -262,6 +262,53 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void should_apply_media_paths_on_put_update()
+        {
+            var existing = new NzbDrone.Core.Books.Author
+            {
+                Id = 1,
+                Name = "J.R.R. Tolkien",
+                AudiobookPath = "/audiobooks/J.R.R. Tolkien",
+                EbookPath = "/ebooks/J.R.R. Tolkien"
+            };
+
+            var resource = new AuthorResource
+            {
+                Id = 1,
+                AuthorName = "J.R.R. Tolkien",
+                AudiobookPath = "/audiobooks/J. R. R. Tolkien"
+            };
+
+            var updated = resource.ToModel(existing);
+
+            Assert.That(updated.AudiobookPath, Is.EqualTo("/audiobooks/J. R. R. Tolkien"));
+            Assert.That(updated.EbookPath, Is.EqualTo("/ebooks/J.R.R. Tolkien"), "an omitted media path must keep its stored value");
+        }
+
+        [Test]
+        public void should_not_wipe_media_paths_when_not_provided_on_put_update()
+        {
+            var existing = new NzbDrone.Core.Books.Author
+            {
+                Id = 1,
+                Name = "J.R.R. Tolkien",
+                AudiobookPath = "/audiobooks/J.R.R. Tolkien",
+                EbookPath = "/ebooks/J.R.R. Tolkien"
+            };
+
+            var resource = new AuthorResource
+            {
+                Id = 1,
+                AuthorName = "J.R.R. Tolkien"
+            };
+
+            var updated = resource.ToModel(existing);
+
+            Assert.That(updated.AudiobookPath, Is.EqualTo("/audiobooks/J.R.R. Tolkien"));
+            Assert.That(updated.EbookPath, Is.EqualTo("/ebooks/J.R.R. Tolkien"));
+        }
+
+        [Test]
         public void should_apply_per_type_metadata_profiles_on_put_update()
         {
             var existing = new NzbDrone.Core.Books.Author
