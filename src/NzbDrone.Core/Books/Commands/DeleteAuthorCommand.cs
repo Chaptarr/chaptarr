@@ -23,9 +23,11 @@ namespace NzbDrone.Core.Books.Commands
         public override bool SendUpdatesToClient => true;
         public override bool IsLongRunning => true;
 
-        // Only contend with other disk-access commands (moves, renames, ...) when this delete
-        // will actually touch the author's files - a metadata-only delete shouldn't be serialized
-        // behind unrelated disk work. See PR #188 for why this group exists.
+        // Scoped to DeleteFiles so a metadata-only delete isn't lumped into the "default" disk-access
+        // group at all. Note this only self-serializes against other RequiresDiskAccess commands that
+        // opt into the same group (see PR #188) - as of this PR that's just this command, so it does
+        // not yet protect against a concurrent move/rename touching the same author's files. Widening
+        // which commands opt in is a separate change.
         public override bool RequiresDiskAccess => DeleteFiles;
     }
 }
