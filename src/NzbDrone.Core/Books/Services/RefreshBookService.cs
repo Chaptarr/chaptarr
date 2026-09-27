@@ -54,6 +54,11 @@ namespace NzbDrone.Core.Books
         // Cache for book metadata during refresh
         private readonly Dictionary<string, Author> _bookMetadataCache = new Dictionary<string, Author>();
 
+        // The current author refresh's local books (and the work groups derived from them). AsyncLocal because this
+        // service is a singleton and RefreshAuthor commands for different authors run concurrently (they neither
+        // require disk access nor are type exclusive), so the hint must never be shared between refreshes.
+        private static readonly System.Threading.AsyncLocal<AuthorBooksHint> CurrentAuthorBooksHint = new System.Threading.AsyncLocal<AuthorBooksHint>();
+
         public RefreshBookService(IBookService bookService,
                                   IAuthorService authorService,
                                   IRootFolderService rootFolderService,
@@ -719,13 +724,24 @@ namespace NzbDrone.Core.Books
 
         protected override void SaveEntity(Book local)
         {
-            // Use UpdateMany to avoid firing the book edited event
-            _bookService.UpdateMany(new List<Book> { local });
+            // Use UpdateMany to avoid firing the book edited event.
+            // The hint-aware overload isn't on IBookService (see BookService.UpdateMany for why) - use it
+            // when the concrete type is available (always true in production DI), otherwise fall back to
+            // the plain interface call exactly as before.
+            if (_bookService is BookService concreteBookService)
+            {
+                concreteBookService.UpdateMany(new List<Book> { local }, CurrentAuthorBooksHint.Value);
+            }
+            else
+            {
+                _bookService.UpdateMany(new List<Book> { local });
+            }
         }
 
         protected override void DeleteEntity(Book local, bool deleteFiles)
         {
             _bookService.DeleteBook(local.Id, deleteFiles);
+            CurrentAuthorBooksHint.Value?.Remove(local.Id);
         }
 
         protected override List<Edition> GetRemoteChildren(Book local, Book remote)
@@ -1193,6 +1209,19 @@ namespace NzbDrone.Core.Books
 
         public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
         {
+            var previousHint = CurrentAuthorBooksHint.Value;
+            try
+            {
+                return RefreshBookInfoInner(books, remoteBooks, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
+            }
+            finally
+            {
+                CurrentAuthorBooksHint.Value = previousHint;
+            }
+        }
+
+        private bool RefreshBookInfoInner(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        {
             var updated = false;
             _bookMetadataCache.Clear();
 
@@ -1224,6 +1253,8 @@ namespace NzbDrone.Core.Books
 
                 books = deduped;
             }
+
+            CurrentAuthorBooksHint.Value = new AuthorBooksHint(books);
 
             // Group books by provider ID to ensure all books with same provider ID update together
             var groups = books
