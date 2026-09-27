@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -22,7 +25,7 @@ namespace NzbDrone.Core.Notifications
           IHandle<AuthorRenamedEvent>,
           IHandle<AuthorAddedEvent>,
           IHandle<BookAddedEvent>,
-          IHandleAsync<AuthorDeletedEvent>,
+          IHandle<AuthorDeletedEvent>,
           IHandleAsync<BookDeletedEvent>,
           IHandle<BookFileDeletedEvent>,
           IHandle<HealthCheckFailedEvent>,
@@ -37,6 +40,14 @@ namespace NzbDrone.Core.Notifications
         private readonly INotificationStatusService _notificationStatusService;
         private readonly IEditionService _editionService;
         private readonly Logger _logger;
+
+        // A bulk author/book delete can publish one BookDeletedEvent per book. Draining them through a
+        // single background worker (rather than one Task.StartNew per event) keeps a slow or rate-limited
+        // notification target (e.g. Discord 429s) from spawning hundreds of concurrently-blocked ThreadPool
+        // threads - that would just relocate the delete-path stall onto shared pool capacity instead of
+        // removing it. See PR #259.
+        private readonly Channel<BookDeleteMessage> _bookDeleteNotificationQueue = Channel.CreateUnbounded<BookDeleteMessage>();
+        private int _bookDeleteWorkerRunning;
 
         public NotificationService(INotificationFactory notificationFactory, INotificationStatusService notificationStatusService, IEditionService editionService, Logger logger)
         {
@@ -315,7 +326,7 @@ namespace NzbDrone.Core.Notifications
             }
         }
 
-        public void HandleAsync(AuthorDeletedEvent message)
+        public void Handle(AuthorDeletedEvent message)
         {
             var deleteMessage = new AuthorDeleteMessage(message.Author, message.DeleteFiles);
 
@@ -341,6 +352,38 @@ namespace NzbDrone.Core.Notifications
         {
             var deleteMessage = new BookDeleteMessage(message.Book, message.DeleteFiles);
 
+            _bookDeleteNotificationQueue.Writer.TryWrite(deleteMessage);
+
+            if (Interlocked.CompareExchange(ref _bookDeleteWorkerRunning, 1, 0) == 0)
+            {
+                Task.Run(DrainBookDeleteNotificationQueue);
+            }
+        }
+
+        private void DrainBookDeleteNotificationQueue()
+        {
+            while (true)
+            {
+                while (_bookDeleteNotificationQueue.Reader.TryRead(out var deleteMessage))
+                {
+                    SendBookDeleteNotifications(deleteMessage);
+                }
+
+                Interlocked.Exchange(ref _bookDeleteWorkerRunning, 0);
+
+                // Close the race where a writer landed a message after our last TryRead saw an empty
+                // queue but before we reset the running flag - if that happened, pick it back up
+                // ourselves instead of leaving it stranded with no worker watching the queue.
+                if (!_bookDeleteNotificationQueue.Reader.TryPeek(out _) ||
+                    Interlocked.CompareExchange(ref _bookDeleteWorkerRunning, 1, 0) != 0)
+                {
+                    return;
+                }
+            }
+        }
+
+        private void SendBookDeleteNotifications(BookDeleteMessage deleteMessage)
+        {
             foreach (var notification in _notificationFactory.OnBookDeleteEnabled())
             {
                 try
