@@ -112,7 +112,7 @@ namespace NzbDrone.Core.Books
         protected abstract void AddChildren(List<TChild> children);
         protected abstract bool RefreshChildren(SortedChildren localChildren, List<TChild> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate);
 
-        protected virtual void PublishEntityUpdatedEvent(TEntity entity)
+        protected virtual void PublishEntityUpdatedEvent(TEntity entity, Author remoteData)
         {
         }
 
@@ -199,7 +199,7 @@ namespace NzbDrone.Core.Books
 
             if (updated)
             {
-                PublishEntityUpdatedEvent(local);
+                PublishEntityUpdatedEvent(local, remoteData);
             }
 
             PublishRefreshCompleteEvent(local);

@@ -2058,7 +2058,7 @@ namespace NzbDrone.Core.Books
                 return _refreshBookService.RefreshBookInfo(booksToRefresh, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
             }
 
-        protected override void PublishEntityUpdatedEvent(Author entity)
+        protected override void PublishEntityUpdatedEvent(Author entity, Author remoteData)
         {
             _eventAggregator.PublishEvent(new AuthorUpdatedEvent(entity));
         }

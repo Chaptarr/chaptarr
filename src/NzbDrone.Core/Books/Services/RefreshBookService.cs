@@ -1185,10 +1185,33 @@ namespace NzbDrone.Core.Books
             return _refreshEditionService.RefreshEditionInfo(localChildren.Added, localChildren.Updated, localChildren.Merged, localChildren.Deleted, localChildren.UpToDate, remoteChildren, forceUpdateFileTags);
         }
 
-        protected override void PublishEntityUpdatedEvent(Book entity)
+        protected override void PublishEntityUpdatedEvent(Book entity, Author remoteData)
         {
-            // Fetch fresh from DB so all lazy loads are available
-            _eventAggregator.PublishEvent(new BookUpdatedEvent(_bookService.GetBook(entity.Id)));
+            // PERF (chaptarr #163): this used to unconditionally call _bookService.GetBook(entity.Id),
+            // which re-queries Books+Authors+Editions+BookFiles from scratch for every single book that
+            // changed during a refresh. On an author-scoped refresh, GetLocalChildren already batch-loaded
+            // Editions/BookFiles for every book up front (see RefreshAuthorService.HydrateLocalChildrenForRefresh),
+            // and remoteData IS this book's author, already in memory - so in the common case nothing here
+            // needs to touch the database at all.
+            //
+            // Only fall back to the original full DB fetch when the entity actually lacks that data (e.g. a
+            // merge target fetched via GetEntityByForeignId, or a direct single-book refresh call that didn't
+            // pre-hydrate), so behavior for every other caller/subscriber is unchanged.
+            // Check IsLoaded on the Lazy* backing fields directly - reading .Editions/.BookFiles/.Author
+            // themselves would transparently fire the very per-book queries this is trying to avoid,
+            // since those are lazy-loading proxies that query on first access.
+            var hydrated = entity;
+
+            if (hydrated.LazyEditions?.IsLoaded != true || hydrated.LazyBookFiles?.IsLoaded != true)
+            {
+                hydrated = _bookService.GetBook(entity.Id);
+            }
+            else if (hydrated.LazyAuthor?.IsLoaded != true)
+            {
+                hydrated.Author = remoteData;
+            }
+
+            _eventAggregator.PublishEvent(new BookUpdatedEvent(hydrated));
         }
 
         public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
@@ -1255,6 +1278,19 @@ namespace NzbDrone.Core.Books
                 // This ensures audiobook and ebook with same provider ID update together
                 foreach (var book in group)
                 {
+                    // PERF (chaptarr #163): Book.Author is a lazy-loaded property - reading it for the
+                    // FIRST time anywhere below (comparisons in UpdateEntity, the hydration check in
+                    // PublishEntityUpdatedEvent, etc.) transparently fires a per-book
+                    // "Authors JOIN Books WHERE Books.Id = $1" query. remoteData already IS this book's
+                    // author, in memory, identical for every book in this author-scoped call - assign it
+                    // up front so every later read is served from memory instead of the database.
+                    // Check LazyAuthor.IsLoaded directly, never book.Author itself - reading the
+                    // materializing property is exactly the self-defeating mistake this fix avoids.
+                    if (book != null && book.LazyAuthor?.IsLoaded != true)
+                    {
+                        book.Author = remoteData;
+                    }
+
                     _logger.Debug("Refreshing book {0} (ID: {1}) in group {2}", book.Title, book.Id, groupKey);
                     updated |= RefreshEntityInfo(book, remoteBooks, remoteData, true, forceUpdateFileTags, lastUpdate);
                 }
