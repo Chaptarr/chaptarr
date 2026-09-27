@@ -200,7 +200,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     })
                     .ToList();
                 var identitySubgroups = BuildIdentitySubgroups(discovered, excludedIdentityValues);
-                var byPath = poolFiles.ToDictionary(file => file.Path, StringComparer.OrdinalIgnoreCase);
+                // Case-only duplicate paths (e.g. a folder renamed only by casing on a
+                // case-insensitive mount) would make ToDictionary throw and degrade the
+                // whole page to per-file units. Keep the first file per case-folded path.
+                var byPath = poolFiles
+                    .GroupBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
 
                 foreach (var subgroup in identitySubgroups)
                 {
