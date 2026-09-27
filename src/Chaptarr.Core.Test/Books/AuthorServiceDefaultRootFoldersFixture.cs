@@ -1,9 +1,16 @@
 using System.Collections.Generic;
+using DryIoc;
+using System.Reflection;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
+using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Organizer;
 using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.Books
@@ -107,6 +114,65 @@ namespace Chaptarr.Core.Test.Books
             BuildService().ApplyDefaultRootFoldersOnAdd(author, new List<RootFolder>());
 
             Assert.That(author.AudiobookRootFolderPath, Is.Null.Or.Empty);
+        }
+
+        [Test]
+        public void the_container_should_inject_the_config_service_into_the_optional_constructor_parameter()
+        {
+            // configService is an optional constructor parameter (= null). Guard against the container silently
+            // using the default, which would make the configured default root folders never apply in production.
+            var config = DispatchProxy.Create<IConfigService, ConfigProxy>();
+
+            var container = new Container(rules => rules.WithNzbDroneRules());
+            container.RegisterInstance(Stub<IAuthorRepository>());
+            container.RegisterInstance(Stub<IEventAggregator>());
+            container.RegisterInstance(Stub<IBuildAuthorPaths>());
+            container.RegisterInstance(Stub<IRootFolderService>());
+            container.RegisterInstance(Stub<IManageCommandQueue>());
+            container.RegisterInstance<ICacheManager>(new CacheManager());
+            container.RegisterInstance(Stub<IBookRepository>());
+            container.RegisterInstance(Stub<IMediaFileService>());
+            container.RegisterInstance(LogManager.GetCurrentClassLogger());
+            container.RegisterInstance(config);
+            container.Register<AuthorService>(Reuse.Singleton);
+
+            var service = container.Resolve<AuthorService>();
+
+            var author = new Author { Name = "A" };
+            service.ApplyDefaultRootFoldersOnAdd(author, new List<RootFolder>
+            {
+                new RootFolder { Id = 1, Path = "/audiobooks-configured", FolderType = FolderType.Audiobook },
+                new RootFolder { Id = 2, Path = "/audiobooks-other", FolderType = FolderType.Audiobook }
+            });
+
+            Assert.That(author.AudiobookRootFolderPath, Is.EqualTo("/audiobooks-configured"), "the configured default only applies if the container injected IConfigService");
+        }
+
+        private static T Stub<T>() where T : class => DispatchProxy.Create<T, NullProxy>();
+
+        public class NullProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return targetMethod.ReturnType != typeof(void) && targetMethod.ReturnType.IsValueType
+                    ? System.Activator.CreateInstance(targetMethod.ReturnType)
+                    : null;
+            }
+        }
+
+        public class ConfigProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name == "get_" + nameof(IConfigService.DefaultAudiobookRootFolderPath))
+                {
+                    return "/audiobooks-configured";
+                }
+
+                return targetMethod.ReturnType != typeof(void) && targetMethod.ReturnType.IsValueType
+                    ? System.Activator.CreateInstance(targetMethod.ReturnType)
+                    : null;
+            }
         }
     }
 }
