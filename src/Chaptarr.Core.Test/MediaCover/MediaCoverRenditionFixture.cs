@@ -63,6 +63,14 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             public HashSet<string> ExistingPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> MissingFolders { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Action<string> OnFolderExists { get; set; }
+
+            private bool FolderExistsWithHook(string path)
+            {
+                var exists = !MissingFolders.Contains(path);
+                OnFolderExists?.Invoke(path);
+                return exists;
+            }
             public Dictionary<string, string> TextByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, byte[]> BinaryByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<string> DeletedFolders { get; } = new();
@@ -83,7 +91,7 @@ namespace Chaptarr.Core.Test.MediaCover
                     nameof(IDiskProvider.FileExists) => ExistingPaths.Contains(path),
                     nameof(IDiskProvider.GetFileSize) => BinaryByPath.TryGetValue(path, out var bytes) ? bytes.LongLength : ExistingPaths.Contains(path) ? 1024L : 0L,
                     nameof(IDiskProvider.FileGetLastWrite) => new DateTime(1234),
-                    nameof(IDiskProvider.FolderExists) => !MissingFolders.Contains(path),
+                    nameof(IDiskProvider.FolderExists) => FolderExistsWithHook(path),
                     nameof(IDiskProvider.GetFiles) => ExistingPaths.Where(existing =>
                         string.Equals(Path.GetDirectoryName(existing), path, StringComparison.OrdinalIgnoreCase)).ToArray(),
                     nameof(IDiskProvider.EnsureFolder) => null,
@@ -867,6 +875,40 @@ namespace Chaptarr.Core.Test.MediaCover
 
             Assert.That(disk.GetCallCount(nameof(IDiskProvider.FileExists)), Is.Zero);
             Assert.That(covers[0].Url, Is.EqualTo("cover.jpg"));
+        }
+
+        [Test]
+        public void a_concurrent_cover_write_should_not_be_overwritten_by_the_missing_folder_negative_cache_entry()
+        {
+            // The reader stats the folder (missing), a cover download then stores its metadata, and only afterwards does the
+            // reader cache its negative result. A plain indexer assignment let the stale negative clobber the fresh entry.
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            disk.MissingFolders.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "901"));
+            var deferred = DispatchProxy.Create<IDeferredCoverService, DeferredCoverProxy>();
+            var subject = new MediaCoverService(null, null, null, null, diskProvider, appFolder, null, null, config, null, deferred, LogManager.GetCurrentClassLogger());
+
+            const System.Reflection.BindingFlags nonPublic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var cache = (System.Collections.IDictionary)typeof(MediaCoverService).GetField("_bookCoverMetadataByBookId", nonPublic).GetValue(subject);
+            var metadataType = typeof(MediaCoverService).GetNestedType("BookCoverMetadata", System.Reflection.BindingFlags.NonPublic);
+            var editionType = typeof(MediaCoverService).GetNestedType("BookCoverMetadataSelectedEdition", System.Reflection.BindingFlags.NonPublic);
+            disk.OnFolderExists = _ =>
+            {
+                var edition = Activator.CreateInstance(editionType);
+                editionType.GetProperty("EditionProviderId").SetValue(edition, "gr:1");
+                var fresh = Activator.CreateInstance(metadataType);
+                metadataType.GetProperty("SelectedEdition").SetValue(fresh, edition);
+                cache[901] = fresh;
+            };
+            var covers = new List<NzbDrone.Core.MediaCover.MediaCover> { new() { CoverType = MediaCoverTypes.Cover, Url = "cover.jpg" } };
+
+            subject.ConvertToLocalUrls(901, MediaCoverEntity.Book, covers);
+
+            var stored = cache[901];
+            Assert.That(metadataType.GetProperty("SelectedEdition").GetValue(stored), Is.Not.Null, "the fresh positive entry was overwritten by the stale negative one");
         }
 
         [Test]

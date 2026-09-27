@@ -1119,20 +1119,23 @@ namespace NzbDrone.Core.MediaCover
 	            {
 	                var coverFolder = GetBookCoverPath(bookId);
 
+                // Entries are only ever added here (TryAdd): a cover download that stores its metadata between this read's disk
+                // check and its cache write must not be replaced by the stale negative result. Writers and invalidation use the indexer / TryRemove.
+
 	                // Most books have no cover folder, and IDiskProvider.FileExists falls back to a
 	                // case-insensitive path resolution for a missing file that enumerates the whole
 	                // MediaCover/Books directory (one entry per book) for every such book. That made
 	                // GET /book?authorId=N quadratic in the catalogue size. FolderExists is a plain stat.
 	                if (!_diskProvider.FolderExists(coverFolder))
 	                {
-	                    _bookCoverMetadataByBookId[bookId] = new BookCoverMetadata();
+	                    _bookCoverMetadataByBookId.TryAdd(bookId, new BookCoverMetadata());
 	                    return null;
 	                }
 
 	                var metadataPath = Path.Combine(coverFolder, "cover-metadata.json");
 	                if (!_diskProvider.FileExists(metadataPath))
 	                {
-	                    _bookCoverMetadataByBookId[bookId] = new BookCoverMetadata();
+	                    _bookCoverMetadataByBookId.TryAdd(bookId, new BookCoverMetadata());
 	                    return null;
 	                }
 
@@ -1140,12 +1143,12 @@ namespace NzbDrone.Core.MediaCover
 	                var metadata = string.IsNullOrWhiteSpace(json)
 	                    ? null
 	                    : Json.Deserialize<BookCoverMetadata>(json);
-	                _bookCoverMetadataByBookId[bookId] = metadata ?? new BookCoverMetadata();
+	                _bookCoverMetadataByBookId.TryAdd(bookId, metadata ?? new BookCoverMetadata());
 	                return metadata;
 	            }
 	            catch
 	            {
-	                _bookCoverMetadataByBookId[bookId] = new BookCoverMetadata();
+	                _bookCoverMetadataByBookId.TryAdd(bookId, new BookCoverMetadata());
 	                return null;
 	            }
 	        }
