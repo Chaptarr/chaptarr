@@ -26,7 +26,7 @@ namespace Chaptarr.Core.Test.Http
                 return targetMethod?.Name switch
                 {
                     "FindByUrl" => Cached,
-                    "Upsert" => RecordUpsert((CachedHttpResponse)args[0]),
+                    "UpsertByUrl" => RecordUpsert((CachedHttpResponse)args[0]),
                     "Delete" => RecordDelete((CachedHttpResponse)args[0]),
                     _ => throw new NotImplementedException($"Repository proxy does not implement {targetMethod?.Name}")
                 };
