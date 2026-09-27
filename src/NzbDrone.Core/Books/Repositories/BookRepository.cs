@@ -26,6 +26,11 @@ namespace NzbDrone.Core.Books
 		        List<Book> GetLastBooks(IEnumerable<int> authorIds);
 		        List<Book> GetNextBooks(IEnumerable<int> authorIds);
 		        List<Book> GetBooksByAuthorId(int authorId);
+		        // The default exists only for lightweight test doubles. Every production implementation must override it.
+		        Dictionary<int, int> CountBooksByAuthorIds(IEnumerable<int> authorIds)
+		        {
+		            throw new NotSupportedException();
+		        }
 		        List<Book> GetBooksForRefresh(int authorId, IEnumerable<string> providerIds);
 		        List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
 		        Book FindByTitle(int authorId, string title);
@@ -196,6 +201,48 @@ namespace NzbDrone.Core.Books
         public List<Book> GetBooksByAuthorId(int authorId)
         {
             return Query(s => s.AuthorId == authorId);
+        }
+
+        // A COUNT(*) ... GROUP BY, not one GetBooksByAuthorId(id) per author - that would issue N
+        // full-row-materializing queries just to size-check a bulk delete before it can even decide
+        // whether to run it inline or queue it, adding real synchronous DB load on the same request
+        // path this is meant to keep fast.
+        public Dictionary<int, int> CountBooksByAuthorIds(IEnumerable<int> authorIds)
+        {
+            var idList = (authorIds ?? Enumerable.Empty<int>()).Distinct().ToList();
+
+            if (!idList.Any())
+            {
+                return new Dictionary<int, int>();
+            }
+
+            const string sql = "SELECT \"AuthorId\" AS \"Key\", CAST(COUNT(*) AS INTEGER) AS \"Value\" FROM \"Books\" WHERE \"AuthorId\" IN @Ids GROUP BY \"AuthorId\"";
+
+            using (var conn = _database.OpenConnection())
+            {
+                var result = new Dictionary<int, int>();
+
+                // SQLite has a default ~999 bind-variable limit; Dapper expands IN lists into many parameters.
+                if (_database.DatabaseType == DatabaseType.SQLite && idList.Count > SqliteVariableLimit.MaxParameters)
+                {
+                    foreach (var batch in idList.Chunk(SqliteVariableLimit.MaxParameters))
+                    {
+                        foreach (var row in conn.Query<KeyValuePair<int, int>>(sql, new { Ids = batch.ToArray() }))
+                        {
+                            result[row.Key] = row.Value;
+                        }
+                    }
+
+                    return result;
+                }
+
+                foreach (var row in conn.Query<KeyValuePair<int, int>>(sql, new { Ids = idList.ToArray() }))
+                {
+                    result[row.Key] = row.Value;
+                }
+
+                return result;
+            }
         }
 
 			        public List<Book> GetBooksForRefresh(int authorId, IEnumerable<string> providerIds)

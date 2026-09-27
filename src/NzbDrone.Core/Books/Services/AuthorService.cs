@@ -344,7 +344,7 @@ namespace NzbDrone.Core.Books
 	                return false;
 	            }
 
-	            var totalBooks = distinctIds.Sum(id => _bookRepository.GetBooksByAuthorId(id).Count);
+	            var totalBooks = _bookRepository.CountBooksByAuthorIds(distinctIds).Values.Sum();
 
 	            if (totalBooks <= AsyncDeleteBookCountThreshold)
 	            {

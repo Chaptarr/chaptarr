@@ -28,7 +28,21 @@ function createRemoveItemHandler(section, url) {
 
     const promise = createAjaxRequest(ajaxOptions).request;
 
-    promise.done((data) => {
+    promise.done((data, textStatus, jqXHR) => {
+      // 202 means the delete was only queued (e.g. a large author delete run as a background
+      // command instead of inline) - the row hasn't actually been removed yet, so pulling it out
+      // of the UI now would show it as gone while it's still fully present in the database.
+      // Leave it in place; it'll disappear once the command finishes and the list next refreshes.
+      if (jqXHR.status === 202) {
+        dispatch(set({
+          section,
+          isDeleting: false,
+          deleteError: null
+        }));
+
+        return;
+      }
+
       dispatch(batchActions([
         set({
           section,
