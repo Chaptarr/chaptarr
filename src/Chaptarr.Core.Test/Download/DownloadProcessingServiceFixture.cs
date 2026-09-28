@@ -135,6 +135,61 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(completed.NativeProcessedWhileConversionActive, Is.True);
         }
 
+        [Test]
+        public void cancelled_sweep_should_stop_importing_instead_of_running_to_completion()
+        {
+            using var conversionFinished = new ManualResetEventSlim(false);
+            using var cts = new CancellationTokenSource();
+            var completed = new CancellingCompletedDownloadService(cts);
+            var tracked = new StaticTrackedDownloadService
+            {
+                Downloads = new List<TrackedDownload>
+                {
+                    CreatePending("first"),
+                    CreatePending("second"),
+                    CreatePending("third")
+                }
+            };
+            var service = new DownloadProcessingService(
+                DispatchProxy.Create<IConfigService, ConfigProxy>(),
+                completed,
+                new NoOpFailedDownloadService(),
+                tracked,
+                new NoOpEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            Assert.Throws<OperationCanceledException>(() => service.Execute(new ProcessMonitoredDownloadsCommand(), cts.Token));
+
+            Assert.That(completed.ImportedDownloadIds, Is.EqualTo(new[] { "first" }));
+        }
+
+        private sealed class CancellingCompletedDownloadService : ICompletedDownloadService
+        {
+            private readonly CancellationTokenSource _cts;
+
+            public CancellingCompletedDownloadService(CancellationTokenSource cts)
+            {
+                _cts = cts;
+            }
+
+            public List<string> ImportedDownloadIds { get; } = new();
+
+            public void Check(TrackedDownload trackedDownload)
+            {
+            }
+
+            public void Import(TrackedDownload trackedDownload)
+            {
+                ImportedDownloadIds.Add(trackedDownload.DownloadItem.DownloadId);
+                _cts.Cancel();
+            }
+
+            public bool VerifyImport(TrackedDownload trackedDownload, List<NzbDrone.Core.MediaFiles.BookImport.ImportResult> importResults)
+            {
+                return true;
+            }
+        }
+
         private static TrackedDownload CreatePending(string downloadId)
         {
             return new TrackedDownload
