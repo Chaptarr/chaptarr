@@ -56,6 +56,15 @@ namespace NzbDrone.Core.MediaCover
         private const int MaxImageRedirects = 5;
         private static readonly TimeSpan ImageRequestTimeout = TimeSpan.FromSeconds(30);
 
+        // A CDN that has just rejected a cover URL (403) is not going to start
+        // accepting it again moments later. Without this, every rename/refresh/
+        // import that touches the same book or author re-attempts the same
+        // known-bad URL from scratch with no backoff, which can flood the CDN
+        // and exhaust the shared HTTP connection pool (max 12 connections per
+        // host - see ManagedHttpDispatcher) when many books share a blocked URL.
+        private static readonly TimeSpan BlockedImageUrlBackoff = TimeSpan.FromHours(6);
+        private static readonly ConcurrentDictionary<string, DateTime> _blockedImageUrlsUntilUtc = new(StringComparer.OrdinalIgnoreCase);
+
         // ImageSharp is slow on ARM (no hardware acceleration on mono yet)
         // So limit the number of concurrent resizing tasks
         private static SemaphoreSlim _semaphore = new SemaphoreSlim((int)Math.Ceiling(Environment.ProcessorCount / 2.0));
@@ -346,6 +355,18 @@ namespace NzbDrone.Core.MediaCover
 
             for (var i = 0; i <= MaxImageRedirects; i++)
             {
+                if (_blockedImageUrlsUntilUtc.TryGetValue(currentUrl, out var blockedUntilUtc))
+                {
+                    if (DateTime.UtcNow < blockedUntilUtc)
+                    {
+                        _logger.Debug("Skipping recently-blocked (403) image URL until {0}: {1}", blockedUntilUtc, currentUrl);
+                        var skippedRequest = new HttpRequest(currentUrl);
+                        throw new HttpException(skippedRequest, new HttpResponse(skippedRequest, new HttpHeader(), Array.Empty<byte>(), HttpStatusCode.Forbidden));
+                    }
+
+                    _blockedImageUrlsUntilUtc.TryRemove(currentUrl, out _);
+                }
+
                 var request = new HttpRequest(currentUrl)
                 {
                     AllowAutoRedirect = false,
@@ -354,7 +375,16 @@ namespace NzbDrone.Core.MediaCover
 
                 ExternalImageRequestHeaders.ApplyExternalImageRequestHeaders(request, currentUrl, userAgent, rangeRequest);
 
-                var response = _httpClient.Get(request);
+                HttpResponse response;
+                try
+                {
+                    response = _httpClient.Get(request);
+                }
+                catch (HttpException e) when (e.Response?.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    _blockedImageUrlsUntilUtc[currentUrl] = DateTime.UtcNow.Add(BlockedImageUrlBackoff);
+                    throw;
+                }
 
                 if (!response.HasHttpRedirect)
                 {
