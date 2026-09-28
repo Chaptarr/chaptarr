@@ -14,6 +14,7 @@ import PageToolbarButton from 'Components/Page/Toolbar/PageToolbarButton';
 import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import PageToolbarSeparator from 'Components/Page/Toolbar/PageToolbarSeparator';
 import SwipeHeaderConnector from 'Components/Swipe/SwipeHeaderConnector';
+import ConvertPreviewModalConnector from 'Convert/ConvertPreviewModalConnector';
 import { icons } from 'Helpers/Props';
 import InteractiveSearchFilterMenuConnector from 'InteractiveSearch/InteractiveSearchFilterMenuConnector';
 import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
@@ -36,6 +37,7 @@ class BookDetails extends Component {
     this.state = {
       isOrganizeModalOpen: false,
       isRetagModalOpen: false,
+      isConvertModalOpen: false,
       isEditBookModalOpen: false,
       isDeleteBookModalOpen: false,
       selectedTabIndex: 0
@@ -72,6 +74,14 @@ class BookDetails extends Component {
 
   onRetagModalClose = () => {
     this.setState({ isRetagModalOpen: false });
+  };
+
+  onConvertPress = () => {
+    this.setState({ isConvertModalOpen: true });
+  };
+
+  onConvertModalClose = () => {
+    this.setState({ isConvertModalOpen: false });
   };
 
   onEditBookPress = () => {
@@ -129,6 +139,7 @@ class BookDetails extends Component {
     const {
       isOrganizeModalOpen,
       isRetagModalOpen,
+      isConvertModalOpen,
       isEditBookModalOpen,
       isDeleteBookModalOpen,
       selectedTabIndex
@@ -168,6 +179,13 @@ class BookDetails extends Component {
               iconName={icons.RETAG}
               isDisabled={!hasBookFiles}
               onPress={this.onRetagPress}
+            />
+
+            <PageToolbarButton
+              label={translate('ConvertFiles')}
+              iconName={icons.CONVERT}
+              isDisabled={!hasBookFiles}
+              onPress={this.onConvertPress}
             />
 
             <PageToolbarSeparator />
@@ -359,6 +377,13 @@ class BookDetails extends Component {
             authorId={author.id}
             bookId={id}
             onModalClose={this.onRetagModalClose}
+          />
+
+          <ConvertPreviewModalConnector
+            isOpen={isConvertModalOpen}
+            authorId={author.id}
+            bookId={id}
+            onModalClose={this.onConvertModalClose}
           />
 
           <EditBookModalConnector

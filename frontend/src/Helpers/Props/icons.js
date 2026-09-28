@@ -50,6 +50,7 @@ import {
   faDownload as fasDownload,
   faEdit as fasEdit,
   faEllipsisH as fasEllipsisH,
+  faExchangeAlt as fasExchangeAlt,
   faExclamationCircle as fasExclamationCircle,
   faExclamationTriangle as fasExclamationTriangle,
   faExternalLinkAlt as fasExternalLinkAlt,
@@ -143,6 +144,7 @@ export const CLOSE = fasTimes;
 export const CLONE = farClone;
 export const COLLAPSE = fasChevronCircleUp;
 export const COMPUTER = fasDesktop;
+export const CONVERT = fasExchangeAlt;
 export const DANGER = fasExclamationCircle;
 export const DELETE = fasTrashAlt;
 export const DOWNLOAD = fasDownload;

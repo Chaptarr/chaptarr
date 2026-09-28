@@ -535,5 +535,124 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(exception.Message, Does.Contain("missing book context"));
             Assert.That(exception.Message, Does.Contain("edition '7'"));
         }
+
+        private static (BookFileMovingService Service, Author Author, string AuthorFolder, string RootFolder) CreateLibraryConversionScenario()
+        {
+            var rootFolder = @"C:\library".AsOsAgnostic();
+            var authorFolder = Path.Combine(rootFolder, "H.G. Wells");
+            var fileNameBuilder = DispatchProxy.Create<IBuildFileNames, BuildFileNamesProxy>();
+            ((BuildFileNamesProxy)(object)fileNameBuilder).BookFileNameFactory =
+                (_, _, _, _) => Path.Combine("The Sleeper Awakes - Alan Munro", "The Sleeper Awakes");
+            var authorPathBuilder = DispatchProxy.Create<IBuildAuthorPaths, AuthorPathBuilderProxy>();
+            ((AuthorPathBuilderProxy)(object)authorPathBuilder).PathFactory = (_, _) => authorFolder;
+            var service = CreateService(
+                fileNameBuilder,
+                DispatchProxy.Create<INamingConfigService, NamingConfigServiceProxy>(),
+                authorPathBuilder: authorPathBuilder);
+
+            var author = new Author
+            {
+                Id = 1,
+                Name = "H.G. Wells",
+                AudiobookRootFolderPath = rootFolder,
+                AudiobookPath = authorFolder
+            };
+
+            return (service, author, authorFolder, rootFolder);
+        }
+
+        private static string ConvertedDestination(BookFileMovingService service, Author author, bool isLibraryConversion, params string[] sourcePaths)
+        {
+            var book = new Book { Id = 42, AuthorId = author.Id, Author = author };
+            var edition = new Edition { Id = 7, BookId = book.Id, Book = book };
+            var bookFile = new BookFile
+            {
+                Quality = new QualityModel(Quality.M4B),
+                MediaType = "audiobook"
+            };
+            var localBook = new NzbDrone.Core.Parser.Model.LocalBook
+            {
+                Path = Path.Combine(@"C:\library\H.G. Wells\.chaptarr-conversions\work".AsOsAgnostic(), "The Sleeper Awakes.m4b"),
+                Author = author,
+                Book = book,
+                Edition = edition,
+                Quality = bookFile.Quality,
+                IsGeneratedConversion = true,
+                IsLibraryConversion = isLibraryConversion,
+                GeneratedConversionSourcePaths = sourcePaths.ToList()
+            };
+
+            return service.GetImportDestinationPath(bookFile, localBook);
+        }
+
+        [Test]
+        public void library_conversion_should_stay_in_the_folder_its_source_files_occupy()
+        {
+            var (service, author, authorFolder, _) = CreateLibraryConversionScenario();
+            var existingFolder = Path.Combine(authorFolder, "The Sleeper Awakes (Unabridged) [MP3]");
+
+            var destination = ConvertedDestination(service, author, true,
+                Path.Combine(existingFolder, "01.mp3"),
+                Path.Combine(existingFolder, "02.mp3"));
+
+            Assert.That(destination, Is.EqualTo(Path.Combine(existingFolder, "The Sleeper Awakes.m4b")));
+        }
+
+        [Test]
+        public void library_conversion_should_use_the_book_folder_when_sources_are_in_disc_subfolders()
+        {
+            var (service, author, authorFolder, _) = CreateLibraryConversionScenario();
+            var bookFolder = Path.Combine(authorFolder, "The Sleeper Awakes");
+
+            var destination = ConvertedDestination(service, author, true,
+                Path.Combine(bookFolder, "CD1", "01.mp3"),
+                Path.Combine(bookFolder, "Disc 2", "01.mp3"));
+
+            Assert.That(destination, Is.EqualTo(Path.Combine(bookFolder, "The Sleeper Awakes.m4b")));
+        }
+
+        [Test]
+        public void library_conversion_should_fall_back_to_naming_when_sources_span_sibling_book_folders()
+        {
+            var (service, author, authorFolder, _) = CreateLibraryConversionScenario();
+
+            var destination = ConvertedDestination(service, author, true,
+                Path.Combine(authorFolder, "Book A", "01.mp3"),
+                Path.Combine(authorFolder, "Book B", "01.mp3"));
+
+            Assert.That(destination, Is.EqualTo(Path.Combine(authorFolder, "The Sleeper Awakes - Alan Munro", "The Sleeper Awakes.m4b")));
+        }
+
+        [Test]
+        public void library_conversion_should_fall_back_to_naming_when_sources_are_outside_the_root_folder()
+        {
+            var (service, author, authorFolder, _) = CreateLibraryConversionScenario();
+            var elsewhere = Path.Combine(@"C:\elsewhere".AsOsAgnostic(), "The Sleeper Awakes");
+
+            var destination = ConvertedDestination(service, author, true, Path.Combine(elsewhere, "01.mp3"));
+
+            Assert.That(destination, Is.EqualTo(Path.Combine(authorFolder, "The Sleeper Awakes - Alan Munro", "The Sleeper Awakes.m4b")));
+        }
+
+        [Test]
+        public void library_conversion_should_not_write_loose_into_the_root_folder()
+        {
+            var (service, author, authorFolder, rootFolder) = CreateLibraryConversionScenario();
+
+            var destination = ConvertedDestination(service, author, true, Path.Combine(rootFolder, "01.mp3"));
+
+            Assert.That(destination, Is.EqualTo(Path.Combine(authorFolder, "The Sleeper Awakes - Alan Munro", "The Sleeper Awakes.m4b")));
+        }
+
+        [Test]
+        public void download_and_manual_import_conversions_should_still_follow_naming()
+        {
+            var (service, author, authorFolder, _) = CreateLibraryConversionScenario();
+            var existingFolder = Path.Combine(authorFolder, "The Sleeper Awakes (Unabridged) [MP3]");
+
+            var destination = ConvertedDestination(service, author, false, Path.Combine(existingFolder, "01.mp3"));
+
+            Assert.That(destination, Is.EqualTo(Path.Combine(authorFolder, "The Sleeper Awakes - Alan Munro", "The Sleeper Awakes.m4b")));
+        }
     }
 }
