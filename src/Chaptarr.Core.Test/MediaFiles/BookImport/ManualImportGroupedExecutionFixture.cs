@@ -18,6 +18,7 @@ using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
@@ -256,6 +257,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private sealed class ImportApprovedBooksStub : IImportApprovedBooks
         {
             public List<ImportDecision<LocalBook>> Decisions { get; private set; } = new();
+            public bool ReturnRejections { get; set; }
 
             public List<ImportResult> Import(
                 List<ImportDecision<LocalBook>> decisions,
@@ -265,7 +267,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 CancellationToken cancellationToken = default)
             {
                 Decisions = decisions;
-                return new List<ImportResult>();
+                return ReturnRejections
+                    ? decisions.Select(decision => new ImportResult(decision, "destination is not writable")).ToList()
+                    : new List<ImportResult>();
             }
         }
 
@@ -388,6 +392,111 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     decision.Item.Edition?.Id == edition.Id &&
                     !decision.Rejections.Any()));
             });
+        }
+
+        [Test]
+        public void manual_import_that_imports_nothing_should_report_unsuccessful_with_the_reason()
+        {
+            var root = new RootFolder { Id = 1, Path = "/library" };
+            var author = new Author
+            {
+                Id = 42,
+                Name = "Michael Connelly",
+                Path = "/library/Michael Connelly",
+                HardcoverAuthorId = "hc:123"
+            };
+            var edition = new Edition
+            {
+                Id = 22002,
+                BookId = 2202,
+                Title = "BOSCH: Schwarzes Echo",
+                ForeignEditionId = "gr:229391768",
+                ReadingFormatId = 2
+            };
+            var book = new Book
+            {
+                Id = 2202,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "The Black Echo",
+                HardcoverBookId = "hc:223021",
+                MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { edition }
+            };
+
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var rootFolders = DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>();
+            ((RootFolderServiceProxy)(object)rootFolders).Root = root;
+            var rootSettings = DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsProxy>();
+            var tags = DispatchProxy.Create<IMetadataTagService, MetadataTagServiceProxy>();
+            var authors = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)(object)authors).Author = author;
+            var books = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)books).Book = book;
+            var editions = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+            ((EditionServiceProxy)(object)editions).Edition = edition;
+            var authorLibrary = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
+            var matcher = new FileMatchingServiceStub(author, book, edition);
+            var importer = new ImportApprovedBooksStub { ReturnRejections = true };
+            var reporter = new RecordingResultReporter();
+            var trackedDownloads = DispatchProxy.Create<ITrackedDownloadService, TrackedDownloadServiceProxy>();
+
+            var service = new ManualImportService(
+                diskProvider,
+                null,
+                rootFolders,
+                null,
+                null,
+                authors,
+                books,
+                editions,
+                authorLibrary,
+                rootSettings,
+                null,
+                matcher,
+                null,
+                tags,
+                importer,
+                null,
+                trackedDownloads,
+                null,
+                null,
+                null,
+                null,
+                null,
+                LogManager.GetCurrentClassLogger(),
+                reporter);
+
+            var files = Enumerable.Range(1, 1)
+                .Select(number => new ManualImportFile
+                {
+                    Path = $"/library/Michael Connelly/Schwarzes Echo/chapter-{number}.mp3",
+                    ForeignAuthorId = "hc:123",
+                    ForeignAuthorName = author.Name,
+                    ForeignBookId = "hc:1987747",
+                    ForeignBookTitle = book.Title,
+                    ForeignEditionId = edition.ForeignEditionId,
+                    ForeignEditionTitle = edition.Title,
+                    Quality = new QualityModel(Quality.MP3)
+                })
+                .ToList();
+
+            service.Execute(new ManualImportCommand
+            {
+                Files = files,
+                ImportMode = ImportMode.Move
+            });
+
+            Assert.That(importer.Decisions, Has.Count.EqualTo(1));
+            Assert.That(reporter.Results, Is.EqualTo(new[] { CommandResult.Unsuccessful }),
+                "a manual import that imported no files must not finish as a success");
+        }
+
+        private sealed class RecordingResultReporter : ICommandResultReporter
+        {
+            public List<CommandResult> Results { get; } = new();
+
+            public void Report(CommandResult result) => Results.Add(result);
         }
 
         [Test]
