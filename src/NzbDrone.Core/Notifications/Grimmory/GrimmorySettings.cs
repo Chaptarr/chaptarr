@@ -49,7 +49,7 @@ namespace NzbDrone.Core.Notifications.Grimmory
         [FieldDefinition(6, Label = "Push Covers", Type = FieldType.Checkbox, HelpText = "Push Chaptarr's cover image for a book to Grimmory whenever the book is imported, retagged, or its cover changes in Chaptarr")]
         public bool PushCovers { get; set; }
 
-        [FieldDefinition(7, Label = "Forward Grimmory Edits", Type = FieldType.Checkbox, HelpText = "Forward metadata and cover edits made in Grimmory to other connections that accept library edits. Requires Grimmory's sidecar 'write on update' setting so edits appear as sidecar files Chaptarr can watch for")]
+        [FieldDefinition(7, Label = "Forward Grimmory Edits", Type = FieldType.Checkbox, HelpText = "Forward metadata and cover edits made in Grimmory to other connections that accept library edits. Requires Grimmory's sidecar 'write on update' setting so edits appear as sidecar files Chaptarr can watch for. Grimmory only writes sidecars when it runs with DISK_TYPE=LOCAL; on network storage the setting is hidden and nothing is forwarded")]
         public bool ForwardEdits { get; set; }
 
         [FieldDefinition(8, Label = "Ignore Grimmory Tags", Type = FieldType.Tag, HelpText = "Tags set on the book in Grimmory, not Chaptarr tags, e.g. Processed. Automatic pushes and forwarded edits leave Grimmory books that carry any of these tags untouched. The Grimmory Push dialog and Push Chaptarr Metadata to Grimmory still update them")]

@@ -99,7 +99,24 @@ namespace NzbDrone.Core.Notifications.Grimmory
             }
 
             return GetLibraryBooks(settings, libraryId, bypassCache)
-                .FirstOrDefault(b => b.AllFiles().Any(f => NormalizeRelativePath(f?.RelativePath()) == normalized));
+                .FirstOrDefault(b => b.AllFiles().Any(f => MatchesPath(f, normalized)));
+        }
+
+        private static bool MatchesPath(GrimmoryBookFile file, string normalizedPath)
+        {
+            var candidate = NormalizeRelativePath(file?.RelativePath());
+
+            if (candidate.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            if (file.FolderBased)
+            {
+                return normalizedPath.StartsWith(candidate + "/", StringComparison.Ordinal);
+            }
+
+            return candidate == normalizedPath;
         }
 
         public void UpdateBookMetadata(GrimmorySettings settings, long bookId, Dictionary<string, object> metadata)
@@ -344,6 +361,9 @@ namespace NzbDrone.Core.Notifications.Grimmory
 
         [JsonProperty("fileSubPath")]
         public string FileSubPath { get; set; }
+
+        [JsonProperty("folderBased")]
+        public bool FolderBased { get; set; }
 
         public string RelativePath()
         {

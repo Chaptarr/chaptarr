@@ -326,7 +326,28 @@ namespace NzbDrone.Core.Notifications.Grimmory
 
             return _mediaFileService.GetFilesWithBasePath(directory)
                 .FirstOrDefault(f => f?.Path.IsNotNullOrWhiteSpace() == true &&
-                    Path.GetFileNameWithoutExtension(f.Path).Equals(baseName, StringComparison.OrdinalIgnoreCase));
+                    (Path.GetFileNameWithoutExtension(f.Path).Equals(baseName, StringComparison.OrdinalIgnoreCase) ||
+                     IsInsideBookFolder(f.Path, directory, baseName)));
+        }
+
+        // Grimmory writes a multi-file audiobook's sidecar beside the book folder, named after the
+        // folder with anything after its last dot trimmed as though it were an extension.
+        private static bool IsInsideBookFolder(string filePath, string directory, string baseName)
+        {
+            if (!directory.IsParentPath(filePath))
+            {
+                return false;
+            }
+
+            var segments = directory.GetRelativePath(filePath).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (segments.Length < 2)
+            {
+                return false;
+            }
+
+            return segments[0].Equals(baseName, StringComparison.OrdinalIgnoreCase) ||
+                   segments[0].StartsWith(baseName + ".", StringComparison.OrdinalIgnoreCase);
         }
 
         private string GetRootRelativePath(string path)

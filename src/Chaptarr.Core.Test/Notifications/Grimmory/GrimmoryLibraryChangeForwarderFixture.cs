@@ -7,6 +7,7 @@ using FluentValidation.Results;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Commands;
@@ -21,6 +22,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
     {
         private const long EbookLibraryId = 3;
         private const string RelativePath = "Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub";
+        private const string AudiobookFolder = "Assassin's Apprentice (Unabridged)";
 
         [SetUp]
         public void Setup()
@@ -133,8 +135,11 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             };
         }
 
-        private static Context CreateContext(int targetDefinitionId = 2, bool withSibling = false)
+        private static string TrackRelativePath(string folder) => $"Robin Hobb/{folder}/Assassin's Apprentice (001).mp3";
+
+        private static Context CreateContext(int targetDefinitionId = 2, bool withSibling = false, string audiobookFolder = null)
         {
+            var folderAudiobook = audiobookFolder != null;
             var context = new Context();
             var proxy = new ScriptedGrimmoryProxy();
             context.Proxy = proxy;
@@ -145,6 +150,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
                 Username = "chaptarr",
                 Password = "secret",
                 EbookLibraryId = EbookLibraryId,
+                AudiobookLibraryId = EbookLibraryId,
                 ForwardEdits = true
             };
 
@@ -152,12 +158,15 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             commandStub.Handlers["Push"] = _ => null;
 
             var rootPath = @"C:\books".AsOsAgnostic();
-            var bookDir = Path.Combine(rootPath, "Robin Hobb", "Assassin's Apprentice");
-            var bookFilePath = Path.Combine(bookDir, "Assassin's Apprentice.epub");
-            context.SidecarPath = Path.Combine(bookDir, "Assassin's Apprentice.metadata.json");
-            context.CoverSidecarPath = Path.Combine(bookDir, "Assassin's Apprentice.cover.jpg");
+            var authorDir = Path.Combine(rootPath, "Robin Hobb");
+            var bookDir = Path.Combine(authorDir, audiobookFolder ?? "Assassin's Apprentice");
+            var bookFilePath = Path.Combine(bookDir, folderAudiobook ? "Assassin's Apprentice (001).mp3" : "Assassin's Apprentice.epub");
+            var sidecarDir = folderAudiobook ? authorDir : bookDir;
+            var sidecarBaseName = audiobookFolder ?? "Assassin's Apprentice";
+            context.SidecarPath = Path.Combine(sidecarDir, sidecarBaseName + ".metadata.json");
+            context.CoverSidecarPath = Path.Combine(sidecarDir, sidecarBaseName + ".cover.jpg");
 
-            var bookFile = new BookFile { Id = 40, EditionId = 30, Path = bookFilePath, MediaType = "ebook" };
+            var bookFile = new BookFile { Id = 40, EditionId = 30, Path = bookFilePath, MediaType = folderAudiobook ? "audiobook" : "ebook" };
 
             var rootFolderService = Stub<IRootFolderService>(out var rootStub);
             rootStub.Handlers["All"] = _ => new List<RootFolder> { new RootFolder { Id = 1, Path = rootPath } };
@@ -200,7 +209,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             factoryStub.Handlers["GetAvailableProviders"] = _ => providers;
 
             var mediaFileService = Stub<IMediaFileService>(out var mediaFileStub);
-            mediaFileStub.Handlers["GetFilesWithBasePath"] = args => string.Equals((string)args[0], bookDir, StringComparison.OrdinalIgnoreCase)
+            mediaFileStub.Handlers["GetFilesWithBasePath"] = args => ((string)args[0]).IsParentPath(bookFilePath)
                 ? new List<BookFile> { bookFile }
                 : new List<BookFile>();
             mediaFileStub.Handlers["GetFilesByBook"] = _ => new List<BookFile> { bookFile };
@@ -209,7 +218,9 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             editionStub.Handlers["GetEdition"] = args => (int)args[0] == 30 ? new Edition { Id = 30, BookId = 10 } : null;
 
             var bookService = Stub<IBookService>(out var bookStub);
-            bookStub.Handlers["GetBook"] = args => (int)args[0] == 10 ? new Book { Id = 10, Title = "Assassin's Apprentice", MediaType = BookMediaType.Ebook } : null;
+            bookStub.Handlers["GetBook"] = args => (int)args[0] == 10
+                ? new Book { Id = 10, Title = "Assassin's Apprentice", MediaType = folderAudiobook ? BookMediaType.Audiobook : BookMediaType.Ebook }
+                : null;
 
             context.Forwarder = new GrimmoryLibraryChangeForwarder(
                 factory,
@@ -327,6 +338,37 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             // is dropped at arrival, so the edit still comes out of the shared batch.
             context.Forwarder.QueueSidecar(context.SidecarPath);
             context.Forwarder.QueueSidecar(context.SidecarPath);
+            context.Forwarder.ForwardPending();
+
+            Assert.That(context.Target.Pushes, Has.Count.EqualTo(1));
+
+            context.Forwarder.Dispose();
+        }
+
+        [Test]
+        public void should_resolve_sidecar_written_beside_a_folder_audiobook()
+        {
+            var context = CreateContext(audiobookFolder: AudiobookFolder);
+            context.Proxy.BooksByPath[TrackRelativePath(AudiobookFolder)] = BuildGrimmoryBook();
+
+            context.Forwarder.QueueSidecar(context.SidecarPath);
+            context.Forwarder.ForwardPending();
+
+            Assert.That(context.Target.Pushes, Has.Count.EqualTo(1));
+            Assert.That(context.Target.Pushes[0].Book.MediaType, Is.EqualTo(BookMediaType.Audiobook));
+
+            context.Forwarder.Dispose();
+        }
+
+        [Test]
+        public void should_resolve_folder_audiobook_sidecar_trimmed_at_the_folders_last_dot()
+        {
+            var context = CreateContext(audiobookFolder: "Assassin's Apprentice Vol. 1");
+            context.Proxy.BooksByPath[TrackRelativePath("Assassin's Apprentice Vol. 1")] = BuildGrimmoryBook();
+
+            var trimmedSidecar = Path.Combine(Path.GetDirectoryName(context.SidecarPath), "Assassin's Apprentice Vol.metadata.json");
+
+            context.Forwarder.QueueSidecar(trimmedSidecar);
             context.Forwarder.ForwardPending();
 
             Assert.That(context.Target.Pushes, Has.Count.EqualTo(1));

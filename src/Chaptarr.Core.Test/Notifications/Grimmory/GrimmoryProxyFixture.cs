@@ -16,7 +16,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
     public class GrimmoryProxyFixture
     {
         private const string LibrariesJson = "[{\"id\":10,\"name\":\"Ebooks\",\"allowedFormats\":[\"EPUB\",\"PDF\"]},{\"id\":20,\"name\":\"Audiobooks\",\"allowedFormats\":[\"AUDIOBOOK\"]}]";
-        private const string LibraryBooksJson = "[{\"id\":100,\"libraryId\":10,\"primaryFile\":{\"fileName\":\"Book One.epub\",\"fileSubPath\":\"Author Name/Book One\"},\"metadata\":{\"title\":\"Book One\"}}]";
+        private const string LibraryBooksJson = "[{\"id\":100,\"libraryId\":10,\"primaryFile\":{\"fileName\":\"Book One.epub\",\"fileSubPath\":\"Author Name/Book One\"},\"metadata\":{\"title\":\"Book One\"}},{\"id\":200,\"libraryId\":20,\"primaryFile\":{\"fileName\":\"Book Two\",\"fileSubPath\":\"Author Name\",\"folderBased\":true},\"metadata\":{\"title\":\"Book Two\"}}]";
 
         [Test]
         public void should_login_and_fetch_libraries_with_bearer_token()
@@ -128,6 +128,28 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
 
             Assert.That(book, Is.Not.Null);
             Assert.That(book.Id, Is.EqualTo(100));
+        }
+
+        [Test]
+        public void should_find_folder_based_audiobook_by_any_track_inside_its_folder()
+        {
+            var httpClient = new ScriptedHttpClient { ValidTokens = { "token1" } };
+            var proxy = CreateProxy(httpClient);
+
+            var book = proxy.FindBookByPath(BuildSettings(), 20, "Author Name\\Book Two\\Book Two (001).mp3");
+
+            Assert.That(book, Is.Not.Null);
+            Assert.That(book.Id, Is.EqualTo(200));
+        }
+
+        [Test]
+        public void should_not_match_folder_based_audiobook_to_a_sibling_file()
+        {
+            var httpClient = new ScriptedHttpClient { ValidTokens = { "token1" } };
+            var proxy = CreateProxy(httpClient);
+
+            Assert.That(proxy.FindBookByPath(BuildSettings(), 20, "Author Name/Book Two.m4b"), Is.Null);
+            Assert.That(proxy.FindBookByPath(BuildSettings(), 20, "Author Name/Book Two Again/Book Two (001).mp3"), Is.Null);
         }
 
         [Test]
