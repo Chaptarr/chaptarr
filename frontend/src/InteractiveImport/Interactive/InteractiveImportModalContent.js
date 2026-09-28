@@ -206,6 +206,13 @@ class InteractiveImportModalContent extends Component {
       .map((x) => x.book)
       .value();
 
+    // Rows that only carry a metadata suggestion have no local book, so no existing file can be replaced. The
+    // confirmation modal would request /bookFile with no filter, get a 500, and stay blank forever.
+    if (booksImported.length === 0) {
+      this.onConfirmImportPress();
+      return;
+    }
+
     this.setState({
       booksImported,
       isConfirmImportModalOpen: true
