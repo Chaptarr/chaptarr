@@ -1825,7 +1825,22 @@ namespace NzbDrone.Core.Books
 
             var remoteForCompare = RefreshEntityCopy.CloneBook(remote, includeEditions: false);
             remoteForCompare.UseDbFieldsFrom(local);
-            return local.Equals(remoteForCompare);
+
+            // chaptarr #183: don't compare local against the raw remote clone. Book.UseMetadataFrom
+            // (the method that actually applies a change) non-destructively coalesces several fields -
+            // Title/Overview only replace a non-empty local value, ReleaseDate only replaces a non-null
+            // one, SeriesName/SeriesPosition use ?? against the existing value - specifically so a remote
+            // payload that just doesn't carry some field (e.g. this author-scoped batch has no series data
+            // for a given book, even though an earlier, richer fetch populated it locally) can't clobber
+            // good local data with nothing. A raw compare doesn't know that and sees "populated" != "empty"
+            // as a real difference - one that a real update would never actually apply - so the book gets
+            // classified Updated on every single refresh forever, never converging. Compare against what
+            // local would actually BECOME if updated, not against the untouched remote payload.
+            var simulatedUpdate = RefreshEntityCopy.CloneBook(local, includeEditions: false);
+            simulatedUpdate.UseDbFieldsFrom(local);
+            simulatedUpdate.UseMetadataFrom(remoteForCompare);
+
+            return local.Equals(simulatedUpdate);
         }
 
         protected override Book CreateChildForAdd(Book remoteChild, Author entity)

@@ -130,6 +130,71 @@ namespace Chaptarr.Core.Test.Books
             {
                 base.ProcessChildren(author, children);
             }
+
+            public bool AreUpToDatePublic(Book local, Book remote)
+            {
+                return base.AreChildrenUpToDate(local, remote);
+            }
+        }
+
+        [Test]
+        public void should_treat_book_as_up_to_date_when_remote_omits_a_field_that_a_real_update_would_not_clobber()
+        {
+            // chaptarr #183: Book.UseMetadataFrom non-destructively coalesces SeriesName/SeriesPosition
+            // (other.SeriesName ?? SeriesName) rather than blindly overwriting - a remote payload that
+            // just doesn't carry series data for this book must not be treated as "this book changed",
+            // because a real update would never actually clobber the local value with it.
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book>()),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var local = new Book
+            {
+                Id = 1,
+                Title = "Dune: The Graphic Novel, Book 1",
+                HardcoverBookId = "hc:428649",
+                MediaType = BookMediaType.Ebook,
+                SeriesName = "Dune: Graphic Novel",
+                SeriesPosition = "1"
+            };
+
+            var remote = new Book
+            {
+                Title = "Dune: The Graphic Novel, Book 1",
+                HardcoverBookId = "hc:428649",
+                MediaType = BookMediaType.Ebook,
+                SeriesName = null,
+                SeriesPosition = null
+            };
+
+            Assert.That(service.AreUpToDatePublic(local, remote), Is.True);
+        }
+
+        [Test]
+        public void should_still_detect_a_real_change_through_the_simulated_update()
+        {
+            var service = new TestableRefreshAuthorService(
+                new StubBookService(new List<Book>()),
+                new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            var local = new Book
+            {
+                Id = 1,
+                Title = "Old Title",
+                HardcoverBookId = "hc:1",
+                MediaType = BookMediaType.Ebook
+            };
+
+            var remote = new Book
+            {
+                Title = "New Title",
+                HardcoverBookId = "hc:1",
+                MediaType = BookMediaType.Ebook
+            };
+
+            Assert.That(service.AreUpToDatePublic(local, remote), Is.False);
         }
 
         [Test]
