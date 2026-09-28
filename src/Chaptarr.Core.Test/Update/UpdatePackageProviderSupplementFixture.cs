@@ -17,7 +17,7 @@ namespace Chaptarr.Core.Test.Update
                 new UpdatePackage
                 {
                     Version = InstalledVersion,
-                    Branch = "chaptarr",
+                    Branch = "main",
                     Changes = new UpdateChanges
                     {
                         New = new List<string> { $"{marker} new" },
@@ -32,7 +32,7 @@ namespace Chaptarr.Core.Test.Update
             return new UpdatePackage
             {
                 Version = new Version(version),
-                Branch = "develop",
+                Branch = "main",
                 Changes = changes
             };
         }

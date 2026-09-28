@@ -9,9 +9,7 @@ import titleCase from 'Utilities/String/titleCase';
 import translate from 'Utilities/String/translate';
 
 const branchValues = [
-  'master',
-  'develop',
-  'nightly'
+  'main'
 ];
 
 function UpdateSettings(props) {

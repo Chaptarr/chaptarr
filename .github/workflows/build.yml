@@ -2,9 +2,9 @@ name: Build Chaptarr
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
   workflow_call:
   workflow_dispatch:
 
@@ -55,15 +55,15 @@ jobs:
       shell: bash
       run: python3 build-tools/version_guard.py sync
 
-    - name: Guard (version) - no decreases on develop
-      if: github.ref == 'refs/heads/develop' || github.base_ref == 'develop'
+    - name: Guard (version) - no decreases on main
+      if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
       shell: bash
       run: |
         set -euo pipefail
 
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          git fetch --no-tags origin "refs/heads/develop:refs/remotes/origin/develop"
-          COMPARE_REF="origin/develop"
+          git fetch --no-tags origin "refs/heads/main:refs/remotes/origin/main"
+          COMPARE_REF="origin/main"
         else
           COMPARE_REF="$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)"
 

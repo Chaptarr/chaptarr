@@ -31,10 +31,7 @@ namespace NzbDrone.Core.HealthCheck.Checks
 
         public enum ReleaseBranches
         {
-            // ToDo Enable Master as valid once released
-            //Master,
-            Develop,
-            Nightly
+            Main
         }
     }
 }

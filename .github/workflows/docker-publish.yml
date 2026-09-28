@@ -35,8 +35,8 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        if [[ "${{ inputs.branch }}" != "develop" && "${{ inputs.branch }}" != "main" ]]; then
-          echo "Docker publication requires branch=develop or branch=main."
+        if [[ "${{ inputs.branch }}" != "main" ]]; then
+          echo "Docker publication requires branch=main."
           exit 1
         fi
 
@@ -72,17 +72,12 @@ jobs:
 
         image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
 
-        if [[ "$branch" == "main" || "$branch" == "develop" ]]; then
-          tags+=("$image:$branch")
-        fi
-
         if [[ "$branch" == "main" ]]; then
+          tags+=("$image:$branch")
           tags+=("$image:latest")
         fi
 
-        # Exact versions only. No rolling major/minor tags: every Chaptarr release
-        # so far is 0.9.x, so a ":0.9" tag would just be a second "latest" that
-        # also tracks develop. Users pin main, develop, or an exact version.
+        # Exact version tags keep stable releases immutable and distinct from latest.
         while IFS= read -r tag; do
           tags+=("$image:${tag#v}")
         done < <(git tag --points-at "$sha" 'v*' | sort -V)

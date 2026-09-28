@@ -133,7 +133,7 @@ namespace Chaptarr.Core.Test.Configuration
                 AuthenticationMethod = AuthenticationType.None,
                 ProxyMode = ProxyMode.Disabled,
                 ProxyType = ProxyType.Http,
-                Branch = "master",
+                Branch = "main",
                 BackupFolder = string.Empty,
                 BackupInterval = 7,
                 BackupRetention = 28

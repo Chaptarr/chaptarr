@@ -278,8 +278,7 @@ namespace NzbDrone.Core.Configuration
         public string PlexAuthUserId => GetValue("PlexAuthUserId", string.Empty).Trim();
         public string PlexAuthUsername => GetValue("PlexAuthUsername", string.Empty).Trim();
 
-        // TODO: Change back to "master" for the first stable release
-        public string Branch => _updateOptions.Branch ?? GetValue("Branch", "develop").ToLowerInvariant();
+        public string Branch => NormalizeReleaseBranch(_updateOptions.Branch ?? GetValue("Branch", "main"));
 
         public string LogLevel => _logOptions.Level ?? GetValue("LogLevel", "info").ToLowerInvariant();
         public string ConsoleLogLevel => _logOptions.ConsoleLevel ?? GetValue("ConsoleLogLevel", string.Empty, persist: false);
@@ -542,5 +541,13 @@ namespace NzbDrone.Core.Configuration
         }
 
         public bool TrustCgnatIpAddresses => _authOptions.TrustCgnatIpAddresses ?? GetValueBoolean("TrustCgnatIpAddresses", false, persist: false);
+
+        private static string NormalizeReleaseBranch(string branch)
+        {
+            var normalized = (branch ?? "main").Trim().ToLowerInvariant();
+            return normalized == "develop" || normalized == "master" || normalized == "nightly"
+                ? "main"
+                : normalized;
+        }
     }
 }

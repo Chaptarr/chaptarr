@@ -35,8 +35,7 @@ namespace NzbDrone.Core.Configuration
 
             PackageUpdateMechanism = UpdateMechanism.BuiltIn;
 
-            // ToDo Change to master as valid once released
-            DefaultBranch = "develop";
+            DefaultBranch = "main";
 
             if (Path.GetFileName(bin) == "bin" && diskProvider.FileExists(packageInfoPath))
             {
@@ -47,7 +46,7 @@ namespace NzbDrone.Core.Configuration
                 PackageGlobalMessage = ReadValue(data, "PackageGlobalMessage");
                 PackageUpdateMechanism = ReadEnumValue(data, "UpdateMethod", UpdateMechanism.BuiltIn);
                 PackageUpdateMechanismMessage = ReadValue(data, "UpdateMethodMessage");
-                PackageBranch = ReadValue(data, "Branch");
+                PackageBranch = NormalizeReleaseBranch(ReadValue(data, "Branch"));
 
                 ReleaseVersion = ReadValue(data, "ReleaseVersion");
 
@@ -62,7 +61,7 @@ namespace NzbDrone.Core.Configuration
                 var data = diskProvider.ReadAllText(releaseInfoPath);
 
                 ReleaseVersion = ReadValue(data, "ReleaseVersion", ReleaseVersion);
-                ReleaseBranch = ReadValue(data, "Branch");
+                ReleaseBranch = NormalizeReleaseBranch(ReadValue(data, "Branch"));
 
                 if (ReleaseBranch.IsNotNullOrWhiteSpace())
                 {
@@ -82,6 +81,19 @@ namespace NzbDrone.Core.Configuration
             }
 
             return defaultValue;
+        }
+
+        private static string NormalizeReleaseBranch(string branch)
+        {
+            if (branch.IsNullOrWhiteSpace())
+            {
+                return branch;
+            }
+
+            var normalized = branch.Trim().ToLowerInvariant();
+            return normalized == "develop" || normalized == "master" || normalized == "nightly"
+                ? "main"
+                : normalized;
         }
 
         private static T ReadEnumValue<T>(string fileData, string key, T defaultValue)

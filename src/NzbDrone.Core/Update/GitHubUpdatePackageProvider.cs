@@ -21,7 +21,7 @@ namespace NzbDrone.Core.Update
     public class GitHubUpdatePackageProvider : IGitHubUpdatePackageProvider
     {
         // Default to the Chaptarr repository
-        private const string DefaultOwner = "chaptarr";
+        private const string DefaultOwner = "snapetech";
         private const string DefaultRepo = "chaptarr";
         private static readonly string[] Sha256AssetSuffixes = { ".sha256", ".sha256sum", ".sha256.txt", ".sha256sums", ".sha256sums.txt" };
 
@@ -44,6 +44,11 @@ namespace NzbDrone.Core.Update
 
         public UpdatePackage GetLatestUpdate(string branch, Version currentVersion)
         {
+            if (!string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
             try
             {
                 var releases = GetReleases();
@@ -54,7 +59,7 @@ namespace NzbDrone.Core.Update
 
                 // Filter by branch if specified
                 var latestRelease = releases
-                    .Where(r => !r.Prerelease || branch == "develop")
+                    .Where(r => !r.Prerelease)
                     .FirstOrDefault(r => IsNewerVersion(r.TagName, currentVersion));
 
                 if (latestRelease == null)
@@ -73,6 +78,11 @@ namespace NzbDrone.Core.Update
 
         public List<UpdatePackage> GetRecentUpdates(string branch, Version currentVersion, Version previousVersion = null)
         {
+            if (!string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase))
+            {
+                return new List<UpdatePackage>();
+            }
+
             try
             {
                 var releases = GetReleases();
@@ -82,7 +92,7 @@ namespace NzbDrone.Core.Update
                 }
 
                 var updates = releases
-                    .Where(r => !r.Prerelease || branch == "develop")
+                    .Where(r => !r.Prerelease)
                     .Where(r => IsNewerVersion(r.TagName, previousVersion ?? new Version(0, 0, 0)))
                     .Where(r => !IsNewerVersion(r.TagName, currentVersion))
                     .Select(ConvertToUpdatePackage)
@@ -134,7 +144,7 @@ namespace NzbDrone.Core.Update
                 ReleaseDate = release.PublishedAt ?? release.CreatedAt,
                 FileName = asset.Name,
                 Url = asset.BrowserDownloadUrl,
-                Branch = release.Prerelease ? "develop" : "main",
+                Branch = "main",
                 Changes = ParseReleaseNotes(release.Body),
                 Hash = hash
             };

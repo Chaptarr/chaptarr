@@ -78,7 +78,7 @@ Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to
 
 Or use Docker Compose:
 ```bash
-wget https://raw.githubusercontent.com/snapetech/chaptarr/develop/docker-compose.yml
+wget https://raw.githubusercontent.com/snapetech/chaptarr/main/docker-compose.yml
 # Edit paths in docker-compose.yml
 docker compose up -d
 ```

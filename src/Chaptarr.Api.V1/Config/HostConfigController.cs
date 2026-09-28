@@ -113,7 +113,7 @@ namespace Chaptarr.Api.V1.Config
                 .Must((resource, path) => IsValidSslCertificate(resource)).WithMessage("Invalid SSL certificate file or password")
                 .When(c => c.EnableSsl);
 
-            SharedValidator.RuleFor(c => c.Branch).NotEmpty().WithMessage("Branch name is required, 'master' is the default");
+            SharedValidator.RuleFor(c => c.Branch).NotEmpty().WithMessage("Branch name is required, 'main' is the default");
             SharedValidator.RuleFor(c => c.UpdateScriptPath).IsValidPath().When(c => c.UpdateMechanism == UpdateMechanism.Script);
             SharedValidator.RuleFor(c => c.ProxyMode)
                            .Must(x => Enum.IsDefined(typeof(ProxyMode), x))

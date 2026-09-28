@@ -105,7 +105,7 @@ yarn watch
 ## Submitting pull requests
 
 1. **Before submitting:**
-   - Rebase on the latest `develop` branch
+   - Rebase on the latest `main` branch
    - Ensure all tests pass (`dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj`)
    - Update documentation if needed
    - One feature/fix per PR

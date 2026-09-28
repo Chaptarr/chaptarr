@@ -237,7 +237,7 @@ namespace NzbDrone.Core.Update
                 {
                     Version = currentVersion,
                     ReleaseDate = DateTime.UtcNow,
-                    Branch = "chaptarr",
+                    Branch = "main",
                     Changes = new UpdateChanges
                     {
                         New = new List<string>

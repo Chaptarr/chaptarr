@@ -1,7 +1,6 @@
 name: Release
 
-# Manual only. Pick the branch in the Run workflow dropdown:
-# develop cuts a pre-release, main promotes to stable.
+# Manual only. Releases are cut from the maintained stable main branch.
 on:
   workflow_dispatch:
 
@@ -20,8 +19,8 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        if [[ "${GITHUB_REF}" != "refs/heads/develop" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
-          echo "Releases must run from develop or main; selected ref is ${GITHUB_REF}."
+        if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+          echo "Releases must run from main; selected ref is ${GITHUB_REF}."
           exit 1
         fi
 
@@ -134,13 +133,6 @@ jobs:
           exit 1
         fi
 
-        # develop stays pre-release; main is the stable channel.
-        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-          PRERELEASE_FLAG=""
-        else
-          PRERELEASE_FLAG="--prerelease"
-        fi
-
         if gh release view "$TAG" >/dev/null 2>&1; then
           echo "Release $TAG already exists; the post-image job will publish it after GHCR succeeds."
           exit 0
@@ -152,8 +144,7 @@ jobs:
           --title "Chaptarr $TAG" \
           --notes-file "$NOTES" \
           --draft \
-          --verify-tag \
-          ${PRERELEASE_FLAG}
+          --verify-tag
 
   # Images publish here and nowhere else, so merging PRs never ships an update.
   docker:
@@ -185,8 +176,8 @@ jobs:
       run: |
         set -euo pipefail
         NOTES="release-notes/${TAG}.md"
-        if [[ "$BRANCH" == "main" ]]; then
-          gh release edit "$TAG" --notes-file "$NOTES" --draft=false --prerelease=false --latest
-        else
-          gh release edit "$TAG" --notes-file "$NOTES" --draft=false --prerelease
+        if [[ "$BRANCH" != "main" ]]; then
+          echo "Stable releases must be published from main."
+          exit 1
         fi
+        gh release edit "$TAG" --notes-file "$NOTES" --draft=false --prerelease=false --latest
