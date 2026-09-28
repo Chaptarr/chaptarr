@@ -1,6 +1,6 @@
 services:
   chaptarr:
-    image: chaptarr/chaptarr:latest
+    image: ghcr.io/snapetech/chaptarr:latest
     container_name: chaptarr
     environment:
       - PUID=1000

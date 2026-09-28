@@ -7,7 +7,7 @@
 A book collection manager for audiobooks and eBooks.
 
 [![Discord](https://img.shields.io/discord/1376676460647022752?logo=discord&logoColor=white&label=Discord)](https://discord.gg/G9ZbgWS5rp)
-[![License](https://img.shields.io/github/license/Chaptarr/chaptarr)](https://github.com/Chaptarr/chaptarr/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/snapetech/chaptarr)](https://github.com/snapetech/chaptarr/blob/main/LICENSE)
 
 </div>
 
@@ -56,7 +56,7 @@ Chaptarr is not compatible with Readarr's metadata sources. It uses its own modu
 
 Pull the image:
 ```bash
-docker pull chaptarr/chaptarr:latest
+docker pull ghcr.io/snapetech/chaptarr:latest
 ```
 
 Run with Docker:
@@ -71,14 +71,14 @@ docker run -d \
   -v /path/to/ebooks:/ebooks \
   -v /path/to/downloads:/downloads \
   --restart unless-stopped \
-  chaptarr/chaptarr:latest
+  ghcr.io/snapetech/chaptarr:latest
 ```
 
 Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarr sh -c 'id; touch /audiobooks/.chaptarr-write-test && rm /audiobooks/.chaptarr-write-test'`.
 
 Or use Docker Compose:
 ```bash
-wget https://raw.githubusercontent.com/chaptarr/chaptarr/develop/docker-compose.yml
+wget https://raw.githubusercontent.com/snapetech/chaptarr/develop/docker-compose.yml
 # Edit paths in docker-compose.yml
 docker compose up -d
 ```
@@ -104,7 +104,7 @@ Building from source requires the .NET 10 SDK, Node.js, and Yarn. When running C
 **Linux / macOS:**
 ```bash
 # Clone the repository
-git clone https://github.com/chaptarr/chaptarr.git
+git clone https://github.com/snapetech/chaptarr.git
 cd chaptarr
 
 # Build the backend
@@ -122,7 +122,7 @@ dotnet _output/publish/Chaptarr.dll
 **Windows (Command Prompt):**
 ```cmd
 :: Clone the repository
-git clone https://github.com/chaptarr/chaptarr.git
+git clone https://github.com/snapetech/chaptarr.git
 cd chaptarr
 
 :: Build the backend
@@ -156,7 +156,7 @@ This process requires the "Docker Compose Manager" plugin.
    ```
 3. Clone the repository:
    ```bash
-   git clone https://github.com/chaptarr/chaptarr.git
+   git clone https://github.com/snapetech/chaptarr.git
    ```
 
 #### After cloning Git repository

@@ -30,12 +30,12 @@ class MoreInfo extends Component {
 
           <DescriptionListItemTitle>{translate('Source')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/Chaptarr/chaptarr">{'github.com/Chaptarr/chaptarr'}</Link>
+            <Link to="https://github.com/snapetech/chaptarr">{'github.com/snapetech/chaptarr'}</Link>
           </DescriptionListItemDescription>
 
           <DescriptionListItemTitle>{translate('FeatureRequests')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/Chaptarr/chaptarr/issues">{'github.com/Chaptarr/chaptarr/issues'}</Link>
+            <Link to="https://github.com/snapetech/chaptarr/issues">{'github.com/snapetech/chaptarr/issues'}</Link>
           </DescriptionListItemDescription>
 
         </DescriptionList>

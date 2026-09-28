@@ -5,7 +5,7 @@
     "description": "Chaptarr API docs",
     "license": {
       "name": "GPL-3.0-only",
-      "url": "https://github.com/Chaptarr/Chaptarr/blob/develop/LICENSE"
+      "url": "https://github.com/snapetech/chaptarr/blob/develop/LICENSE"
     },
     "version": "1.0.0"
   },
