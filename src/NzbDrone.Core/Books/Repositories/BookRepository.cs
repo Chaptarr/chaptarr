@@ -216,29 +216,36 @@ namespace NzbDrone.Core.Books
                 return new Dictionary<int, int>();
             }
 
-            const string sql = "SELECT \"AuthorId\" AS \"Key\", CAST(COUNT(*) AS INTEGER) AS \"Value\" FROM \"Books\" WHERE \"AuthorId\" IN @Ids GROUP BY \"AuthorId\"";
-
             using (var conn = _database.OpenConnection())
             {
                 var result = new Dictionary<int, int>();
 
-                // SQLite has a default ~999 bind-variable limit; Dapper expands IN lists into many parameters.
-                if (_database.DatabaseType == DatabaseType.SQLite && idList.Count > SqliteVariableLimit.MaxParameters)
+                // Dapper's automatic "IN @Ids" list expansion doesn't fire against this connection
+                // (confirmed live: Postgres received a literal single "$1" placeholder for the whole
+                // array and rejected it) - build the parameter list by hand instead of relying on it.
+                // SQLite also has a default ~999 bind-variable limit, so batch there regardless.
+                var chunkSize = _database.DatabaseType == DatabaseType.SQLite
+                    ? SqliteVariableLimit.MaxParameters
+                    : idList.Count;
+
+                foreach (var batch in idList.Chunk(Math.Max(chunkSize, 1)))
                 {
-                    foreach (var batch in idList.Chunk(SqliteVariableLimit.MaxParameters))
+                    var parameters = new DynamicParameters();
+                    var placeholders = new List<string>(batch.Length);
+
+                    for (var i = 0; i < batch.Length; i++)
                     {
-                        foreach (var row in conn.Query<KeyValuePair<int, int>>(sql, new { Ids = batch.ToArray() }))
-                        {
-                            result[row.Key] = row.Value;
-                        }
+                        var name = $"Id{i}";
+                        placeholders.Add("@" + name);
+                        parameters.Add(name, batch[i]);
                     }
 
-                    return result;
-                }
+                    var sql = $"SELECT \"AuthorId\" AS \"Key\", CAST(COUNT(*) AS INTEGER) AS \"Value\" FROM \"Books\" WHERE \"AuthorId\" IN ({string.Join(",", placeholders)}) GROUP BY \"AuthorId\"";
 
-                foreach (var row in conn.Query<KeyValuePair<int, int>>(sql, new { Ids = idList.ToArray() }))
-                {
-                    result[row.Key] = row.Value;
+                    foreach (var row in conn.Query<KeyValuePair<int, int>>(sql, parameters))
+                    {
+                        result[row.Key] = row.Value;
+                    }
                 }
 
                 return result;
