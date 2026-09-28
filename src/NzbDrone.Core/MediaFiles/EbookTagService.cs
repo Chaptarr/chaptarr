@@ -41,6 +41,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRootFolderService _rootFolderService;
         private readonly IConfigService _configService;
         private readonly ICalibreProxy _calibre;
+        private readonly IEpubSeriesTagWriter _epubSeriesTagWriter;
         private readonly Logger _logger;
         private readonly IFileMutationSafetyService _fileMutationSafetyService;
 
@@ -50,6 +51,7 @@ namespace NzbDrone.Core.MediaFiles
             IConfigService configService,
             ICalibreProxy calibre,
             IFileMutationSafetyService fileMutationSafetyService,
+            IEpubSeriesTagWriter epubSeriesTagWriter,
             Logger logger)
         {
             _authorService = authorService;
@@ -57,6 +59,7 @@ namespace NzbDrone.Core.MediaFiles
             _rootFolderService = rootFolderService;
             _configService = configService;
             _calibre = calibre;
+            _epubSeriesTagWriter = epubSeriesTagWriter;
             _logger = logger;
             _fileMutationSafetyService = fileMutationSafetyService;
         }
@@ -125,13 +128,13 @@ namespace NzbDrone.Core.MediaFiles
 
                 _logger.Debug($"Syncing ebook tags for {edition}");
 
-                foreach (var file in bookFiles.Where(x => x.CalibreId != 0))
+                foreach (var file in bookFiles.Where(CanWriteTags))
                 {
                     // populate tracks (which should also have release/book/author set) because
                     // not all of the updates will have been committed to the database yet
                     file.Edition = edition;
 
-                    WriteTagsInternal(file, _configService.UpdateCovers, _configService.EmbedMetadata);
+                    TryWriteTagsInternal(file, _configService.UpdateCovers, _configService.EmbedMetadata);
                 }
             }
         }
@@ -183,9 +186,9 @@ namespace NzbDrone.Core.MediaFiles
 
             _logger.ProgressInfo("Re-tagging {0} ebook files for {1}", files.Count, author.Name);
 
-            foreach (var file in files.Where(x => x.CalibreId != 0))
+            foreach (var file in files.Where(CanWriteTags))
             {
-                WriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
+                TryWriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
             }
 
             _logger.ProgressInfo("Selected ebook files re-tagged for {0}", author.Name);
@@ -202,22 +205,40 @@ namespace NzbDrone.Core.MediaFiles
 
                 _logger.ProgressInfo("Re-tagging all ebook files for author: {0}", author.Name);
 
-                foreach (var file in files.Where(x => x.CalibreId != 0))
+                foreach (var file in files.Where(CanWriteTags))
                 {
-                    WriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
+                    TryWriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
                 }
 
                 _logger.ProgressInfo("All ebook files re-tagged for {0}", author.Name);
             }
         }
 
+        /// <summary>
+        /// Bulk re-tagging walks a whole author or library, so one unreadable book must not
+        /// strand every file after it. Mirrors how the import path treats tag writing as
+        /// optional post-processing.
+        /// </summary>
+        private void TryWriteTagsInternal(BookFile file, bool updateCover, bool embedMetadata)
+        {
+            try
+            {
+                WriteTagsInternal(file, updateCover, embedMetadata);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Failed writing tags for {0}, continuing with the remaining files", file?.Path);
+            }
+        }
+
+        // A file is taggable if Calibre owns it, or if we can write into the book file ourselves.
+        private static bool CanWriteTags(BookFile file)
+        {
+            return file.CalibreId != 0 || MediaFileExtensions.CanWriteEbookSeriesTags(Path.GetExtension(file.Path));
+        }
+
         private void WriteTagsInternal(BookFile file, bool updateCover, bool embedMetadata)
         {
-            if (file.CalibreId == 0)
-            {
-                _logger.Trace($"No calibre id for {file.Path}, skipping writing tags");
-            }
-
             _fileMutationSafetyService.EnsureMutableFile(file.Path);
 
             var rootFolder = _rootFolderService.GetBestRootFolder(file.Path);
@@ -227,7 +248,101 @@ namespace NzbDrone.Core.MediaFiles
                 throw new Exception($"File '{file.Path}' is not in a root folder.");
             }
 
+            if (!rootFolder.IsCalibreLibrary)
+            {
+                WriteSeriesTagsDirectly(file);
+                return;
+            }
+
+            if (file.CalibreId == 0)
+            {
+                _logger.Trace($"No calibre id for {file.Path}, skipping writing tags");
+                return;
+            }
+
             _calibre.SetFields(file, rootFolder.CalibreSettings, updateCover, embedMetadata);
+        }
+
+        /// <summary>
+        /// Writes series metadata into the book file itself. Chaptarr already knows the series
+        /// and position for every book, but outside a Calibre library it previously had no way
+        /// to record them where a reader would look.
+        /// </summary>
+        private void WriteSeriesTagsDirectly(BookFile file)
+        {
+            if (!MediaFileExtensions.CanWriteEbookSeriesTags(Path.GetExtension(file.Path)))
+            {
+                _logger.Trace("No series tag writer for {0}, skipping", file.Path);
+                return;
+            }
+
+            var book = file.Edition?.Book;
+
+            if (book == null)
+            {
+                return;
+            }
+
+            var seriesName = GetSeriesName(book);
+
+            if (seriesName.IsNullOrWhiteSpace())
+            {
+                _logger.Trace("No series known for {0}, skipping series tags", file.Path);
+                return;
+            }
+
+            var position = GetSeriesPosition(book);
+            double? seriesIndex = null;
+
+            if (position.IsNotNullOrWhiteSpace())
+            {
+                if (double.TryParse(position, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    seriesIndex = parsed;
+                }
+                else
+                {
+                    // Positions like "2 - Heavy Metal" are common in imported metadata. A reader
+                    // needs a plain number, so record the series without a position rather than
+                    // writing something it cannot use.
+                    _logger.Debug("Series position '{0}' for {1} is not numeric, writing series without a position", position, file.Path);
+                }
+            }
+
+            if (_epubSeriesTagWriter.WriteSeriesTags(file.Path, seriesName, seriesIndex))
+            {
+                _logger.Debug("Wrote series tags to {0}: {1} #{2}", file.Path, seriesName, seriesIndex?.ToString(CultureInfo.InvariantCulture) ?? "-");
+            }
+        }
+
+        // The denormalised columns on Book are the values Chaptarr itself displays and keeps in
+        // step with the metadata provider. The relational series links are only consulted when
+        // those are empty.
+        private static string GetSeriesName(Book book)
+        {
+            if (book.SeriesName.IsNotNullOrWhiteSpace())
+            {
+                return book.SeriesName;
+            }
+
+            return GetPrimarySeriesLink(book)?.Series?.Value?.Title;
+        }
+
+        private static string GetSeriesPosition(Book book)
+        {
+            if (book.SeriesName.IsNotNullOrWhiteSpace())
+            {
+                return book.SeriesPosition;
+            }
+
+            return GetPrimarySeriesLink(book)?.Position;
+        }
+
+        private static SeriesBookLink GetPrimarySeriesLink(Book book)
+        {
+            return book.SeriesLinks?
+                .OrderBy(x => x.SeriesPosition)
+                .FirstOrDefault(x => x.Series?.Value?.Title.IsNotNullOrWhiteSpace() == true);
         }
 
         private IEnumerable<RetagBookFilePreview> GetPreviews(List<BookFile> files)
