@@ -74,9 +74,9 @@
     <Copyright>Copyright 2017-$([System.DateTime]::Now.ToString('yyyy')) chaptarr.com (GNU General Public v3)</Copyright>
 
     <!-- Chaptarr Development Version -->
-    <AssemblyVersion>0.9.964.0</AssemblyVersion>
-    <AssemblyFileVersion>0.9.964.0</AssemblyFileVersion>
-    <AssemblyInformationalVersion>0.9.964-chaptarr-dev</AssemblyInformationalVersion>
+    <AssemblyVersion>0.9.965.0</AssemblyVersion>
+    <AssemblyFileVersion>0.9.965.0</AssemblyFileVersion>
+    <AssemblyInformationalVersion>0.9.965-chaptarr-dev</AssemblyInformationalVersion>
     <AssemblyConfiguration>$(Configuration)-chaptarr-dev</AssemblyConfiguration>
     <NeutralLanguage>en</NeutralLanguage>
 
@@ -101,12 +101,8 @@
     <RootNamespace Condition="'$(ChaptarrProject)'=='true'">$(MSBuildProjectName.Replace('Chaptarr','NzbDrone'))</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(TestProject)'!='true'">
-    <!-- Annotates .NET assemblies with repository information including SHA -->
-    <!-- Sentry uses this to link directly to GitHub at the exact version/file/line -->
-    <!-- This is built-in on .NET 8 and can be removed once the project is updated -->
-    <PackageReference Include="Microsoft.SourceLink.GitHub" />
-  </ItemGroup>
+  <!-- Use the SDK's built-in Source Link; an explicit package overrides its serviced
+       Git tasks and can reintroduce vulnerable build tooling. -->
 
   <ItemGroup>
     <!-- Moderate advisory against Microsoft.Build.Tasks.Git with no fixed release yet
