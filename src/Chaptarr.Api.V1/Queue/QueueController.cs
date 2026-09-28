@@ -38,6 +38,7 @@ namespace Chaptarr.Api.V1.Queue
         private readonly IBlocklistService _blocklistService;
         private readonly IConversionTrackingService _conversionTrackingService;
         private readonly IConversionJobService _conversionJobService;
+        private readonly IDownloadImportModeResolver _downloadImportModeResolver;
 
         public QueueController(IBroadcastSignalRMessage broadcastSignalRMessage,
                            IQueueService queueService,
@@ -49,6 +50,7 @@ namespace Chaptarr.Api.V1.Queue
                            IProvideDownloadClient downloadClientProvider,
                            IBlocklistService blocklistService,
                            IConversionTrackingService conversionTrackingService,
+                           IDownloadImportModeResolver downloadImportModeResolver,
                            IConversionJobService conversionJobService = null)
             : base(broadcastSignalRMessage)
         {
@@ -61,6 +63,7 @@ namespace Chaptarr.Api.V1.Queue
             _blocklistService = blocklistService;
             _conversionTrackingService = conversionTrackingService;
             _conversionJobService = conversionJobService;
+            _downloadImportModeResolver = downloadImportModeResolver;
 
             // Get the first available quality profile instead of creating an empty one
             var profiles = qualityProfileService.All();
@@ -140,6 +143,12 @@ namespace Chaptarr.Api.V1.Queue
                 {
                     trackedToRemove.Add(trackedDownload);
                 }
+            }
+
+            // Validate the whole batch before removing anything, including pending releases.
+            foreach (var trackedDownload in trackedToRemove)
+            {
+                EnsureRemovalAllowed(trackedDownload, removeFromClient);
             }
 
             foreach (var pendingRelease in pendingToRemove.DistinctBy(p => p.Id))
@@ -311,6 +320,8 @@ namespace Chaptarr.Api.V1.Queue
 
         private TrackedDownload Remove(TrackedDownload trackedDownload, bool removeFromClient, bool blocklist, bool skipRedownload, bool changeCategory)
         {
+            EnsureRemovalAllowed(trackedDownload, removeFromClient);
+
             if (removeFromClient)
             {
                 var downloadClient = _downloadClientProvider.Get(trackedDownload.DownloadClient);
@@ -355,6 +366,19 @@ namespace Chaptarr.Api.V1.Queue
             }
 
             return trackedDownload;
+        }
+
+        private void EnsureRemovalAllowed(TrackedDownload trackedDownload, bool removeFromClient)
+        {
+            if (removeFromClient && _downloadImportModeResolver.ShouldPreserveDownloadClientItem(trackedDownload.DownloadItem))
+            {
+                throw new BadRequestException(new
+                {
+                    message = "This torrent is protected by the permanent seeding/download preservation policy. " +
+                              "Choose 'Ignore Download' (API: removeFromClient=false) to remove it from Chaptarr without deleting it from the client. " +
+                              "To delete the torrent and its files, remove it directly in your download client."
+                });
+            }
         }
 
         private TrackedDownload GetTrackedDownload(int queueId)
