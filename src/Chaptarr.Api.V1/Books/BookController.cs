@@ -2011,7 +2011,7 @@ namespace Chaptarr.Api.V1.Books
 
 	            try
 	            {
-	                var wantedBook = _bookService.AddWantedEdition(id, request.EditionId);
+	                var wantedBook = _bookService.AddWantedEdition(id, request.EditionId, request.AsNewVariant);
 	                EnsureBookCover(wantedBook.Id, "wantedEdition");
 
 	                if (request.SearchForNewBook)

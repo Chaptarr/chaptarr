@@ -150,7 +150,23 @@ namespace Chaptarr.Core.Test.Books
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
-            public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions)
+            {
+                foreach (var edition in editions ?? new List<Edition>())
+                {
+                    if (!_editionsByBookId.TryGetValue(edition.BookId, out var list))
+                    {
+                        continue;
+                    }
+
+                    var index = list.FindIndex(e => e.Id == edition.Id);
+                    if (index >= 0)
+                    {
+                        list[index] = edition;
+                    }
+                }
+            }
+
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
@@ -201,7 +217,13 @@ namespace Chaptarr.Core.Test.Books
             public int Count() => throw new NotImplementedException();
             public Book Find(int id) => throw new NotImplementedException();
             public Book Insert(Book model) => throw new NotImplementedException();
-            public Book Update(Book model) => throw new NotImplementedException();
+
+            public Book Update(Book model)
+            {
+                _booksById[model.Id] = model;
+                return model;
+            }
+
             public void SetFields(Book model, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void Delete(Book model) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
@@ -372,6 +394,142 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(wanted.Id, Is.Not.EqualTo(otherWanted.Id));
                 Assert.That(wanted.GoodreadsWorkId, Is.EqualTo(baseBook.GoodreadsWorkId));
             });
+        }
+
+        private static (BookService Sut, Book BaseBook, Edition First, Edition Second, InMemoryEditionService Editions) BuildTwoNarratorBook(
+            bool withFiles,
+            params Book[] additionalBooks)
+        {
+            var author = new Author { Id = 1, Name = "George Orwell" };
+
+            var firstEdition = new Edition
+            {
+                Id = 101,
+                BookId = 20,
+                Title = "1984",
+                ForeignEditionId = "edition-first",
+                ReadingFormatId = 2,
+                Narrator = "Stephen Fry",
+                NarratorNames = new List<string> { "Stephen Fry" },
+                Monitored = true
+            };
+
+            var secondEdition = new Edition
+            {
+                Id = 102,
+                BookId = 20,
+                Title = "1984",
+                ForeignEditionId = "edition-second",
+                ReadingFormatId = 2,
+                Narrator = "Andrew Wincott",
+                NarratorNames = new List<string> { "Andrew Wincott" }
+            };
+
+            var baseBook = new Book
+            {
+                Id = 20,
+                AuthorId = author.Id,
+                Title = "1984",
+                TitleSlug = "1984",
+                MediaType = BookMediaType.Audiobook,
+                GoodreadsWorkId = "gr:work-1984",
+                Editions = new List<Edition> { firstEdition, secondEdition }
+            };
+
+            var editions = new InMemoryEditionService();
+            editions.Seed(baseBook.Id, firstEdition, secondEdition);
+
+            var books = new List<Book> { baseBook };
+            books.AddRange(additionalBooks ?? Array.Empty<Book>());
+
+            var mediaFiles = new StubMediaFileService();
+            if (withFiles)
+            {
+                mediaFiles.FilesByBookId[baseBook.Id] = new List<BookFile> { new BookFile { Id = 1 } };
+            }
+
+            var sut = new BookService(
+                new InMemoryBookRepository(books.ToArray()),
+                editions,
+                new StubEventAggregator(),
+                new StubAuthorService(author),
+                mediaFiles,
+                rootFolderService: null,
+                seriesBookLinkRepository: null,
+                multiCopySeriesService: new StubMultiCopySeriesService(),
+                logger: LogManager.GetCurrentClassLogger());
+
+            return (sut, baseBook, firstEdition, secondEdition, editions);
+        }
+
+        [Test]
+        public void should_create_a_separate_variant_for_a_second_narrator_when_the_book_has_no_files()
+        {
+            var (sut, baseBook, _, secondEdition, _) = BuildTwoNarratorBook(withFiles: false);
+
+            var variant = sut.AddWantedEdition(baseBook.Id, secondEdition.Id, asNewVariant: true);
+
+            Assert.That(variant.Id, Is.Not.EqualTo(baseBook.Id));
+        }
+
+        [Test]
+        public void should_pin_in_place_without_creating_a_variant_when_not_requested()
+        {
+            var (sut, baseBook, _, secondEdition, _) = BuildTwoNarratorBook(withFiles: false);
+
+            var pinned = sut.AddWantedEdition(baseBook.Id, secondEdition.Id);
+
+            Assert.That(pinned.Id, Is.EqualTo(baseBook.Id));
+        }
+
+        [Test]
+        public void should_not_duplicate_the_base_book_when_it_already_wants_that_narrator()
+        {
+            var (sut, baseBook, _, secondEdition, _) = BuildTwoNarratorBook(withFiles: false);
+
+            // The book is already pinned to this narrator by an earlier in-place selection.
+            var pinned = sut.AddWantedEdition(baseBook.Id, secondEdition.Id);
+            Assume.That(pinned.Id, Is.EqualTo(baseBook.Id));
+
+            var variant = sut.AddWantedEdition(baseBook.Id, secondEdition.Id, asNewVariant: true);
+
+            Assert.That(variant.Id, Is.EqualTo(baseBook.Id));
+        }
+
+        [Test]
+        public void should_reuse_an_existing_variant_that_already_wants_the_same_narrator()
+        {
+            var existingVariant = new Book
+            {
+                Id = 21,
+                AuthorId = 1,
+                Title = "1984",
+                TitleSlug = "1984_wanted_earlier",
+                MediaType = BookMediaType.Audiobook,
+                GoodreadsWorkId = "gr:work-1984",
+                AddOptions = new AddBookOptions { AddType = BookAddType.Manual }
+            };
+
+            var (sut, baseBook, _, secondEdition, editions) = BuildTwoNarratorBook(withFiles: false, existingVariant);
+
+            // The existing variant is pinned to a *different* edition record that happens to have
+            // the same narrator, so provider-id dedup cannot catch it -- only narrator dedup can.
+            editions.Seed(existingVariant.Id, new Edition
+            {
+                Id = 201,
+                BookId = existingVariant.Id,
+                Title = "1984",
+                ForeignEditionId = "edition-other-printing",
+                ReadingFormatId = 2,
+                Narrator = secondEdition.Narrator,
+                NarratorNames = new List<string> { secondEdition.Narrator },
+                ManualAdd = true,
+                Monitored = true
+            });
+
+            var variant = sut.AddWantedEdition(baseBook.Id, secondEdition.Id, asNewVariant: true);
+
+            Assert.That(variant.Id, Is.EqualTo(existingVariant.Id));
         }
     }
 }
