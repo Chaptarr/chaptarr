@@ -39,6 +39,16 @@ namespace NzbDrone.Core.MediaFiles
         public bool ShouldCleanupReplicas { get; set; }
         public bool ShouldUpdateStoredAuthorPath { get; set; }
 
+        /// <summary>
+        /// True when the destination was chosen by the ebook colocation planner (i.e. the file is being
+        /// placed alongside an audiobook of the same work) rather than by the standard naming format.
+        /// This is the single source of truth for "this plan is a colocation": it selects the colocating
+        /// branch in <see cref="BookFileMovingService.MoveBookFile(BookFile, Author, BookFileMovePlan, RenameBatchContext)"/>,
+        /// and <see cref="ReplicaPaths"/> is populated only when it is set. Callers whose only mandate is
+        /// colocation must not move files when this is false.
+        /// </summary>
+        public bool ColocationApplied { get; set; }
+
         public static BookFileMovePlan Skipped(string reason)
         {
             return new BookFileMovePlan
@@ -166,7 +176,8 @@ namespace NzbDrone.Core.MediaFiles
                 DestinationPath = destinationPath,
                 ReplicaPaths = colocationPlan.Applies ? colocationPlan.ReplicaPaths : null,
                 ShouldCleanupReplicas = colocationPlan.ShouldCleanupReplicas,
-                ShouldUpdateStoredAuthorPath = moveToCanonicalAuthorFolder && !colocationPlan.Applies
+                ShouldUpdateStoredAuthorPath = moveToCanonicalAuthorFolder && !colocationPlan.Applies,
+                ColocationApplied = colocationPlan.Applies
             };
         }
 
@@ -184,7 +195,7 @@ namespace NzbDrone.Core.MediaFiles
                 throw new InvalidOperationException(plan.SkipReason);
             }
 
-            if (plan.ReplicaPaths != null)
+            if (plan.ColocationApplied)
             {
                 EnsureBookFolder(bookFile, author, edition.Book, plan.DestinationPath, plan.DestinationAuthorFolderPath);
                 _logger.Debug("Colocating ebook file: {0} to {1}", bookFile, plan.DestinationPath);

@@ -117,6 +117,17 @@ namespace NzbDrone.Core.MediaFiles
                             continue;
                         }
 
+                        // This handler exists solely to colocate ebooks with audiobooks. When the planner did not
+                        // produce a colocated destination (for example the ebook lives under a separate ebook-only
+                        // root, or that root has the feature disabled), the plan falls back to the plain naming
+                        // destination. Moving the file then would be a full re-organize of a file that was never
+                        // part of this import, so leave it where the user has it.
+                        if (!plan.ColocationApplied)
+                        {
+                            _logger.Debug("Skipping ebook colocation for {0}: no colocated destination applies for this file.", previousPath);
+                            continue;
+                        }
+
                         _bookFileMover.MoveBookFile(ebookFile, author, plan);
                         _mediaFileService.Update(ebookFile);
 
