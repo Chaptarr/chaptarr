@@ -373,9 +373,38 @@ namespace NzbDrone.Core.Books
 
             RefreshBookProviderAliases(newBook);
 
+            ApplyFormatSyncForNewBook(newBook);
+
             _eventAggregator.PublishEvent(new BookAddedEvent(newBook, doRefresh));
 
             return newBook;
+        }
+
+        // "Sync Monitored Across Formats" otherwise only reconciles when an EXISTING book's monitored
+        // flag changes (SetBookMonitored, SetMonitored, UpdateBook, UpdateMany). A book that arrives
+        // already monitored - every book request does, since it is created with monitored: true in
+        // the same call - never goes through any of those, so its sibling format is left behind even
+        // though the author is configured to sync. Treat the insert itself as "became monitored" by
+        // diffing against an unmonitored baseline, and run it through the same reconciliation.
+        private void ApplyFormatSyncForNewBook(Book newBook)
+        {
+            if (!newBook.IsMonitored())
+            {
+                return;
+            }
+
+            var priorState = CloneStoredBook(newBook);
+            priorState.AudiobookMonitored = false;
+            priorState.EbookMonitored = false;
+
+            var syncUpdates = GetSyncUpdatesForMutations(new List<Book> { newBook }, new Dictionary<int, Book> { { newBook.Id, priorState } });
+            if (!syncUpdates.Any())
+            {
+                return;
+            }
+
+            _bookRepository.UpdateMany(syncUpdates.Select(update => update.Book).ToList());
+            PublishBookEditedEvents(syncUpdates);
         }
 
         public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false)
