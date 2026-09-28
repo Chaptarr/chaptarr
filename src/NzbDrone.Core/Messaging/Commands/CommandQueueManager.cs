@@ -44,6 +44,7 @@ namespace NzbDrone.Core.Messaging.Commands
 
     public class CommandQueueManager : IManageCommandQueue, IHandle<ApplicationStartedEvent>
     {
+        private const string CancellingMessage = "Cancelling";
         private const string MaxManualQueueDepthEnvVar = "CHAPTARR_MAX_MANUAL_COMMAND_QUEUE";
         private const int DefaultMaxManualQueueDepth = 1000;
         private static readonly int MaxManualQueueDepth = GetMaxManualQueueDepth();
@@ -301,6 +302,13 @@ namespace NzbDrone.Core.Messaging.Commands
                 throw new NzbDroneClientException(HttpStatusCode.Conflict, "Cannot cancel a command that has already finished");
             }
 
+            if (command.Status == CommandStatus.Started && command.Message == CancellingMessage)
+            {
+                // Already asked to stop; the handler has not exited yet. Nothing more to do (and do not fall through
+                // to the Cancelled path below, which would hide the still-running handler).
+                return;
+            }
+
             // If queued, remove from the in-memory queue to prevent execution.
             if (command.Status == CommandStatus.Queued)
             {
@@ -308,11 +316,25 @@ namespace NzbDrone.Core.Messaging.Commands
             }
 
             // Best-effort: cancel running work if a token source exists.
+            var cancellationRequested = false;
             if (_cancellationTokenSources.TryRemove(id, out var cancellationTokenSource))
             {
+                cancellationRequested = true;
                 _logger.Info("Cancelling command with ID: {0}", id);
                 cancellationTokenSource.Cancel();
                 cancellationTokenSource.Dispose();
+            }
+
+            if (command.Status == CommandStatus.Started && cancellationRequested)
+            {
+                // The token has been signalled, but the handler is still running on its worker thread and only stops
+                // if it observes the token. Marking the command Cancelled here hid a thread that was still busy: the
+                // command left the started list and stopped counting toward disk access group limits while the handler
+                // kept going. Keep it Started until the executor sees the handler exit (OperationCanceledException ->
+                // Cancelled, or normal completion -> Completed).
+                SetMessage(command, CancellingMessage);
+                _logger.Info("Cancellation requested for running command with ID: {0}; it stays Started until its handler exits", id);
+                return;
             }
 
             if (command.Status == CommandStatus.Queued ||
