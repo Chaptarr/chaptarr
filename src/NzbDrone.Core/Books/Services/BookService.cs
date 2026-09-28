@@ -2022,10 +2022,10 @@ namespace NzbDrone.Core.Books
 
         public void DeleteMany(List<Book> books, bool deleteFiles)
         {
-            DeleteMany(books, deleteFiles, skipDiskCleanup: false);
+            DeleteMany(books, deleteFiles, partOfAuthorDelete: false);
         }
 
-        private void DeleteMany(List<Book> books, bool deleteFiles, bool skipDiskCleanup)
+        private void DeleteMany(List<Book> books, bool deleteFiles, bool partOfAuthorDelete)
         {
             var booksToDelete = (books ?? new List<Book>())
                 .Where(book => book != null)
@@ -2037,7 +2037,7 @@ namespace NzbDrone.Core.Books
 
             foreach (var book in booksToDelete)
             {
-                _eventAggregator.PublishEvent(new BookDeletedEvent(book, deleteFiles, false, skipDiskCleanup: skipDiskCleanup));
+                _eventAggregator.PublishEvent(new BookDeletedEvent(book, deleteFiles, false, partOfAuthorDelete: partOfAuthorDelete));
 
                 _providerAliasService?.DeleteAliases("Book", book.Id);
             }
@@ -2222,10 +2222,13 @@ namespace NzbDrone.Core.Books
             // Previously hardcoded to false here regardless of what the author-level delete actually
             // requested, so MediaFileService always unlinked (never deleted) each book's BookFile rows -
             // leaving them behind as "unmapped files" even when the physical files really were deleted.
-            // skipDiskCleanup: true because MediaFileDeletionService's own AuthorDeletedEvent handler
-            // already recursively deletes the author's whole folder(s) when DeleteFiles is set - a
-            // per-book disk delete here would just race that and duplicate recycle-bin entries.
-            DeleteMany(books, message.DeleteFiles, skipDiskCleanup: true);
+            // partOfAuthorDelete: true because MediaFileDeletionService's own AuthorDeletedEvent handler
+            // already recursively deletes the author's whole folder(s) when DeleteFiles is set (a
+            // per-book disk delete here would just race that and duplicate recycle-bin entries), and
+            // NotificationService already sends one OnAuthorDelete notification for the whole author -
+            // a per-book OnBookDelete on top of that is the "notification per episode when the whole
+            // series was deleted" noise Sonarr/Radarr deliberately don't send.
+            DeleteMany(books, message.DeleteFiles, partOfAuthorDelete: true);
         }
 
         public void Execute(BulkSyncFormatMonitoringCommand message)

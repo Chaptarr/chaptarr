@@ -451,8 +451,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         [Test]
         public void should_do_no_disk_work_on_book_delete_when_an_author_delete_already_covers_it()
         {
-            // A book delete published as part of a larger author delete (SkipDiskCleanup) relies on
-            // MediaFileDeletionService's own AuthorDeletedEvent handler to recursively remove the
+            // A book delete published as part of a larger author delete (PartOfAuthorDelete) relies
+            // on MediaFileDeletionService's own AuthorDeletedEvent handler to recursively remove the
             // whole author folder. Doing per-file work here too would race that and duplicate
             // recycle-bin entries for the same files.
             var author = new Author
@@ -498,7 +498,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
 
             Assert.DoesNotThrow(() =>
-                service.HandleAsync(new BookDeletedEvent(book, deleteFiles: true, addImportListExclusion: false, skipDiskCleanup: true)));
+                service.HandleAsync(new BookDeletedEvent(book, deleteFiles: true, addImportListExclusion: false, partOfAuthorDelete: true)));
 
             Assert.That(recycleBinProvider.DeletedFiles, Is.Empty);
         }

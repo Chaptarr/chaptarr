@@ -339,6 +339,15 @@ namespace NzbDrone.Core.Notifications
 
         public void Handle(BookDeletedEvent message)
         {
+            // A book delete published as part of a larger author delete already gets a single
+            // OnAuthorDelete notification for the whole author - sending OnBookDelete on top of that
+            // for every one of its books is the "one notification per episode when a whole series is
+            // deleted" noise Sonarr/Radarr deliberately don't send.
+            if (message.PartOfAuthorDelete)
+            {
+                return;
+            }
+
             var deleteMessage = new BookDeleteMessage(message.Book, message.DeleteFiles);
 
             foreach (var notification in _notificationFactory.OnBookDeleteEnabled())

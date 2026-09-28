@@ -105,8 +105,10 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(bookRepoProxy.DeletedBooks.Select(b => b.Id), Does.Contain(book.Id));
 
             // MediaFileDeletionService's own AuthorDeletedEvent handler already recursively deletes
-            // the author's whole folder(s) - a per-book disk delete here would just race it.
-            Assert.That(published.SkipDiskCleanup, Is.True);
+            // the author's whole folder(s), and NotificationService already sends one OnAuthorDelete
+            // notification for the whole author - a per-book disk delete or notification here would
+            // just duplicate both.
+            Assert.That(published.PartOfAuthorDelete, Is.True);
         }
 
         [Test]

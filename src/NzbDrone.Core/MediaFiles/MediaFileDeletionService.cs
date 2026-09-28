@@ -346,7 +346,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public void HandleAsync(BookDeletedEvent message)
         {
-            if (!message.DeleteFiles || message.SkipDiskCleanup)
+            if (!message.DeleteFiles || message.PartOfAuthorDelete)
             {
                 return;
             }
