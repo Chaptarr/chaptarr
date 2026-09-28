@@ -257,6 +257,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         {
             public List<ImportDecision<LocalBook>> Decisions { get; private set; } = new();
 
+            // chaptarr #184 test hook: lets a test simulate CheckExistingDestinationConflict finding
+            // (or not finding) an existing file at the computed destination, without needing a real
+            // IMediaFileService/IMoveBookFiles/disk setup just to exercise ManualImportService.MapItem.
+            public string ConflictReasonToReturn { get; set; }
+
             public List<ImportResult> Import(
                 List<ImportDecision<LocalBook>> decisions,
                 bool replaceExisting,
@@ -267,6 +272,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Decisions = decisions;
                 return new List<ImportResult>();
             }
+
+            public string CheckExistingDestinationConflict(LocalBook localBook, Book book, Author author) => ConflictReasonToReturn;
         }
 
         private class TrackedDownloadServiceProxy : DispatchProxy

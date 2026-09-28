@@ -3653,6 +3653,61 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return values?.Count > 0 ? values : null;
         }
 
+        // chaptarr #184: single-item version of the check GetAdditionalCopyPathCollisionReason does for
+        // a batch, exposed so the Manual Import preview (ManualImportService.MapItem) can warn about an
+        // existing-file conflict up front - previously this check only ever ran at actual-import time
+        // (inside Import(), via GetAdditionalCopyPathCollisionReason), so the preview showed a clean
+        // "Ready now (local)" status with no indication either Combine or Replace mode would collide with
+        // an already-imported file until the user clicked Import and it failed (or, worse, silently
+        // replaced a good file - see #184). Read-only: never mutates anything, safe to call for a preview.
+        public string CheckExistingDestinationConflict(LocalBook localBook, Book book, Author author)
+        {
+            if (localBook?.Edition == null || localBook.Quality == null)
+            {
+                return null;
+            }
+
+            author ??= localBook.Author;
+            book ??= localBook.Book;
+
+            if (author == null || book == null)
+            {
+                return null;
+            }
+
+            localBook.Author ??= author;
+            localBook.Book ??= book;
+            localBook.Edition.Book ??= book;
+
+            var previewBookFile = new BookFile
+            {
+                Path = localBook.Path.CleanFilePath(),
+                Quality = localBook.Quality,
+                EditionId = localBook.Edition.Id,
+                Edition = localBook.Edition,
+                Author = author,
+                Part = localBook.Part,
+                PartCount = localBook.PartCount,
+                MediaType = BookFile.DetermineMediaType(localBook.Quality)
+            };
+
+            var destinationPath = _bookFileMover.GetImportDestinationPath(previewBookFile, localBook);
+            if (destinationPath.IsNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            var existingTracked = _mediaFileService.GetFileWithPath(destinationPath);
+            var destinationExists = DestinationFileExists(destinationPath);
+
+            if (destinationExists && (existingTracked == null || existingTracked.Path.PathNotEquals(localBook.Path)))
+            {
+                return $"An existing file is already imported at the managed destination: {destinationPath}. Combine mode will add this as an additional copy; Replace mode will overwrite it.";
+            }
+
+            return null;
+        }
+
         private string GetAdditionalCopyPathCollisionReason(List<ImportDecision<LocalBook>> bookDecisions, Book book, Author author)
         {
             var plannedDestinations = new List<string>();

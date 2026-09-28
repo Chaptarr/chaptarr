@@ -510,7 +510,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             item.Quality = decision.Item.Quality;
             item.IndexerFlags = (int)decision.Item.IndexerFlags;
             item.Size = fileInfo.Length;
-            item.Rejections = decision.Rejections;
+
+            var rejections = decision.Rejections?.ToList() ?? new List<Rejection>();
+
+            // chaptarr #184: the preview never checked for an existing-file conflict at the computed
+            // destination in either Combine or Replace mode, so a book that's already imported (under a
+            // different download) showed a clean "Ready now (local)" status with no warning - see
+            // ImportApprovedBooks.CheckExistingDestinationConflict for why this needs the same check the
+            // real import runs, not a re-derived one. Warning-severity (CanBypass) - informational only,
+            // doesn't block either mode, matches how other *arr apps surface this in Manual Import.
+            var conflictReason = _importApprovedBooks?.CheckExistingDestinationConflict(decision.Item, decision.Item.Book, decision.Item.Author);
+            if (conflictReason.IsNotNullOrWhiteSpace())
+            {
+                rejections.Add(new Rejection(conflictReason, RejectionType.Temporary));
+            }
+
+            item.Rejections = rejections;
             item.Tags = decision.Item.RawTags?.AllTags ?? new Dictionary<string, List<string>>();
             item.AdditionalFile = decision.Item.AdditionalFile;
             item.ReplaceExistingFiles = replaceExistingFiles;
