@@ -10,21 +10,16 @@ on:
       branch:
         required: true
         type: string
-    secrets:
-      DOCKER_USERNAME:
-        required: true
-      DOCKER_PASSWORD:
-        required: true
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAMES: robertlordhood/chaptarr chaptarr/chaptarr
+  REGISTRY: ghcr.io
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
 
     steps:
     - name: Checkout repository
@@ -50,12 +45,12 @@ jobs:
           exit 1
         fi
 
-    - name: Log in to Docker Hub
+    - name: Log in to GitHub Container Registry
       uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
       with:
         registry: ${{ env.REGISTRY }}
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
 
     - name: Generate Docker tags
       id: docker-tags
@@ -75,24 +70,22 @@ jobs:
 
         tags=()
 
-        for name in ${IMAGE_NAMES}; do
-          image="${REGISTRY}/${name}"
+        image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
 
-          if [[ "$branch" == "main" || "$branch" == "develop" ]]; then
-            tags+=("$image:$branch")
-          fi
+        if [[ "$branch" == "main" || "$branch" == "develop" ]]; then
+          tags+=("$image:$branch")
+        fi
 
-          if [[ "$branch" == "main" ]]; then
-            tags+=("$image:latest")
-          fi
+        if [[ "$branch" == "main" ]]; then
+          tags+=("$image:latest")
+        fi
 
-          # Exact versions only. No rolling major/minor tags: every Chaptarr release
-          # so far is 0.9.x, so a ":0.9" tag would just be a second "latest" that
-          # also tracks develop. Users pin main, develop, or an exact version.
-          while IFS= read -r tag; do
-            tags+=("$image:${tag#v}")
-          done < <(git tag --points-at "$sha" 'v*' | sort -V)
-        done
+        # Exact versions only. No rolling major/minor tags: every Chaptarr release
+        # so far is 0.9.x, so a ":0.9" tag would just be a second "latest" that
+        # also tracks develop. Users pin main, develop, or an exact version.
+        while IFS= read -r tag; do
+          tags+=("$image:${tag#v}")
+        done < <(git tag --points-at "$sha" 'v*' | sort -V)
 
         if [[ "${#tags[@]}" -eq 0 ]]; then
           echo "No Docker tags generated for $sha; skipping publish."

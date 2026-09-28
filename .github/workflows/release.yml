@@ -25,18 +25,6 @@ jobs:
           exit 1
         fi
 
-    - name: Require Docker credentials
-      shell: bash
-      env:
-        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-      run: |
-        set -euo pipefail
-        if [[ -z "$DOCKER_USERNAME" || -z "$DOCKER_PASSWORD" ]]; then
-          echo "Docker credentials are required before a release can start."
-          exit 1
-        fi
-
   validate:
     needs: preflight
     uses: ./.github/workflows/build.yml
@@ -50,6 +38,7 @@ jobs:
       contents: write
     outputs:
       sha: ${{ steps.head.outputs.sha }}
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -73,6 +62,17 @@ jobs:
 
     - name: Guard - tag matches versions
       run: python3 build-tools/version_guard.py release-tag --tag "${{ steps.tag.outputs.tag }}"
+
+    - name: Guard - curated fork release notes exist
+      env:
+        TAG: ${{ steps.tag.outputs.tag }}
+      run: |
+        NOTES="release-notes/${TAG}.md"
+        if [[ ! -s "$NOTES" ]]; then
+          echo "Missing curated release notes: $NOTES"
+          echo "Add this file before running the release so inherited upstream history is not presented as fork changes."
+          exit 1
+        fi
 
     - name: Guard - selected branch has not advanced
       shell: bash
@@ -119,13 +119,20 @@ jobs:
           echo "Tag $TAG already on this commit."
         fi
 
-    - name: Create or promote the release
+    - name: Create draft release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       shell: bash
       run: |
         set -euo pipefail
         TAG="${{ steps.tag.outputs.tag }}"
+        NOTES="release-notes/${TAG}.md"
+
+        if [[ ! -s "$NOTES" ]]; then
+          echo "Missing curated release notes: $NOTES"
+          echo "Add this file before running the release so inherited upstream history is not shown as fork changes."
+          exit 1
+        fi
 
         # develop stays pre-release; main is the stable channel.
         if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -135,12 +142,7 @@ jobs:
         fi
 
         if gh release view "$TAG" >/dev/null 2>&1; then
-          if [[ -z "$PRERELEASE_FLAG" ]]; then
-            echo "Promoting $TAG to stable."
-            gh release edit "$TAG" --prerelease=false --latest
-          else
-            echo "Release $TAG already exists."
-          fi
+          echo "Release $TAG already exists; the post-image job will publish it after GHCR succeeds."
           exit 0
         fi
 
@@ -148,7 +150,8 @@ jobs:
         # the supported install.
         gh release create "$TAG" \
           --title "Chaptarr $TAG" \
-          --generate-notes \
+          --notes-file "$NOTES" \
+          --draft \
           --verify-tag \
           ${PRERELEASE_FLAG}
 
@@ -156,7 +159,34 @@ jobs:
   docker:
     needs: release
     uses: ./.github/workflows/docker-publish.yml
+    permissions:
+      contents: read
+      packages: write
     with:
       sha: ${{ needs.release.outputs.sha }}
       branch: ${{ github.ref_name }}
-    secrets: inherit
+
+  publish-release:
+    needs: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        persist-credentials: false
+
+    - name: Publish verified draft
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ needs.release.outputs.tag }}
+        BRANCH: ${{ github.ref_name }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        NOTES="release-notes/${TAG}.md"
+        if [[ "$BRANCH" == "main" ]]; then
+          gh release edit "$TAG" --notes-file "$NOTES" --draft=false --prerelease=false --latest
+        else
+          gh release edit "$TAG" --notes-file "$NOTES" --draft=false --prerelease
+        fi
