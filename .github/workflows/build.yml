@@ -68,8 +68,13 @@ jobs:
           COMPARE_REF="$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)"
 
           if [[ -z "$COMPARE_REF" ]]; then
-            echo "No reachable version tag is available for monotonic version comparison."
-            exit 1
+            if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              COMPARE_REF="HEAD^"
+              echo "No ChaptarrNG release tag exists yet; comparing against the parent commit for the initial fork release."
+            else
+              echo "No reachable version tag or parent commit is available for monotonic version comparison."
+              exit 1
+            fi
           fi
         fi
 
