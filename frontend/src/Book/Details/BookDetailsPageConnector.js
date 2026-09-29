@@ -104,6 +104,8 @@ class BookDetailsPageConnector extends Component {
     super(props);
     this.state = { hasMounted: false };
     this._lastSiblingFetchKey = null;
+    this._lastBookFetchKey = null;
+    this._lastAuthorFetchKey = null;
   }
   //
   // Lifecycle
@@ -141,7 +143,16 @@ class BookDetailsPageConnector extends Component {
       siblingCount
     } = this.props;
 
-    if (needsBookFetch && routeBookKey) {
+    // Fetch each book (and author) at most once per route. When the book does not exist the server
+    // answers 404, the fetch fails and `isFetching` drops back to false while the book is still
+    // missing, so `needsBookFetch` flips false -> true again and componentDidUpdate calls populate()
+    // again: an endless loop of failing requests with the spinner up most of the time, and the
+    // "cannot be found" screen below never gets to render.
+    const bookFetchKey = `${routeBookKey}|${scopedMediaType || ''}`;
+
+    if (needsBookFetch && routeBookKey && this._lastBookFetchKey !== bookFetchKey) {
+      this._lastBookFetchKey = bookFetchKey;
+
       // Fetch the specific book data. bookId may be either the local numeric id
       // or a Readarr-compatible titleSlug from an external service link.
       const fetchParams = { bookId: routeBookKey.toString() };
@@ -153,7 +164,9 @@ class BookDetailsPageConnector extends Component {
       this.props.fetchBooks(fetchParams);
     }
 
-    if (needsAuthorFetch && authorId) {
+    if (needsAuthorFetch && authorId && this._lastAuthorFetchKey !== authorId) {
+      this._lastAuthorFetchKey = authorId;
+
       // Fetch the author data
       this.props.fetchAuthor({ id: authorId });
     }
