@@ -70,6 +70,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         private class MediaFileRepositoryProxy : DispatchProxy
         {
             public List<BookFile> DeletedMany { get; } = new List<BookFile>();
+            public List<int> DeletedIds { get; } = new List<int>();
             public List<BookFile> ReplacementAdditions { get; } = new List<BookFile>();
             public List<BookFile> ReplacementRemovals { get; } = new List<BookFile>();
             public BookFile DeletedSingle { get; private set; }
@@ -87,6 +88,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                         return null;
 
                     case nameof(IMediaFileRepository.DeleteMany):
+                        if (args[0] is IEnumerable<int> deletedIds)
+                        {
+                            DeletedIds.AddRange(deletedIds);
+                            return null;
+                        }
+
                         DeletedMany.Clear();
                         DeletedMany.AddRange((IEnumerable<BookFile>)args[0]);
                         return null;
@@ -322,6 +329,48 @@ namespace Chaptarr.Core.Test.MediaFiles
             sut.HandleAsync(new BookDeletedEvent(book, deleteFiles: false, addImportListExclusion: false));
 
             Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { "/books/books/Test Author/Test Book/Test Book.m4b" }));
+        }
+        [Test]
+        public void book_delete_with_delete_files_should_delete_snapshot_rows_that_editions_already_unlinked()
+        {
+            var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
+            var repoProxy = (MediaFileRepositoryProxy)(object)repo;
+            var sut = new MediaFileService(repo, new RecordingEventAggregator(), new RecordingIngestQueueRepository(), LogManager.GetLogger("test"));
+
+            // EditionDeletedEvent has already unlinked these (EditionId = 0) by the time the async handler runs.
+            var book = new Book
+            {
+                Id = 10,
+                Title = "Test Book",
+                BookFiles = new List<BookFile>
+                {
+                    new BookFile { Id = 1, Path = "/books/books/Test Author/Test Book/a.mp3", EditionId = 0 },
+                    new BookFile { Id = 2, Path = "/books/books/Test Author/Test Book/b.mp3", EditionId = 0 }
+                }
+            };
+
+            sut.HandleAsync(new BookDeletedEvent(book, deleteFiles: true, addImportListExclusion: false));
+
+            Assert.That(repoProxy.DeletedIds, Is.EquivalentTo(new[] { 1, 2 }), "rows must be deleted by id, not left behind as unmapped");
+        }
+
+        [Test]
+        public void book_delete_without_delete_files_should_not_delete_any_rows()
+        {
+            var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
+            var repoProxy = (MediaFileRepositoryProxy)(object)repo;
+            var sut = new MediaFileService(repo, new RecordingEventAggregator(), new RecordingIngestQueueRepository(), LogManager.GetLogger("test"));
+
+            var book = new Book
+            {
+                Id = 10,
+                Title = "Test Book",
+                BookFiles = new List<BookFile> { new BookFile { Id = 1, Path = "/books/books/Test Author/Test Book/a.mp3", EditionId = 0 } }
+            };
+
+            sut.HandleAsync(new BookDeletedEvent(book, deleteFiles: false, addImportListExclusion: false));
+
+            Assert.That(repoProxy.DeletedIds, Is.Empty, "keeping files means keeping their (unmapped) rows");
         }
     }
 }

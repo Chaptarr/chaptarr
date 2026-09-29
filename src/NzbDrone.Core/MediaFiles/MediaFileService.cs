@@ -503,6 +503,23 @@ namespace NzbDrone.Core.MediaFiles
 
             if (message.DeleteFiles)
             {
+                // A book's editions are deleted synchronously while BookDeletedEvent is being published
+                // (EditionService), and Handle(EditionDeletedEvent) unlinks their files (EditionId = 0)
+                // before this async handler runs - so a lookup by book/edition no longer finds them and
+                // DeleteFilesByBook alone leaves the rows behind as "unmapped" files even though the user
+                // asked to delete files. Delete the rows captured in the event's snapshot by id, and keep
+                // the by-book delete for any row linked after the snapshot was taken.
+                var snapshotIds = (bookFiles ?? new List<BookFile>())
+                    .Where(file => file != null && file.Id > 0)
+                    .Select(file => file.Id)
+                    .Distinct()
+                    .ToList();
+
+                if (snapshotIds.Any())
+                {
+                    _mediaFileRepository.DeleteMany(snapshotIds);
+                }
+
                 _mediaFileRepository.DeleteFilesByBook(message.Book.Id);
             }
             else
