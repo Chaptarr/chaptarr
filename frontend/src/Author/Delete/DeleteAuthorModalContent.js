@@ -63,15 +63,17 @@ class DeleteAuthorModalContent extends Component {
     const {
       authorName,
       path,
-      audiobookPath,
-      ebookPath,
+      audiobookFolder,
+      ebookFolder,
       statistics,
       onModalClose
     } = this.props;
 
     // An author can have a separate audiobook and ebook folder (plus the legacy single path). Deleting
     // with "delete files" removes all of them, so list every distinct one instead of only `path`.
-    const paths = [path, audiobookPath, ebookPath]
+    // The API exposes the format folders as audiobookFolder / ebookFolder (AuthorResource) - not
+    // audiobookPath / ebookPath, which are null on the resource.
+    const paths = [path, audiobookFolder, ebookFolder]
       .filter((folder) => !!folder && folder.trim() !== '')
       .filter((folder, index, all) => all.indexOf(folder) === index);
 
@@ -201,8 +203,8 @@ class DeleteAuthorModalContent extends Component {
 DeleteAuthorModalContent.propTypes = {
   authorName: PropTypes.string.isRequired,
   path: PropTypes.string.isRequired,
-  audiobookPath: PropTypes.string,
-  ebookPath: PropTypes.string,
+  audiobookFolder: PropTypes.string,
+  ebookFolder: PropTypes.string,
   statistics: PropTypes.object.isRequired,
   onDeletePress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
