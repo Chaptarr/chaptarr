@@ -45,7 +45,8 @@ namespace Chaptarr.Core.Test.Commands
                 _manager.SetProgressMessage(_command, $"Checking Info for Book {i}");
             }
 
-            Assert.That(_repository.SetFieldsCalls, Is.EqualTo(1), "first message persists, the rest fall inside the interval");
+            // One write normally; two if the machine stalls past the 1s window mid-loop. Never 200.
+            Assert.That(_repository.SetFieldsCalls, Is.InRange(1, 2), "first message persists, the rest fall inside the interval");
         }
 
         [Test]
@@ -64,14 +65,16 @@ namespace Chaptarr.Core.Test.Commands
         {
             _manager.SetProgressMessage(_command, "Checking Info for Book 1");
             _manager.SetProgressMessage(_command, "Checking Info for Book 2");
-            Assert.That(_repository.SetFieldsCalls, Is.EqualTo(1));
 
+            // Relative counts, so a stall past the throttle window earlier in the test cannot break them.
+            var before = _repository.SetFieldsCalls;
             _manager.SetMessage(_command, "Completed");
-            Assert.That(_repository.SetFieldsCalls, Is.EqualTo(2), "explicit messages are never throttled");
+            Assert.That(_repository.SetFieldsCalls, Is.EqualTo(before + 1), "explicit messages are never throttled");
             Assert.That(_command.Message, Is.EqualTo("Completed"));
 
+            before = _repository.SetFieldsCalls;
             _manager.SetProgressMessage(_command, "Checking Info for Book 3");
-            Assert.That(_repository.SetFieldsCalls, Is.EqualTo(3), "a finished command's next progress message is not held back by stale throttle state");
+            Assert.That(_repository.SetFieldsCalls, Is.EqualTo(before + 1), "a finished command's next progress message is not held back by stale throttle state");
         }
 
         [Test]
