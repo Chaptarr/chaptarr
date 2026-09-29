@@ -12,6 +12,7 @@ import translate from 'Utilities/String/translate';
 import { showMessage } from './appActions';
 import { set, update, updateItem } from './baseActions';
 import { fetchBooks } from './bookActions';
+import { fetchCommands } from './commandActions';
 import createHandleActions from './Creators/createHandleActions';
 import createRemoveItemHandler from './Creators/createRemoveItemHandler';
 import createSaveProviderHandler from './Creators/createSaveProviderHandler';
@@ -356,6 +357,11 @@ export const actionHandlers = handleThunks({
         type: 'info',
         hideAfter: 15
       }));
+
+      // The server publishes no update when a command is only queued (the first push to the client is
+      // when it starts), and the 202 response has no body, so pull the command list once now: that puts
+      // the queued DeleteAuthor command in the store and lets the author page show its "queued" banner.
+      dispatch(fetchCommands());
     }
   }),
 
