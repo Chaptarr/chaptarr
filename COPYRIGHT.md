@@ -1,13 +1,13 @@
-# Copyright & Attribution
+# ChaptarrNG Copyright & Attribution
 
-Chaptarr is free software, licensed under the **GNU General Public License, version 3**.
-See the [LICENSE](LICENSE) file for the full license text. If you found and ran Chaptarr
-from Docker Hub and would like a copy of the source code as required by this license,
-please reach out on [Discord](https://discord.gg/nqFGsGUug2) and it will be sent to you.
+ChaptarrNG is free software, licensed under the **GNU General Public License, version 3**.
+See the [LICENSE](LICENSE) file for the full license text. Source code for the
+maintained fork is published in this repository.
 
 ## Copyright
 
-- Copyright © 2026 Chaptarr contributors.
+- Copyright © 2026 Snapetech and SeerrNG contributors for ChaptarrNG fork-specific changes.
+- Copyright © 2026 Chaptarr contributors for inherited Chaptarr changes.
 - Portions copyright © 2010–2026 the Servarr team and contributors.
 
 Upstream copyright notices are preserved throughout the source code in accordance
@@ -15,32 +15,33 @@ with the GPL.
 
 ## Lineage & Attribution
 
-Chaptarr is a fork of [Readarr](https://github.com/Readarr/Readarr), an eBook and
-audiobook manager that is part of the [Servarr](https://wiki.servarr.com/) project
-family. Readarr is built on the shared codebase behind
+ChaptarrNG is a fork of [Chaptarr](https://github.com/Chaptarr/chaptarr), which
+is itself a fork of [Readarr](https://github.com/Readarr/Readarr), an eBook and
+audiobook manager from the [Servarr](https://wiki.servarr.com/) project family.
+Readarr is built on the shared codebase behind
 [Sonarr](https://github.com/Sonarr/Sonarr),
 [Radarr](https://github.com/Radarr/Radarr),
 [Lidarr](https://github.com/Lidarr/Lidarr), and
 [Prowlarr](https://github.com/Prowlarr/Prowlarr).
 
-Chaptarr would not exist without the years of work the Servarr team and their
-contributors put into those projects. We are grateful for it.
+ChaptarrNG would not exist without the work by Chaptarr, Readarr, and the
+Servarr team and contributors. We are grateful for it.
 
 ## Not Affiliated With Servarr
 
-Chaptarr is an independent, community-run project. It is **not affiliated with,
+ChaptarrNG is independently maintained. It is **not affiliated with,
 endorsed by, or supported by** the Servarr team or the Readarr, Sonarr, Radarr,
-Lidarr, or Prowlarr projects. Please direct Chaptarr questions and support requests
-to the Chaptarr project — not to them.
+Lidarr, or Prowlarr projects. Please direct ChaptarrNG support requests to
+this repository.
 
 ## AI Development Disclosure
 
-Chaptarr is developed and maintained with the assistance of AI tools.
+ChaptarrNG is developed and maintained with the assistance of AI tools.
 
 ## Third-Party Components
 
-Chaptarr's optional audiobook conversion shells out to external tools that are
-bundled in the **official Chaptarr Docker image** — they are not part of this
+ChaptarrNG's optional audiobook conversion shells out to external tools that are
+bundled in the **ChaptarrNG Docker image** — they are not part of this
 source tree. Each remains under its own license:
 
 | Component | License | Source |

@@ -20,9 +20,9 @@ namespace NzbDrone.Core.Update
 
     public class GitHubUpdatePackageProvider : IGitHubUpdatePackageProvider
     {
-        // Default to the Chaptarr repository
+        // Default to the Snapetech-maintained ChaptarrNG repository
         private const string DefaultOwner = "snapetech";
-        private const string DefaultRepo = "chaptarr";
+        private const string DefaultRepo = "chaptarrng";
         private static readonly string[] Sha256AssetSuffixes = { ".sha256", ".sha256sum", ".sha256.txt", ".sha256sums", ".sha256sums.txt" };
 
         private readonly IHttpClient _httpClient;

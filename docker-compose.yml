@@ -1,7 +1,7 @@
 services:
-  chaptarr:
-    image: ghcr.io/snapetech/chaptarr:latest
-    container_name: chaptarr
+  chaptarrng:
+    image: ghcr.io/snapetech/chaptarrng:latest
+    container_name: chaptarrng
     environment:
       - PUID=1000
       - PGID=1000

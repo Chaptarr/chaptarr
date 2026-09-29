@@ -62,7 +62,7 @@ Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement via a private channel:
 
 - Direct message the moderators on Discord: https://discord.gg/nqFGsGUug2
-- Or email team@chaptarr.com
+- Or email seerrng@proton.me
 
 All complaints will be reviewed and investigated promptly and fairly.
 

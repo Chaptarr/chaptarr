@@ -18,7 +18,7 @@ class MoreInfo extends Component {
           {/* No Home Page entry: chaptarr.com does not serve a site yet; re-add if a landing page ships. */}
           <DescriptionListItemTitle>{translate('Wiki')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://wiki.chaptarr.com">{translate('Wiki')}</Link>
+            <Link to="https://github.com/snapetech/chaptarrng#documentation">{translate('Wiki')}</Link>
           </DescriptionListItemDescription>
 
           {/* No Reddit entry: r/chaptarr is already taken and not affiliated with Chaptarr, and no official subreddit is planned. */}
@@ -30,12 +30,12 @@ class MoreInfo extends Component {
 
           <DescriptionListItemTitle>{translate('Source')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/snapetech/chaptarr">{'github.com/snapetech/chaptarr'}</Link>
+            <Link to="https://github.com/snapetech/chaptarrng">{'github.com/snapetech/chaptarrng'}</Link>
           </DescriptionListItemDescription>
 
           <DescriptionListItemTitle>{translate('FeatureRequests')}</DescriptionListItemTitle>
           <DescriptionListItemDescription>
-            <Link to="https://github.com/snapetech/chaptarr/issues">{'github.com/snapetech/chaptarr/issues'}</Link>
+            <Link to="https://github.com/snapetech/chaptarrng/issues">{'github.com/snapetech/chaptarrng/issues'}</Link>
           </DescriptionListItemDescription>
 
         </DescriptionList>

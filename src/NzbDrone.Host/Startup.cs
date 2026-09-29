@@ -112,7 +112,7 @@ namespace NzbDrone.Host
                     License = new OpenApiLicense
                     {
                         Name = "GPL-3.0-only",
-                        Url = new Uri("https://github.com/snapetech/chaptarr/blob/main/LICENSE")
+                        Url = new Uri("https://github.com/snapetech/chaptarrng/blob/main/LICENSE")
                     }
                 });
                 c.EnableAnnotations();

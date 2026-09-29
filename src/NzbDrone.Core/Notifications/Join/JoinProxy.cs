@@ -93,8 +93,8 @@ namespace NzbDrone.Core.Notifications.Join
             var request = requestBuilder.AddQueryParam("apikey", settings.ApiKey)
                           .AddQueryParam("title", title)
                           .AddQueryParam("text", message)
-                          .AddQueryParam("icon", "https://raw.githubusercontent.com/snapetech/chaptarr/main/Logo/256.png") // Use the Chaptarr logo.
-                          .AddQueryParam("smallicon", "https://raw.githubusercontent.com/snapetech/chaptarr/main/Logo/96-Outline-White.png") // 96x96px with outline at 88x88px on a transparent background.
+                          .AddQueryParam("icon", "https://raw.githubusercontent.com/snapetech/chaptarrng/main/Logo/256.png") // Use the ChaptarrNG logo.
+                          .AddQueryParam("smallicon", "https://raw.githubusercontent.com/snapetech/chaptarrng/main/Logo/96-Outline-White.png") // 96x96px with outline at 88x88px on a transparent background.
                           .AddQueryParam("priority", settings.Priority)
                           .Build();
 

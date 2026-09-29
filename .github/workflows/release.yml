@@ -141,7 +141,7 @@ jobs:
         # Native zips stay suppressed until they pass the viability gates. Docker is
         # the supported install.
         gh release create "$TAG" \
-          --title "Chaptarr $TAG" \
+          --title "ChaptarrNG $TAG" \
           --notes-file "$NOTES" \
           --draft \
           --verify-tag

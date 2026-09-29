@@ -1,25 +1,38 @@
 <div align="center">
 
-<img src="Logo/chaptarr.png" width="160" alt="Chaptarr logo">
+<img src="Logo/chaptarr.png" width="160" alt="ChaptarrNG logo">
 
-# Chaptarr
+# ChaptarrNG
 
-A book collection manager for audiobooks and eBooks.
+A Snapetech-maintained Chaptarr fork for audiobook and eBook libraries.
 
-[![Discord](https://img.shields.io/discord/1376676460647022752?logo=discord&logoColor=white&label=Discord)](https://discord.gg/G9ZbgWS5rp)
-[![License](https://img.shields.io/github/license/snapetech/chaptarr)](https://github.com/snapetech/chaptarr/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/snapetech/chaptarrng)](https://github.com/snapetech/chaptarrng/blob/main/LICENSE)
 
 </div>
 
-<div align="center"><a href='https://ko-fi.com/chaptarr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a></div>
+<div align="center"><a href='https://ko-fi.com/snapetech' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Support Snapetech on Ko-fi' /></a></div>
 
-> **Chaptarr is beta software.** It is under active development. Bugs are likely; breaking changes less so, but still possible. Full disclosure: the last data loss event was in pre-alpha, with a tester group of roughly 30 people, about 12 months ago. Over the last 6 months we've grown past 11,000 active users with no reported data loss events. Still, follow good backup practice and avoid pointing it at a library you can't afford to lose.
+> **ChaptarrNG is beta software.** It is under active development, and breaking changes are possible. Keep regular backups and avoid pointing it at a library you cannot afford to lose.
 
-## What is Chaptarr?
+## What is ChaptarrNG?
 
-Chaptarr is a Readarr fork built to accommodate audiobook and eBook libraries in one instance. It helps you organize and maintain a collection of books with rich metadata, including narrator and edition information that many general-purpose media managers struggle to track, or don't try to at all.
+ChaptarrNG is Snapetech's maintained fork of [Chaptarr](https://github.com/Chaptarr/chaptarr), which is itself an independent Readarr-derived audiobook and eBook library manager. ChaptarrNG keeps that standalone library-management experience while maintaining the request and format APIs used by SeerrNG.
 
-Chaptarr is an independent project. It is **not affiliated with the Servarr team** or the Readarr, Sonarr, Radarr, Lidarr, or Prowlarr projects.
+We forked Chaptarr so SeerrNG can rely on a book backend with explicit ebook/audiobook routing and durable handling for imports that Chaptarr queues while preparing author metadata. Maintaining the API contract here lets SeerrNG track a request through that asynchronous work without depending on upstream changes landing first. ChaptarrNG runs on its own and does not require SeerrNG.
+
+The application continues to identify itself as `Chaptarr` through its Readarr-compatible API so SeerrNG can detect it. **ChaptarrNG** is the name of this maintained repository, its container image, and its Unraid template.
+
+ChaptarrNG is independently maintained and is not affiliated with the Servarr team or the Readarr, Sonarr, Radarr, Lidarr, or Prowlarr projects.
+
+### What makes this fork different
+
+- **Format-scoped requests and monitoring:** SeerrNG can configure one service for ebooks and another for audiobooks, both pointing to one ChaptarrNG instance. Adds, lookups, and monitoring preserve the selected format and book.
+- **Durable pending imports:** When author metadata preparation delays an add, the API returns a pending import ID and supports reading, retrying, and cancelling that work. SeerrNG can keep a request waiting and resume it after the import completes.
+- **Safe shared-request handling:** Retry and cancellation are fenced against concurrent work, so cancelling one SeerrNG request does not cancel a pending import still used by another request.
+- **Provider-aware compatibility:** The fork preserves the requested media type through scoped lookups and exposes the API behavior SeerrNG needs to retain provider work and edition IDs.
+- **Fork-owned releases:** Stable releases and GHCR images are built from `main` with curated fork release notes, so the maintained API changes ship together as a versioned image.
+
+See the [SeerrNG Bookshelf backend guide](https://github.com/snapetech/seerrng/blob/main/docs/using-seerr/bookshelf-backend.md) for setup and the integration contract.
 
 ## Key Features
 
@@ -46,23 +59,23 @@ Chaptarr is an independent project. It is **not affiliated with the Servarr team
 
 ## Metadata
 
-Chaptarr is not compatible with Readarr's metadata sources. It uses its own modular pipeline that resolves entities across metadata providers and aggregates their data through automated refinement and consensus. As anyone in the book metadata space would expect, this is an ongoing effort to deliver the best, most accurate data possible. It is the core of our mission.
+ChaptarrNG is not compatible with Readarr's metadata sources. It uses Chaptarr's modular pipeline to resolve entities across metadata providers and aggregate their data through automated refinement and consensus. Metadata work remains an ongoing effort.
 
 ## Getting Started
 
-> **Docker is currently the only supported way to run Chaptarr.** Chaptarr is developed and tested in Docker. Releases do not include native install packages; earlier zip attachments were incomplete build artifacts and have been withdrawn. Native support (starting with an experimental Windows build) is being worked on.
+> **Docker is currently the only supported way to run ChaptarrNG.** The fork is developed and tested in Docker. Releases do not include native install packages; native support is not currently offered.
 
 ### Docker
 
 Pull the image:
 ```bash
-docker pull ghcr.io/snapetech/chaptarr:latest
+docker pull ghcr.io/snapetech/chaptarrng:latest
 ```
 
 Run with Docker:
 ```bash
 docker run -d \
-  --name chaptarr \
+  --name chaptarrng \
   -p 8789:8789 \
   -e PUID=1000 \
   -e PGID=1000 \
@@ -71,21 +84,21 @@ docker run -d \
   -v /path/to/ebooks:/ebooks \
   -v /path/to/downloads:/downloads \
   --restart unless-stopped \
-  ghcr.io/snapetech/chaptarr:latest
+  ghcr.io/snapetech/chaptarrng:latest
 ```
 
-Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarr sh -c 'id; touch /audiobooks/.chaptarr-write-test && rm /audiobooks/.chaptarr-write-test'`.
+Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarrng sh -c 'id; touch /audiobooks/.chaptarr-write-test && rm /audiobooks/.chaptarr-write-test'`.
 
 Or use Docker Compose:
 ```bash
-wget https://raw.githubusercontent.com/snapetech/chaptarr/main/docker-compose.yml
+wget https://raw.githubusercontent.com/snapetech/chaptarrng/main/docker-compose.yml
 # Edit paths in docker-compose.yml
 docker compose up -d
 ```
 
 ### PostgreSQL (Optional)
 
-Chaptarr supports using an external PostgreSQL database instead of the default SQLite `chaptarr.db` file. To enable it, set at least `Chaptarr__Postgres__Host` (and credentials).
+ChaptarrNG supports using an external PostgreSQL database instead of the default SQLite `chaptarr.db` file. To enable it, set at least `Chaptarr__Postgres__Host` (and credentials).
 
 Environment variables:
 - `Chaptarr__Postgres__Host`
@@ -96,16 +109,16 @@ Environment variables:
 - `Chaptarr__Postgres__LogDb` (default: `chaptarr-log`)
 - `Chaptarr__Postgres__CacheDb` (default: `chaptarr-cache`)
 
-Note: Chaptarr does not create PostgreSQL databases automatically; create the databases and grant the configured user access.
+Note: ChaptarrNG does not create PostgreSQL databases automatically; create the databases and grant the configured user access.
 
 ## Building from Source
-Building from source requires the .NET 10 SDK, Node.js, and Yarn. When running Chaptarr natively, install FFmpeg for your operating system and make sure both `ffmpeg` and `ffprobe` are available on the `PATH` used to start Chaptarr. Normal source builds do not bundle them automatically; the official Docker image already includes them.
+Building from source requires the .NET 10 SDK, Node.js, and Yarn. When running ChaptarrNG natively, install FFmpeg for your operating system and make sure both `ffmpeg` and `ffprobe` are available on the `PATH` used to start the application. Normal source builds do not bundle them automatically; the ChaptarrNG Docker image already includes them.
 
 **Linux / macOS:**
 ```bash
 # Clone the repository
-git clone https://github.com/snapetech/chaptarr.git
-cd chaptarr
+git clone https://github.com/snapetech/chaptarrng.git
+cd chaptarrng
 
 # Build the backend
 dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
@@ -115,15 +128,15 @@ yarn install
 yarn build
 cp -r _output/UI _output/publish/UI
 
-# Run Chaptarr
+# Run ChaptarrNG
 dotnet _output/publish/Chaptarr.dll
 ```
 
 **Windows (Command Prompt):**
 ```cmd
 :: Clone the repository
-git clone https://github.com/snapetech/chaptarr.git
-cd chaptarr
+git clone https://github.com/snapetech/chaptarrng.git
+cd chaptarrng
 
 :: Build the backend
 dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o _output/publish
@@ -133,78 +146,38 @@ yarn install
 yarn build
 xcopy _output\UI _output\publish\UI /E /I
 
-:: Run Chaptarr
+:: Run ChaptarrNG
 dotnet _output/publish/Chaptarr.Console.dll
 ```
 
-Note: the assembly is named `Chaptarr.dll` on Linux/macOS and `Chaptarr.Console.dll` on Windows.
+Note: the inherited assembly is named `Chaptarr.dll` on Linux/macOS and `Chaptarr.Console.dll` on Windows.
 
-### Testing from Unraid
-This process requires the "Docker Compose Manager" plugin.
+### Unraid Community Applications
 
-1. Open the Unraid terminal and type:
-   ```bash
-   cd /YOUR/APPDATA/PATH/HERE
-   ```
-   For example:
-   ```bash
-   cd /mnt/user/appdata/
-   ```
-2. Create the appdata folder:
-   ```bash
-   mkdir Chaptarr
-   ```
-3. Clone the repository:
-   ```bash
-   git clone https://github.com/snapetech/chaptarr.git
-   ```
+ChaptarrNG has its own Docker template at
+[`packaging/unraid/chaptarrng.xml`](packaging/unraid/chaptarrng.xml). It installs
+the maintained fork image, maps the web interface on port `8789`, and provides
+separate paths for appdata, audiobooks, ebooks, and downloads. The image uses
+`PUID=99` and `PGID=100` by default; change those values to match the ownership
+of your media shares.
 
-#### After cloning Git repository
-1. Now go to Docker tab and then the Compose tab in Unraid
-2. Make a new stack
-3. Choose "Chaptarr" as stack name
-4. Click Advanced, enter the folder path that leads to Chaptarr, for example `/mnt/user/appdata/Chaptarr/`, and click "OK"
-5. Click the gear icon next to the Chaptarr Stack -> "Edit Stack" -> Compose File
-6. Replace the uncommented top section with the following, using your real media paths, for example `/mnt/user/YOURAUDIOBOOKSHERE:/audiobooks`
-``` yaml
-services:
-  chaptarr:
-    build:
-      context: ./
-      dockerfile: Dockerfile.build
-    container_name: chaptarr
-    network_mode: bridge
-    environment:
-      - PUID=99
-      - PGID=100
-      - UMASK=002
-      - TZ=America/New_York  # Change to your timezone
-    volumes:
-      - /mnt/user/appdata/Chaptarr:/config
-      - /mnt/user/data/media/books/audiobooks:/audiobooks
-      - /mnt/user/data/media/books/ebooks:/ebooks
-      - /mnt/user/data:/downloads
-    ports:
-      - 8789:8789
-    restart: unless-stopped 
-```
-Paths are case sensitive.
-
-7. Save the compose file. Leave the generated UI fields empty, then click Compose Up.
-
-Chaptarr should now be available at the IP address of your Unraid server on port 8789, for example `http://192.168.xxx.xxx:8789/`.
-
-If you experience an error, check folder ownership and permissions, then run compose down and rebuild Chaptarr.
+To make ChaptarrNG searchable in Community Applications, submit the repository
+URL `https://github.com/snapetech/chaptarrng` through Unraid's Community Apps
+submission flow and complete its validation scan. The template publishes from
+this repository, and stable releases from `main` publish the `latest` image to
+GHCR.
 
 
 ## Documentation
 
-- Default web UI: http://localhost:8789
+- Default ChaptarrNG web UI: http://localhost:8789
 - Default username/password: Set on first launch
+- [SeerrNG Bookshelf backend guide](https://github.com/snapetech/seerrng/blob/main/docs/using-seerr/bookshelf-backend.md): setup and request lifecycle
+- [API identity and lifecycle](docs/API_IDENTITY_AND_LIFECYCLE.md): compatibility details for maintainers
 
 ## Contributing
 
-Chaptarr is a community project, and we welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+ChaptarrNG is a community project, and we welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Bug Reports & Features
 
@@ -216,7 +189,7 @@ Found a bug or have a feature request? Please open an issue on GitHub with:
 
 ## Security
 
-Chaptarr is a fork of Readarr, so much of the operational model is familiar to *arr users. A few areas have been updated:
+ChaptarrNG inherits the Readarr-derived operational model and security work from Chaptarr. Its current protections include:
 
 - Constant-time API-key comparison
 - Login brute-force throttling
@@ -231,32 +204,32 @@ Traditional full backups contain the database and config file, including credent
 
 ## Privacy
 
-Chaptarr uses `api2.chaptarr.com` for metadata and matching. Metadata requests may include provider IDs, search text, media type, selected audio/eBook tags, and the file name being matched. Full file paths, user identity, and indexer or download-client credentials are not sent. Update checks send version, OS, architecture, and runtime information.
+ChaptarrNG uses `api2.chaptarr.com` for metadata and matching. Metadata requests may include provider IDs, search text, media type, selected audio/eBook tags, and the file name being matched. Full file paths, user identity, and indexer or download-client credentials are not sent. Update checks send version, OS, architecture, and runtime information.
 
 Please see [SECURITY.md](SECURITY.md) for reporting security vulnerabilities.
 
 ## Acknowledgments
 
-Chaptarr is an independent fork of [Readarr](https://github.com/Readarr/Readarr), an application from the [Servarr](https://wiki.servarr.com/) project family. It builds on years of work by the Servarr team and the contributors to Readarr, Sonarr, Radarr, Lidarr, and Prowlarr, whose shared codebase makes this project possible. Thank you.
+ChaptarrNG is a fork of [Chaptarr](https://github.com/Chaptarr/chaptarr), which is itself an independent fork of [Readarr](https://github.com/Readarr/Readarr), from the [Servarr](https://wiki.servarr.com/) project family. This project builds on work by Chaptarr, Readarr, and the Servarr contributors to Readarr, Sonarr, Radarr, Lidarr, and Prowlarr. Thank you.
 
-Audiobook conversion is powered by [m4b-tool](https://github.com/sandreas/m4b-tool) (by sandreas), which builds on [FFmpeg](https://ffmpeg.org/) and [mp4v2](https://github.com/enzo1982/mp4v2). These are bundled in the official Chaptarr Docker image under their respective licenses.
+Audiobook conversion is powered by [m4b-tool](https://github.com/sandreas/m4b-tool) (by sandreas), which builds on [FFmpeg](https://ffmpeg.org/) and [mp4v2](https://github.com/enzo1982/mp4v2). These are bundled in the ChaptarrNG Docker image under their respective licenses.
 
 See [COPYRIGHT.md](COPYRIGHT.md) for full attribution and copyright details.
 
 ## Disclaimer
 
-Chaptarr is an independent, community-run project. It is **not affiliated with, endorsed by, or supported by** the Servarr team or the Readarr, Sonarr, Radarr, Lidarr, or Prowlarr projects — please don't send Chaptarr support requests their way.
+ChaptarrNG is independently maintained. It is **not affiliated with, endorsed by, or supported by** the Servarr team or the Readarr, Sonarr, Radarr, Lidarr, or Prowlarr projects — please don't send ChaptarrNG support requests their way.
 
-Chaptarr is provided under the GNU GPL v3 with no warranty (see the [License](#license) section below).
+ChaptarrNG is provided under the GNU GPL v3 with no warranty (see the [License](#license) section below).
 
 ## AI Development Disclosure
 
-Chaptarr is developed and maintained with the assistance of AI tools.
+ChaptarrNG is developed and maintained with the assistance of AI tools.
 
 ## License
 
 - [GNU GPL v3](https://www.gnu.org/licenses/gpl.html)
-- Copyright © 2026 Chaptarr contributors
+- Copyright © 2026 Snapetech and SeerrNG contributors for fork-specific changes
 - Portions copyright © 2010–2026 the Servarr team and contributors
 
 See the [LICENSE](LICENSE) file for the full license text and [COPYRIGHT.md](COPYRIGHT.md) for attribution details.

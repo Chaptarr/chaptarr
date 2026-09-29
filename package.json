@@ -1,7 +1,7 @@
 {
-  "name": "chaptarr",
+  "name": "chaptarrng",
   "version": "0.9.936",
-  "description": "Chaptarr",
+  "description": "ChaptarrNG, the SeerrNG-maintained Chaptarr fork",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
     "prebuild": "yarn clean",
@@ -17,9 +17,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/snapetech/chaptarr.git"
+    "url": "https://github.com/snapetech/chaptarrng.git"
   },
-  "author": "Team Chaptarr",
+  "author": "Snapetech and SeerrNG contributors",
   "license": "GPL-3.0-only",
   "readmeFilename": "readme.md",
   "main": "frontend/src/index.ts",

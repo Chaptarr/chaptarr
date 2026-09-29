@@ -1,6 +1,6 @@
-# Chaptarr API Identity and Lifecycle Contract
+# ChaptarrNG API Identity and Lifecycle Contract
 
-This document is the public-facing contract for clients building against Chaptarr and the Chaptarr Metadata Server. It describes identity semantics that the generated OpenAPI schema cannot express by itself.
+This document is the public-facing contract for clients building against ChaptarrNG and the Chaptarr Metadata Server. It describes identity semantics that the generated OpenAPI schema cannot express by itself. ChaptarrNG's system-status API continues to report the app name `Chaptarr` for Readarr-compatible client detection; this fork's additional API behavior is maintained in the `snapetech/chaptarrng` repository.
 
 ## Identity Model
 

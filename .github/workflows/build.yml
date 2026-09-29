@@ -1,4 +1,4 @@
-name: Build Chaptarr
+name: Build ChaptarrNG
 
 on:
   push:
@@ -133,7 +133,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: chaptarr-${{ matrix.platform }}
+        name: chaptarrng-${{ matrix.platform }}
         path: ./publish/
         retention-days: 7
         if-no-files-found: error

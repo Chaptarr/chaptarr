@@ -14,7 +14,7 @@ selector, and update checks now use the stable fork release on `main`. Existing
 `develop`, `master`, and `nightly` updater settings are mapped to `main`, so
 installations following the old channel continue receiving fork releases.
 
-The update client now reads releases from `snapetech/chaptarr`; the old
+The update client now reads releases from `snapetech/chaptarrng`; the old
 `chaptarr/chaptarr` owner and develop-branch asset URLs are removed. Copyright,
 license, and contributor attribution to Readarr and the Servarr family remain
 in place. No upstream Git remote is configured.

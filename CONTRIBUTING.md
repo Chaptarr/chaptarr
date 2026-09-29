@@ -1,6 +1,6 @@
-# Contributing to Chaptarr
+# Contributing to ChaptarrNG
 
-Thanks for your interest in contributing to Chaptarr.
+Thanks for your interest in contributing to ChaptarrNG.
 
 ## How can you contribute?
 
@@ -17,7 +17,7 @@ Thanks for your interest in contributing to Chaptarr.
 ### 2. Suggest Features
 - Open a GitHub Issue with the [FEATURE] tag
 - Describe the use case
-- Explain how it benefits audiobook/eBook management
+- Explain how it benefits audiobook/eBook management or SeerrNG integration
 - Be open to discussion and feedback
 
 ### 3. Submit Code
@@ -38,14 +38,14 @@ Thanks for your interest in contributing to Chaptarr.
 ### Prerequisites
 - .NET SDK compatible with the repo targets (currently `net10.0`)
 - Node.js + Yarn (see `package.json` `volta` section for recommended versions)
-- FFmpeg and FFprobe on `PATH` when running or testing Chaptarr's native media features
+- FFmpeg and FFprobe on `PATH` when running or testing ChaptarrNG's native media features
 - Git
 
-### Building Chaptarr
+### Building ChaptarrNG
 ```bash
-# Clone your fork
-git clone https://github.com/<your-username>/Chaptarr.git
-cd Chaptarr
+# Clone ChaptarrNG
+git clone https://github.com/snapetech/chaptarrng.git
+cd chaptarrng
 
 # Install frontend dependencies
 yarn install
@@ -131,4 +131,4 @@ Please note that this project is released with a [Contributor Code of Conduct](C
 
 ## Thank you
 
-Every contribution, no matter how small, helps make Chaptarr better for everyone. We appreciate your time and effort!
+Every contribution, no matter how small, helps improve ChaptarrNG and its SeerrNG integration. We appreciate your time and effort!

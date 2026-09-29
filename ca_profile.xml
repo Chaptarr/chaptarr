@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<CommunityApplications>
+  <Profile>ChaptarrNG is Snapetech's maintained Chaptarr fork for audiobook and eBook libraries. It adds format-scoped requests and durable pending-import handling for SeerrNG, while remaining a standalone book manager. SeerrNG is optional.</Profile>
+  <Icon>https://raw.githubusercontent.com/snapetech/chaptarrng/main/Logo/256.png</Icon>
+  <WebPage>https://github.com/snapetech/chaptarrng</WebPage>
+  <Forum>https://github.com/snapetech/seerrng/issues</Forum>
+</CommunityApplications>
