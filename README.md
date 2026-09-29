@@ -154,18 +154,18 @@ Note: the inherited assembly is named `Chaptarr.dll` on Linux/macOS and `Chaptar
 
 ### Unraid Community Applications
 
-ChaptarrNG has its own Docker template at
-[`packaging/unraid/chaptarrng.xml`](packaging/unraid/chaptarrng.xml). It installs
-the maintained fork image, maps the web interface on port `8789`, and provides
-separate paths for appdata, audiobooks, ebooks, and downloads. The image uses
-`PUID=99` and `PGID=100` by default; change those values to match the ownership
-of your media shares.
+ChaptarrNG's Unraid template is maintained in the dedicated
+[ChaptarrNG Unraid package repository](https://github.com/snapetech/chaptarrng-unraid).
+It installs the maintained fork image, maps the web interface on port `8789`,
+and provides separate paths for appdata, audiobooks, ebooks, and downloads.
+The image uses `PUID=99` and `PGID=100` by default; change those values to match
+the ownership of your media shares.
 
-To make ChaptarrNG searchable in Community Applications, submit the repository
-URL `https://github.com/snapetech/chaptarrng` through Unraid's Community Apps
-submission flow and complete its validation scan. The template publishes from
-this repository, and stable releases from `main` publish the `latest` image to
-GHCR.
+To make ChaptarrNG searchable in Community Applications, submit the package
+repository URL `https://github.com/snapetech/chaptarrng-unraid` through
+Unraid's Community Apps submission flow and complete its validation scan.
+Stable releases from the application repository's `main` branch publish the
+`latest` image to GHCR.
 
 
 ## Documentation
