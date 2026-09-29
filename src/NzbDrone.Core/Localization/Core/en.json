@@ -906,6 +906,7 @@
   "ImportMixedContent": "Import Mixed Content?",
   "ImportMixedContentDisabledHelpText": "This folder will only import one media type. Files of non-matching types will be moved to unmapped files. Enable mixed content to edit both audiobook and ebook settings.",
   "ImportMixedContentEnabledHelpText": "This folder can contain both audiobooks and eBooks. Configure settings for both media types.",
+  "ImportMixedContentLockedHelpText": "This root folder already has authors assigned, so its media type can't be changed here. Remove it and re-add it as audiobook-only, eBook-only, or mixed instead.",
   "ImportPreparing": "Preparing import",
   "ImportProgressAuthorsDiscovered": "Authors discovered",
   "ImportProgressAuthorsImported": "Authors imported",
