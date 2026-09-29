@@ -1,6 +1,6 @@
 {
   "name": "chaptarrng",
-  "version": "0.9.937",
+  "version": "0.9.938",
   "description": "ChaptarrNG, the SeerrNG-maintained Chaptarr fork",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
