@@ -63,9 +63,17 @@ class DeleteAuthorModalContent extends Component {
     const {
       authorName,
       path,
+      audiobookPath,
+      ebookPath,
       statistics,
       onModalClose
     } = this.props;
+
+    // An author can have a separate audiobook and ebook folder (plus the legacy single path). Deleting
+    // with "delete files" removes all of them, so list every distinct one instead of only `path`.
+    const paths = [path, audiobookPath, ebookPath]
+      .filter((folder) => !!folder && folder.trim() !== '')
+      .filter((folder, index, all) => all.indexOf(folder) === index);
 
     const {
       bookFileCount,
@@ -93,14 +101,21 @@ class DeleteAuthorModalContent extends Component {
         </ModalHeader>
 
         <ModalBody>
-          <div className={styles.pathContainer}>
-            <Icon
-              className={styles.pathIcon}
-              name={icons.FOLDER}
-            />
+          {
+            paths.map((folder) => (
+              <div
+                key={folder}
+                className={styles.pathContainer}
+              >
+                <Icon
+                  className={styles.pathIcon}
+                  name={icons.FOLDER}
+                />
 
-            {path}
-          </div>
+                {folder}
+              </div>
+            ))
+          }
 
           <FormGroup>
             <FormLabel>{deleteFilesLabel}</FormLabel>
@@ -149,9 +164,13 @@ class DeleteAuthorModalContent extends Component {
           {
             deleteFiles &&
               <div className={styles.deleteFilesMessage}>
-                <div>
-                  {translate('TheAuthorFolderAndAllOfItsContentWillBeDeleted', [path])}
-                </div>
+                {
+                  paths.map((folder) => (
+                    <div key={folder}>
+                      {translate('TheAuthorFolderAndAllOfItsContentWillBeDeleted', [folder])}
+                    </div>
+                  ))
+                }
 
                 {
                   !!bookFileCount &&
@@ -182,6 +201,8 @@ class DeleteAuthorModalContent extends Component {
 DeleteAuthorModalContent.propTypes = {
   authorName: PropTypes.string.isRequired,
   path: PropTypes.string.isRequired,
+  audiobookPath: PropTypes.string,
+  ebookPath: PropTypes.string,
   statistics: PropTypes.object.isRequired,
   onDeletePress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
