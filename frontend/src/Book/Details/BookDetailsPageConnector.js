@@ -47,6 +47,9 @@ function findBookByRouteSlug(items, routeBookKey, scopedMediaType) {
   return matches.sort((left, right) => left.id - right.id)[0];
 }
 
+// Max fetches of one book per route: the first try plus retries for non-404 failures.
+const MAX_BOOK_FETCH_ATTEMPTS = 3;
+
 function createMapStateToProps() {
   return createSelector(
     (state, { match }) => match,
@@ -58,6 +61,7 @@ function createMapStateToProps() {
       const isNumericRoute = isNumericBookRoute(routeBookKey);
       const numericBookId = isNumericRoute ? parseInt(routeBookKey) : null;
       const isFetching = books.isFetching || author.isFetching;
+      const booksError = books.error;
 
       // Find the book if it exists
       const book = isNumericRoute ?
@@ -86,6 +90,7 @@ function createMapStateToProps() {
         siblingCount,
         needsBookFetch,
         needsAuthorFetch,
+        booksError,
         isFetching,
         isPopulated: hasBook && !needsAuthorFetch
       };
@@ -104,6 +109,9 @@ class BookDetailsPageConnector extends Component {
     super(props);
     this.state = { hasMounted: false };
     this._lastSiblingFetchKey = null;
+    this._lastBookFetchKey = null;
+    this._bookFetchAttempts = 0;
+    this._lastAuthorFetchKey = null;
   }
   //
   // Lifecycle
@@ -135,13 +143,36 @@ class BookDetailsPageConnector extends Component {
       scopedMediaType,
       needsBookFetch,
       needsAuthorFetch,
+      booksError,
       authorId,
       book,
       bookMediaType,
       siblingCount
     } = this.props;
 
-    if (needsBookFetch && routeBookKey) {
+    // Do not refetch forever. When the book does not exist the server answers 404, the fetch fails
+    // and `isFetching` drops back to false while the book is still missing, so `needsBookFetch` flips
+    // false -> true again and componentDidUpdate calls populate() again: an endless loop of failing
+    // requests with the spinner up most of the time, and the "cannot be found" screen below never
+    // gets to render.
+    //
+    // A definitive 404 is final. Anything else (a transient 500, a network error, a request aborted by
+    // another fetchBooks, an empty 200) is retried, but only a few times so a persistent failure still
+    // ends on the "cannot be found" screen instead of looping.
+    const bookFetchKey = `${routeBookKey}|${scopedMediaType || ''}`;
+    const isNewBookKey = this._lastBookFetchKey !== bookFetchKey;
+
+    if (isNewBookKey) {
+      this._lastBookFetchKey = bookFetchKey;
+      this._bookFetchAttempts = 0;
+    }
+
+    const lastFetchWasNotFound = !!booksError && booksError.status === 404;
+    const canRetryBookFetch = !isNewBookKey && !lastFetchWasNotFound && this._bookFetchAttempts < MAX_BOOK_FETCH_ATTEMPTS;
+
+    if (needsBookFetch && routeBookKey && (isNewBookKey || canRetryBookFetch)) {
+      this._bookFetchAttempts++;
+
       // Fetch the specific book data. bookId may be either the local numeric id
       // or a Readarr-compatible titleSlug from an external service link.
       const fetchParams = { bookId: routeBookKey.toString() };
@@ -153,7 +184,9 @@ class BookDetailsPageConnector extends Component {
       this.props.fetchBooks(fetchParams);
     }
 
-    if (needsAuthorFetch && authorId) {
+    if (needsAuthorFetch && authorId && this._lastAuthorFetchKey !== authorId) {
+      this._lastAuthorFetchKey = authorId;
+
       // Fetch the author data
       this.props.fetchAuthor({ id: authorId });
     }
@@ -237,6 +270,7 @@ BookDetailsPageConnector.propTypes = {
   bookMediaType: PropTypes.string,
   siblingCount: PropTypes.number,
   needsBookFetch: PropTypes.bool,
+  booksError: PropTypes.object,
   needsAuthorFetch: PropTypes.bool,
   match: PropTypes.shape({ params: PropTypes.shape({ bookId: PropTypes.string.isRequired }).isRequired }).isRequired,
   fetchBooks: PropTypes.func.isRequired,
