@@ -126,7 +126,7 @@ namespace NzbDrone.Core.Download
             // Tier 1: per-indexer protection for downloads Chaptarr grabbed.
             if (grab?.IndexerId > 0 && ShouldNeverMoveForIndexer(grab.IndexerId))
             {
-                return $"the indexer is configured to keep seeding permanently (IndexerId={grab.IndexerId})";
+                return $"the indexer is configured to preserve torrents in client (IndexerId={grab.IndexerId})";
             }
 
             // Tier 2: per-download-client protection for unmanaged downloads (no grab history).
