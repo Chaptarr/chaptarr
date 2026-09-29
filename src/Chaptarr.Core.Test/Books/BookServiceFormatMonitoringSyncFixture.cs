@@ -169,7 +169,13 @@ namespace Chaptarr.Core.Test.Books
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public int AuthorLookupCount { get; private set; }
+
+            public List<Edition> GetEditionsByAuthor(int authorId)
+            {
+                AuthorLookupCount++;
+                return _editions.ToList();
+            }
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
@@ -331,6 +337,83 @@ namespace Chaptarr.Core.Test.Books
                 seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
+        }
+
+        private sealed class CountingLazyEditions : NzbDrone.Core.Datastore.LazyLoaded<List<Edition>>
+        {
+            private readonly Counter _counter;
+
+            public CountingLazyEditions(Counter counter)
+            {
+                _counter = counter;
+            }
+
+            public override void LazyLoad()
+            {
+                if (IsLoaded)
+                {
+                    return;
+                }
+
+                _counter.Count++;
+                _value = new List<Edition>();
+                IsLoaded = true;
+            }
+        }
+
+        private sealed class Counter
+        {
+            public int Count { get; set; }
+        }
+
+        [Test]
+        public void update_many_should_load_author_editions_in_one_query_instead_of_one_per_book()
+        {
+            var author = BuildAuthor(1);
+            var counter = new Counter();
+            var books = Enumerable.Range(0, 25)
+                .Select(i => BuildBook(10 + i, author.Id, i % 2 == 0 ? BookMediaType.Audiobook : BookMediaType.Ebook, $"hc:work-{i / 2}", monitored: false))
+                .ToList();
+            foreach (var book in books)
+            {
+                book.LazyEditions = new CountingLazyEditions(counter);
+            }
+
+            var editions = books.Select(book => new Edition { Id = book.Id * 10, BookId = book.Id, Asin = $"ASIN{book.Id}" }).ToList();
+            var editionService = new StubEditionService(editions);
+            var repository = new StubBookRepository(books);
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), editionService: editionService);
+
+            var changed = books[0];
+            changed.SetMonitored(true);
+            service.UpdateMany(new List<Book> { changed });
+
+            Assert.That(counter.Count, Is.EqualTo(0), "no per-book lazy Editions load should be needed");
+            Assert.That(editionService.AuthorLookupCount, Is.LessThanOrEqualTo(2), "one bulk query per author (plus at most one for the changed books)");
+        }
+
+        [Test]
+        public void update_many_should_give_each_book_only_its_own_editions_and_not_touch_loaded_books()
+        {
+            var author = BuildAuthor(1);
+            var first = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
+            var second = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: false);
+            first.LazyEditions = new CountingLazyEditions(new Counter());
+            var preloaded = new List<Edition> { new Edition { Id = 999, BookId = 11, Asin = "KEEP" } };
+            second.Editions = preloaded;
+
+            var editionService = new StubEditionService(new[]
+            {
+                new Edition { Id = 100, BookId = 10, Asin = "A" },
+                new Edition { Id = 110, BookId = 11, Asin = "B" }
+            });
+            var service = BuildService(new StubBookRepository(new[] { first, second }), new StubAuthorService(new[] { author }), editionService: editionService);
+
+            first.SetMonitored(true);
+            service.UpdateMany(new List<Book> { first });
+
+            Assert.That(first.Editions.Select(e => e.Id), Is.EqualTo(new[] { 100 }));
+            Assert.That(second.Editions, Is.SameAs(preloaded), "an already-loaded book must keep its in-memory editions");
         }
 
         [Test]
