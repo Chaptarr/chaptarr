@@ -389,7 +389,7 @@ namespace Chaptarr.Core.Test.Books
             service.UpdateMany(new List<Book> { changed });
 
             Assert.That(counter.Count, Is.EqualTo(0), "no per-book lazy Editions load should be needed");
-            Assert.That(editionService.AuthorLookupCount, Is.LessThanOrEqualTo(2), "one bulk query per author (plus at most one for the changed books)");
+            Assert.That(editionService.AuthorLookupCount, Is.EqualTo(1), "exactly one author-wide query; the changed books use the by-book query");
         }
 
         [Test]

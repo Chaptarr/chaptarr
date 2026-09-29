@@ -1555,7 +1555,9 @@ namespace NzbDrone.Core.Books
                     authorBooksById[changedBook.Id] = changedBook;
                 }
 
-                PreloadEditions(authorBooks.Key, authorBooks);
+                // The caller's changed books replaced their repository copies above; fill only those (a small
+                // IN query) rather than re-running the author-wide query.
+                PreloadEditionsByBook(authorBooks);
 
                 var changedBookIds = authorBooks.Select(book => book.Id).ToHashSet();
                 var baseStates = authorBooksById.ToDictionary(pair => pair.Key, pair => SnapshotMonitoredState(pair.Value));
