@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.IndexerSearch.Definitions
 {
     public class BookSearchCriteria : SearchCriteriaBase
     {
+        private static readonly Regex BookNumberSuffixRegex = new Regex(@"\s*,?\s*book\s+\d+(\.\d+)?\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         public string BookTitle { get; set; }
         public int BookYear { get; set; }
         public string BookIsbn { get; set; }
@@ -16,6 +19,29 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
         // Including the author here can double-apply author terms (hurting recall) and breaks book-search endpoints
         // that expect a clean title (e.g., Newznab's t=book&author=...&title=...).
         public string BookQuery => GetQueryTitle(GetMainSearchTitle(BookTitle, Author?.Name));
+
+        // Audible-style titles end in a series position ("..., Book 4") that release names almost never
+        // carry. Null when the title has no such suffix, so callers can skip the extra search tier.
+        public string BookQueryWithoutBookNumber
+        {
+            get
+            {
+                var mainTitle = GetMainSearchTitle(BookTitle, Author?.Name)?.Trim();
+                if (string.IsNullOrWhiteSpace(mainTitle))
+                {
+                    return null;
+                }
+
+                var withoutBookNumber = BookNumberSuffixRegex.Replace(mainTitle, string.Empty).Trim();
+                if (withoutBookNumber.Length == 0 ||
+                    string.Equals(withoutBookNumber, mainTitle, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                return GetQueryTitle(withoutBookNumber);
+            }
+        }
 
         internal static string GetMainSearchTitle(string title, string author)
         {
