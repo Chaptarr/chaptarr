@@ -83,6 +83,14 @@ namespace Chaptarr.Core.Test.Books
                     return Editions.Where(e => e.BookId == bookId).ToList();
                 }
 
+                if (targetMethod?.Name == nameof(IEditionService.GetEditionsByBook) &&
+                    args?.Length == 1 &&
+                    args[0] is IEnumerable<int> bookIds)
+                {
+                    var wanted = bookIds.ToHashSet();
+                    return Editions.Where(e => wanted.Contains(e.BookId)).ToList();
+                }
+
                 throw new NotImplementedException($"Test proxy does not implement IEditionService.{targetMethod?.Name}");
             }
         }
