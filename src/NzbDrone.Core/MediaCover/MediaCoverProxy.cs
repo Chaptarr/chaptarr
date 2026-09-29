@@ -19,6 +19,9 @@ namespace NzbDrone.Core.MediaCover
 
         string GetUrl(string hash);
         byte[] GetImage(string hash);
+
+        bool IsProxyUrl(string url);
+        bool TryResolveProxyUrl(string url, out string resolved);
     }
 
     public class MediaCoverProxy : IMediaCoverProxy
@@ -94,6 +97,34 @@ namespace NzbDrone.Core.MediaCover
                     cover.Url = RegisterUrl(cover.Url);
                 }
             }
+        }
+
+        public bool IsProxyUrl(string url)
+        {
+            return url.IsNotNullOrWhiteSpace() &&
+                   url.StartsWith(_configFileProvider.UrlBase + "/MediaCoverProxy/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public bool TryResolveProxyUrl(string url, out string resolved)
+        {
+            resolved = null;
+
+            if (!IsProxyUrl(url))
+            {
+                return false;
+            }
+
+            var segments = url.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var index = Array.FindIndex(segments, segment => segment.Equals("MediaCoverProxy", StringComparison.OrdinalIgnoreCase));
+
+            if (index < 0 || index + 1 >= segments.Length)
+            {
+                return false;
+            }
+
+            resolved = _cache.Find(segments[index + 1]);
+
+            return resolved.IsNotNullOrWhiteSpace();
         }
 
         public string GetUrl(string hash)

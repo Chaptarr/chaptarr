@@ -12,6 +12,7 @@ using NzbDrone.Common.TPL;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Configuration.Events;
 using NzbDrone.Core.Datastore.Events;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
@@ -38,6 +39,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly ConcurrentDictionary<string, string> _changedPaths = new ConcurrentDictionary<string, string>();
 
         private readonly IRootFolderService _rootFolderService;
+        private readonly IAuthorService _authorService;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IConfigService _configService;
         private readonly IDiskProvider _diskProvider;
@@ -47,12 +49,14 @@ namespace NzbDrone.Core.MediaFiles
         private bool _watchForChanges;
 
         public RootFolderWatchingService(IRootFolderService rootFolderService,
+                                         IAuthorService authorService,
                                          IManageCommandQueue commandQueueManager,
                                          IConfigService configService,
                                          IDiskProvider diskProvider,
                                          Logger logger)
         {
             _rootFolderService = rootFolderService;
+            _authorService = authorService;
             _commandQueueManager = commandQueueManager;
             _configService = configService;
             _diskProvider = diskProvider;
@@ -292,7 +296,23 @@ namespace NzbDrone.Core.MediaFiles
                     _logger.Debug("[IMPORT-TRIGGER] RootFolderWatchingService: File system change detected, triggering RescanFoldersCommand for {0} root folders: [{1}]", toScan.Count, string.Join(", ", toScan));
                 }
 
-                _commandQueueManager.Push(new RescanFoldersCommand(toScan.ToList(), FilterFilesType.Known, null));
+                _commandQueueManager.Push(new RescanFoldersCommand(toScan.ToList(), FilterFilesType.Known, granularScanning ? ResolveAuthorIds(toScan) : null));
+            }
+        }
+
+        private List<int> ResolveAuthorIds(HashSet<string> folders)
+        {
+            try
+            {
+                return _authorService.AllAuthorPaths()
+                    .Where(pair => folders.Any(f => f.PathEquals(pair.Value) || pair.Value.IsParentPath(f)))
+                    .Select(pair => pair.Key)
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to resolve the authors owning the changed folders");
+                return null;
             }
         }
 

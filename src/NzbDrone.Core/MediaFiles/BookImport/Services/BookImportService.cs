@@ -349,6 +349,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	                        existing.Author = book.Author;
 	                        RefreshTrackedFileMetadata(existing, file, book);
                         ApplySuccessfulMatchState(existing, provenance, book.Author, book, targetEdition);
+                        EnsureBookMonitored(book);
 
 	                        _mediaFileService.Update(existing);
 
@@ -700,6 +701,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     existingFile.Part = assignment.Part;
                     RefreshTrackedFileMetadata(existingFile, file, book, assignment.PartCount);
                     ApplySuccessfulMatchState(existingFile, request.Provenance, author, book, edition);
+                    EnsureBookMonitored(book);
 
                     pendingUpdates.Add((existingFile, file.Path, edition.Id, assignment.Part, previousEditionId <= 0 && edition.Id > 0, false, null, edition));
                 }
@@ -915,6 +917,42 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return book?.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
         }
 
+        private void EnsureBookMonitored(Book book)
+        {
+            try
+            {
+                if (book == null || book.Id <= 0)
+                {
+                    return;
+                }
+
+                var alreadyMonitored = book.MediaType == BookMediaType.Audiobook ? book.AudiobookMonitored : book.EbookMonitored;
+                if (alreadyMonitored)
+                {
+                    return;
+                }
+
+                var mediaType = book.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
+
+                _bookService.SetBookMonitored(book.Id, true);
+
+                if (book.MediaType == BookMediaType.Audiobook)
+                {
+                    book.AudiobookMonitored = true;
+                }
+                else
+                {
+                    book.EbookMonitored = true;
+                }
+
+                _logger.Debug("Monitored '{0}' ({1}) after attaching a library file", book.Title, mediaType);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to monitor book '{0}' after attaching a file", book?.Title);
+            }
+        }
+
         private bool ApplySuccessfulMatchState(
             BookFile persisted,
             MatchProvenance provenance,
@@ -977,6 +1015,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     return;
                 }
 
+                EnsureBookMonitored(book);
                 if (ApplySuccessfulMatchState(persisted, provenance, author, book, edition))
                 {
                     _mediaFileService.Update(persisted);

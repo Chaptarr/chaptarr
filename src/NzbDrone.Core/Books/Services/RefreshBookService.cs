@@ -1117,10 +1117,46 @@ namespace NzbDrone.Core.Books
                 .Select(e => e.Book?.MediaType)
                 .FirstOrDefault(mt => mt.HasValue);
 
+            var monitoredBefore = all.FirstOrDefault(e => e.Monitored)?.Id;
+
             _editionSelector.EnsureSingleMonitoredEdition(all, fileCountsByEditionId, mediaType);
 
             PersistMonitoredChanges(children, beforeMonitoredById);
             Debug.Assert(all.Count(e => e.Monitored) == 1, "exactly one edition monitored");
+
+            var monitored = all.FirstOrDefault(e => e.Monitored);
+
+            if (monitored != null && monitored.Id != monitoredBefore)
+            {
+                ReconcileCoverForMonitoredEdition(monitored, all);
+            }
+        }
+
+        private void ReconcileCoverForMonitoredEdition(Edition monitored, List<Edition> editions)
+        {
+            var bookId = monitored.BookId;
+
+            if (bookId <= 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var book = _bookService.GetBook(bookId);
+
+                if (book == null)
+                {
+                    return;
+                }
+
+                book.Editions = editions;
+                _mediaCoverService.EnsureBookCovers(book);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to reconcile the cover for book {0} after its monitored edition changed", bookId);
+            }
         }
 
         private static void PersistMonitoredChanges(SortedChildren children, Dictionary<int, bool> beforeMonitoredById)

@@ -36,6 +36,8 @@ namespace Chaptarr.Api.V1.RootFolders
         // DELETED: DefaultMetadataProfileId, DefaultQualityProfileId, DefaultAudiobookMetadataProfileId, DefaultEbookMetadataProfileId - use media-specific settings
         public HashSet<int> DefaultTags { get; set; }
         public bool IsCalibreLibrary { get; set; }
+        public bool ReapCalibreDuplicates { get; set; }
+        public bool AutoPushCalibreMetadata { get; set; }
         public string Host { get; set; }
         public int Port { get; set; }
         public string UrlBase { get; set; }
@@ -109,6 +111,8 @@ namespace Chaptarr.Api.V1.RootFolders
                 // REMOVED: DefaultMetadataProfileId, DefaultQualityProfileId, DefaultAudiobookMetadataProfileId, DefaultEbookMetadataProfileId
                 DefaultTags = model.DefaultTags,
                 IsCalibreLibrary = model.IsCalibreLibrary,
+                ReapCalibreDuplicates = model.ReapCalibreDuplicates,
+                AutoPushCalibreMetadata = model.AutoPushCalibreMetadata,
                 Host = model.CalibreSettings?.Host,
                 Port = model.CalibreSettings?.Port ?? 0,
                 UrlBase = model.CalibreSettings?.UrlBase,
@@ -230,6 +234,8 @@ namespace Chaptarr.Api.V1.RootFolders
                 // Migration 025 will drop these columns from the database
                 DefaultTags = resource.DefaultTags ?? new HashSet<int>(),
                 IsCalibreLibrary = resource.IsCalibreLibrary,
+                ReapCalibreDuplicates = resource.ReapCalibreDuplicates,
+                AutoPushCalibreMetadata = resource.AutoPushCalibreMetadata,
                 CalibreSettings = cs,
                 FolderType = (NzbDrone.Core.RootFolders.FolderType)resource.FolderType,
                 PlaceEbooksWithAudiobooks = resource.PlaceEbooksWithAudiobooks,

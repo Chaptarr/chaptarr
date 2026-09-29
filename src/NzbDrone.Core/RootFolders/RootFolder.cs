@@ -196,6 +196,8 @@ namespace NzbDrone.Core.RootFolders
         public HashSet<int> DefaultTags { get; set; } = new();
         public bool IsCalibreLibrary { get; set; }
         public bool UseCalibreNaming { get; set; }
+        public bool ReapCalibreDuplicates { get; set; }
+        public bool AutoPushCalibreMetadata { get; set; }
         public CalibreSettings CalibreSettings { get; set; }
         public FolderType FolderType { get; set; }
         public bool PlaceEbooksWithAudiobooks { get; set; }

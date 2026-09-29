@@ -27,8 +27,7 @@ import monitorOptions from 'Utilities/Author/monitorOptions';
 import translate from 'Utilities/String/translate';
 import styles from './EditRootFolderModalContent.css';
 
-// Temporary toggle: hide Calibre controls in the GUI until Calibre support is restored.
-const SHOW_CALIBRE_UI = false;
+const SHOW_CALIBRE_UI = true;
 
 class EditRootFolderModalContent extends Component {
   constructor(props, context) {
@@ -180,6 +179,8 @@ class EditRootFolderModalContent extends Component {
       placeEbooksWithAudiobooks,
       defaultSyncMonitoredAcrossFormats,
       isCalibreLibrary,
+      reapCalibreDuplicates,
+      autoPushCalibreMetadata,
       host,
       port,
       urlBase,
@@ -710,6 +711,35 @@ class EditRootFolderModalContent extends Component {
                       {
                         isCalibreLibrary?.value &&
                           <div>
+
+                            <FormGroup>
+                              <FormLabel>
+                                {translate('AutoPushCalibreMetadata')}
+                              </FormLabel>
+
+                              <FormInputGroup
+                                type={inputTypes.CHECK}
+                                name="autoPushCalibreMetadata"
+                                helpText={translate('AutoPushCalibreMetadataHelpText')}
+                                {...autoPushCalibreMetadata}
+                                onChange={onInputChange}
+                              />
+                            </FormGroup>
+
+                            <FormGroup>
+                              <FormLabel>
+                                {translate('ReapCalibreDuplicates')}
+                              </FormLabel>
+
+                              <FormInputGroup
+                                type={inputTypes.CHECK}
+                                name="reapCalibreDuplicates"
+                                helpText={translate('ReapCalibreDuplicatesHelpText')}
+                                {...reapCalibreDuplicates}
+                                onChange={onInputChange}
+                              />
+                            </FormGroup>
+
                             <FormGroup>
                               <FormLabel>
                                 {translate('CalibreHost')}

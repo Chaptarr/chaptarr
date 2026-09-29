@@ -105,6 +105,11 @@ namespace NzbDrone.Core.Books
             return remoteChild;
         }
 
+        protected virtual bool ShouldSkipChildAdd(TEntity entity, TChild remoteChild)
+        {
+            return false;
+        }
+
         protected virtual void ProcessChildren(TEntity entity, SortedChildren children)
         {
         }
@@ -260,6 +265,10 @@ namespace NzbDrone.Core.Books
                         sortedChildren.Deleted.Remove(child);
                         localChildren.Remove(child);
                     }
+                }
+                else if (ShouldSkipChildAdd(entity, remoteChild))
+                {
+                    continue;
                 }
                 else
                 {

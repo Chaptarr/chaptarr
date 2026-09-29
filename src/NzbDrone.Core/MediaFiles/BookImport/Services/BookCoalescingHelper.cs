@@ -157,6 +157,39 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
         }
 
+        private static readonly Regex CalibreFolderPattern = new Regex(@"\((\d+)\)$", RegexOptions.Compiled);
+
+        private static string TryBuildCalibreFolderRoot(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return null;
+            }
+
+            var folderName = Path.GetFileName(directory);
+
+            if (string.IsNullOrWhiteSpace(folderName))
+            {
+                return null;
+            }
+
+            var match = CalibreFolderPattern.Match(folderName.Trim());
+
+            if (!match.Success || !long.TryParse(match.Groups[1].Value, out var folderId))
+            {
+                return null;
+            }
+
+            // Ids in this range are far more likely publication years than calibre ids.
+            if (folderId >= 1900 && folderId <= 2100)
+            {
+                return NormalizeDirectory(directory);
+            }
+
+            var parent = NormalizeDirectory(Path.GetDirectoryName(directory) ?? string.Empty) ?? string.Empty;
+            return parent + "|calibre-" + folderId;
+        }
+
         public static string BuildRootUnitKey(string anyFilePathInUnit, string editionTitle, BookMediaType mediaType)
         {
             try
@@ -165,6 +198,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 if (IsStandaloneUnitExtension(extension))
                 {
                     var directory = Path.GetDirectoryName(anyFilePathInUnit) ?? string.Empty;
+                    var calibreRoot = TryBuildCalibreFolderRoot(directory);
+
+                    if (calibreRoot != null)
+                    {
+                        return (calibreRoot + "|" + mediaType).ToLowerInvariant();
+                    }
+
                     var fileStem = Path.GetFileNameWithoutExtension(anyFilePathInUnit) ?? string.Empty;
                     var standaloneRoot = NormalizeDirectory(Path.Combine(directory, fileStem)) ?? string.Empty;
                     return (standaloneRoot + "|" + mediaType).ToLowerInvariant();

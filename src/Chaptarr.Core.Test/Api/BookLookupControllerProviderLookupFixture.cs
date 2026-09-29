@@ -40,6 +40,14 @@ namespace Chaptarr.Core.Test.Api
                 return "/MediaCoverProxy/test/" + System.IO.Path.GetFileName(new Uri(url).AbsolutePath);
             }
 
+            public bool IsProxyUrl(string url) => false;
+
+            public bool TryResolveProxyUrl(string url, out string resolved)
+            {
+                resolved = null;
+                return false;
+            }
+
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers)
             {
                 foreach (var cover in covers ?? Enumerable.Empty<NzbDrone.Core.MediaCover.MediaCover>())

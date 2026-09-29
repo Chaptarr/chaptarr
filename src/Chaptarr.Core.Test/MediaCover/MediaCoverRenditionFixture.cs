@@ -211,6 +211,14 @@ namespace Chaptarr.Core.Test.MediaCover
 
             public string RegisterUrl(string url) => "/MediaCoverProxy/hash/cover.jpg";
 
+            public bool IsProxyUrl(string url) => false;
+
+            public bool TryResolveProxyUrl(string url, out string resolved)
+            {
+                resolved = null;
+                return false;
+            }
+
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers)
             {
                 ProxyCalls++;

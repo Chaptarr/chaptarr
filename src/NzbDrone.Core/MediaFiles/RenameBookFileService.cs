@@ -13,6 +13,7 @@ using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Organizer;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -40,6 +41,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IMoveBookFiles _bookFileMover;
         private readonly IEventAggregator _eventAggregator;
         private readonly IDiskProvider _diskProvider;
+        private readonly IRootFolderService _rootFolderService;
         private readonly Logger _logger;
 
         public RenameBookFileService(IAuthorService authorService,
@@ -47,6 +49,7 @@ namespace NzbDrone.Core.MediaFiles
                                         IMoveBookFiles bookFileMover,
                                         IEventAggregator eventAggregator,
                                         IDiskProvider diskProvider,
+                                        IRootFolderService rootFolderService,
                                         Logger logger)
         {
             _authorService = authorService;
@@ -54,6 +57,7 @@ namespace NzbDrone.Core.MediaFiles
             _bookFileMover = bookFileMover;
             _eventAggregator = eventAggregator;
             _diskProvider = diskProvider;
+            _rootFolderService = rootFolderService;
             _logger = logger;
         }
 
@@ -84,9 +88,25 @@ namespace NzbDrone.Core.MediaFiles
                 .OrderBy(e => e.ExistingPath).ToList();
         }
 
+        private static bool IsCalibreManaged(List<RootFolder> rootFolders, string path)
+        {
+            if (path.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            var bestRoot = rootFolders
+                .Where(r => r.Path.IsNotNullOrWhiteSpace() && (r.Path.PathEquals(path) || r.Path.IsParentPath(path)))
+                .OrderByDescending(r => r.Path.Length)
+                .FirstOrDefault();
+
+            return bestRoot?.IsCalibreLibrary == true;
+        }
+
         private IEnumerable<RenameBookFilePreview> GetPreviews(Author author, List<BookFile> files, bool moveToCanonicalAuthorFolder)
         {
-            var renameFiles = files.Where(x => x.CalibreId == 0).ToList();
+            var rootFolders = _rootFolderService.All();
+            var renameFiles = files.Where(x => x.CalibreId == 0 && !IsCalibreManaged(rootFolders, x.Path)).ToList();
             EnsurePartNumbers(renameFiles);
             // Pass 1: compute target directories for audiobook files that are part of this rename batch.
             var batchContext = new RenameBatchContext();
@@ -237,10 +257,12 @@ namespace NzbDrone.Core.MediaFiles
             var cleanupCandidates = new List<(string PreviousPath, string SourceAuthorFolderPath)>();
             var canonicalMoves = new List<(string MediaType, string SourceAuthorFolderPath, string DestinationAuthorFolderPath)>();
 
+            var rootFolders = _rootFolderService.All();
+
             // Don't rename Calibre files.
             // Ensure audiobook files are renamed first so mixed-root ebook colocation can clamp to the updated audiobook folders.
             var ordered = filesToRename
-                .Where(x => x.CalibreId == 0)
+                .Where(x => x.CalibreId == 0 && !IsCalibreManaged(rootFolders, x.Path))
                 .OrderBy(x =>
                 {
                     var mt = x.MediaType;

@@ -11,6 +11,7 @@ using Npgsql;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
@@ -380,6 +381,11 @@ namespace NzbDrone.Core.Books.Services
 
                 // Add author
                 author.Added = DateTime.UtcNow;
+                if (config == null || !config.IsManualAddition)
+                {
+                    SeedMissingMediaTypeDefaults(author);
+                }
+
                 author.CleanName = author.Name.CleanAuthorName();
                 // IMPORTANT: Set doRefresh=false to prevent scan loop when called from ImportOrchestrator
                 var authorInsertStopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -1788,6 +1794,87 @@ namespace NzbDrone.Core.Books.Services
             _authorService.DeleteAuthor(authorId, false, false);
 
             return Task.CompletedTask;
+        }
+
+        private void SeedMissingMediaTypeDefaults(Author author)
+        {
+            var rootPath = author.EbookRootFolderPath;
+
+            if (rootPath.IsNullOrWhiteSpace())
+            {
+                rootPath = author.AudiobookRootFolderPath;
+            }
+
+            if (rootPath.IsNullOrWhiteSpace())
+            {
+                rootPath = author.Path;
+            }
+
+            if (rootPath.IsNullOrWhiteSpace())
+            {
+                return;
+            }
+
+            var rootFolder = _rootFolderService.GetBestRootFolder(rootPath);
+
+            if (rootFolder == null)
+            {
+                return;
+            }
+
+            var audiobookDefaults = ParseMediaTypeSettings(rootFolder.AudiobookSettings);
+
+            if (author.AudiobookQualityProfileId == null && !author.AudiobookSettingsManuallyOverridden && audiobookDefaults?.QualityProfileId > 0)
+            {
+                author.AudiobookQualityProfileId = audiobookDefaults.QualityProfileId;
+                author.AudiobookMetadataProfileId ??= audiobookDefaults.MetadataProfileId;
+                author.AudiobookMonitored ??= audiobookDefaults.Monitored;
+                author.AudiobookMonitorNewItems ??= audiobookDefaults.MonitorNewItems;
+
+                if (author.AudiobookRootFolderPath.IsNullOrWhiteSpace())
+                {
+                    author.AudiobookRootFolderPath = rootFolder.Path;
+                }
+
+                _logger.Info("Seeded audiobook defaults for {0} from root folder {1}", author.Name, rootFolder.Path);
+            }
+
+            var ebookDefaults = ParseMediaTypeSettings(rootFolder.EbookSettings);
+
+            if (author.EbookQualityProfileId == null && !author.EbookSettingsManuallyOverridden && ebookDefaults?.QualityProfileId > 0)
+            {
+                author.EbookQualityProfileId = ebookDefaults.QualityProfileId;
+                author.EbookMetadataProfileId ??= ebookDefaults.MetadataProfileId;
+                author.EbookMonitored ??= ebookDefaults.Monitored;
+                author.EbookMonitorNewItems ??= ebookDefaults.MonitorNewItems;
+
+                if (author.EbookRootFolderPath.IsNullOrWhiteSpace())
+                {
+                    author.EbookRootFolderPath = rootFolder.Path;
+                }
+
+                _logger.Info("Seeded ebook defaults for {0} from root folder {1}", author.Name, rootFolder.Path);
+            }
+
+            author.SyncMonitoredAcrossFormats ??= rootFolder.DefaultSyncMonitoredAcrossFormats;
+        }
+
+        private MediaTypeSettings ParseMediaTypeSettings(string json)
+        {
+            if (json.IsNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            try
+            {
+                return Json.Deserialize<MediaTypeSettings>(json);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to parse root folder media type defaults");
+                return null;
+            }
         }
 
         private void ApplyMonitoringConfig(Author author, MonitoringConfig config)

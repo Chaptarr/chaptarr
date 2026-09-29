@@ -1542,10 +1542,10 @@ namespace NzbDrone.Core.Books
                 return true;
             }
 
-            if (!string.IsNullOrWhiteSpace(book.UnitKeyHash))
+            if (!string.IsNullOrWhiteSpace(book.UnitKeyHash) &&
+                // The grace window covers clones whose files are still attaching or converting.
+                (HasKnownFiles(book) || book.Added > DateTime.UtcNow.AddHours(-24)))
             {
-                // UnitKeyHash is the durable identity of an intentional multi-copy row. Refresh
-                // may update it from the server pocket, but must never merge it away as a duplicate.
                 return true;
             }
 
@@ -1578,6 +1578,7 @@ namespace NzbDrone.Core.Books
             private readonly Dictionary<string, List<Book>> _booksByProviderToken;
             private readonly Dictionary<int, int> _sourceOrderByBookId;
             private readonly HashSet<int> _activeBookIds;
+            private readonly Dictionary<BookMediaType, HashSet<string>> _consumedStableWorkTokensByType = new Dictionary<BookMediaType, HashSet<string>>();
 
             private BookRefreshMatchingIndex(
                 List<Book> source,
@@ -1667,6 +1668,7 @@ namespace NzbDrone.Core.Books
                 if (existingChild?.Id > 0)
                 {
                     _activeBookIds.Remove(existingChild.Id);
+                    ConsumeStableWorkTokens(existingChild);
                 }
 
                 foreach (var child in mergedChildren ?? Enumerable.Empty<Book>())
@@ -1674,9 +1676,45 @@ namespace NzbDrone.Core.Books
                     if (child?.Id > 0)
                     {
                         _activeBookIds.Remove(child.Id);
+                        ConsumeStableWorkTokens(child);
                     }
                 }
             }
+
+            private void ConsumeStableWorkTokens(Book book)
+            {
+                if (!_consumedStableWorkTokensByType.TryGetValue(book.MediaType, out var tokens))
+                {
+                    tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    _consumedStableWorkTokensByType[book.MediaType] = tokens;
+                }
+
+                tokens.UnionWith(BookIdentity.GetStableWorkProviderIdentityTokens(book));
+            }
+
+            public bool HasConsumedStableWorkOverlap(Book remote)
+            {
+                if (remote == null ||
+                    !_consumedStableWorkTokensByType.TryGetValue(remote.MediaType, out var tokens) ||
+                    tokens.Count == 0)
+                {
+                    return false;
+                }
+
+                return BookIdentity.GetStableWorkProviderIdentityTokens(remote).Overlaps(tokens);
+            }
+        }
+
+        protected override bool ShouldSkipChildAdd(Author entity, Book remoteChild)
+        {
+            var index = _bookRefreshMatchingIndex;
+            if (index == null || !index.HasConsumedStableWorkOverlap(remoteChild))
+            {
+                return false;
+            }
+
+            _logger.Info("[REFRESH-DUP-GUARD] Remote book '{0}' shares stable work identity with a local book already matched in this refresh pass; skipping duplicate add", remoteChild?.Title);
+            return true;
         }
 
         protected override Tuple<Book, List<Book>> GetMatchingExistingChildren(List<Book> existingChildren, Book remote)
@@ -1837,6 +1875,8 @@ namespace NzbDrone.Core.Books
         {
             _logger.Debug("ProcessChildren: Processing {0} new books for author {1}", children.Added.Count, entity.Name);
 
+            var deletionExclusions = _importListExclusionService.All();
+
             foreach (var book in children.Added)
             {
                 // Store original narrator for logging
@@ -1844,6 +1884,20 @@ namespace NzbDrone.Core.Books
 
                 var audioMonitor = ShouldMonitorNewBook(book, entity, isAudiobook: true);
                 var ebookMonitor = ShouldMonitorNewBook(book, entity, isAudiobook: false);
+
+                if ((audioMonitor || ebookMonitor) && deletionExclusions.Count > 0)
+                {
+                    var providerIds = new HashSet<string>(ImportListExclusionBookMatcher.GetCanonicalProviderIds(book), StringComparer.OrdinalIgnoreCase);
+
+                    // Deleted with an exclusion; recreate the catalog row unmonitored so it stays gone.
+                    if (providerIds.Count > 0 &&
+                        deletionExclusions.Any(e => providerIds.Contains(e.ForeignId) && (!e.MediaType.HasValue || e.MediaType == book.MediaType)))
+                    {
+                        audioMonitor = false;
+                        ebookMonitor = false;
+                        _logger.Debug("[MONITORING-REFRESH] '{0}' was previously deleted with an exclusion; recreating unmonitored", book.Title);
+                    }
+                }
 
                 // Set monitoring flags (metadata profile filtering will happen after insertion)
                 book.AudiobookMonitored = audioMonitor;

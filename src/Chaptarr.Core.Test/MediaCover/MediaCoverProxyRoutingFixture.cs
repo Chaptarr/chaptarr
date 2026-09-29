@@ -85,6 +85,14 @@ namespace Chaptarr.Core.Test.MediaCover
             public bool Placeholder { get; set; }
 
             public string RegisterUrl(string url) => throw new NotImplementedException();
+            public bool IsProxyUrl(string url) => false;
+
+            public bool TryResolveProxyUrl(string url, out string resolved)
+            {
+                resolved = null;
+                return false;
+            }
+
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers) => throw new NotImplementedException();
             public string GetUrl(string hash) => throw new NotImplementedException();
             public byte[] GetImage(string hash) => Missing

@@ -911,6 +911,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 fieldTokens,
                 allowNearExact: false,
                 allowTransposition: false,
+                allowVolumeMarkerGaps: true,
                 out _);
         }
 

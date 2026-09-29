@@ -19,12 +19,12 @@ namespace NzbDrone.Core.Books.Calibre
         [JsonProperty("pubdate")]
         public DateTime? PubDate { get; set; }
         public string Publisher { get; set; }
-        public string Languages { get; set; }
+        public List<string> Languages { get; set; }
         public List<string> Tags { get; set; }
         public string Comments { get; set; }
         public decimal Rating { get; set; }
         public Dictionary<string, string> Identifiers { get; set; }
-        [JsonProperty(NullValueHandling = NullValueHandling.Include)]
+        // Omitted when null so a push cannot erase a series calibre-web learned on its own.
         public string Series { get; set; }
         [JsonProperty("series_index")]
         public double? SeriesIndex { get; set; }

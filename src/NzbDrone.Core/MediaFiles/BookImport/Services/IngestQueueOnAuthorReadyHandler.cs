@@ -51,6 +51,41 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             private readonly IManageCommandQueue _commandQueueManager;
             private readonly StagingResidualQueueSweeper _stagingResidualQueueSweeper;
             private readonly Logger _logger;
+
+            private bool TryCompleteAlreadyLinkedFile(string path, Book canonicalBook, Dictionary<string, IngestQueueItem> byPath, int? matchedAuthorId, HashSet<string> matchedPaths)
+            {
+                BookFile tracked = null;
+                try
+                {
+                    tracked = _mediaFileService.GetFileWithPath(path);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Unable to look up tracked file for {0}", path);
+                }
+
+                if (tracked == null || tracked.EditionId <= 0)
+                {
+                    return false;
+                }
+
+                _logger.Debug("[DEFERRED-INGEST] File {0} is already linked (EditionId={1}); skipping re-import", path, tracked.EditionId);
+                if (byPath != null && byPath.TryGetValue(path, out var itemRef))
+                {
+                    _ingestQueue.CompleteItemWithResult(
+                        itemRef.Id,
+                        path,
+                        ImportOutcome.AlreadyLinked,
+                        bookId: canonicalBook?.Id,
+                        authorId: matchedAuthorId,
+                        errorMessage: "ALREADY_LINKED",
+                        statusError: null);
+                }
+
+                matchedPaths?.Add(path);
+                return true;
+            }
+
             private sealed class AuthorIngestGate : IDisposable
             {
                 public SemaphoreSlim Semaphore { get; } = new SemaphoreSlim(1, 1);
@@ -1054,6 +1089,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                                 var splitUnitAppliedAny = false;
                                 foreach (var (p, tags, durationSeconds, provenance) in list)
                                 {
+                                    if (TryCompleteAlreadyLinkedFile(p, canonicalBook, byPath, matchedAuthorId, matchedPaths))
+                                    {
+                                        continue;
+                                    }
+
                                     var perFileKey = BuildPerFileUnitKey(p, canonicalEdition.Title, canonicalBook.MediaType);
                                     var fileDest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, perFileKey);
 
@@ -1148,6 +1188,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                             }
 
                             // Use helper-provided root-level unit key
+                            list = list.Where(file => !TryCompleteAlreadyLinkedFile(file.Path, canonicalBook, byPath, matchedAuthorId, matchedPaths)).ToList();
+                            if (list.Count == 0)
+                            {
+                                continue;
+                            }
+
                             var coalescedDestKey = _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
                             var coalescedDest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, coalescedDestKey);
 
@@ -1187,6 +1233,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                         // Use a root-level unit key (book root + media type + extension) to avoid per-disc clones
                         // while ensuring different media containers (m4b vs mp3) never collapse into the same book.
+                        list = list.Where(file => !TryCompleteAlreadyLinkedFile(file.Path, canonicalBook, byPath, matchedAuthorId, matchedPaths)).ToList();
+                        if (list.Count == 0)
+                        {
+                            continue;
+                        }
+
                         var destKey = _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
                         var dest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, destKey);
 

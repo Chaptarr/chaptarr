@@ -61,6 +61,7 @@ namespace Chaptarr.Api.V1.Books
 	        protected readonly IQualityProfileService _qualityProfileService;
 	        protected readonly IRootFolderService _rootFolderService;
 	        private readonly IMediaFileService _mediaFileService;
+	        private readonly IMediaCoverProxy _mediaCoverProxy;
 	        private readonly IEventAggregator _eventAggregator;
             private readonly IProviderAliasService _providerAliasService;
 	        private readonly Logger _logger;
@@ -79,6 +80,7 @@ namespace Chaptarr.Api.V1.Books
 	                          IAuthorStatisticsService authorStatisticsService,
                           IMediaFileService mediaFileService,
                           IMapCoversToLocal coverMapper,
+                          IMediaCoverProxy mediaCoverProxy,
                           IUpgradableSpecification upgradableSpecification,
 	                          IBroadcastSignalRMessage signalRBroadcaster,
 	                          IManageCommandQueue commandQueueManager,
@@ -102,6 +104,7 @@ namespace Chaptarr.Api.V1.Books
             _qualityProfileService = qualityProfileService;
             _rootFolderService = rootFolderService;
             _mediaFileService = mediaFileService;
+            _mediaCoverProxy = mediaCoverProxy;
             _eventAggregator = eventAggregator;
             _logger = logger;
             _providerAliasService = providerAliasService;
@@ -178,7 +181,6 @@ namespace Chaptarr.Api.V1.Books
             PostValidator.RuleFor(s => s.Author.RootFolderPath).IsValidPath()
                              .When(s => s.Author != null && s.Author.Path.IsNullOrWhiteSpace() && !s.Author.RootFolderPath.IsNullOrWhiteSpace());
 	        }
-
 
         private ActionResult GetProviderAmbiguityResult(ProviderAmbiguityResource ambiguity)
         {
@@ -1847,6 +1849,45 @@ namespace Chaptarr.Api.V1.Books
             return UpdateBookInternal(bookResource, pinExplicitEditionChange: true);
         }
 
+        private void RestoreProxiedCoverUrls(List<Edition> submitted, List<Edition> stored)
+        {
+            if (submitted == null)
+            {
+                return;
+            }
+
+            foreach (var edition in submitted.Where(e => e?.Images != null))
+            {
+                var storedImages = stored?.FirstOrDefault(e => e != null && e.Id == edition.Id)?.Images;
+                var unresolved = new List<NzbDrone.Core.MediaCover.MediaCover>();
+
+                foreach (var image in edition.Images.Where(i => i != null && _mediaCoverProxy.IsProxyUrl(i.Url)))
+                {
+                    if (_mediaCoverProxy.TryResolveProxyUrl(image.Url, out var restored))
+                    {
+                        image.Url = restored;
+                        continue;
+                    }
+
+                    var storedUrl = storedImages?.FirstOrDefault(i => i != null && i.CoverType == image.CoverType)?.Url;
+
+                    if (storedUrl.IsNotNullOrWhiteSpace())
+                    {
+                        image.Url = storedUrl;
+                        continue;
+                    }
+
+                    unresolved.Add(image);
+                }
+
+                if (unresolved.Count > 0)
+                {
+                    _logger.Debug("Dropping {0} cover(s) on edition {1} whose proxy urls could no longer be resolved", unresolved.Count, edition.Id);
+                    edition.Images = edition.Images.Except(unresolved).ToList();
+                }
+            }
+        }
+
         private ActionResult<BookResource> UpdateBookInternal(BookResource bookResource, bool pinExplicitEditionChange)
         {
             var facadeContext = HttpContext.GetReadarrFacadeContext();
@@ -1862,6 +1903,7 @@ namespace Chaptarr.Api.V1.Books
             var beforeMonitoredEditionId = book?.Editions?.SingleOrDefault(e => e != null && e.Monitored)?.Id;
 
             var model = bookResource.ToModel(book, facadeContext);
+            RestoreProxiedCoverUrls(model?.Editions, book?.Editions);
             var shouldPinExplicitEditionSelection = ShouldPinExplicitEditionSelection(pinExplicitEditionChange, beforeMonitoredEditionId, model?.Editions);
             var shouldSkipEditionRepair = ShouldSkipEditionRepairForPartialFacadeCompat(pinExplicitEditionChange, facadeContext, beforeMonitoredEditionId, book?.Editions, model?.Editions);
 

@@ -81,6 +81,8 @@ export default {
       folderType: 1, // Default to audiobook
       placeEbooksWithAudiobooks: false,
       isCalibreLibrary: false,
+      reapCalibreDuplicates: false,
+      autoPushCalibreMetadata: false,
       host: 'localhost',
       port: 8080,
       urlBase: '',
@@ -191,6 +193,8 @@ export default {
 
       // Add Calibre settings if it's a Calibre library
       if (rawData.isCalibreLibrary) {
+        saveData.reapCalibreDuplicates = !!rawData.reapCalibreDuplicates;
+        saveData.autoPushCalibreMetadata = !!rawData.autoPushCalibreMetadata;
         saveData.host = rawData.host;
         saveData.port = rawData.port;
         saveData.urlBase = rawData.urlBase;

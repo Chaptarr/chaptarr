@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -30,9 +31,16 @@ namespace NzbDrone.Core.Books.Calibre
         void DeleteBooks(List<BookFile> books, CalibreSettings settings);
         void RemoveFormats(int calibreId, IEnumerable<string> formats, CalibreSettings settings);
         void SetFields(BookFile file, CalibreSettings settings, bool updateCover = true, bool embed = false);
+        void SetIdentity(int calibreId, string title, string author, string series, double? seriesIndex, CalibreSettings settings);
+        ICollection<string> SetSelectedFields(BookFile file, ICollection<string> fields, CalibreSettings settings);
         List<string> GetAllBookFilePaths(CalibreSettings settings);
+        Dictionary<int, string> GetBookTitlesUnderPath(string localPathPrefix, CalibreSettings settings);
+        void DeleteBookIds(List<int> calibreIds, CalibreSettings settings);
+        int GetCalibreIdForPath(string path, CalibreSettings settings);
+        string GetFormatLocalPath(int calibreId, string extension, CalibreSettings settings);
         CalibreBook GetBook(int calibreId, CalibreSettings settings);
         List<CalibreBook> GetBooks(List<int> calibreId, CalibreSettings settings);
+        List<CalibreBook> GetAllBooks(CalibreSettings settings);
         void Test(CalibreSettings settings);
     }
 
@@ -82,8 +90,19 @@ namespace NzbDrone.Core.Books.Calibre
 
             if (file.CalibreId == 0)
             {
-                var import = AddBook(file, settings);
-                file.CalibreId = import.Id;
+                // A file already inside the library belongs to an existing record; adding again duplicates it.
+                var existingId = GetCalibreIdForPath(file.Path, settings);
+
+                if (existingId > 0)
+                {
+                    _logger.Debug("{0} already belongs to calibre record {1}; reusing it instead of adding", file.Path, existingId);
+                    file.CalibreId = existingId;
+                }
+                else
+                {
+                    var import = AddBook(file, settings);
+                    file.CalibreId = import.Id;
+                }
             }
             else
             {
@@ -209,11 +228,379 @@ namespace NzbDrone.Core.Books.Calibre
             ExecuteSetFields(calibreId, payload, settings);
         }
 
+        // Writing values a record already holds still bumps last_modified, which calibre-web answers by re-embedding metadata into the files.
+        private void RemoveUnchanged(int calibreId, Dictionary<string, object> changes, CalibreSettings settings)
+        {
+            CalibreBook current;
+
+            try
+            {
+                current = GetBook(calibreId, settings);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to read calibre record {0} back before writing fields", calibreId);
+                return;
+            }
+
+            if (current == null)
+            {
+                return;
+            }
+
+            bool SameText(object a, string b)
+            {
+                return string.Equals((a as string)?.Trim() ?? string.Empty, b?.Trim() ?? string.Empty, StringComparison.Ordinal);
+            }
+
+            bool SameList(object a, List<string> b)
+            {
+                var left = ((a as IEnumerable<string>) ?? Enumerable.Empty<string>()).Select(v => v?.Trim()).Where(v => v.IsNotNullOrWhiteSpace()).OrderBy(v => v, StringComparer.Ordinal).ToList();
+                var right = (b ?? new List<string>()).Select(v => v?.Trim()).Where(v => v.IsNotNullOrWhiteSpace()).OrderBy(v => v, StringComparer.Ordinal).ToList();
+
+                return left.SequenceEqual(right, StringComparer.Ordinal);
+            }
+
+            if (changes.TryGetValue("title", out var title) && SameText(title, current.Title))
+            {
+                changes.Remove("title");
+            }
+
+            if (changes.TryGetValue("authors", out var authors) && SameList(authors, current.Authors))
+            {
+                changes.Remove("authors");
+            }
+
+            if (changes.TryGetValue("comments", out var comments) && SameText(comments, current.Comments))
+            {
+                changes.Remove("comments");
+            }
+
+            if (changes.TryGetValue("publisher", out var publisher) && SameText(publisher, current.Publisher))
+            {
+                changes.Remove("publisher");
+            }
+
+            if (changes.TryGetValue("languages", out var languages) && SameList(languages, current.Languages))
+            {
+                changes.Remove("languages");
+            }
+
+            if (changes.TryGetValue("tags", out var tags) && SameList(tags, current.Tags))
+            {
+                changes.Remove("tags");
+            }
+
+            if (changes.TryGetValue("series", out var series) && SameText(series, current.Series))
+            {
+                changes.Remove("series");
+
+                if (changes.TryGetValue("series_index", out var index) &&
+                    current.Position.HasValue &&
+                    index is double position &&
+                    Math.Abs(position - current.Position.Value) < 0.001)
+                {
+                    changes.Remove("series_index");
+                }
+            }
+
+            if (changes.TryGetValue("pubdate", out var pubdate) &&
+                pubdate is DateTime date &&
+                current.PubDate.HasValue &&
+                date.Date == current.PubDate.Value.Date)
+            {
+                changes.Remove("pubdate");
+            }
+
+            if (changes.TryGetValue("rating", out var rating) &&
+                rating is int stars &&
+                stars == (int)Math.Round(current.Rating))
+            {
+                changes.Remove("rating");
+            }
+
+            if (changes.TryGetValue("identifiers", out var idsObj) &&
+                idsObj is Dictionary<string, string> ids &&
+                current.Identifiers != null &&
+                ids.Count == current.Identifiers.Count &&
+                ids.All(pair => current.Identifiers.TryGetValue(pair.Key, out var existing) && string.Equals(existing, pair.Value, StringComparison.Ordinal)))
+            {
+                changes.Remove("identifiers");
+            }
+
+            if (changes.TryGetValue("cover", out var coverObj) && coverObj is string encoded)
+            {
+                try
+                {
+                    var coverRequest = GetBuilder($"get/cover/{calibreId}/{settings.Library}", settings).Build();
+                    var existingCover = _httpClient.Get(coverRequest)?.ResponseData;
+
+                    if (existingCover != null && Convert.ToBase64String(existingCover) == encoded)
+                    {
+                        changes.Remove("cover");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Unable to compare the existing cover for calibre record {0}", calibreId);
+                }
+            }
+        }
+
+        public ICollection<string> SetSelectedFields(BookFile file, ICollection<string> fields, CalibreSettings settings)
+        {
+            if (file == null || file.CalibreId == 0 || fields == null || fields.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            var selected = new HashSet<string>(fields, StringComparer.OrdinalIgnoreCase);
+            var edition = file.Edition;
+            var book = edition?.Book;
+            var changes = new Dictionary<string, object>();
+
+            var title = edition?.Title.IsNotNullOrWhiteSpace() == true ? edition.Title : book?.Title;
+
+            if (selected.Contains("title") && title.IsNotNullOrWhiteSpace())
+            {
+                changes["title"] = title;
+            }
+
+            if (selected.Contains("authors") && file.Author?.Name.IsNotNullOrWhiteSpace() == true)
+            {
+                changes["authors"] = new List<string> { file.Author.Name };
+            }
+
+            if (selected.Contains("series"))
+            {
+                var serieslink = CalibreSeriesSelector.Select(book);
+                var seriesTitle = serieslink?.Series?.Value?.Title;
+
+                if (seriesTitle.IsNotNullOrWhiteSpace())
+                {
+                    changes["series"] = seriesTitle;
+
+                    if (double.TryParse(serieslink.Position, out var index))
+                    {
+                        changes["series_index"] = index;
+                    }
+                }
+            }
+
+            var overview = edition?.Overview.IsNotNullOrWhiteSpace() == true ? edition.Overview : book?.Overview;
+
+            if (selected.Contains("comments") && overview.IsNotNullOrWhiteSpace())
+            {
+                changes["comments"] = overview;
+            }
+
+            if (selected.Contains("publisher") && edition?.Publisher.IsNotNullOrWhiteSpace() == true)
+            {
+                changes["publisher"] = edition.Publisher;
+            }
+
+            if (selected.Contains("pubdate") && book?.ReleaseDate > DateTime.MinValue)
+            {
+                changes["pubdate"] = book.ReleaseDate;
+            }
+
+            if (selected.Contains("languages") &&
+                edition?.Language.CanonicalizeLanguage() is string canonicalLanguage &&
+                canonicalLanguage.IsNotNullOrWhiteSpace())
+            {
+                changes["languages"] = new List<string> { canonicalLanguage };
+            }
+
+            if (selected.Contains("tags") && book?.Genres?.Any() == true)
+            {
+                var textInfo = CultureInfo.InvariantCulture.TextInfo;
+                changes["tags"] = book.Genres.Select(x => textInfo.ToTitleCase(x.Replace('-', ' '))).ToList();
+            }
+
+            if (selected.Contains("rating") && edition?.Ratings?.Value > 0)
+            {
+                changes["rating"] = (int)(edition.Ratings.Value * 2);
+            }
+
+            if (selected.Contains("identifiers") && edition != null)
+            {
+                var identifiers = new Dictionary<string, string>();
+
+                if (edition.Isbn13.IsNotNullOrWhiteSpace())
+                {
+                    identifiers["isbn"] = edition.Isbn13;
+                }
+
+                if (edition.Asin.IsNotNullOrWhiteSpace())
+                {
+                    identifiers["asin"] = edition.Asin;
+                }
+
+                if (edition.ForeignEditionId.IsNotNullOrWhiteSpace())
+                {
+                    identifiers["goodreads"] = edition.ForeignEditionId;
+                }
+
+                if (identifiers.Any())
+                {
+                    changes["identifiers"] = identifiers;
+                }
+            }
+
+            if (selected.Contains("cover") && edition != null)
+            {
+                var cover = edition.Images?.FirstOrDefault(x => x.CoverType == MediaCoverTypes.Cover);
+
+                if (cover != null)
+                {
+                    var imageFile = _mediaCoverService.GetCoverPath(edition.BookId, MediaCoverEntity.Book, cover.CoverType, cover.Extension, null);
+
+                    if (File.Exists(imageFile))
+                    {
+                        var imageData = File.ReadAllBytes(imageFile);
+
+                        if (CalibreImageValidator.IsValidImage(imageData))
+                        {
+                            changes["cover"] = Convert.ToBase64String(imageData);
+                        }
+                    }
+                }
+            }
+
+            RemoveUnchanged(file.CalibreId, changes, settings);
+            DropRejectedFieldWrites(file.CalibreId, changes, settings);
+
+            if (!changes.Any())
+            {
+                return Array.Empty<string>();
+            }
+
+            var payload = new Dictionary<string, object>
+            {
+                { "changes", changes },
+                { "loaded_book_ids", new List<int> { file.CalibreId } }
+            };
+
+            var builder = GetBuilder($"cdb/set-fields/{file.CalibreId}/{settings.Library}", settings)
+                .Post()
+                .SetHeader("Content-Type", "application/json");
+
+            var request = builder.Build();
+            request.SetContent(payload.ToJson());
+            _httpClient.Execute(request);
+
+            RememberRejectedFieldWrites(file.CalibreId, changes, settings);
+
+            return changes.Keys.ToList();
+        }
+
+        private static string RejectedFieldKey(CalibreSettings settings, int calibreId, string field)
+        {
+            return $"{settings.Host}:{settings.Port}:{settings.Library}:{calibreId}:{field}";
+        }
+
+        private static void DropRejectedFieldWrites(int calibreId, Dictionary<string, object> changes, CalibreSettings settings)
+        {
+            var now = DateTime.UtcNow;
+
+            foreach (var stale in RejectedFieldWrites.Where(p => now - p.Value.Added > RejectedFieldWriteMemory).Select(p => p.Key).ToList())
+            {
+                RejectedFieldWrites.TryRemove(stale, out _);
+            }
+
+            foreach (var field in changes.Keys.ToList())
+            {
+                if (RejectedFieldWrites.TryGetValue(RejectedFieldKey(settings, calibreId, field), out var rejected) &&
+                    rejected.Value == changes[field].ToJson())
+                {
+                    changes.Remove(field);
+                }
+            }
+        }
+
+        // Fields the server refuses to persist would otherwise be rewritten on every event.
+        private void RememberRejectedFieldWrites(int calibreId, Dictionary<string, object> written, CalibreSettings settings)
+        {
+            var check = written
+                .Where(pair => !pair.Key.Equals("cover", StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+
+            if (!check.Any())
+            {
+                return;
+            }
+
+            RemoveUnchanged(calibreId, check, settings);
+
+            if (!check.Any())
+            {
+                return;
+            }
+
+            foreach (var field in check.Keys)
+            {
+                RejectedFieldWrites[RejectedFieldKey(settings, calibreId, field)] = (check[field].ToJson(), DateTime.UtcNow);
+            }
+
+            _logger.Debug("Calibre did not persist {0} for record {1}; suppressing further writes of the same values", string.Join(", ", check.Keys), calibreId);
+        }
+
+        public void SetIdentity(int calibreId, string title, string author, string series, double? seriesIndex, CalibreSettings settings)
+        {
+            if (calibreId == 0 || (title.IsNullOrWhiteSpace() && author.IsNullOrWhiteSpace() && series.IsNullOrWhiteSpace()))
+            {
+                return;
+            }
+
+            var identity = new Dictionary<string, object>();
+
+            if (title.IsNotNullOrWhiteSpace())
+            {
+                identity["title"] = title;
+            }
+
+            if (author.IsNotNullOrWhiteSpace())
+            {
+                identity["authors"] = new List<string> { author };
+            }
+
+            if (series.IsNotNullOrWhiteSpace())
+            {
+                identity["series"] = series;
+
+                if (seriesIndex.HasValue)
+                {
+                    identity["series_index"] = seriesIndex.Value;
+                }
+            }
+
+            RemoveUnchanged(calibreId, identity, settings);
+
+            if (!identity.Any())
+            {
+                return;
+            }
+
+            var payload = new CalibreChangesPayload
+            {
+                LoadedBookIds = new List<int> { calibreId },
+                Changes = new CalibreChanges
+                {
+                    Title = identity.ContainsKey("title") ? title : null,
+                    Authors = identity.ContainsKey("authors") ? new List<string> { author } : null,
+                    Series = identity.ContainsKey("series") ? series : null,
+                    SeriesIndex = identity.ContainsKey("series_index") ? seriesIndex : null
+                }
+            };
+
+            ExecuteSetFields(calibreId, payload, settings);
+        }
+
         public void SetFields(BookFile file, CalibreSettings settings, bool updateCover = true, bool embed = false)
         {
             var edition = file.Edition;
             var book = edition.Book;
-            var serieslink = book.SeriesLinks.OrderBy(x => x.SeriesPosition).FirstOrDefault(x => x.Series.Value.Title.IsNotNullOrWhiteSpace());
+            var serieslink = CalibreSeriesSelector.Select(book);
 
             var series = serieslink?.Series.Value;
             double? seriesIndex = null;
@@ -254,7 +641,9 @@ namespace NzbDrone.Core.Books.Calibre
                     Cover = updateCover ? image : null,
                     PubDate = book.ReleaseDate,
                     Publisher = edition.Publisher,
-                    Languages = edition.Language.CanonicalizeLanguage(),
+                    Languages = edition.Language.CanonicalizeLanguage() is string canonicalLanguage
+                        ? new List<string> { canonicalLanguage }
+                        : null,
                     Tags = genres,
                     Comments = edition.Overview,
                     Rating = (int)(edition.Ratings.Value * 2),
@@ -419,6 +808,28 @@ namespace NzbDrone.Core.Books.Calibre
             }
         }
 
+        public List<CalibreBook> GetAllBooks(CalibreSettings settings)
+        {
+            var ids = GetAllBookIds(settings);
+            var result = new List<CalibreBook>();
+            var offset = 0;
+
+            while (offset < ids.Count)
+            {
+                var chunk = ids.Skip(offset).Take(PAGE_SIZE).ToList();
+
+                if (chunk.Count == 0)
+                {
+                    break;
+                }
+
+                result.AddRange(GetBooks(chunk, settings));
+                offset += PAGE_SIZE;
+            }
+
+            return result;
+        }
+
         public List<CalibreBook> GetBooks(List<int> calibreIds, CalibreSettings settings)
         {
             var builder = GetBuilder($"ajax/books/{settings.Library}", settings);
@@ -446,6 +857,105 @@ namespace NzbDrone.Core.Books.Calibre
             {
                 throw new CalibreException("Unable to connect to Calibre library: {0}", ex, ex.Message);
             }
+        }
+
+        private static readonly ConcurrentDictionary<string, DateTime> PathEnumerations = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan PathEnumerationCooldown = TimeSpan.FromMinutes(1);
+        private static readonly ConcurrentDictionary<string, (string Value, DateTime Added)> RejectedFieldWrites = new ConcurrentDictionary<string, (string Value, DateTime Added)>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan RejectedFieldWriteMemory = TimeSpan.FromHours(24);
+
+        public int GetCalibreIdForPath(string path, CalibreSettings settings)
+        {
+            var book = _bookCache.Find(path);
+
+            if (book == null && ShouldEnumeratePaths(settings))
+            {
+                GetAllBookFilePaths(settings);
+                book = _bookCache.Find(path);
+            }
+
+            return book?.Id ?? 0;
+        }
+
+        // Every download import misses this lookup; one full-library walk per cooldown.
+        private static bool ShouldEnumeratePaths(CalibreSettings settings)
+        {
+            var enumerationKey = $"{settings.Host}:{settings.Port}:{settings.Library}";
+            var now = DateTime.UtcNow;
+            var last = PathEnumerations.GetOrAdd(enumerationKey, DateTime.MinValue);
+
+            if (now - last < PathEnumerationCooldown)
+            {
+                return false;
+            }
+
+            PathEnumerations[enumerationKey] = now;
+            return true;
+        }
+
+        public string GetFormatLocalPath(int calibreId, string extension, CalibreSettings settings)
+        {
+            if (calibreId == 0 || extension.IsNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            var format = GetBook(calibreId, settings)?.Formats?
+                .FirstOrDefault(f => f.Key.Equals(extension, StringComparison.OrdinalIgnoreCase))
+                .Value;
+
+            if (format?.Path == null)
+            {
+                return null;
+            }
+
+            return _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(format.Path)).FullPath;
+        }
+
+        public Dictionary<int, string> GetBookTitlesUnderPath(string localPathPrefix, CalibreSettings settings)
+        {
+            var result = new Dictionary<int, string>();
+
+            if (localPathPrefix.IsNullOrWhiteSpace())
+            {
+                return result;
+            }
+
+            foreach (var book in GetAllBooks(settings))
+            {
+                if (book?.Formats == null)
+                {
+                    continue;
+                }
+
+                foreach (var format in book.Formats.Values)
+                {
+                    if (format?.Path == null)
+                    {
+                        continue;
+                    }
+
+                    var localPath = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(format.Path)).FullPath;
+
+                    if (localPath.StartsWith(localPathPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result[book.Id] = book.Title;
+                        break;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        public void DeleteBookIds(List<int> calibreIds, CalibreSettings settings)
+        {
+            if (calibreIds == null || calibreIds.Count == 0)
+            {
+                return;
+            }
+
+            DeleteBooks(calibreIds.Distinct().Select(id => new BookFile { CalibreId = id }).ToList(), settings);
         }
 
         public List<string> GetAllBookFilePaths(CalibreSettings settings)
@@ -477,7 +987,16 @@ namespace NzbDrone.Core.Books.Calibre
                         var localPath = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(remotePath)).FullPath;
                         result.Add(localPath);
 
-                        _bookCache.Set(localPath, book);
+                        foreach (var format in book.Formats.Values)
+                        {
+                            if (format?.Path == null)
+                            {
+                                continue;
+                            }
+
+                            var formatPath = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(format.Path)).FullPath;
+                            _bookCache.Set(formatPath, book);
+                        }
                     }
                 }
                 catch (HttpException ex)

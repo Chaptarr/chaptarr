@@ -148,11 +148,41 @@ namespace NzbDrone.Core.MediaFiles
                 }
                 else
                 {
-                    _calibre.DeleteBook(bookFile, rootFolder.CalibreSettings);
+                    if (bookFile.CalibreId == 0)
+                    {
+                        bookFile.CalibreId = _calibre.GetCalibreIdForPath(bookFile.Path, rootFolder.CalibreSettings);
+                    }
+
+                    if (bookFile.CalibreId != 0)
+                    {
+                        var format = System.IO.Path.GetExtension(bookFile.Path).TrimStart('.');
+                        var calibreBook = _calibre.GetBook(bookFile.CalibreId, rootFolder.CalibreSettings);
+
+                        if (format.IsNotNullOrWhiteSpace() && calibreBook?.Formats?.Count > 1)
+                        {
+                            // Deleting one of several formats must not remove the whole book
+                            _calibre.RemoveFormats(bookFile.CalibreId, new[] { format }, rootFolder.CalibreSettings);
+                        }
+                        else
+                        {
+                            _calibre.DeleteBook(bookFile, rootFolder.CalibreSettings);
+                        }
+                    }
+                    else if (_diskProvider.FileExistsCanonical(bookFile.Path))
+                    {
+                        _logger.Warn("Calibre does not know book file ({0}), deleting it from disk instead.", bookFile.Path);
+                        _recycleBinProvider.DeleteFile(bookFile.Path, subfolder);
+                    }
                 }
             }
             catch (Exception e)
             {
+                if (bookFile?.Path != null && !_diskProvider.FileExistsCanonical(bookFile.Path))
+                {
+                    _logger.Debug(e, "Book file was already removed: {0}", bookFile.Path);
+                    return;
+                }
+
                 _logger.Error(e, "Unable to delete book file");
                 throw new NzbDroneClientException(HttpStatusCode.InternalServerError, "Unable to delete book file");
             }
@@ -165,14 +195,45 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var author = message.Author;
 
-                var rootFolder = _rootFolderService.GetBestRootFolder(message.Author.Path);
-                var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
-
-                if (isCalibre)
+                foreach (var folder in GetAuthorFolders(author))
                 {
-                    // use authorId for the query
-                    var books = _mediaFileService.GetFilesByAuthor(author.Id);
-                    _calibre.DeleteBooks(books, rootFolder.CalibreSettings);
+                    var rootFolder = _rootFolderService.GetBestRootFolder(folder);
+                    if (rootFolder?.IsCalibreLibrary != true || rootFolder.CalibreSettings == null)
+                    {
+                        continue;
+                    }
+
+                    // The rows are already gone from the database when this fires; find them by path.
+                    var books = _mediaFileService.GetFilesWithBasePath(folder) ?? new List<BookFile>();
+
+                    foreach (var bookFile in books.Where(f => f.CalibreId == 0))
+                    {
+                        try
+                        {
+                            bookFile.CalibreId = _calibre.GetCalibreIdForPath(bookFile.Path, rootFolder.CalibreSettings);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Debug(ex, "Could not resolve calibre id for {0}", bookFile.Path);
+                        }
+                    }
+
+                    if (books.Any())
+                    {
+                        _logger.Info("Deleting {0} files across {1} calibre books for deleted author {2}",
+                            books.Count,
+                            books.Select(f => f.CalibreId).Where(id => id > 0).Distinct().Count(),
+                            author.Name);
+                        try
+                        {
+                            _calibre.DeleteBooks(books, rootFolder.CalibreSettings);
+                            _mediaFileService.DeleteMany(books.Where(f => f.Id > 0).ToList(), DeleteMediaFileReason.Manual);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Error(ex, "Failed to delete the calibre books for author {0}; their records may need cleanup in calibre-web", author.Name);
+                        }
+                    }
                 }
             }
         }
@@ -182,22 +243,18 @@ namespace NzbDrone.Core.MediaFiles
             if (message.DeleteFiles)
             {
                 var author = message.Author;
+                var allAuthors = _authorService.AllAuthorPaths();
 
-                var rootFolder = _rootFolderService.GetBestRootFolder(message.Author.Path);
-                var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
-
-                if (!isCalibre)
+                foreach (var folder in GetAuthorFolders(author))
                 {
-                    if (IsPathUnsafeToDelete(author.Path))
+                    if (IsPathUnsafeToDelete(folder))
                     {
                         _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
-                            author.Path, author.Name);
-                        _eventAggregator.PublishEvent(new DeleteCompletedEvent());
-                        return;
+                            folder, author.Name);
+                        continue;
                     }
 
-                    var allAuthors = _authorService.AllAuthorPaths();
-
+                    var conflictsWithOtherAuthor = false;
                     foreach (var s in allAuthors)
                     {
                         if (s.Key == author.Id)
@@ -205,27 +262,70 @@ namespace NzbDrone.Core.MediaFiles
                             continue;
                         }
 
-                        if (author.Path.IsParentPath(s.Value))
+                        if (folder.IsParentPath(s.Value) || folder.PathEquals(s.Value))
                         {
-                            _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", author.Path);
-                            return;
-                        }
-
-                        if (author.Path.PathEquals(s.Value))
-                        {
-                            _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", author.Path);
-                            return;
+                            _logger.Error("Author folder '{0}' matches or contains another author, not deleting its files.", folder);
+                            conflictsWithOtherAuthor = true;
+                            break;
                         }
                     }
 
-                    if (_diskProvider.FolderExists(message.Author.Path))
+                    if (conflictsWithOtherAuthor)
                     {
-                        _recycleBinProvider.DeleteFolder(message.Author.Path);
+                        continue;
                     }
 
-                    _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+                    var deleteRootFolder = _rootFolderService.GetBestRootFolder(folder);
+
+                    if (deleteRootFolder?.IsCalibreLibrary == true && deleteRootFolder.CalibreSettings != null)
+                    {
+                        // Recycle only the tracked leftovers; the rest of the folder belongs to calibre.
+                        foreach (var trackedFile in (_mediaFileService.GetFilesWithBasePath(folder) ?? new List<BookFile>())
+                                     .Where(f => f.Path.IsNotNullOrWhiteSpace()))
+                        {
+                            try
+                            {
+                                if (_diskProvider.FileExistsCanonical(trackedFile.Path))
+                                {
+                                    _recycleBinProvider.DeleteFile(trackedFile.Path);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.Warn(ex, "Unable to delete {0} for deleted author {1}", trackedFile.Path, author.Name);
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    if (_diskProvider.FolderExists(folder))
+                    {
+                        _recycleBinProvider.DeleteFolder(folder);
+                    }
+                }
+
+                _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+            }
+        }
+
+        private List<string> GetAuthorFolders(Author author)
+        {
+            var folders = new List<string>();
+            foreach (var path in new[] { author.Path, author.EbookPath, author.AudiobookPath })
+            {
+                if (path.IsNullOrWhiteSpace())
+                {
+                    continue;
+                }
+
+                if (!folders.Any(f => f.PathEquals(path)))
+                {
+                    folders.Add(path);
                 }
             }
+
+            return folders;
         }
 
         private bool IsPathUnsafeToDelete(string path)

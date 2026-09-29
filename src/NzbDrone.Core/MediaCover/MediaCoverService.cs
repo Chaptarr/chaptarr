@@ -31,11 +31,17 @@ namespace NzbDrone.Core.MediaCover
         Task<EnsureImageResult> EnsureAuthorImage(Author author, MediaCover cover);
     }
 
+    public interface IBookCoverSidecarReader
+    {
+        int? GetStoredCoverEditionId(int bookId);
+    }
+
 	    public class MediaCoverService :
 	        IHandleAsync<AuthorRefreshCompleteEvent>,
 	        IHandleAsync<AuthorDeletedEvent>,
 	        IHandleAsync<BookDeletedEvent>,
-	        IMapCoversToLocal
+	        IMapCoversToLocal,
+	        IBookCoverSidecarReader
 	    {
 
 	        private readonly IMediaCoverProxy _mediaCoverProxy;
@@ -1000,6 +1006,11 @@ namespace NzbDrone.Core.MediaCover
 
                 foreach (var candidate in candidates)
                 {
+                    if (_mediaCoverProxy.TryResolveProxyUrl(candidate.Cover.Url, out var restoredUrl))
+                    {
+                        candidate.Cover.Url = restoredUrl;
+                    }
+
                     if (!TryGetSafeImageUrl(candidate.Cover.Url, out _, out var unsafeReason))
                     {
                         _logger.Debug("Skipping unsafe monitored-edition cover URL for book {0}: {1} ({2})", book.Title, candidate.Cover.Url, unsafeReason);
@@ -1042,6 +1053,23 @@ namespace NzbDrone.Core.MediaCover
             }
         }
 
+        // Mappings at this file describe the previous edition once it is overwritten.
+        private void ForgetCachedCoverPath(string fileName)
+        {
+            if (fileName.IsNullOrWhiteSpace())
+            {
+                return;
+            }
+
+            foreach (var stale in _bookCoverUrlToPath
+                         .Where(pair => pair.Value.PathEquals(fileName))
+                         .Select(pair => pair.Key)
+                         .ToList())
+            {
+                _bookCoverUrlToPath.TryRemove(stale, out _);
+            }
+        }
+
         private bool EnsureMonitoredBookCover(Book book, BookCoverSelection selection)
         {
             var cover = selection.Cover;
@@ -1062,9 +1090,12 @@ namespace NzbDrone.Core.MediaCover
             var downloadedOrReused = false;
             if (!selectedUrlAlreadyStored || !hasOriginal)
             {
+                ForgetCachedCoverPath(fileName);
+
                 var urlHash = ComputeHash(cover.Url);
                 if (!string.IsNullOrWhiteSpace(urlHash) &&
                     _bookCoverUrlToPath.TryGetValue(urlHash, out var cachedPath) &&
+                    !cachedPath.PathEquals(fileName) &&
                     MediaCoverRendition.IsUsable(cachedPath, _diskProvider))
                 {
                     ReplaceFileWithCopy(cachedPath, fileName);
@@ -1103,6 +1134,7 @@ namespace NzbDrone.Core.MediaCover
 
 	        private sealed class BookCoverMetadataSelectedEdition
 	        {
+	            public int? LocalEditionId { get; set; }
 	            public string EditionProviderId { get; set; }
 	            public string CoverUrl { get; set; }
 	            public DateTime? DownloadedAt { get; set; }
@@ -1137,6 +1169,11 @@ namespace NzbDrone.Core.MediaCover
 	                return null;
 	            }
 	        }
+
+        public int? GetStoredCoverEditionId(int bookId)
+        {
+            return TryReadBookCoverMetadata(bookId)?.SelectedEdition?.LocalEditionId;
+        }
 
         private void RemoveBookCoverArtifactsForProvenEditionChange(Book book)
         {
@@ -1607,6 +1644,7 @@ namespace NzbDrone.Core.MediaCover
                 {
                     SelectedEdition = new BookCoverMetadataSelectedEdition
                     {
+                        LocalEditionId = coverChoice.Edition.Id,
                         EditionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(coverChoice.Edition),
                         CoverUrl = coverChoice.Cover.Url,
                         DownloadedAt = downloadedAt

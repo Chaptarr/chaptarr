@@ -1,0 +1,38 @@
+.notices {
+  margin-bottom: 20px;
+}
+
+.tipIcon {
+  margin-left: 5px;
+}
+
+.description {
+  margin-bottom: 8px;
+}
+
+.field {
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.field:last-child {
+  border-bottom: none;
+}
+
+.check {
+  flex: 0 0 30px;
+}
+
+.label {
+  flex: 0 0 130px;
+  font-weight: bold;
+}
+
+.value {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--helpTextColor);
+  word-break: break-word;
+}
