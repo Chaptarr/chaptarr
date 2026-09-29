@@ -352,9 +352,14 @@ namespace NzbDrone.Core.Books
 	                return false;
 	            }
 
+	            // High, not Normal: this is an interactive UI action (the user is watching the author page
+	            // wait for it), and at Normal it queues behind every background MissingBookSearch already
+	            // waiting - all command threads can be busy with rate-limited indexer searches for many
+	            // minutes, leaving a delete "stuck" on the author page. Same treatment ManualImportCommand
+	            // gets in CommandController.
 	            _commandQueueManager.Push(
 	                new DeleteAuthorCommand(distinctIds, deleteFiles, addImportListExclusion),
-	                CommandPriority.Normal,
+	                CommandPriority.High,
 	                CommandTrigger.Manual);
 
 	            return true;

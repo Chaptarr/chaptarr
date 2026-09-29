@@ -45,6 +45,7 @@ namespace Chaptarr.Core.Test.Books
         private class RecordingCommandQueueManagerProxy : DispatchProxy
         {
             public List<Command> PushedCommands { get; } = new();
+            public List<CommandPriority> PushedPriorities { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -52,6 +53,7 @@ namespace Chaptarr.Core.Test.Books
                     args?.Length >= 1 && args[0] is Command command)
                 {
                     PushedCommands.Add(command);
+                    PushedPriorities.Add(args.Length >= 2 && args[1] is CommandPriority priority ? priority : CommandPriority.Normal);
                     return null;
                 }
 
@@ -119,6 +121,7 @@ namespace Chaptarr.Core.Test.Books
             var command = commandQueueRecorder.PushedCommands.OfType<DeleteAuthorCommand>().Single();
             Assert.That(command.AuthorIds, Is.EquivalentTo(new[] { 1 }));
             Assert.That(command.DeleteFiles, Is.True);
+            Assert.That(commandQueueRecorder.PushedPriorities, Is.EqualTo(new[] { CommandPriority.High }), "an interactive delete must not wait behind background searches at Normal priority");
         }
 
         [Test]
