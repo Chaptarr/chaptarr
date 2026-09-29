@@ -8,10 +8,15 @@ using System.Threading.Tasks;
 using Chaptarr.Http.ClientSchema;
 using Newtonsoft.Json;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.ThingiProvider;
 
 namespace Chaptarr.Core.Test.Indexers
 {
@@ -46,6 +51,34 @@ namespace Chaptarr.Core.Test.Indexers
                 if (targetMethod?.Name == nameof(IIndexerHttpClientFactory.GetClient))
                 {
                     return Client;
+                }
+
+                throw new NotImplementedException(targetMethod?.Name);
+            }
+        }
+
+        private sealed class TestableMyAnonaMouse : MyAnonaMouse
+        {
+            public TestableMyAnonaMouse(IIndexerHttpClientFactory httpClientFactory, Logger logger)
+                : base(httpClientFactory, null, null, null, null, logger)
+            {
+            }
+
+            protected override Task<IList<ReleaseInfo>> FetchPage(IndexerRequest request, IParseIndexerResponse parser)
+            {
+                return Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo> { new ReleaseInfo() });
+            }
+        }
+
+        private class IndexerFactoryProxy : DispatchProxy
+        {
+            public IIndexer Indexer { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IIndexerFactory.GetAvailableProviders))
+                {
+                    return new List<IIndexer> { Indexer };
                 }
 
                 throw new NotImplementedException(targetMethod?.Name);
@@ -237,15 +270,18 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(clientState.Requests, Has.Count.EqualTo(1));
         }
 
-        [Test]
-        public async Task account_status_should_use_mam_unsatisfied_count_limit_and_snapshot()
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task account_status_should_use_mam_unsatisfied_count_limit_and_snapshot(bool nested)
         {
             var client = DispatchProxy.Create<IIndexerHttpClient, IndexerHttpClientProxy>();
             var clientState = (IndexerHttpClientProxy)(object)client;
             clientState.Responses.Enqueue(request => new HttpResponse(
                 request,
                 new HttpHeader { ContentType = "application/json" },
-                "{\"classname\":\"Elite VIP\",\"created\":1785171600,\"unsat\":{\"count\":196,\"limit\":200}}",
+                nested
+                    ? "{\"classname\":\"Elite VIP\",\"snatch_summary\":{\"created\":1785171600,\"unsat\":{\"count\":196,\"limit\":200}}}"
+                    : "{\"classname\":\"Elite VIP\",\"created\":1785171600,\"unsat\":{\"count\":196,\"limit\":200}}",
                 HttpStatusCode.OK));
 
             var settings = new MyAnonaMouseSettings { MamId = "secret" };
@@ -264,6 +300,171 @@ namespace Chaptarr.Core.Test.Indexers
                 Assert.That(settings.UnsatisfiedSnapshotUtc, Is.EqualTo(status.SnapshotCreatedUtc));
                 Assert.That(settings.UnsatisfiedStatusRefreshedUtc, Is.EqualTo(status.RefreshedUtc));
                 Assert.That(clientState.Requests.Single(), Does.EndWith("/jsonLoad.php?snatch_summary&pretty"));
+            });
+        }
+
+        [TestCase("{\"classname\":\"User\",\"created\":1785171600,\"unsat\":{\"limit\":200}}")]
+        [TestCase("{\"classname\":\"User\",\"created\":1785171600,\"unsat\":{\"count\":null,\"limit\":200}}")]
+        public void account_status_should_reject_missing_or_null_count_without_overwriting_cached_settings(string content)
+        {
+            var client = CreateClient(request => JsonResponse(request, content));
+            var settings = new MyAnonaMouseSettings
+            {
+                MamId = "fixture-token",
+                UserClass = "Prior",
+                IsVip = true,
+                UnsatisfiedCount = 17,
+                UnsatisfiedLimit = 99,
+                UnsatisfiedSnapshotUtc = DateTime.UtcNow.AddHours(-1),
+                UnsatisfiedStatusRefreshedUtc = DateTime.UtcNow.AddMinutes(-1)
+            };
+            var priorSnapshot = settings.UnsatisfiedSnapshotUtc;
+            var priorRefresh = settings.UnsatisfiedStatusRefreshedUtc;
+            var indexer = CreateIndexer(settings, client);
+
+            Assert.ThrowsAsync<JsonSerializationException>(async () => await indexer.RefreshAccountStatus());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(settings.UserClass, Is.EqualTo("Prior"));
+                Assert.That(settings.IsVip, Is.True);
+                Assert.That(settings.UnsatisfiedCount, Is.EqualTo(17));
+                Assert.That(settings.UnsatisfiedLimit, Is.EqualTo(99));
+                Assert.That(settings.UnsatisfiedSnapshotUtc, Is.EqualTo(priorSnapshot));
+                Assert.That(settings.UnsatisfiedStatusRefreshedUtc, Is.EqualTo(priorRefresh));
+            });
+        }
+
+        [Test]
+        public async Task account_status_should_accept_an_explicit_zero_count()
+        {
+            var created = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
+            var client = CreateClient(request => JsonResponse(request,
+                $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":0,\"limit\":50}}}}"));
+            var settings = new MyAnonaMouseSettings { MamId = "fixture-token" };
+            var indexer = CreateIndexer(settings, client);
+
+            var status = await indexer.RefreshAccountStatus();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(status.UnsatisfiedCount, Is.Zero);
+                Assert.That(status.UnsatisfiedLimit, Is.EqualTo(50));
+                Assert.That(settings.UnsatisfiedCount, Is.Zero);
+            });
+        }
+
+        [TestCase("malformed")]
+        [TestCase("missing-count")]
+        [TestCase("http-failure")]
+        [TestCase("stale")]
+        public void test_connection_should_fail_when_protection_is_enabled_and_summary_is_unavailable(string scenario)
+        {
+            var settings = new MyAnonaMouseSettings
+            {
+                MamId = "fixture-token",
+                ProtectUnsatisfiedSlots = true,
+                UnsatisfiedCount = 77,
+                UnsatisfiedLimit = 200
+            };
+            var indexer = CreateTestIndexer(settings, CreateSummaryClient(scenario));
+
+            var result = indexer.Test();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.IsValid, Is.False);
+                Assert.That(result.Errors.Select(error => error.ErrorMessage), Has.Member("MAM account status is unavailable or stale. Cannot verify unsatisfied-slot protection."));
+                Assert.That(indexer.Definition.Message?.Type, Is.Not.EqualTo(ProviderMessageType.Info));
+                Assert.That((indexer.Definition.Message?.Message ?? string.Empty), Does.Not.Contain("77/200"));
+            });
+        }
+
+        [TestCase("malformed")]
+        [TestCase("missing-count")]
+        [TestCase("http-failure")]
+        [TestCase("stale")]
+        public void test_connection_should_warn_without_stale_counts_when_protection_is_disabled(string scenario)
+        {
+            var settings = new MyAnonaMouseSettings
+            {
+                MamId = "fixture-token",
+                ProtectUnsatisfiedSlots = false,
+                UnsatisfiedCount = 77,
+                UnsatisfiedLimit = 200
+            };
+            var indexer = CreateTestIndexer(settings, CreateSummaryClient(scenario));
+
+            var result = indexer.Test();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(indexer.Definition.Message?.Type, Is.EqualTo(ProviderMessageType.Warning));
+                Assert.That(indexer.Definition.Message?.Message, Does.Contain("MAM account status is unavailable or stale"));
+                Assert.That((indexer.Definition.Message?.Message ?? string.Empty), Does.Not.Contain("77/200"));
+                Assert.That((indexer.Definition.Message?.Message ?? string.Empty), Does.Not.Contain("3/50"));
+            });
+        }
+
+        [Test]
+        public void test_connection_should_succeed_with_fresh_summary_and_updated_counts()
+        {
+            var settings = new MyAnonaMouseSettings
+            {
+                MamId = "fixture-token",
+                ProtectUnsatisfiedSlots = true,
+                UnsatisfiedCount = 77,
+                UnsatisfiedLimit = 200
+            };
+            var indexer = CreateTestIndexer(settings, CreateSummaryClient("fresh"));
+
+            var result = indexer.Test();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.IsValid, Is.True);
+                Assert.That(settings.UnsatisfiedCount, Is.EqualTo(3));
+                Assert.That(settings.UnsatisfiedLimit, Is.EqualTo(50));
+                Assert.That(indexer.Definition.Message?.Type, Is.EqualTo(ProviderMessageType.Info));
+                Assert.That(indexer.Definition.Message?.Message, Does.Contain("3/50"));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void account_status_warning_should_identify_indexer_without_exposing_response_content(bool background)
+        {
+            const string privateValue = "fixture-private-response";
+            var messages = new MemoryTarget { Layout = "${level}|${message}|${exception:format=tostring}" };
+            var configuration = new LoggingConfiguration();
+            configuration.AddRule(LogLevel.Warn, LogLevel.Fatal, messages);
+            using var logs = new LogFactory { Configuration = configuration };
+            var logger = logs.GetLogger("AccountStatusDiagnostic");
+            var client = CreateClient(request => JsonResponse(request,
+                $"{{\"classname\":\"User\",\"created\":1785171600,\"unsat\":{{\"count\":\"{privateValue}\",\"limit\":200}}}}"));
+            var indexer = CreateTestIndexer(new MyAnonaMouseSettings { MamId = "fixture-token" }, client, logger);
+            indexer.Definition.Name = "Fixture MAM";
+
+            if (background)
+            {
+                var factory = DispatchProxy.Create<IIndexerFactory, IndexerFactoryProxy>();
+                ((IndexerFactoryProxy)(object)factory).Indexer = indexer;
+                new MyAnonaMouseAccountStatusService(factory, null, logger).Execute(new RefreshMyAnonaMouseAccountStatusCommand());
+            }
+            else
+            {
+                Assert.That(indexer.Test().IsValid, Is.False);
+            }
+
+            Assert.That(messages.Logs, Has.Count.EqualTo(1));
+            Assert.Multiple(() =>
+            {
+                Assert.That(messages.Logs[0], Does.StartWith("Warn|"));
+                Assert.That(messages.Logs[0], Does.Contain("Fixture MAM"));
+                Assert.That(messages.Logs[0], Does.Contain(nameof(JsonReaderException)));
+                Assert.That(messages.Logs[0], Does.Not.Contain(privateValue));
+                Assert.That(messages.Logs[0], Does.Not.Contain("fixture-token"));
             });
         }
 
@@ -303,6 +504,50 @@ namespace Chaptarr.Core.Test.Indexers
                     Settings = settings
                 }
             };
+        }
+
+        private static TestableMyAnonaMouse CreateTestIndexer(MyAnonaMouseSettings settings, IIndexerHttpClient client, Logger logger = null)
+        {
+            var factory = DispatchProxy.Create<IIndexerHttpClientFactory, IndexerHttpClientFactoryProxy>();
+            ((IndexerHttpClientFactoryProxy)(object)factory).Client = client;
+            return new TestableMyAnonaMouse(factory, logger ?? LogManager.GetCurrentClassLogger())
+            {
+                Definition = new IndexerDefinition
+                {
+                    Id = 9,
+                    Name = "MyAnonaMouse",
+                    Implementation = nameof(MyAnonaMouse),
+                    Settings = settings
+                }
+            };
+        }
+
+        private static IIndexerHttpClient CreateSummaryClient(string scenario)
+        {
+            var created = scenario == "stale"
+                ? DateTimeOffset.UtcNow.AddHours(-3).ToUnixTimeSeconds()
+                : DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
+            var client = DispatchProxy.Create<IIndexerHttpClient, IndexerHttpClientProxy>();
+            ((IndexerHttpClientProxy)(object)client).Responses.Enqueue(request => scenario switch
+            {
+                "malformed" => JsonResponse(request, "not-json"),
+                "missing-count" => JsonResponse(request, $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"limit\":50}}}}"),
+                "http-failure" => new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, "", HttpStatusCode.ServiceUnavailable),
+                _ => JsonResponse(request, $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":3,\"limit\":50}}}}")
+            });
+            return client;
+        }
+
+        private static IIndexerHttpClient CreateClient(Func<HttpRequest, HttpResponse> response)
+        {
+            var client = DispatchProxy.Create<IIndexerHttpClient, IndexerHttpClientProxy>();
+            ((IndexerHttpClientProxy)(object)client).Responses.Enqueue(response);
+            return client;
+        }
+
+        private static HttpResponse JsonResponse(HttpRequest request, string content)
+        {
+            return new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, content, HttpStatusCode.OK);
         }
 
         private static string EligibleAudiobookUrl()
