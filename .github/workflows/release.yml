@@ -158,7 +158,7 @@ jobs:
       branch: ${{ github.ref_name }}
 
   publish-release:
-    needs: docker
+    needs: [release, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
