@@ -123,6 +123,37 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
         }
 
+
+        [Test]
+        public void should_include_actionable_guidance_when_sync_is_skipped_for_missing_root()
+        {
+            var author = new CoreAuthor
+            {
+                Id = 1,
+                Name = "Martha Wells",
+                AudiobookRootFolderPath = "/library/audiobooks"
+            };
+            var authorService = CreateAuthorService(author);
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService())
+            {
+                ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+                {
+                    HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext()
+                }
+            };
+
+            controller.SaveAll(new AuthorEditorResource
+            {
+                AuthorIds = new List<int> { 1 },
+                SyncMonitoredAcrossFormats = true
+            });
+
+            var warning = controller.Response.Headers["X-Chaptarr-Warning"].ToString();
+
+            Assert.That(warning, Does.Contain("1 author(s) were skipped"));
+            Assert.That(warning, Does.Contain("switch the media type filter to Audiobooks"));
+        }
+
         private static IAuthorService CreateAuthorService(params CoreAuthor[] authors)
         {
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
