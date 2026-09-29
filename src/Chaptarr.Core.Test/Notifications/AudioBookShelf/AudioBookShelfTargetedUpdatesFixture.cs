@@ -18,6 +18,127 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
     public class AudioBookShelfTargetedUpdatesFixture
     {
         [Test]
+        public void cover_event_push_should_not_overwrite_item_metadata()
+        {
+            var proxy = BuildPushProxy();
+            var subject = CreatePushSubject(proxy);
+
+            subject.PushBooksCovers(BuildPushableBook());
+
+            Assert.That(proxy.MetadataUpdates, Is.Empty);
+        }
+
+        [Test]
+        public void library_edit_push_should_still_send_item_metadata()
+        {
+            var proxy = BuildPushProxy();
+            var subject = CreatePushSubject(proxy);
+
+            subject.PushBooksMetadata(BuildPushableBook());
+
+            Assert.That(proxy.MetadataUpdates, Is.EqualTo(new[] { "item-1" }));
+        }
+
+        [Test]
+        public void automatic_push_should_leave_items_with_an_ignore_tag_untouched()
+        {
+            var proxy = BuildPushProxy("processed");
+            var subject = CreatePushSubject(proxy, "Processed");
+
+            subject.PushBooksMetadata(BuildPushableBook());
+
+            Assert.That(proxy.MetadataUpdates, Is.Empty);
+            Assert.That(proxy.CoverUpdates, Is.Empty);
+        }
+
+        [Test]
+        public void automatic_push_should_still_update_items_without_an_ignore_tag()
+        {
+            var proxy = BuildPushProxy("Fantasy");
+            var subject = CreatePushSubject(proxy, "Processed");
+
+            subject.PushBooksMetadata(BuildPushableBook());
+
+            Assert.That(proxy.MetadataUpdates, Is.EqualTo(new[] { "item-1" }));
+        }
+
+        [TestCase(false, 0)]
+        [TestCase(true, 1)]
+        public void forwarded_edit_should_reach_an_ignored_item_only_when_manual(bool manual, int expectedUpdates)
+        {
+            var proxy = BuildPushProxy("Processed");
+            var subject = CreatePushSubject(proxy, "Processed");
+            var (book, files) = BuildPushableBook().Single();
+
+            subject.PushExternalLibraryEdit(book, files, new ExternalLibraryEditPayload
+            {
+                Description = "Edited",
+                CoverUrl = "http://covers/cover.jpg",
+                Manual = manual
+            });
+
+            Assert.That(proxy.MetadataUpdates, Has.Count.EqualTo(expectedUpdates));
+            Assert.That(proxy.CoverUpdates, Has.Count.EqualTo(expectedUpdates));
+        }
+
+        private static FakeAudioBookShelfProxy BuildPushProxy(params string[] itemTags)
+        {
+            return new FakeAudioBookShelfProxy
+            {
+                Libraries = new List<AudioBookShelfLibrary>
+                {
+                    BuildLibrary("library-audio", "folder-audio", "/abs/audio", disableWatcher: false)
+                },
+                Items = new List<AudioBookShelfLibraryItemSummary>
+                {
+                    new AudioBookShelfLibraryItemSummary
+                    {
+                        Id = "item-1",
+                        RelPath = "Joe Abercrombie/The Blade Itself",
+                        Media = new AudioBookShelfLibraryItemMedia { Tags = itemTags.ToList() }
+                    }
+                }
+            };
+        }
+
+        private static NzbDrone.Core.Notifications.AudioBookShelf.AudioBookShelf CreatePushSubject(FakeAudioBookShelfProxy proxy, params string[] ignoreTags)
+        {
+            var subject = CreateSubject(proxy, new List<RootFolder>
+            {
+                new RootFolder { Id = 1, Path = "/audiobooks", FolderType = FolderType.Audiobook }
+            }, new List<AudioBookShelfLibraryMapping>
+            {
+                new AudioBookShelfLibraryMapping
+                {
+                    RootFolderId = 1,
+                    MediaType = "audiobook",
+                    LibraryId = "library-audio",
+                    LibraryFolderId = "folder-audio",
+                    LibraryFolderPath = "/abs/audio"
+                }
+            });
+
+            ((AudioBookShelfSettings)subject.Definition.Settings).IgnoreTags = ignoreTags;
+            return subject;
+        }
+
+        private static List<(Book Book, List<BookFile> Files)> BuildPushableBook()
+        {
+            return new List<(Book Book, List<BookFile> Files)>
+            {
+                (new Book { Title = "The Blade Itself", MediaType = BookMediaType.Audiobook },
+                 new List<BookFile>
+                 {
+                     new BookFile
+                     {
+                         Path = "/audiobooks/Joe Abercrombie/The Blade Itself/The Blade Itself.m4b",
+                         MediaType = "audiobook"
+                     }
+                 })
+            };
+        }
+
+        [Test]
         public void should_send_targeted_add_for_mapped_import()
         {
             var proxy = new FakeAudioBookShelfProxy
@@ -324,6 +445,8 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
                 pendingProviderSecretService: new PendingProviderSecretService(new CacheManager()),
                 cacheManager: new CacheManager(),
                 rootFolderService: new FakeRootFolderService(rootFolders),
+                bookService: null,
+                editionService: null,
                 logger: LogManager.GetLogger("AudioBookShelfTargetedUpdatesFixture"))
             {
                 Definition = new NotificationDefinition
@@ -401,6 +524,29 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
                 GetLibrariesCallCount++;
                 return Libraries;
             }
+
+            public List<AudioBookShelfLibraryItemSummary> Items { get; set; } = new List<AudioBookShelfLibraryItemSummary>();
+            public List<string> MetadataUpdates { get; } = new List<string>();
+
+            public List<AudioBookShelfLibraryItemSummary> GetLibraryItems(AudioBookShelfSettings settings, string libraryId) => Items;
+            public void ScanItem(AudioBookShelfSettings settings, string itemId) { }
+            public void UpdateItemMetadata(AudioBookShelfSettings settings, string itemId, AudioBookShelfItemMetadata metadata)
+            {
+                MetadataUpdates.Add(itemId);
+            }
+            public List<string> CoverUpdates { get; } = new List<string>();
+            public void UpdateItemCover(AudioBookShelfSettings settings, string itemId, string coverPath)
+            {
+                CoverUpdates.Add(itemId);
+            }
+
+            public void UploadItemCover(AudioBookShelfSettings settings, string itemId, byte[] image, string fileName)
+            {
+                CoverUpdates.Add(itemId);
+            }
+
+            public void PurgeCoverCache(AudioBookShelfSettings settings) { }
+            public void RemoveItemsWithIssues(AudioBookShelfSettings settings, string libraryId) { }
         }
 
         private class FakeRootFolderService : IRootFolderService
