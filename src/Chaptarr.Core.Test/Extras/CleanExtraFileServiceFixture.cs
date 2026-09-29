@@ -164,6 +164,20 @@ namespace Chaptarr.Core.Test.Extras
         }
 
         [Test]
+        public void should_fall_back_to_the_default_order_when_the_linked_book_file_no_longer_exists()
+        {
+            // BookFileId 99 is not among the author's book files (deleted, or never mapped).
+            _media.Files = new List<BookFile> { new BookFile { Id = 50, Path = EbookBase + "/Other/Other.epub", MediaType = "ebook" } };
+            _metadata.Files = new List<MetadataFile> { Row(1, "Book/cover.jpg", 99) };
+            _disk.ExistingFiles.Add(EbookBase + "/Book/cover.jpg");
+
+            _sut.Clean(_author);
+
+            Assert.That(_disk.Probes, Is.EqualTo(new[] { AudioBase + "/Book/cover.jpg", EbookBase + "/Book/cover.jpg" }), "default audiobook -> ebook order");
+            Assert.That(_metadata.DeleteManyCalls, Is.Empty, "the file exists under the ebook folder, so the row is kept");
+        }
+
+        [Test]
         public void should_ignore_rows_without_a_relative_path_instead_of_throwing()
         {
             _metadata.Files = new List<MetadataFile> { Row(1, null), Row(2, "  "), Row(3, "gone.jpg") };
