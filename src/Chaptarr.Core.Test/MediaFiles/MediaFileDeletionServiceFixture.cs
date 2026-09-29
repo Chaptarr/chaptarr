@@ -90,6 +90,69 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders) => throw new NotImplementedException();
         }
 
+        private class FolderExistsOnlyDiskProviderProxy : DispatchProxy
+        {
+            public HashSet<string> ExistingFolders { get; } = new(PathEqualityComparer.Instance);
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(IDiskProvider.FolderExists), StringComparison.Ordinal) &&
+                    args?.Length == 1 &&
+                    args[0] is string folderPath)
+                {
+                    return ExistingFolders.Contains(folderPath);
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IDiskProvider.{targetMethod?.Name}");
+            }
+        }
+
+        private class GetFilesByAuthorOnlyMediaFileServiceProxy : DispatchProxy
+        {
+            public List<BookFile> Files { get; set; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(IMediaFileService.GetFilesByAuthor), StringComparison.Ordinal))
+                {
+                    return Files;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IMediaFileService.{targetMethod?.Name}");
+            }
+        }
+
+        private class RecordingCalibreProxy : DispatchProxy
+        {
+            public List<(List<BookFile> Books, CalibreSettings Settings)> DeleteBooksCalls { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(ICalibreProxy.DeleteBooks), StringComparison.Ordinal))
+                {
+                    DeleteBooksCalls.Add(((List<BookFile>)args[0], (CalibreSettings)args[1]));
+                    return null;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement ICalibreProxy.{targetMethod?.Name}");
+            }
+        }
+
+        private class AllAuthorPathsOnlyAuthorServiceProxy : DispatchProxy
+        {
+            public List<KeyValuePair<int, string>> Paths { get; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(IAuthorService.AllAuthorMediaPaths), StringComparison.Ordinal))
+                {
+                    return Paths;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IAuthorService.{targetMethod?.Name}");
+            }
+        }
+
         private class ThrowingProxy<T> : DispatchProxy where T : class
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -386,6 +449,61 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void should_do_no_disk_work_on_book_delete_when_an_author_delete_already_covers_it()
+        {
+            // A book delete published as part of a larger author delete (PartOfAuthorDelete) relies
+            // on MediaFileDeletionService's own AuthorDeletedEvent handler to recursively remove the
+            // whole author folder. Doing per-file work here too would race that and duplicate
+            // recycle-bin entries for the same files.
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Jim Butcher",
+                Path = "/ebooks/Jim Butcher",
+                EbookPath = "/ebooks/Jim Butcher"
+            };
+
+            var bookFolder = "/ebooks/Jim Butcher/Captains Fury";
+
+            var diskProvider = DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>();
+            var recycleBinProvider = new RecordingRecycleBinProvider();
+
+            var service = new MediaFileDeletionService(
+                diskProvider,
+                recycleBinProvider,
+                DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                new RecordingEventAggregator(),
+                new StubRootFolderService(new RootFolder { Id = 1, Path = "/ebooks" }),
+                DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                LogManager.GetCurrentClassLogger());
+
+            var book = new Book
+            {
+                Id = 5792,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Captain's Fury",
+                MediaType = BookMediaType.Ebook,
+                BookFiles = new List<BookFile>
+                {
+                    new()
+                    {
+                        Id = 1,
+                        Path = bookFolder + "/Captains Fury.epub",
+                        Author = author
+                    }
+                }
+            };
+
+            Assert.DoesNotThrow(() =>
+                service.HandleAsync(new BookDeletedEvent(book, deleteFiles: true, addImportListExclusion: false, partOfAuthorDelete: true)));
+
+            Assert.That(recycleBinProvider.DeletedFiles, Is.Empty);
+        }
+
+        [Test]
         public void should_clean_the_book_folder_from_its_parent_so_it_can_actually_be_removed()
         {
             // The emptied book folder can only be deleted as a CHILD of the author folder; cleaning
@@ -529,6 +647,122 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(recycleBinProvider.DeletedFolders, Is.Empty);
             Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Not.Empty);
+        }
+
+        [Test]
+        public void should_delete_both_audiobook_and_ebook_folders_on_author_delete_when_they_differ()
+        {
+            // An author's legacy Path only ever pointed at one of AudiobookPath/EbookPath. Deleting
+            // just Path silently left the other format's entire folder - and every file in it -
+            // behind on disk, with no error, despite "delete files" having been requested.
+            var recycleBinProvider = new RecordingRecycleBinProvider();
+            var eventAggregator = new RecordingEventAggregator();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, FolderExistsOnlyDiskProviderProxy>();
+            var diskProxy = (FolderExistsOnlyDiskProviderProxy)(object)diskProvider;
+
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Jim Butcher",
+                Path = "/audiobooks/Jim Butcher",
+                AudiobookPath = "/audiobooks/Jim Butcher",
+                EbookPath = "/ebooks/Jim Butcher"
+            };
+
+            diskProxy.ExistingFolders.Add(author.AudiobookPath);
+            diskProxy.ExistingFolders.Add(author.EbookPath);
+
+            var rootFolderService = new StubRootFolderService(
+                new RootFolder { Path = "/audiobooks", FolderType = FolderType.Audiobook },
+                new RootFolder { Path = "/ebooks", FolderType = FolderType.Ebook });
+
+            var service = new MediaFileDeletionService(
+                diskProvider,
+                recycleBinProvider,
+                DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                DispatchProxy.Create<IAuthorService, AllAuthorPathsOnlyAuthorServiceProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                eventAggregator,
+                rootFolderService,
+                DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
+                LogManager.GetCurrentClassLogger());
+
+            service.HandleAsync(new AuthorDeletedEvent(author, deleteFiles: true, addImportListExclusion: false));
+
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.AudiobookPath));
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.EbookPath));
+            Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Not.Empty);
+        }
+
+        [Test]
+        public void should_route_each_path_through_calibre_or_recycle_bin_independently_when_only_one_format_is_calibre_managed()
+        {
+            // Calibre status must be decided per path, not once for the whole author from Path
+            // alone: a non-Calibre AudiobookPath must never be recycle-binned as if it were part of
+            // an EbookPath that happens to be Calibre-managed (or vice versa) - either direction
+            // would either corrupt Calibre's own metadata.db or leave a format's folder untouched.
+            var recycleBinProvider = new RecordingRecycleBinProvider();
+            var eventAggregator = new RecordingEventAggregator();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, FolderExistsOnlyDiskProviderProxy>();
+            var diskProxy = (FolderExistsOnlyDiskProviderProxy)(object)diskProvider;
+            var calibreProxy = DispatchProxy.Create<ICalibreProxy, RecordingCalibreProxy>();
+            var calibreRecorder = (RecordingCalibreProxy)(object)calibreProxy;
+
+            var author = new Author
+            {
+                Id = 1,
+                Name = "Jim Butcher",
+                Path = "/audiobooks/Jim Butcher",
+                AudiobookPath = "/audiobooks/Jim Butcher",
+                EbookPath = "/calibre-ebooks/Jim Butcher"
+            };
+
+            diskProxy.ExistingFolders.Add(author.AudiobookPath);
+            diskProxy.ExistingFolders.Add(author.EbookPath);
+
+            var calibreSettings = new CalibreSettings();
+            var calibreRootFolder = new RootFolder
+            {
+                Path = "/calibre-ebooks",
+                FolderType = FolderType.Ebook,
+                IsCalibreLibrary = true,
+                CalibreSettings = calibreSettings
+            };
+
+            var rootFolderService = new StubRootFolderService(
+                new RootFolder { Path = "/audiobooks", FolderType = FolderType.Audiobook },
+                calibreRootFolder);
+
+            var ebookFile = new BookFile { Id = 1, Path = author.EbookPath + "/Storm Front.epub" };
+            var audiobookFile = new BookFile { Id = 2, Path = author.AudiobookPath + "/Storm Front.m4b" };
+
+            var mediaFileService = DispatchProxy.Create<IMediaFileService, GetFilesByAuthorOnlyMediaFileServiceProxy>();
+            ((GetFilesByAuthorOnlyMediaFileServiceProxy)(object)mediaFileService).Files = new List<BookFile> { ebookFile, audiobookFile };
+
+            var service = new MediaFileDeletionService(
+                diskProvider,
+                recycleBinProvider,
+                mediaFileService,
+                DispatchProxy.Create<IAuthorService, AllAuthorPathsOnlyAuthorServiceProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                eventAggregator,
+                rootFolderService,
+                calibreProxy,
+                LogManager.GetCurrentClassLogger());
+
+            var authorDeletedEvent = new AuthorDeletedEvent(author, deleteFiles: true, addImportListExclusion: false);
+            service.Handle(authorDeletedEvent);
+            service.HandleAsync(authorDeletedEvent);
+
+            // The plain audiobook folder goes through the recycle bin, and only that folder.
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Contain(author.AudiobookPath));
+            Assert.That(recycleBinProvider.DeletedFolders, Does.Not.Contain(author.EbookPath));
+
+            // The Calibre-managed ebook folder goes through _calibre.DeleteBooks instead, with only
+            // the file(s) actually under that path, using that path's own CalibreSettings.
+            var calibreCall = calibreRecorder.DeleteBooksCalls.Single();
+            Assert.That(calibreCall.Settings, Is.SameAs(calibreSettings));
+            Assert.That(calibreCall.Books.Select(b => b.Id), Is.EquivalentTo(new[] { ebookFile.Id }));
         }
 
         [Test]

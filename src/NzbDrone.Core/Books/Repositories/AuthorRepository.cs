@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Dapper;
 using NLog;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -20,6 +21,11 @@ namespace NzbDrone.Core.Books
         Author FindByGoogleBooksId(string googleBooksAuthorId);
         List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId);
         Dictionary<int, string> AllAuthorPaths();
+        // The default exists only for lightweight test doubles. Every production implementation must override it.
+        List<KeyValuePair<int, string>> AllAuthorMediaPaths()
+        {
+            throw new NotSupportedException();
+        }
         Dictionary<int, List<int>> AllAuthorTags();
         void UpdateLastSelectedMediaType(int authorId, string mediaType);
         
@@ -107,6 +113,32 @@ namespace NzbDrone.Core.Books
             {
                 var strSql = "SELECT \"Id\" AS \"Key\", \"Path\" AS \"Value\" FROM \"Authors\"";
                 return conn.Query<KeyValuePair<int, string>>(strSql).ToDictionary(x => x.Key, x => x.Value);
+            }
+        }
+
+        private sealed class AuthorPathRow
+        {
+            public int Id { get; set; }
+            public string Path { get; set; }
+            public string AudiobookPath { get; set; }
+            public string EbookPath { get; set; }
+        }
+
+        // Unlike AllAuthorPaths (legacy single-path field, used by validators/health checks that
+        // predate dual-format authors), this flattens every author down to all of the paths they
+        // actually use - Path, AudiobookPath and EbookPath - one row per non-empty path, so a
+        // consumer can safely check a candidate path against every path any other author owns.
+        public List<KeyValuePair<int, string>> AllAuthorMediaPaths()
+        {
+            using (var conn = _database.OpenConnection())
+            {
+                var strSql = "SELECT \"Id\", \"Path\", \"AudiobookPath\", \"EbookPath\" FROM \"Authors\"";
+                return conn.Query<AuthorPathRow>(strSql)
+                    .SelectMany(row => new[] { row.Path, row.AudiobookPath, row.EbookPath }
+                        .Where(p => !string.IsNullOrWhiteSpace(p))
+                        .Distinct(StringComparer.FromComparison(DiskProviderBase.PathStringComparison))
+                        .Select(p => new KeyValuePair<int, string>(row.Id, p)))
+                    .ToList();
             }
         }
 

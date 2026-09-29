@@ -503,6 +503,38 @@ namespace NzbDrone.Core.MediaFiles
 
             if (message.DeleteFiles)
             {
+                // A book's editions are deleted synchronously while BookDeletedEvent is being published
+                // (EditionService), and Handle(EditionDeletedEvent) unlinks their files (EditionId = 0)
+                // before this async handler runs - so a lookup by book/edition no longer finds them and
+                // DeleteFilesByBook alone leaves the rows behind as "unmapped" files even though the user
+                // asked to delete files. Delete the rows captured in the event's snapshot by id, and keep
+                // the by-book delete for any row linked after the snapshot was taken.
+                var snapshotIds = (bookFiles ?? new List<BookFile>())
+                    .Where(file => file != null && file.Id > 0)
+                    .Select(file => file.Id)
+                    .Distinct()
+                    .ToList();
+
+                if (snapshotIds.Any())
+                {
+                    // Re-read the rows and only delete ones that are still unlinked or still belong to this
+                    // book's own editions: an id in the snapshot that was re-linked to another book's edition
+                    // in the meantime (concurrent import/replace) must never be deleted here.
+                    var ownEditionIds = (message.Book.Editions ?? new List<Edition>())
+                        .Select(edition => edition.Id)
+                        .ToHashSet();
+
+                    var deletableIds = (_mediaFileRepository.Get(snapshotIds) ?? Enumerable.Empty<BookFile>())
+                        .Where(file => file.EditionId == 0 || ownEditionIds.Contains(file.EditionId))
+                        .Select(file => file.Id)
+                        .ToList();
+
+                    if (deletableIds.Any())
+                    {
+                        _mediaFileRepository.DeleteMany(deletableIds);
+                    }
+                }
+
                 _mediaFileRepository.DeleteFilesByBook(message.Book.Id);
             }
             else

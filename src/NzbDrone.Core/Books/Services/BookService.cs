@@ -70,6 +70,15 @@ namespace NzbDrone.Core.Books
         void ReassignAuthor(List<Book> books, int authorId) { throw new NotImplementedException(); }
         void RefreshProviderAliases(Book book) { }
         void DeleteMany(List<Book> books);
+        // The default exists only for lightweight test doubles. Kept as an overload (not an added
+        // parameter on the line above) so the many hand-written IBookService test stubs that only
+        // implement the 1-arg form keep compiling unchanged. Throws rather than silently forwarding
+        // to the 1-arg overload (which would drop deleteFiles) - every production implementation
+        // must override this directly, same as AllAuthorMediaPaths() elsewhere in this change.
+        void DeleteMany(List<Book> books, bool deleteFiles)
+        {
+            throw new NotSupportedException();
+        }
         void SetAddOptions(IEnumerable<Book> books);
         List<Book> GetAuthorBooksWithFiles(Author author);
             List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null);
@@ -2008,6 +2017,16 @@ namespace NzbDrone.Core.Books
 
         public void DeleteMany(List<Book> books)
         {
+            DeleteMany(books, false);
+        }
+
+        public void DeleteMany(List<Book> books, bool deleteFiles)
+        {
+            DeleteMany(books, deleteFiles, partOfAuthorDelete: false);
+        }
+
+        private void DeleteMany(List<Book> books, bool deleteFiles, bool partOfAuthorDelete)
+        {
             var booksToDelete = (books ?? new List<Book>())
                 .Where(book => book != null)
                 .GroupBy(book => book.Id)
@@ -2018,7 +2037,7 @@ namespace NzbDrone.Core.Books
 
             foreach (var book in booksToDelete)
             {
-                _eventAggregator.PublishEvent(new BookDeletedEvent(book, false, false));
+                _eventAggregator.PublishEvent(new BookDeletedEvent(book, deleteFiles, false, partOfAuthorDelete: partOfAuthorDelete));
 
                 _providerAliasService?.DeleteAliases("Book", book.Id);
             }
@@ -2200,7 +2219,16 @@ namespace NzbDrone.Core.Books
         {
             var books = GetBooksByAuthorId(message.Author.Id);
 
-            DeleteMany(books);
+            // Previously hardcoded to false here regardless of what the author-level delete actually
+            // requested, so MediaFileService always unlinked (never deleted) each book's BookFile rows -
+            // leaving them behind as "unmapped files" even when the physical files really were deleted.
+            // partOfAuthorDelete: true because MediaFileDeletionService's own AuthorDeletedEvent handler
+            // already recursively deletes the author's whole folder(s) when DeleteFiles is set (a
+            // per-book disk delete here would just race that and duplicate recycle-bin entries), and
+            // NotificationService already sends one OnAuthorDelete notification for the whole author -
+            // a per-book OnBookDelete on top of that is the "notification per episode when the whole
+            // series was deleted" noise Sonarr/Radarr deliberately don't send.
+            DeleteMany(books, message.DeleteFiles, partOfAuthorDelete: true);
         }
 
         public void Execute(BulkSyncFormatMonitoringCommand message)
