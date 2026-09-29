@@ -27,6 +27,12 @@ namespace NzbDrone.Core.Messaging.Commands
         CommandModel Get(int id);
         List<CommandModel> GetStarted();
         void SetMessage(CommandModel command, string message);
+
+        // Progress text that changes many times a second (one per book during an author refresh).
+        // Default = SetMessage so every existing implementer/test double keeps its behaviour; the real
+        // manager overrides it to persist at most once per ProgressPersistInterval.
+        void SetProgressMessage(CommandModel command, string message) => SetMessage(command, message);
+
         void TouchProgress(CommandModel command);
         void SetResult(CommandModel command, CommandResult result);
         void Start(CommandModel command);
@@ -54,6 +60,8 @@ namespace NzbDrone.Core.Messaging.Commands
 
         private readonly CommandQueue _commandQueue;
         private readonly ConcurrentDictionary<int, CancellationTokenSource> _cancellationTokenSources;
+        private readonly ConcurrentDictionary<int, long> _lastProgressPersistTicks = new ConcurrentDictionary<int, long>();
+        private static readonly long ProgressPersistIntervalTicks = System.Diagnostics.Stopwatch.Frequency; // 1s
 
         public CommandQueueManager(ICommandRepository repo,
                                    IServiceFactory serviceFactory,
@@ -212,10 +220,44 @@ namespace NzbDrone.Core.Messaging.Commands
             return _commandQueue.All().Where(c => c.Status == CommandStatus.Started).ToList();
         }
 
-        public void SetMessage(CommandModel command, string message)
+        public void SetProgressMessage(CommandModel command, string message)
         {
+            // Always keep the in-memory model current (that is what the API/UI reads while a command
+            // runs); only the DB write is throttled. Persisting Message + LastProgressAt on every call
+            // cost one UPDATE per book during a refresh, and LastProgressAt already has its own 30s
+            // heartbeat (TouchProgress), so nothing depends on it moving faster than this.
             command.Message = message;
             command.LastProgressAt = DateTime.UtcNow;
+
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastProgressPersistTicks.TryGetValue(command.Id, out var last) &&
+                now - last < ProgressPersistIntervalTicks)
+            {
+                return;
+            }
+
+            if (_lastProgressPersistTicks.Count > 1024)
+            {
+                _lastProgressPersistTicks.Clear();
+            }
+
+            _lastProgressPersistTicks[command.Id] = now;
+            PersistMessage(command);
+        }
+
+        public void SetMessage(CommandModel command, string message)
+        {
+            // Terminal/explicit messages (Completed, Failed, Cancelled, Resumed, ...) always persist and
+            // end the command's progress throttling.
+            _lastProgressPersistTicks.TryRemove(command.Id, out _);
+
+            command.Message = message;
+            command.LastProgressAt = DateTime.UtcNow;
+            PersistMessage(command);
+        }
+
+        private void PersistMessage(CommandModel command)
+        {
             try
             {
                 // Persist progress heartbeat and message
