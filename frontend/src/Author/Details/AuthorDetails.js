@@ -259,6 +259,8 @@ class AuthorDetails extends Component {
       saveError,
       isDeleting,
       deleteError,
+      isDeletingAuthor,
+      isDeleteAuthorQueued,
       statistics = {},
       selectedMediaType,
       onMediaTypeChange,
@@ -368,6 +370,7 @@ class AuthorDetails extends Component {
             <PageToolbarButton
               label={translate('Delete')}
               iconName={icons.DELETE}
+              isDisabled={!!isDeletingAuthor}
               onPress={this.onDeleteAuthorPress}
             />
 
@@ -412,6 +415,18 @@ class AuthorDetails extends Component {
           className={styles.contentBody}
           innerClassName={styles.innerContentBody}
         >
+          {
+            isDeletingAuthor ?
+              <Alert kind={kinds.INFO}>
+                {
+                  isDeleteAuthorQueued ?
+                    'This author is queued for deletion. It will be deleted in the background once a worker is free, and it will disappear from the library when it finishes. You can leave this page.' :
+                    'This author is being deleted in the background. It will disappear from the library when it finishes. You can leave this page.'
+                }
+              </Alert> :
+              null
+          }
+
           <SwipeHeaderConnector
             className={styles.header}
             nextLink={`/author/${nextAuthor.id}`}
@@ -737,6 +752,8 @@ AuthorDetails.propTypes = {
   saveError: PropTypes.object,
   isDeleting: PropTypes.bool.isRequired,
   deleteError: PropTypes.object,
+  isDeletingAuthor: PropTypes.bool,
+  isDeleteAuthorQueued: PropTypes.bool,
   onSaveSelected: PropTypes.func.isRequired
 };
 

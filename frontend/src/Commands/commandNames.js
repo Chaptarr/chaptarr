@@ -6,6 +6,7 @@ export const CLEAR_BLOCKLIST = 'ClearBlocklist';
 export const CHECK_HEALTH = 'CheckHealth';
 export const CLEAR_LOGS = 'ClearLog';
 export const CUTOFF_UNMET_BOOK_SEARCH = 'CutoffUnmetBookSearch';
+export const DELETE_AUTHOR = 'DeleteAuthor';
 export const DELETE_LOG_FILES = 'DeleteLogFiles';
 export const DELETE_UPDATE_LOG_FILES = 'DeleteUpdateLogFiles';
 export const DOWNLOADED_BOOKS_SCAN = 'DownloadedBooksScan';

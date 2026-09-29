@@ -187,6 +187,18 @@ function createMapStateToProps() {
         isRenamingAuthorCommand.body.authorIds.indexOf(author.id) > -1
         );
 
+        // A large author delete runs as a background command and can sit queued behind other work for a
+        // while; surface that (and the running state) so the page is not silently unchanged.
+        const deleteAuthorCommand = _.find(commands, (command) => (
+          command.body &&
+          command.body.name === commandNames.DELETE_AUTHOR &&
+          isCommandExecuting(command) &&
+          Array.isArray(command.body.authorIds) &&
+          command.body.authorIds.indexOf(author.id) > -1
+        ));
+        const isDeletingAuthor = !!deleteAuthorCommand;
+        const isDeleteAuthorQueued = !!deleteAuthorCommand && deleteAuthorCommand.status === 'queued';
+
         const isFetching = isBooksFetching || isSeriesFetching || isBookFilesFetching;
         const isPopulated = isBooksPopulated && isSeriesPopulated && isBookFilesPopulated;
 
@@ -404,6 +416,8 @@ function createMapStateToProps() {
           isSearching,
           isRenamingFiles,
           isRenamingAuthor,
+          isDeletingAuthor,
+          isDeleteAuthorQueued,
           isFetching,
           isPopulated,
           booksError,

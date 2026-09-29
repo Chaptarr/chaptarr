@@ -343,7 +343,21 @@ export const actionHandlers = handleThunks({
   [SAVE_AUTHOR]: createSaveProviderHandler(section, '/author', { getAjaxOptions: getSaveAjaxOptions }),
   // A large author delete runs as a background command and responds 202 (queued, not done yet)
   // instead of a completed 2xx - see AuthorService.DeleteAuthorsSyncOrQueue.
-  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author', { allowQueuedResponse: true }),
+  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author', {
+    allowQueuedResponse: true,
+    onQueued: (dispatch, getState, payload) => {
+      const author = (getState().authors.items || []).find((item) => item.id === payload.id);
+      const name = author ? author.authorName : 'the author';
+
+      dispatch(showMessage({
+        id: `author-delete-queued-${payload.id}`,
+        name: 'AuthorDeleteQueued',
+        message: `Deleting ${name} in the background. It will be removed when a worker is free - you can leave this page.`,
+        type: 'info',
+        hideAfter: 15
+      }));
+    }
+  }),
 
   [TOGGLE_AUTHOR_MONITORED]: (getState, payload, dispatch) => {
     const {

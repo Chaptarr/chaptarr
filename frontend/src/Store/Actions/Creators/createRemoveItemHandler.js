@@ -7,7 +7,10 @@ import { removeItem, set } from '../baseActions';
 // of always meaning "already deleted" - e.g. an author delete large enough to run as a background
 // command. Left off (default) for every other consumer of this shared factory, whose endpoints
 // have never returned anything but a completed 2xx for a delete.
-function createRemoveItemHandler(section, url, { allowQueuedResponse = false } = {}) {
+//
+// onQueued(dispatch, getState, payload): optional feedback hook for that 202 case, so the user is told the
+// delete is happening in the background instead of the page silently staying as it was.
+function createRemoveItemHandler(section, url, { allowQueuedResponse = false, onQueued = null } = {}) {
   return function(getState, payload, dispatch) {
     const {
       id,
@@ -43,6 +46,10 @@ function createRemoveItemHandler(section, url, { allowQueuedResponse = false } =
           isDeleting: false,
           deleteError: null
         }));
+
+        if (onQueued) {
+          onQueued(dispatch, getState, payload);
+        }
 
         return;
       }
