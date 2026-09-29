@@ -948,6 +948,51 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             Assert.That(result.IsValid, Is.False);
         }
 
+        [TestCase(1, false)]
+        [TestCase(14, false)]
+        [TestCase(15, true)]
+        [TestCase(720, true)]
+        public void settings_should_require_a_refresh_interval_of_at_least_15_minutes(int minutes, bool valid)
+        {
+            var settings = new GoodreadsBookshelfImportListSettings
+            {
+                UserId = "12345678",
+                BookshelfIds = new[] { "to-read" },
+                AudiobookRootFolderPath = "/audiobooks",
+                EbookRootFolderPath = "/books",
+                RefreshIntervalMinutes = minutes
+            };
+
+            Assert.That(settings.Validate().IsValid, Is.EqualTo(valid));
+        }
+
+        [TestCase(5, 15)]
+        [TestCase(15, 15)]
+        [TestCase(40, 40)]
+        [TestCase(0, 720)]
+        public void refresh_interval_should_never_drop_below_15_minutes(int configured, int expected)
+        {
+            var importList = new GoodreadsBookshelf(
+                importListStatusService: new StubImportListStatusService(),
+                configService: null,
+                parsingService: null,
+                httpClient: null,
+                qualityProfileService: new Lazy<IQualityProfileService>(() => new StubQualityProfileService()),
+                metadataProfileService: new Lazy<IMetadataProfileService>(() => new StubMetadataProfileService()),
+                tagService: new Lazy<ITagService>(() => new StubTagService()),
+                rootFolderService: new StubRootFolderService(),
+                rootFolderSettingsResolver: new StubRootFolderSettingsResolver(),
+                logger: LogManager.GetCurrentClassLogger())
+            {
+                Definition = new ImportListDefinition
+                {
+                    Settings = new GoodreadsBookshelfImportListSettings { RefreshIntervalMinutes = configured }
+                }
+            };
+
+            Assert.That(importList.MinRefreshInterval, Is.EqualTo(TimeSpan.FromMinutes(expected)));
+        }
+
         [Test]
         public void settings_should_reject_negative_import_limit()
         {

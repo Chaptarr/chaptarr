@@ -673,6 +673,66 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public async Task specific_book_import_with_search_should_not_leave_an_all_books_fallback_for_the_scan()
+        {
+            var remoteAuthor = new Author
+            {
+                Name = "Shelf Author",
+                Books = new List<Book>
+                {
+                    BuildAudiobook("Selected Book", "hc:1001"),
+                    BuildAudiobook("Other Book", "hc:1002")
+                },
+                Series = new List<Series>()
+            };
+
+            var service = new AuthorLibraryService(
+                authorService: new StubAuthorService(),
+                authorInfo: new StubAuthorInfo(remoteAuthor),
+                bookService: new StubBookService(),
+                refreshSeriesService: null,
+                editionService: new StubEditionService(),
+                narratorLinkService: null,
+                metadataProfileService: new StubMetadataProfileService(),
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: new StubAuthorPathBuilder(),
+                rootFolderService: new StubRootFolderService(BuildAudiobookRoot("/audiobooks")),
+                commandQueueManager: null,
+                eventAggregator: new StubEventAggregator(),
+                pendingImportService: null,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger(),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()));
+
+            var addedAuthor = await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
+            {
+                AuthorName = remoteAuthor.Name,
+                CreateAudiobook = true,
+                CreateEbook = false,
+                AudiobookQualityProfileId = 2,
+                AudiobookMetadataProfileId = 1,
+                AudiobookRootFolderPath = "/audiobooks",
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.All,
+                AudiobookMonitorExistingMode = MonitorTypes.SpecificBook,
+                AudiobookBooksToMonitor = new List<string> { "hc:1001" },
+                SearchForMissingBooks = true
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(addedAuthor.AddOptions, Is.Not.Null);
+                Assert.That(addedAuthor.AddOptions.SearchForMissingBooks, Is.True);
+                Assert.That(addedAuthor.AddOptions.AudiobookMonitor, Is.Null);
+                Assert.That(addedAuthor.AddOptions.EbookMonitor, Is.Null);
+                Assert.That(addedAuthor.AddOptions.Monitor, Is.EqualTo(MonitorTypes.SpecificBook));
+            });
+        }
+
+        [Test]
         public async Task all_initial_mode_should_not_be_narrowed_by_the_requested_work_rescue_id()
         {
             var remoteAuthor = new Author

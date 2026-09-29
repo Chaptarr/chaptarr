@@ -112,6 +112,9 @@ namespace NzbDrone.Core.Books
                             ToggleBooksMonitoredState(books, false);
                             ToggleBooksMonitoredState(books.OrderBy(e => e.ReleaseDate).Take(1), true);
                             break;
+                        case MonitorTypes.SpecificBook:
+                            _logger.Debug("Specific-book add: book rows were monitored by provider ID when inserted, leaving them unchanged");
+                            break;
                         default:
                             throw new ArgumentOutOfRangeException();
                     }

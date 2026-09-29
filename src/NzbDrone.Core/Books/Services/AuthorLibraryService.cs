@@ -1812,6 +1812,14 @@ namespace NzbDrone.Core.Books.Services
                 author.AddOptions.AudiobookMonitor = audiobookInitialMode;
                 author.AddOptions.EbookMonitor = ebookInitialMode;
                 author.AddOptions.SearchForMissingBooks = config.SearchForMissingBooks == true;
+
+                var specificBookRequested =
+                    (config.CreateAudiobook && config.AudiobookMonitorExistingMode == MonitorTypes.SpecificBook) ||
+                    (config.CreateEbook && config.EbookMonitorExistingMode == MonitorTypes.SpecificBook);
+                if (!audiobookInitialMode.HasValue && !ebookInitialMode.HasValue && specificBookRequested)
+                {
+                    author.AddOptions.Monitor = MonitorTypes.SpecificBook;
+                }
             }
 
             // Apply audiobook settings only when this add request configured audiobook support.

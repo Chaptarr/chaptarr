@@ -17,12 +17,17 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                 .Must(GoodreadsUserIdParser.IsValidUserId)
                 .WithMessage("Goodreads user ID must be a numeric ID (or a profile URL containing it)");
             RuleFor(c => c.BookshelfIds).NotEmpty();
+            RuleFor(c => c.RefreshIntervalMinutes)
+                .GreaterThanOrEqualTo(GoodreadsBookshelfImportListSettings.MinimumRefreshIntervalMinutes)
+                .WithMessage($"Refresh interval must be at least {GoodreadsBookshelfImportListSettings.MinimumRefreshIntervalMinutes} minutes");
             this.AddDualMediaRules();
         }
     }
 
     public class GoodreadsBookshelfImportListSettings : IGoodreadsDualMediaImportListSettings
     {
+        public const int MinimumRefreshIntervalMinutes = 15;
+
         private static readonly GoodreadsBookshelfImportListSettingsValidator Validator = new();
 
         public GoodreadsBookshelfImportListSettings()
@@ -31,6 +36,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             BookshelfIds = new string[] { };
             MonitorAudiobooks = true;
             MonitorEbooks = true;
+            RefreshIntervalMinutes = 720;
         }
 
         public string BaseUrl { get; set; }
@@ -82,6 +88,9 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
         [FieldDefinition(12, Label = "Ebook Tags", Type = FieldType.TagSelect, SelectOptionsProviderAction = "getTags", HelpText = "Optional: tags to apply when importing ebooks from these shelves.")]
         public List<int> EbookTags { get; set; } = new();
+
+        [FieldDefinition(13, Label = "Refresh Interval (Minutes)", Type = FieldType.Number, HelpText = "How often these shelves are checked for new books, in minutes (minimum 15). Short intervals mean more requests to Goodreads.", Advanced = true)]
+        public int RefreshIntervalMinutes { get; set; }
 
         public NzbDroneValidationResult Validate()
         {
