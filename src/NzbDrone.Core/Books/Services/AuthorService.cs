@@ -6,6 +6,7 @@ using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
@@ -70,9 +71,14 @@ namespace NzbDrone.Core.Books
         List<Book> GetAuthorBooksFromCache(int authorId);
         List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId);
         void ClearAuthorCache();
+        // The default exists only for lightweight test doubles. Every production implementation must override it.
+        bool DeleteAuthorsSyncOrQueue(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
+        {
+            throw new NotSupportedException();
+        }
     }
 
-    public class AuthorService : IAuthorService
+    public class AuthorService : IAuthorService, IExecute<DeleteAuthorCommand>
     {
         private readonly IAuthorRepository _authorRepository;
         private readonly IEventAggregator _eventAggregator;
@@ -318,6 +324,50 @@ namespace NzbDrone.Core.Books
 	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
 	        {
 	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false);
+	        }
+
+	        // Below the threshold, delete inline and keep the old immediately-consistent contract - a
+	        // caller that deletes then re-adds the same author expects the delete to have already
+	        // happened by the time it gets a response, and that guarantee only breaks down once the
+	        // command queue is actually in the picture. Only defer to the queue once an author (or a
+	        // bulk selection) is large enough that inline deletion is what caused this host to lock up
+	        // in the first place (Charles Dickens, 10113 books) - see PR #260.
+	        private const int AsyncDeleteBookCountThreshold = 200;
+
+	        // Returns true if the delete was queued (caller should respond 202 Accepted, work not done
+	        // yet), false if it ran inline before returning (caller should respond 200 OK, already done).
+	        public bool DeleteAuthorsSyncOrQueue(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
+	        {
+	            var distinctIds = (authorIds ?? new List<int>()).Where(id => id > 0).Distinct().ToList();
+	            if (!distinctIds.Any())
+	            {
+	                return false;
+	            }
+
+	            var totalBooks = _bookRepository.CountBooksByAuthorIds(distinctIds).Values.Sum();
+
+	            if (totalBooks <= AsyncDeleteBookCountThreshold)
+	            {
+	                DeleteAuthorsInternal(distinctIds, deleteFiles, addImportListExclusion, false);
+	                return false;
+	            }
+
+	            // High, not Normal: this is an interactive UI action (the user is watching the author page
+	            // wait for it), and at Normal it queues behind every background MissingBookSearch already
+	            // waiting - all command threads can be busy with rate-limited indexer searches for many
+	            // minutes, leaving a delete "stuck" on the author page. Same treatment ManualImportCommand
+	            // gets in CommandController.
+	            _commandQueueManager.Push(
+	                new DeleteAuthorCommand(distinctIds, deleteFiles, addImportListExclusion),
+	                CommandPriority.High,
+	                CommandTrigger.Manual);
+
+	            return true;
+	        }
+
+	        public void Execute(DeleteAuthorCommand message)
+	        {
+	            DeleteAuthors(message.AuthorIds, message.DeleteFiles, message.AddImportListExclusion);
 	        }
 
 	        private List<int> DeleteAuthorsInternal(

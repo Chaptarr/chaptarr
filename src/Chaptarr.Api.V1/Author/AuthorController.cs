@@ -1235,8 +1235,16 @@ namespace Chaptarr.Api.V1.Author
                 return Ok();
             }
 
-            _authorService.DeleteAuthor(id, deleteFiles, addImportListExclusion);
-            return Ok();
+            // Deleting a large author (thousands of books) inline here would block this request for
+            // as long as every synchronous BookDeletedEvent subscriber (file unlink, history, extras,
+            // ...) takes to run against all of them. AuthorService routes it through the command
+            // queue once it's big enough that inline deletion is what caused this host to lock up in
+            // the first place, and keeps everything else on the old, immediately-consistent path. See
+            // backlog: "Chaptarr: run author delete as a background Command, not inline in the HTTP
+            // request".
+            var queued = _authorService.DeleteAuthorsSyncOrQueue(new List<int> { id }, deleteFiles, addImportListExclusion);
+
+            return queued ? Accepted() : Ok();
         }
 
         [HttpPost("{id}/downloadmedia")]
