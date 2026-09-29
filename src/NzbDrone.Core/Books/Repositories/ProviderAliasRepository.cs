@@ -42,7 +42,8 @@ namespace NzbDrone.Core.Books
                 MaxReplaceAttempts);
         }
 
-        private void ReplaceAliasesOnce(string entityType, int entityId, string scope, List<ProviderAlias> items)
+        // internal virtual so tests can make an attempt fail and prove ReplaceAliases retries it.
+        internal virtual void ReplaceAliasesOnce(string entityType, int entityId, string scope, List<ProviderAlias> items)
         {
             using (var conn = _database.OpenConnection())
             using (var transaction = conn.BeginTransaction(IsolationLevel.ReadCommitted))
