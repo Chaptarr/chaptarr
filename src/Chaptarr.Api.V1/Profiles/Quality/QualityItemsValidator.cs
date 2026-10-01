@@ -1,8 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
 using FluentValidation;
-using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
+
+using NzbDrone.Core.Validation;
 
 namespace Chaptarr.Api.V1.Profiles.Quality
 {
@@ -10,7 +11,7 @@ namespace Chaptarr.Api.V1.Profiles.Quality
     {
         public static IRuleBuilderOptions<T, IList<QualityProfileQualityItemResource>> ValidItems<T>(this IRuleBuilder<T, IList<QualityProfileQualityItemResource>> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
+            ruleBuilder.NotEmpty();
             ruleBuilder.SetValidator(new AllowedValidator<T>());
             ruleBuilder.SetValidator(new QualityNameValidator<T>());
             ruleBuilder.SetValidator(new GroupItemValidator<T>());
@@ -23,11 +24,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class AllowedValidator<T> : PropertyValidator
+    public class AllowedValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Must contain at least one allowed quality";
         
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not IList<QualityProfileQualityItemResource> list)
                 return false;
@@ -36,11 +37,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class GroupItemValidator<T> : PropertyValidator
+    public class GroupItemValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Groups must contain multiple qualities";
         
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not IList<QualityProfileQualityItemResource> items)
                 return false;
@@ -49,11 +50,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class QualityNameValidator<T> : PropertyValidator
+    public class QualityNameValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Individual qualities should not be named";
         
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not IList<QualityProfileQualityItemResource> items)
                 return false;
@@ -62,11 +63,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class ItemGroupNameValidator<T> : PropertyValidator
+    public class ItemGroupNameValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Groups must have a name";
         
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not IList<QualityProfileQualityItemResource> items)
                 return false;
@@ -75,11 +76,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class ItemGroupIdValidator<T> : PropertyValidator
+    public class ItemGroupIdValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Groups must have an ID";
         
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not IList<QualityProfileQualityItemResource> items)
                 return false;
@@ -88,11 +89,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class UniqueIdValidator<T> : PropertyValidator
+    public class UniqueIdValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Groups must have a unique ID";
         
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not IList<QualityProfileQualityItemResource> items)
                 return false;
@@ -104,11 +105,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class UniqueQualityIdValidator<T> : PropertyValidator
+    public class UniqueQualityIdValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Qualities can only be used once";
         
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not IList<QualityProfileQualityItemResource> items)
                 return false;

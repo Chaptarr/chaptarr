@@ -468,7 +468,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 if (targetMethod?.Name == nameof(IDiskProvider.GetFileInfo))
                 {
-                    return new System.IO.Abstractions.FileSystem().FileInfo.FromFileName((string)args[0]);
+                    return new System.IO.Abstractions.FileSystem().FileInfo.New((string)args[0]);
                 }
 
                 throw new NotImplementedException($"Unexpected call to IDiskProvider.{targetMethod?.Name}");

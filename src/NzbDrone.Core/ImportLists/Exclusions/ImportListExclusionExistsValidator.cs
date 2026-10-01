@@ -7,11 +7,11 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.ImportLists.Exclusions
 {
-    public class ImportListExclusionProviderIdValidator : PropertyValidator
+    public class ImportListExclusionProviderIdValidator : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => $"Invalid provider ID. Expected {ProviderIdValidator.ValidPrefixesDisplay}:id.";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             return TryNormalizeProviderId(context.PropertyValue?.ToString(), out _);
         }
@@ -30,7 +30,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
         }
     }
 
-    public class ImportListExclusionExistsValidator : PropertyValidator
+    public class ImportListExclusionExistsValidator : NzbDronePropertyValidator
     {
         private readonly IImportListExclusionService _importListExclusionService;
 
@@ -41,7 +41,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
 
         protected override string GetDefaultMessageTemplate() => "This exclusion has already been added.";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

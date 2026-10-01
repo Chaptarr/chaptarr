@@ -13,6 +13,8 @@ using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation.Paths;
 using NzbDrone.Http.REST.Attributes;
 
+using NzbDrone.Core.Validation;
+
 namespace Chaptarr.Api.V1.RemotePathMappings
 {
     [V1ApiController]

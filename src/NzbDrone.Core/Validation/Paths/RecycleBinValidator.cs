@@ -2,9 +2,11 @@ using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Validation.Paths
 {
-    public class RecycleBinValidator : PropertyValidator
+    public class RecycleBinValidator : NzbDronePropertyValidator
     {
         private readonly IConfigService _configService;
 
@@ -15,7 +17,7 @@ namespace NzbDrone.Core.Validation.Paths
 
         protected override string GetDefaultMessageTemplate() => "Path '{path}' is {relationship} configured recycle bin folder";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             var recycleBin = _configService.RecycleBin;
 

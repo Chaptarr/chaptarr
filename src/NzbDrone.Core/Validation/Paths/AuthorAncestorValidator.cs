@@ -3,9 +3,11 @@ using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Validation.Paths
 {
-    public class AuthorAncestorValidator : PropertyValidator
+    public class AuthorAncestorValidator : NzbDronePropertyValidator
     {
         private readonly IAuthorService _authorService;
 
@@ -16,7 +18,7 @@ namespace NzbDrone.Core.Validation.Paths
 
         protected override string GetDefaultMessageTemplate() => "Path '{path}' is an ancestor of an existing author";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

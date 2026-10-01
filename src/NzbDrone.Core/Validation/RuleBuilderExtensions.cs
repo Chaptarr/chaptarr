@@ -1,7 +1,6 @@
 using System;
 using System.Text.RegularExpressions;
 using FluentValidation;
-using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.Validation
@@ -12,22 +11,22 @@ namespace NzbDrone.Core.Validation
 
         public static IRuleBuilderOptions<T, int> ValidId<T>(this IRuleBuilder<T, int> ruleBuilder)
         {
-            return ruleBuilder.SetValidator(new GreaterThanValidator(0));
+            return ruleBuilder.GreaterThan(0);
         }
 
         public static IRuleBuilderOptions<T, int> IsZero<T>(this IRuleBuilder<T, int> ruleBuilder)
         {
-            return ruleBuilder.SetValidator(new EqualValidator(0));
+            return ruleBuilder.Equal(0);
         }
 
         public static IRuleBuilderOptions<T, string> HaveHttpProtocol<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            return ruleBuilder.SetValidator(new RegularExpressionValidator("^https?://", RegexOptions.IgnoreCase)).WithMessage("must start with http:// or https://");
+            return ruleBuilder.Matches("^https?://", RegexOptions.IgnoreCase).WithMessage("must start with http:// or https://");
         }
 
         public static IRuleBuilderOptions<T, string> ValidHost<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
+            ruleBuilder.NotEmpty();
 
             // FluentValidation may continue evaluating validators after NotEmpty, so guard null/empty here
             // to avoid Regex.IsMatch throwing ArgumentNullException ("Value cannot be null. (Parameter 'input')").
@@ -38,7 +37,7 @@ namespace NzbDrone.Core.Validation
 
         public static IRuleBuilderOptions<T, string> ValidRootUrl<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
+            ruleBuilder.NotEmpty();
 
             return ruleBuilder
                 .Must(x => x.IsValidHttpUrl())
@@ -47,12 +46,12 @@ namespace NzbDrone.Core.Validation
 
         public static IRuleBuilderOptions<T, string> ValidUrlBase<T>(this IRuleBuilder<T, string> ruleBuilder, string example = "/chaptarr")
         {
-            return ruleBuilder.SetValidator(new RegularExpressionValidator(@"^(?!\/?https?://[-_a-z0-9.]+)", RegexOptions.IgnoreCase)).WithMessage($"Must be a valid URL path (ie: '{example}')");
+            return ruleBuilder.Matches(@"^(?!\/?https?://[-_a-z0-9.]+)", RegexOptions.IgnoreCase).WithMessage($"Must be a valid URL path (ie: '{example}')");
         }
 
         public static IRuleBuilderOptions<T, int> ValidPort<T>(this IRuleBuilder<T, int> ruleBuilder)
         {
-            return ruleBuilder.SetValidator(new InclusiveBetweenValidator(1, 65535))
+            return ruleBuilder.InclusiveBetween(1, 65535)
                               .Must(x =>
                               {
                                   if (x <= 1024)
@@ -76,8 +75,9 @@ namespace NzbDrone.Core.Validation
 
         public static IRuleBuilderOptions<T, string> ContainsChaptarr<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
-            return ruleBuilder.SetValidator(new RegularExpressionValidator("(chaptarr)", RegexOptions.IgnoreCase)).WithMessage("Must contain chaptarr");
+            return ruleBuilder.NotEmpty()
+                .Matches("(chaptarr)", RegexOptions.IgnoreCase)
+                .WithMessage("Must contain chaptarr");
         }
     }
 }

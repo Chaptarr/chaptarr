@@ -3,9 +3,11 @@ using FluentValidation.Validators;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Validation.Paths
 {
-    public class FolderWritableValidator : PropertyValidator
+    public class FolderWritableValidator : NzbDronePropertyValidator
     {
         private readonly IDiskProvider _diskProvider;
 
@@ -17,7 +19,7 @@ namespace NzbDrone.Core.Validation.Paths
         protected override string GetDefaultMessageTemplate() =>
             "Folder '{path}' is not writable by user '{user}'. Permission denied - please ensure the Chaptarr process has write access to this directory and its subdirectories.{dockerHint} Chaptarr determines this by attempting to create and delete a temporary file in the folder.";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

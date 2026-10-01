@@ -471,7 +471,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public bool FileExists(string path) => false;
             public bool FileExistsCanonical(string path) => false;
             public bool FileExists(string path, StringComparison stringComparison) => false;
-            public IFileInfo GetFileInfo(string path) => new FileSystem().FileInfo.FromFileName(path);
+            public IFileInfo GetFileInfo(string path) => new FileSystem().FileInfo.New(path);
 
             public long? GetAvailableSpace(string path) => throw new NotImplementedException();
             public void InheritFolderPermissions(string filename) => throw new NotImplementedException();
@@ -511,8 +511,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public FileAttributes GetFileAttributes(string path) => throw new NotImplementedException();
             public void EmptyFolder(string path) => throw new NotImplementedException();
             public string GetVolumeLabel(string path) => throw new NotImplementedException();
-            public FileStream OpenReadStream(string path) => throw new NotImplementedException();
-            public FileStream OpenWriteStream(string path) => throw new NotImplementedException();
+            public Stream OpenReadStream(string path) => throw new NotImplementedException();
+            public Stream OpenWriteStream(string path) => throw new NotImplementedException();
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
             public IDirectoryInfo GetDirectoryInfo(string path) => throw new NotImplementedException();
