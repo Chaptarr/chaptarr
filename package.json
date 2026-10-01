@@ -13,7 +13,8 @@
     "lint-fix": "yarn lint --fix",
     "check-translations": "node frontend/build/check-missing-translation-keys.js",
     "stylelint-linux": "stylelint $(find frontend -name '*.css') --config frontend/.stylelintrc",
-    "stylelint-windows": "stylelint \"frontend/**/*.css\" --config frontend/.stylelintrc"
+    "stylelint-windows": "stylelint \"frontend/**/*.css\" --config frontend/.stylelintrc",
+    "sync-yunohost-package": "node scripts/sync-yunohost-package.mjs"
   },
   "repository": {
     "type": "git",

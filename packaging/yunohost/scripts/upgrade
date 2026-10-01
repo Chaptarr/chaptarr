@@ -1,0 +1,19 @@
+#!/bin/bash
+
+source _common.sh
+
+ynh_script_progression "Stopping ChaptarrNG..."
+ynh_systemctl --service="$app" --action="stop"
+
+ynh_script_progression "Installing the pinned ChaptarrNG release..."
+chaptarrng_install_runtime
+ynh_setup_source --dest_dir="$install_dir" --full_replace=1
+chown -R "$app:$app" "$install_dir"
+
+ynh_script_progression "Refreshing ChaptarrNG's service and reverse proxy..."
+chaptarrng_prepare_service
+
+ynh_script_progression "Starting ChaptarrNG..."
+ynh_systemctl --service="$app" --action="start"
+
+ynh_script_progression "ChaptarrNG upgrade completed"

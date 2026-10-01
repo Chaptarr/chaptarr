@@ -1,0 +1,12 @@
+#!/bin/bash
+
+source _common.sh
+
+if [[ "$new_path" != "/" ]]; then
+    ynh_die --message="ChaptarrNG must remain at the root of a dedicated domain."
+fi
+
+ynh_script_progression "Updating ChaptarrNG's Nginx domain configuration..."
+ynh_change_url_nginx_config
+
+ynh_script_progression "ChaptarrNG URL update completed"

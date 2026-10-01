@@ -1,0 +1,1 @@
+ChaptarrNG requires a dedicated domain and the root URL (`/`). The package supports `amd64` and `arm64` on Debian 12 or 13. Installation downloads a release archive of about 70 MB (about 200 MB when extracted) and installs the .NET 10 ASP.NET Core runtime plus FFmpeg, PHP, and SQLite dependencies.

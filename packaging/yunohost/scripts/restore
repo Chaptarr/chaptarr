@@ -1,0 +1,17 @@
+#!/bin/bash
+
+source ../settings/scripts/_common.sh
+
+ynh_script_progression "Restoring ChaptarrNG files..."
+ynh_restore_everything
+chaptarrng_install_runtime
+
+install -d -o "$app" -g "$app" -m 0700 "$data_dir" "$data_dir/tmp"
+chown -R "$app:$app" "$install_dir" "$data_dir"
+chaptarrng_prepare_service
+chaptarrng_register_service
+
+ynh_script_progression "Starting ChaptarrNG..."
+ynh_systemctl --service="$app" --action="start"
+
+ynh_script_progression "ChaptarrNG restoration completed"

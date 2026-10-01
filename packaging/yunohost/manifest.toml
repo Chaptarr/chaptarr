@@ -1,0 +1,68 @@
+#:schema https://raw.githubusercontent.com/YunoHost/apps/main/schemas/manifest.v2.schema.json
+
+packaging_format = 2
+
+id = "chaptarrng"
+name = "ChaptarrNG"
+description.en = "Manage audiobook libraries, chapter metadata, and conversions"
+version = "0.9.938~ynh1"
+maintainers = ["snapetech"]
+
+[upstream]
+license = "GPL-3.0-only"
+code = "https://github.com/snapetech/chaptarrng"
+admindoc = "https://github.com/snapetech/chaptarrng#readme"
+
+[integration]
+yunohost = ">= 12.1.17"
+helpers_version = "2.1"
+architectures = ["amd64", "arm64"]
+multi_instance = true
+ldap = false
+sso = false
+disk = "1G"
+ram.build = "100M"
+ram.runtime = "512M"
+
+[install]
+  [install.domain]
+  type = "domain"
+
+  [install.path]
+  type = "path"
+  default = "/"
+  pattern = { regexp = "^/$", error = "ChaptarrNG must be installed at the root of a dedicated domain." }
+
+  [install.init_main_permission]
+  type = "group"
+  default = "admins"
+
+[resources]
+  [resources.sources]
+    [resources.sources.main]
+    in_subdir = false
+    format = "tar.gz"
+    amd64.url = "https://github.com/snapetech/chaptarrng/releases/download/v0.9.938/chaptarrng-v0.9.938-linux-amd64-yunohost.tar.gz"
+    amd64.sha256 = "b6f9a3da63c96b04ecdc020ad117a7b84f17d85f2ca1363a07547b5a2fad15ab"
+    arm64.url = "https://github.com/snapetech/chaptarrng/releases/download/v0.9.938/chaptarrng-v0.9.938-linux-arm64-yunohost.tar.gz"
+    arm64.sha256 = "67de01fd00e2884cf2097b617d392c26cf613f5fccb5cf2670e066e25661019f"
+    autoupdate.strategy = "latest_github_release"
+    autoupdate.asset.amd64 = "^chaptarrng-v.*-linux-amd64-yunohost\\.tar\\.gz$"
+    autoupdate.asset.arm64 = "^chaptarrng-v.*-linux-arm64-yunohost\\.tar\\.gz$"
+
+  [resources.system_user]
+
+  [resources.install_dir]
+
+  [resources.data_dir]
+
+  [resources.permissions]
+  main.url = "/"
+  main.auth_header = false
+
+  [resources.ports]
+  main.default = 8789
+  main.exposed = false
+
+  [resources.apt]
+  packages = "ffmpeg php-cli php-mbstring php-xml php-curl php-zip php-json sqlite3 libsqlite3-0 rsync"

@@ -1,0 +1,1 @@
+ChaptarrNG organizes audiobook libraries and can convert supported audio sources into tagged, chaptered M4B files. It runs as a native systemd service behind YunoHost's Nginx proxy and stores its application database, settings, cache, and logs in the app data directory.

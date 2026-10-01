@@ -150,3 +150,6 @@ docs/api/
 Tools/ffmpeg/*/
 Tools/ffprobe/*/
 !Tools/README.md
+
+# Generated YunoHost release bundles
+dist-yunohost/

@@ -157,8 +157,30 @@ jobs:
       sha: ${{ needs.release.outputs.sha }}
       branch: ${{ github.ref_name }}
 
-  publish-release:
+  yunohost-assets:
     needs: [release, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        persist-credentials: false
+
+    - name: Build YunoHost bundles from the released GHCR image
+      env:
+        TAG: ${{ needs.release.outputs.tag }}
+      run: ./build-tools/package-yunohost-release-assets.sh "$TAG"
+
+    - name: Attach YunoHost bundles to the release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ needs.release.outputs.tag }}
+      run: gh release upload "$TAG" dist-yunohost/*.tar.gz --clobber
+
+  publish-release:
+    needs: [release, docker, yunohost-assets]
     runs-on: ubuntu-latest
     permissions:
       contents: write

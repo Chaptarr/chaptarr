@@ -1,0 +1,17 @@
+#!/bin/bash
+
+source _common.sh
+
+ynh_script_progression "Installing the pinned ChaptarrNG release..."
+chaptarrng_install_runtime
+ynh_setup_source --dest_dir="$install_dir"
+chown -R "$app:$app" "$install_dir"
+
+ynh_script_progression "Configuring the media group, Nginx proxy, and systemd service..."
+chaptarrng_prepare_service
+chaptarrng_register_service
+
+ynh_script_progression "Starting ChaptarrNG..."
+ynh_systemctl --service="$app" --action="start"
+
+ynh_script_progression "ChaptarrNG installation completed"
