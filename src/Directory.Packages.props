@@ -11,9 +11,9 @@
     <PackageVersion Include="FluentAssertions" Version="5.10.3" />
     <PackageVersion Include="IPAddressRange" Version="6.3.0" />
     <PackageVersion Include="Polly" Version="8.8.0" />
-    <PackageVersion Include="FluentMigrator.Runner" Version="7.2.0" />
-    <PackageVersion Include="FluentMigrator.Runner.SQLite" Version="7.2.0" />
-    <PackageVersion Include="FluentMigrator.Runner.Postgres" Version="7.2.0" />
+    <PackageVersion Include="FluentMigrator.Runner" Version="8.0.1" />
+    <PackageVersion Include="FluentMigrator.Runner.SQLite" Version="8.0.1" />
+    <PackageVersion Include="FluentMigrator.Runner.Postgres" Version="8.0.1" />
     <PackageVersion Include="FluentValidation" Version="9.5.4" />
     <PackageVersion Include="Ical.Net" Version="5.2.3" />
     <PackageVersion Include="ImpromptuInterface" Version="8.1.0" />
