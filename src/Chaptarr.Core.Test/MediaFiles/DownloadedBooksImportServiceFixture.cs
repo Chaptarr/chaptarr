@@ -219,12 +219,43 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<IDirectoryInfo> GetDirectoryInfos(string path) => throw new NotImplementedException();
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false)
             {
-                var option = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                return Directory.EnumerateFiles(path, "*", option)
+                var safePath = GetSafeTestPath(path);
+                var testRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "chaptarr-tests"));
+                var pathPrefix = Path.EndsInDirectorySeparator(safePath)
+                    ? safePath
+                    : safePath + Path.DirectorySeparatorChar;
+                var comparison = OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal;
+
+                return Directory.EnumerateFiles(testRoot, "*", SearchOption.AllDirectories)
+                    .Where(file => recursive
+                        ? file.StartsWith(pathPrefix, comparison)
+                        : string.Equals(Path.GetDirectoryName(file), safePath, comparison))
                     .Select(file => _fileSystem.FileInfo.New(file))
                     .Cast<IFileInfo>()
                     .ToList();
             }
+
+            private static string GetSafeTestPath(string path)
+            {
+                var candidatePath = Path.GetFullPath(path);
+                var testRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "chaptarr-tests"));
+                var testRootPrefix = Path.EndsInDirectorySeparator(testRoot)
+                    ? testRoot
+                    : testRoot + Path.DirectorySeparatorChar;
+                var comparison = OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal;
+
+                if (!candidatePath.StartsWith(testRootPrefix, comparison))
+                {
+                    throw new ArgumentException("Test paths must stay inside the dedicated temporary test directory.", nameof(path));
+                }
+
+                return candidatePath;
+            }
+
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();
             public bool IsValidFolderPermissionMask(string mask) => throw new NotImplementedException();
