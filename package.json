@@ -3,6 +3,7 @@
   "version": "0.9.938",
   "description": "ChaptarrNG, the SeerrNG-maintained Chaptarr fork",
   "scripts": {
+    "release-notes:preview": "node scripts/preview-release-notes.mjs",
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
     "prebuild": "yarn clean",
     "clean": "npx rimraf ./_output/UI && npx rimraf --glob \"**/*.js.map\"",

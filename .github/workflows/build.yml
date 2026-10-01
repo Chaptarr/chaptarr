@@ -23,6 +23,42 @@ permissions:
   contents: read
 
 jobs:
+  release-notes:
+    name: Release-note contract
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.21.0
+        package-manager-cache: false
+
+    - name: Validate release-note fragment or explicit opt-out
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        body_file="$RUNNER_TEMP/pr-body.md"
+        printf '%s' "$PR_BODY" > "$body_file"
+        node scripts/check-release-notes.mjs \
+          --base "$BASE_SHA" \
+          --head "$HEAD_SHA" \
+          --pr-body "$body_file" \
+          --summary-file "$GITHUB_STEP_SUMMARY"
+        node scripts/preview-release-notes.mjs \
+          --base "$BASE_SHA" \
+          --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
   build:
     runs-on: ${{ matrix.os }}
     strategy:

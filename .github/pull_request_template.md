@@ -3,6 +3,15 @@ A few sentences on what this changes and why.
 
 Fixes # (if applicable)
 
+#### Release Notes
+
+Choose exactly one option:
+
+- [ ] I added a validated fragment under release-notes/ for user-facing changes.
+- [ ] This change is internal-only and does not need a user-facing release note.
+
+See release-notes/README.md for the required metadata and preview command.
+
 #### Database Migration
 YES / NO. If yes, which tables?
 

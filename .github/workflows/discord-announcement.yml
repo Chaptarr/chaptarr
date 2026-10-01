@@ -1,0 +1,58 @@
+name: Announce to Discord
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Discord embed title
+        required: true
+        type: string
+        default: ChaptarrNG is now available on YunoHost
+      url:
+        description: HTTPS link opened by the embed
+        required: true
+        type: string
+        default: https://github.com/YunoHost-Apps/chaptarrng_ynh
+      body:
+        description: Announcement text
+        required: true
+        type: string
+        default: |
+          ChaptarrNG now has amd64 and arm64 packages for YunoHost. Install directly with:
+          `sudo yunohost app install https://github.com/YunoHost-Apps/chaptarrng_ynh --debug`
+
+          The YunoHost catalog submission is under review:
+          https://github.com/YunoHost/apps/pull/3635
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        persist-credentials: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.21.0
+        package-manager-cache: false
+
+    - name: Post announcement
+      env:
+        DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+        ANNOUNCEMENT_TITLE: ${{ inputs.title }}
+        ANNOUNCEMENT_URL: ${{ inputs.url }}
+        ANNOUNCEMENT_BODY: ${{ inputs.body }}
+        ANNOUNCEMENT_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        if [[ -z "$DISCORD_RELEASE_WEBHOOK" ]]; then
+          echo "::error::Add the DISCORD_RELEASE_WEBHOOK repository secret using the same webhook configured for SeerrNG."
+          exit 1
+        fi
+        node scripts/post-discord-announcement.mjs
+

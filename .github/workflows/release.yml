@@ -19,8 +19,8 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-          echo "Releases must run from main; selected ref is ${GITHUB_REF}."
+        if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+          echo "Releases must run from main; selected ref is $GITHUB_REF."
           exit 1
         fi
 
@@ -36,16 +36,35 @@ jobs:
     permissions:
       contents: write
     outputs:
-      sha: ${{ steps.head.outputs.sha }}
+      sha: ${{ steps.changelog.outputs.sha }}
       tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      release_body: ${{ steps.changelog.outputs.release_body }}
 
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       with:
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Resolve head
-      id: head
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.21.0
+        package-manager-cache: false
+
+    - name: Install git-cliff
+      uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+      with:
+        tool: git-cliff
+
+    - name: Configure release commit identity
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+    - name: Resolve source head
+      id: source
       run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
     - name: Guard - versions in sync
@@ -57,94 +76,149 @@ jobs:
       run: |
         set -euo pipefail
         VERSION="$(python3 -c "import json; print(json.load(open('package.json', encoding='utf-8'))['version'])")"
-        echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Guard - tag matches versions
       run: python3 build-tools/version_guard.py release-tag --tag "${{ steps.tag.outputs.tag }}"
 
-    - name: Guard - curated fork release notes exist
-      env:
-        TAG: ${{ steps.tag.outputs.tag }}
-      run: |
-        NOTES="release-notes/${TAG}.md"
-        if [[ ! -s "$NOTES" ]]; then
-          echo "Missing curated release notes: $NOTES"
-          echo "Add this file before running the release so inherited upstream history is not presented as fork changes."
-          exit 1
-        fi
-
     - name: Guard - selected branch has not advanced
+      env:
+        SOURCE_SHA: ${{ steps.source.outputs.sha }}
       shell: bash
       run: |
         set -euo pipefail
-        HEAD_SHA="$(git rev-parse HEAD)"
-        REMOTE_HEAD_SHA="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | awk '{print $1}')"
-
+        REMOTE_HEAD_SHA="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | awk '{print $1}')"
         if [[ -z "$REMOTE_HEAD_SHA" ]]; then
-          echo "Unable to resolve the current remote head for ${GITHUB_REF_NAME}."
+          echo "Unable to resolve the current remote head for $GITHUB_REF_NAME."
           exit 1
         fi
-
-        if [[ "$REMOTE_HEAD_SHA" != "$HEAD_SHA" ]]; then
-          echo "${GITHUB_REF_NAME} advanced to ${REMOTE_HEAD_SHA} while this run tested ${HEAD_SHA}."
+        if [[ "$REMOTE_HEAD_SHA" != "$SOURCE_SHA" ]]; then
+          echo "$GITHUB_REF_NAME advanced to $REMOTE_HEAD_SHA while this run validated $SOURCE_SHA."
           echo "Run the release workflow again so the published image includes the current branch head."
           exit 1
         fi
 
-    - name: Create tag if absent
+    - name: Generate and commit changelog
+      id: changelog
       env:
+        TAG: ${{ steps.tag.outputs.tag }}
+        SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_REPO: ${{ github.repository }}
       shell: bash
       run: |
         set -euo pipefail
-        TAG="${{ steps.tag.outputs.tag }}"
-        HEAD_SHA="$(git rev-parse HEAD)"
 
-        REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}' || true)"
-        if [[ -z "$REMOTE_SHA" ]]; then
-          REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}' || true)"
-        fi
-
-        if [[ -n "$REMOTE_SHA" && "$REMOTE_SHA" != "$HEAD_SHA" ]]; then
-          echo "Tag $TAG already exists at $REMOTE_SHA but HEAD is $HEAD_SHA. Bump the version first."
+        releases_json="$RUNNER_TEMP/published-releases.json"
+        gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt > "$releases_json"
+        PREVIOUS_TAG="$(jq -r --arg current "$TAG" '
+          [.[] | select(.isDraft == false and .isPrerelease == false and .tagName != $current and
+            (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))]
+          | sort_by(.publishedAt)
+          | last
+          | .tagName // empty
+        ' "$releases_json")"
+        if [[ -z "$PREVIOUS_TAG" ]]; then
+          echo "No previously published stable release was found."
           exit 1
         fi
 
+        git merge-base --is-ancestor "$PREVIOUS_TAG" "$SOURCE_SHA" || {
+          echo "Previous release $PREVIOUS_TAG is not an ancestor of $SOURCE_SHA."
+          exit 1
+        }
+
+        current_changelog="$RUNNER_TEMP/chaptarrng-current-changelog.md"
+        git-cliff --config .github/cliff.toml --tag "$TAG" "$PREVIOUS_TAG..$SOURCE_SHA" \
+          --output "$current_changelog"
+        node scripts/assemble-release-notes.mjs \
+          --previous-tag "$PREVIOUS_TAG" \
+          --head "$SOURCE_SHA" \
+          --changelog "$current_changelog" \
+          --output "$current_changelog"
+        grep -Eq '^## \[?[0-9]+\.[0-9]+\.[0-9]+' "$current_changelog" || {
+          echo "Generated changelog is missing its release heading."
+          exit 1
+        }
+
+        node scripts/prepend-changelog-section.mjs \
+          --current "$current_changelog" \
+          --existing CHANGELOG.md \
+          --output CHANGELOG.md
+        git add CHANGELOG.md
+        if ! git diff --cached --quiet; then
+          git commit \
+            -m "chore(release): prepare $TAG" \
+            -m "release-note: none"
+        fi
+        git push origin HEAD:refs/heads/main
+
+        prepared_sha="$(git rev-parse HEAD)"
+        echo "sha=$prepared_sha" >> "$GITHUB_OUTPUT"
+        delimiter="release_body_$GITHUB_RUN_ID"
+        {
+          echo "release_body<<$delimiter"
+          cat "$current_changelog"
+          echo "$delimiter"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Create tag if absent
+      env:
+        TAG: ${{ steps.tag.outputs.tag }}
+        RELEASE_SHA: ${{ steps.changelog.outputs.sha }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        CURRENT_MAIN_SHA="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+        if [[ "$CURRENT_MAIN_SHA" != "$RELEASE_SHA" ]]; then
+          echo "main advanced to $CURRENT_MAIN_SHA before tag creation; rerun the release workflow."
+          exit 1
+        fi
+        REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/$TAG^{}" | awk '{print $1}' || true)"
         if [[ -z "$REMOTE_SHA" ]]; then
-          echo "Creating tag $TAG"
-          git tag "$TAG"
-          git push origin "$TAG"
-        else
-          echo "Tag $TAG already on this commit."
+          REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}' || true)"
+        fi
+
+        if [[ -n "$REMOTE_SHA" && "$REMOTE_SHA" != "$RELEASE_SHA" ]]; then
+          echo "Tag $TAG already exists at $REMOTE_SHA but release commit is $RELEASE_SHA."
+          echo "Bump the version before creating another release."
+          exit 1
+        fi
+        if [[ -z "$REMOTE_SHA" ]]; then
+          git tag "$TAG" "$RELEASE_SHA"
+          git push origin "refs/tags/$TAG:refs/tags/$TAG"
         fi
 
     - name: Create draft release
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ steps.tag.outputs.tag }}
+        RELEASE_BODY: ${{ steps.changelog.outputs.release_body }}
       shell: bash
       run: |
         set -euo pipefail
-        TAG="${{ steps.tag.outputs.tag }}"
-        NOTES="release-notes/${TAG}.md"
-
-        if [[ ! -s "$NOTES" ]]; then
-          echo "Missing curated release notes: $NOTES"
-          echo "Add this file before running the release so inherited upstream history is not shown as fork changes."
-          exit 1
-        fi
+        notes="$RUNNER_TEMP/chaptarrng-release-notes.md"
+        printf '%s\n' "$RELEASE_BODY" > "$notes"
 
         if gh release view "$TAG" >/dev/null 2>&1; then
-          echo "Release $TAG already exists; the post-image job will publish it after GHCR succeeds."
-          exit 0
+          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == "true" ]]; then
+            gh release edit "$TAG" \
+              --title "ChaptarrNG $TAG" \
+              --notes-file "$notes" \
+              --draft=true \
+              --prerelease=false
+          else
+            echo "Release $TAG is already published; leaving it published."
+          fi
+        else
+          gh release create "$TAG" \
+            --title "ChaptarrNG $TAG" \
+            --notes-file "$notes" \
+            --draft \
+            --verify-tag
         fi
-
-        # Native zips stay suppressed until they pass the viability gates. Docker is
-        # the supported install.
-        gh release create "$TAG" \
-          --title "ChaptarrNG $TAG" \
-          --notes-file "$NOTES" \
-          --draft \
-          --verify-tag
 
   # Images publish here and nowhere else, so merging PRs never ships an update.
   docker:
@@ -166,6 +240,7 @@ jobs:
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       with:
+        ref: ${{ needs.release.outputs.sha }}
         persist-credentials: false
 
     - name: Build YunoHost bundles from the released GHCR image
@@ -187,19 +262,61 @@ jobs:
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       with:
+        ref: ${{ needs.release.outputs.sha }}
         persist-credentials: false
 
     - name: Publish verified draft
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         TAG: ${{ needs.release.outputs.tag }}
+        RELEASE_BODY: ${{ needs.release.outputs.release_body }}
         BRANCH: ${{ github.ref_name }}
       shell: bash
       run: |
         set -euo pipefail
-        NOTES="release-notes/${TAG}.md"
         if [[ "$BRANCH" != "main" ]]; then
           echo "Stable releases must be published from main."
           exit 1
         fi
-        gh release edit "$TAG" --notes-file "$NOTES" --draft=false --prerelease=false --latest
+        notes="$RUNNER_TEMP/chaptarrng-release-notes.md"
+        printf '%s\n' "$RELEASE_BODY" > "$notes"
+        gh release edit "$TAG" \
+          --notes-file "$notes" \
+          --draft=false \
+          --prerelease=false \
+          --latest
+
+  announce-discord:
+    name: Announce release to Discord
+    needs: [release, docker, yunohost-assets, publish-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+      ANNOUNCEMENT_TITLE: ChaptarrNG ${{ needs.release.outputs.tag }} release notes
+      ANNOUNCEMENT_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.release.outputs.tag }}
+      ANNOUNCEMENT_BODY: ${{ needs.release.outputs.release_body }}
+      ANNOUNCEMENT_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ANNOUNCEMENT_IMAGE_REF: ghcr.io/snapetech/chaptarrng:${{ needs.release.outputs.version }}
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        ref: ${{ needs.release.outputs.sha }}
+        persist-credentials: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.21.0
+        package-manager-cache: false
+
+    - name: Check Discord destination
+      run: |
+        if [[ -z "$DISCORD_RELEASE_WEBHOOK" ]]; then
+          echo "::error::Add the DISCORD_RELEASE_WEBHOOK repository secret using the same webhook configured for SeerrNG."
+          exit 1
+        fi
+
+    - name: Send Discord announcement
+      run: node scripts/post-discord-announcement.mjs
