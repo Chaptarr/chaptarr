@@ -220,8 +220,18 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false)
             {
                 var safePath = GetSafeTestPath(path);
-                var option = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                return Directory.EnumerateFiles(safePath, "*", option)
+                var testRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "chaptarr-tests"));
+                var pathPrefix = Path.EndsInDirectorySeparator(safePath)
+                    ? safePath
+                    : safePath + Path.DirectorySeparatorChar;
+                var comparison = OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal;
+
+                return Directory.EnumerateFiles(testRoot, "*", SearchOption.AllDirectories)
+                    .Where(file => recursive
+                        ? file.StartsWith(pathPrefix, comparison)
+                        : string.Equals(Path.GetDirectoryName(file), safePath, comparison))
                     .Select(file => _fileSystem.FileInfo.New(file))
                     .Cast<IFileInfo>()
                     .ToList();
