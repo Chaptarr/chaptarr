@@ -2,7 +2,7 @@
 
 ###### node stage ######
 # Use a pinned Node image instead of curl|bash installers.
-FROM node:24.21.0-bookworm-slim AS node
+FROM node:26.10.0-bookworm-slim AS node
 RUN npm install -g yarn@1.22.22 --force
 
 ###### mp4v2 stage ######
