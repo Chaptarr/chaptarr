@@ -88,6 +88,12 @@ namespace NzbDrone.Common.Instrumentation
                     var value = m.Value;
                     foreach (var capture in m.Groups["secret"].Captures.OfType<Capture>().Reverse())
                     {
+                        // Preserve placeholders produced by the URL sanitizer when the safe logger cleanses again.
+                        if (capture.Value == "<REDACTED>")
+                        {
+                            continue;
+                        }
+
                         value = value.Replace(capture.Index - m.Index, capture.Length, "(removed)");
                     }
 
