@@ -613,8 +613,8 @@ namespace Chaptarr.Core.Test.Datastore
             public FileAttributes GetFileAttributes(string path) => File.GetAttributes(path);
             public void EmptyFolder(string path) => throw new NotImplementedException();
             public string GetVolumeLabel(string path) => throw new NotImplementedException();
-            public FileStream OpenReadStream(string path) => File.OpenRead(path);
-            public FileStream OpenWriteStream(string path) => File.OpenWrite(path);
+            public Stream OpenReadStream(string path) => File.OpenRead(path);
+            public Stream OpenWriteStream(string path) => File.OpenWrite(path);
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
             public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.New(path);

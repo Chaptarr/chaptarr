@@ -49,8 +49,8 @@ namespace NzbDrone.Common.Disk
         FileAttributes GetFileAttributes(string path);
         void EmptyFolder(string path);
         string GetVolumeLabel(string path);
-        FileStream OpenReadStream(string path);
-        FileStream OpenWriteStream(string path);
+        Stream OpenReadStream(string path);
+        Stream OpenWriteStream(string path);
         List<IMount> GetMounts();
         IMount GetMount(string path);
         IDirectoryInfo GetDirectoryInfo(string path);

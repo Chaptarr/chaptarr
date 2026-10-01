@@ -503,7 +503,7 @@ namespace NzbDrone.Common.Disk
             return driveInfo.VolumeLabel;
         }
 
-        public FileStream OpenReadStream(string path)
+        public Stream OpenReadStream(string path)
         {
             var resolvedPath = ResolveExistingFilePath(path) ?? path;
 
@@ -512,12 +512,12 @@ namespace NzbDrone.Common.Disk
                 throw new FileNotFoundException("Unable to find file: " + path, path);
             }
 
-            return (FileStream)_fileSystem.FileStream.New(resolvedPath, FileMode.Open, FileAccess.Read);
+            return _fileSystem.FileStream.New(resolvedPath, FileMode.Open, FileAccess.Read);
         }
 
-        public FileStream OpenWriteStream(string path)
+        public Stream OpenWriteStream(string path)
         {
-            return (FileStream)_fileSystem.FileStream.New(path, FileMode.Create);
+            return _fileSystem.FileStream.New(path, FileMode.Create);
         }
 
         public List<IMount> GetMounts()

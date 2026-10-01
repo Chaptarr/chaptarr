@@ -211,8 +211,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public FileAttributes GetFileAttributes(string path) => throw new NotImplementedException();
             public void EmptyFolder(string path) => throw new NotImplementedException();
             public string GetVolumeLabel(string path) => throw new NotImplementedException();
-            public FileStream OpenReadStream(string path) => throw new NotImplementedException();
-            public FileStream OpenWriteStream(string path) => throw new NotImplementedException();
+            public Stream OpenReadStream(string path) => throw new NotImplementedException();
+            public Stream OpenWriteStream(string path) => throw new NotImplementedException();
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
             public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.New(path);
