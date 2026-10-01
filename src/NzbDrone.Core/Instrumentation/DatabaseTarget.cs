@@ -33,20 +33,20 @@ namespace NzbDrone.Core.Instrumentation
 
             LogManager.Configuration.AddTarget("DbLogger", target);
             LogManager.Configuration.LoggingRules.Add(Rule);
-            LogManager.ConfigurationReloaded += OnLogManagerOnConfigurationReloaded;
+            LogManager.ConfigurationChanged += OnLogManagerOnConfigurationChanged;
             LogManager.ReconfigExistingLoggers();
         }
 
         public void UnRegister()
         {
-            LogManager.ConfigurationReloaded -= OnLogManagerOnConfigurationReloaded;
+            LogManager.ConfigurationChanged -= OnLogManagerOnConfigurationChanged;
             LogManager.Configuration.RemoveTarget("DbLogger");
             LogManager.Configuration.LoggingRules.Remove(Rule);
             LogManager.ReconfigExistingLoggers();
             Dispose();
         }
 
-        private void OnLogManagerOnConfigurationReloaded(object sender, LoggingConfigurationReloadedEventArgs args)
+        private void OnLogManagerOnConfigurationChanged(object sender, LoggingConfigurationChangedEventArgs args)
         {
             Register();
         }
