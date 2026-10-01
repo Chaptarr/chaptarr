@@ -128,7 +128,7 @@
     "mini-css-extract-plugin": "2.10.2",
     "postcss": "8.5.28",
     "@csstools/postcss-color-function": "5.0.14",
-    "postcss-loader": "7.3.0",
+    "postcss-loader": "8.2.1",
     "postcss-mixins": "9.0.4",
     "postcss-nested": "6.2.0",
     "postcss-simple-vars": "7.0.1",
