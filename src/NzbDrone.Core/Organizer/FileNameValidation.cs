@@ -2,7 +2,6 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using FluentValidation;
-using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
 
 using NzbDrone.Core.Validation;
@@ -16,7 +15,7 @@ namespace NzbDrone.Core.Organizer
 
         public static IRuleBuilderOptions<T, string> ValidBookFormat<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
+            ruleBuilder.NotEmpty();
             ruleBuilder.SetValidator(new IllegalCharactersValidator());
 
             return ruleBuilder.SetValidator(new ValidStandardTrackFormatValidator());
@@ -24,10 +23,10 @@ namespace NzbDrone.Core.Organizer
 
         public static IRuleBuilderOptions<T, string> ValidAuthorFolderFormat<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
+            ruleBuilder.NotEmpty();
             ruleBuilder.SetValidator(new IllegalCharactersValidator());
 
-            return ruleBuilder.SetValidator(new RegularExpressionValidator(FileNameBuilder.AuthorNameRegex)).WithMessage("Must contain Author name");
+            return ruleBuilder.Matches(FileNameBuilder.AuthorNameRegex).WithMessage("Must contain Author name");
         }
     }
 

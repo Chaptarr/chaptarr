@@ -81,7 +81,10 @@ namespace NzbDrone.Core.Validation
                 value,
                 context.InstanceToValidate,
                 context.RootContextData,
-                context.MessageFormatter.AppendArgument);
+                (name, argument) =>
+                {
+                    context.MessageFormatter.AppendArgument(name, argument);
+                });
 
             return _validator.Validate(legacyContext);
         }

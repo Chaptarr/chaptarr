@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using FluentValidation;
-using FluentValidation.Validators;
 
 using NzbDrone.Core.Validation;
 
@@ -10,17 +9,17 @@ namespace Chaptarr.Http.Validation
     {
         public static IRuleBuilderOptions<T, int> ValidId<T>(this IRuleBuilder<T, int> ruleBuilder)
         {
-            return ruleBuilder.SetValidator(new GreaterThanValidator(0));
+            return ruleBuilder.GreaterThan(0);
         }
 
         public static IRuleBuilderOptions<T, int> IsZero<T>(this IRuleBuilder<T, int> ruleBuilder)
         {
-            return ruleBuilder.SetValidator(new EqualValidator(0));
+            return ruleBuilder.Equal(0);
         }
 
         public static IRuleBuilderOptions<T, string> HaveHttpProtocol<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            return ruleBuilder.SetValidator(new RegularExpressionValidator("^https?://", RegexOptions.IgnoreCase)).WithMessage("must start with http:// or https://");
+            return ruleBuilder.Matches("^https?://", RegexOptions.IgnoreCase).WithMessage("must start with http:// or https://");
         }
 
         public static IRuleBuilderOptions<T, string> NotBlank<T>(this IRuleBuilder<T, string> ruleBuilder)
