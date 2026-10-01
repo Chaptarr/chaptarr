@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Http.Proxy;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Configuration
 {
@@ -38,7 +39,7 @@ namespace NzbDrone.Core.Configuration
         {
             var result = new ProxyTestResult();
             
-            _logger.Debug("Starting proxy test - Hostname: {0}, Port: {1}, Type: {2}, Auth: {3}", hostname, port, proxyType, !string.IsNullOrEmpty(username) ? "Yes" : "No");
+            _logger.DebugSafe("Starting proxy test - Hostname: {0}, Port: {1}, Type: {2}, Auth: {3}", hostname, port, proxyType, !string.IsNullOrEmpty(username) ? "Yes" : "No");
             
             // Create proxy settings and HttpClient once for reuse across attempts
             var proxySettings = new HttpProxySettings(proxyType, hostname, port, "", false, username, password);
@@ -64,7 +65,7 @@ namespace NzbDrone.Core.Configuration
                 {
                     // Get test URL for this attempt (cycle through fallback URLs)
                     var testUrl = DefaultTestUrls[(attempt - 1) % DefaultTestUrls.Length];
-                    _logger.Debug("Attempting to connect to {0} through proxy {1}:{2} (attempt {3}/{4})", testUrl, hostname, port, attempt, DefaultMaxRetries);
+                    _logger.DebugSafe("Attempting to connect to {0} through proxy {1}:{2} (attempt {3}/{4})", testUrl, hostname, port, attempt, DefaultMaxRetries);
 
                     // Make the request through proxy
                     using var response = await httpClient.GetAsync(testUrl, HttpCompletionOption.ResponseHeadersRead);
@@ -122,7 +123,7 @@ namespace NzbDrone.Core.Configuration
                 }
                 catch (TaskCanceledException ex)
                 {
-                    _logger.Warn("Proxy test timed out after {0} seconds - Proxy: {1}:{2}, Attempt: {3}/{4}", DefaultTimeout.TotalSeconds, hostname, port, attempt, DefaultMaxRetries);
+                    _logger.WarnSafe("Proxy test timed out after {0} seconds - Proxy: {1}:{2}, Attempt: {3}/{4}", DefaultTimeout.TotalSeconds, hostname, port, attempt, DefaultMaxRetries);
                     _logger.Debug(ex, "Timeout exception details");
 
                     if (attempt < DefaultMaxRetries)

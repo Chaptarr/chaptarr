@@ -284,7 +284,7 @@ namespace NzbDrone.Core.Parser
 
                 if (Logger.IsTraceEnabled)
                 {
-                    Logger.Trace("Parsing string '{0}' using search criteria author: '{1}' books: '{2}'",
+                    Logger.TraceSafe("Parsing string '{0}' using search criteria author: '{1}' books: '{2}'",
                                  title,
                                  authorName.RemoveAccent(),
                                  string.Join(", ", books.Select(a => a.Title.RemoveAccent())));
@@ -304,7 +304,7 @@ namespace NzbDrone.Core.Parser
 
                 if (bestMatch?.Book == null || !bestMatch.IsMatch)
                 {
-                    Logger.Trace("No acceptable title match found using search criteria for '{0}'", title);
+                    Logger.TraceSafe("No acceptable title match found using search criteria for '{0}'", title);
                     return null;
                 }
 
@@ -357,11 +357,11 @@ namespace NzbDrone.Core.Parser
             {
                 if (!title.ToLower().Contains("password") && !title.ToLower().Contains("yenc"))
                 {
-                    Logger.Error(e, "An error has occurred while trying to parse {0}", title);
+                    Logger.ErrorSafe(e, "An error has occurred while trying to parse {0}", title);
                 }
             }
 
-            Logger.Trace("Unable to parse {0}", title);
+            Logger.TraceSafe("Unable to parse {0}", title);
             return null;
         }
 
@@ -401,14 +401,14 @@ namespace NzbDrone.Core.Parser
         {
             try
             {
-                Logger.Trace("ParseBookTitle called with: '{0}'", title);
+                Logger.TraceSafe("ParseBookTitle called with: '{0}'", title);
 
                 if (!ValidateBeforeParsing(title))
                 {
                     return null;
                 }
 
-                Logger.Trace("Parsing string '{0}'", title);
+                Logger.TraceSafe("Parsing string '{0}'", title);
 
                 var releaseTitle = CleanReleaseTitleForParsing(title);
 
@@ -488,11 +488,11 @@ namespace NzbDrone.Core.Parser
             {
                 if (!title.ToLower().Contains("password") && !title.ToLower().Contains("yenc"))
                 {
-                    Logger.Error(e, "An error has occurred while trying to parse {0}", title);
+                    Logger.ErrorSafe(e, "An error has occurred while trying to parse {0}", title);
                 }
             }
 
-            Logger.Trace("Unable to parse {0}", title);
+            Logger.TraceSafe("Unable to parse {0}", title);
             return null;
         }
 
@@ -818,7 +818,7 @@ namespace NzbDrone.Core.Parser
 
             if (RejectHashedReleasesRegex.Any(v => v.IsMatch(titleWithoutExtension)))
             {
-                Logger.Trace("Rejected Hashed Release Title: {0}", title);
+                Logger.TraceSafe("Rejected Hashed Release Title: {0}", title);
                 return false;
             }
 

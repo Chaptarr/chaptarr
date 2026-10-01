@@ -13,6 +13,7 @@ using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Security;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Configuration
 {
@@ -723,7 +724,7 @@ namespace NzbDrone.Core.Configuration
 
                 if (originalValue != value)
                 {
-                    _logger.Debug("Normalized proxy hostname from '{0}' to '{1}'", originalValue, value);
+                    _logger.DebugSafe("Normalized proxy hostname from '{0}' to '{1}'", originalValue, value);
                 }
             }
 
@@ -735,7 +736,7 @@ namespace NzbDrone.Core.Configuration
 
                 if (!string.Equals(originalValue, value, StringComparison.Ordinal))
                 {
-                    _logger.Debug("Normalized metadata server URL from '{0}' to '{1}'", RedactUrlForLogs(originalValue), RedactUrlForLogs(value));
+                    _logger.DebugSafe("Normalized metadata server URL from '{0}' to '{1}'", RedactUrlForLogs(originalValue), RedactUrlForLogs(value));
                 }
             }
 
@@ -761,7 +762,7 @@ namespace NzbDrone.Core.Configuration
             }
             else
             {
-                _logger.Trace("Writing Setting to database. Key:'{0}' Value:'{1}'", key, value);
+                _logger.TraceSafe("Writing Setting to database. Key:'{0}' Value:'{1}'", key, value);
             }
             _repository.Upsert(key, value);
 

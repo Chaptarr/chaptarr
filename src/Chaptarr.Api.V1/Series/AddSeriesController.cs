@@ -15,6 +15,7 @@ using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Common.Instrumentation;
 // using NzbDrone.Core.MetadataSource.Hardcover; // Removed - using V5 API via BookInfoProxy
 
 namespace Chaptarr.Api.V1.Series
@@ -75,7 +76,7 @@ namespace Chaptarr.Api.V1.Series
             {
                 if (string.IsNullOrWhiteSpace(request.SelectedMediaType))
                 {
-                    _logger.Warn("AddSeries: missing selectedMediaType for series {0}", request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: missing selectedMediaType for series {0}", request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -85,7 +86,7 @@ namespace Chaptarr.Api.V1.Series
 
                 if (request.SelectedBooks == null || request.SelectedBooks.Count == 0)
                 {
-                    _logger.Warn("AddSeries: missing selectedBooks for series {0}", request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: missing selectedBooks for series {0}", request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -100,7 +101,7 @@ namespace Chaptarr.Api.V1.Series
                 }
                 catch (BadRequestException)
                 {
-                    _logger.Warn("AddSeries: invalid selectedMediaType '{0}' for series {1}", request.SelectedMediaType, request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: invalid selectedMediaType '{0}' for series {1}", request.SelectedMediaType, request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -122,7 +123,7 @@ namespace Chaptarr.Api.V1.Series
 
                 if (authorProviderIds.Count == 0)
                 {
-                    _logger.Warn("AddSeries: no foreignAuthorId values for series {0}", request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: no foreignAuthorId values for series {0}", request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -155,7 +156,7 @@ namespace Chaptarr.Api.V1.Series
 
                 var monitorFuture = request.MonitorFuture == true;
 
-                _logger.Info("Adding series {0}: {1} selected books, {2} authors, mediaType={3}, monitorExisting={4}, monitorFuture={5}",
+                _logger.InfoSafe("Adding series {0}: {1} selected books, {2} authors, mediaType={3}, monitorExisting={4}, monitorFuture={5}",
                     request.ForeignSeriesId,
                     selectedBookIds.Count,
                     authorProviderIds.Count,
@@ -174,7 +175,7 @@ namespace Chaptarr.Api.V1.Series
                     var dbAuthor = await EnsureAuthorExistsAsync(authorProviderId, monitoringConfig, selectedMediaType);
                     if (dbAuthor == null)
                     {
-                        _logger.Warn("Failed to add/resolve author {0} while adding series {1}", authorProviderId, request.ForeignSeriesId);
+                        _logger.WarnSafe("Failed to add/resolve author {0} while adding series {1}", authorProviderId, request.ForeignSeriesId);
                         continue;
                     }
 
@@ -184,7 +185,7 @@ namespace Chaptarr.Api.V1.Series
                     {
                         var pendingId = -dbAuthor.Id;
                         pendingAuthorImportIds.Add(pendingId);
-                        _logger.Info("AddSeries: queued pending author import {0} (pendingId={1}) for series {2}", authorProviderId, pendingId, request.ForeignSeriesId);
+                        _logger.InfoSafe("AddSeries: queued pending author import {0} (pendingId={1}) for series {2}", authorProviderId, pendingId, request.ForeignSeriesId);
                         continue;
                     }
 
@@ -218,7 +219,7 @@ namespace Chaptarr.Api.V1.Series
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, $"Error adding series {request.ForeignSeriesId}");
+                _logger.ErrorSafe(ex, $"Error adding series {request.ForeignSeriesId}");
                 return StatusCode(500, new AddSeriesResult
                 {
                     Success = false,
@@ -387,7 +388,7 @@ namespace Chaptarr.Api.V1.Series
             var (provider, rawId) = SplitProviderId(authorProviderId);
             if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(rawId))
             {
-                _logger.Warn("Invalid author provider ID: {0}", authorProviderId);
+                _logger.WarnSafe("Invalid author provider ID: {0}", authorProviderId);
                 return null;
             }
 
@@ -412,7 +413,7 @@ namespace Chaptarr.Api.V1.Series
 
                     if (!hasRequestedMediaType)
                     {
-                        _logger.Info("AddSeries: existing author {0} missing {1} catalog; hydrating from provider", authorProviderId, requestedMediaType);
+                        _logger.InfoSafe("AddSeries: existing author {0} missing {1} catalog; hydrating from provider", authorProviderId, requestedMediaType);
 
                         var hydrated = await _authorLibraryService.AddAuthorAsync(authorProviderId, config);
                         if (hydrated != null)
@@ -439,11 +440,11 @@ namespace Chaptarr.Api.V1.Series
                 }
                 catch (AuthorNotFoundException ex)
                 {
-                    _logger.Warn(ex, "AddSeries: unable to hydrate missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
+                    _logger.WarnSafe(ex, "AddSeries: unable to hydrate missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, "AddSeries: unexpected error hydrating missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
+                    _logger.WarnSafe(ex, "AddSeries: unexpected error hydrating missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
                 }
 
                 return existing;

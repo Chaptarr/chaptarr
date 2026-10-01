@@ -11,6 +11,7 @@ using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Organizer;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Search
 {
@@ -42,7 +43,7 @@ namespace Chaptarr.Api.V1.Search
         {
             // Add logging to trace the search request
             var logger = NLog.LogManager.GetCurrentClassLogger();
-            logger.Info($"[SEARCH API] Called with term: '{term}', provider: '{provider ?? "null"}'");
+            logger.InfoSafe($"[SEARCH API] Called with term: '{term}', provider: '{provider ?? "null"}'");
 
             try
             {
@@ -77,7 +78,7 @@ namespace Chaptarr.Api.V1.Search
             }
             catch (Exception ex)
             {
-                logger.Error(ex, $"[SEARCH API] Error during search for term: '{term}', provider: '{provider}'");
+                logger.ErrorSafe(ex, $"[SEARCH API] Error during search for term: '{term}', provider: '{provider}'");
                 throw;
             }
         }

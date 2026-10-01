@@ -1,6 +1,7 @@
 using NLog;
 using NLog.Config;
 using NLog.Targets;
+using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
@@ -35,7 +36,7 @@ namespace NzbDrone.Core.ProgressMessaging
 
             try
             {
-                _commandQueueManager.SetMessage(command, logEvent.FormattedMessage);
+                _commandQueueManager.SetMessage(command, CleanseLogMessage.Cleanse(logEvent.FormattedMessage));
                 _eventAggregator.PublishEvent(new CommandUpdatedEvent(command));
             }
             finally

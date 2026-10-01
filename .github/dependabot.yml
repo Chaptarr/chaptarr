@@ -1,0 +1,79 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Regina
+    open-pull-requests-limit: 10
+    groups:
+      npm-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      npm-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: nuget
+    directory: "/src"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Regina
+    open-pull-requests-limit: 10
+    groups:
+      nuget-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      nuget-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Regina
+    open-pull-requests-limit: 10
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Regina
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Regina
+    open-pull-requests-limit: 10

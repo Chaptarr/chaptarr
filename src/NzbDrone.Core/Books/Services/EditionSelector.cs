@@ -5,6 +5,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Services;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books
 {
@@ -86,7 +87,7 @@ namespace NzbDrone.Core.Books
             {
                 var selected = manual.Where(e => e.Monitored).OrderBy(e => e.Id).FirstOrDefault()
                                ?? manual.OrderBy(e => e.Id).First();
-                _logger.Debug("Using manually selected edition: {0} (ID: {1})", selected.Title, selected.Id);
+                _logger.DebugSafe("Using manually selected edition: {0} (ID: {1})", selected.Title, selected.Id);
                 return selected;
             }
 
@@ -98,7 +99,7 @@ namespace NzbDrone.Core.Books
                 return null;
             }
 
-            _logger.Debug("Selected edition '{0}' (ID: {1}, Format: {2}, Votes: {3}, Rating: {4})",
+            _logger.DebugSafe("Selected edition '{0}' (ID: {1}, Format: {2}, Votes: {3}, Rating: {4})",
                 selected2.Title, selected2.Id, selected2.ReadingFormatId,
                 selected2.Ratings?.Votes ?? 0, selected2.Ratings?.Value ?? 0m);
 

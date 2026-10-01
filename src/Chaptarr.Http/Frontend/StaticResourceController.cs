@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using NLog;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Http.Frontend
 {
@@ -53,7 +54,7 @@ namespace Chaptarr.Http.Frontend
 
             if (mappers.Count > 1)
             {
-                _logger.Warn("Multiple static resource mappers matched {0}: {1}", path, string.Join(", ", mappers.Select(m => m.GetType().Name)));
+                _logger.WarnSafe("Multiple static resource mappers matched {0}: {1}", path, string.Join(", ", mappers.Select(m => m.GetType().Name)));
             }
 
             var mapper = mappers.FirstOrDefault();
@@ -75,7 +76,7 @@ namespace Chaptarr.Http.Frontend
                 return NotFound();
             }
 
-            _logger.Warn("Couldn't find handler for {0}", path);
+            _logger.WarnSafe("Couldn't find handler for {0}", path);
 
             return NotFound();
         }

@@ -11,6 +11,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.MediaCover;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Series
 {
@@ -48,7 +49,7 @@ namespace Chaptarr.Api.V1.Series
             if (requestedMediaType.HasValue)
             {
                 series = series.Where(s => s.MediaType == requestedMediaType.Value).ToList();
-               _logger.Debug("Filtered series for author {0} by mediaType {1}: {2} series", authorId, mediaType, series.Count);
+               _logger.DebugSafe("Filtered series for author {0} by mediaType {1}: {2} series", authorId, mediaType, series.Count);
             }
 
             return ProxyRemoteImages(series.ToResource());

@@ -7,6 +7,7 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Metadata.Events;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -51,17 +52,17 @@ namespace NzbDrone.Core.Books.Services
             // provide a previous profile, so keep the legacy behavior in that case.
             if (!AllowedLanguagesChanged(message.PreviousMetadataProfile, profile))
             {
-                _logger.Debug("Metadata profile '{0}' language settings unchanged, skipping edition re-selection", profile.Name);
+                _logger.DebugSafe("Metadata profile '{0}' language settings unchanged, skipping edition re-selection", profile.Name);
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(profile.AllowedLanguages))
             {
-                _logger.Debug("Metadata profile '{0}' has no language restrictions, skipping edition re-selection", profile.Name);
+                _logger.DebugSafe("Metadata profile '{0}' has no language restrictions, skipping edition re-selection", profile.Name);
                 return;
             }
 
-            _logger.Info("Metadata profile '{0}' (ID: {1}) language settings changed to: {2}, updating edition selection for affected books",
+            _logger.InfoSafe("Metadata profile '{0}' (ID: {1}) language settings changed to: {2}, updating edition selection for affected books",
                 profile.Name, profile.Id, profile.AllowedLanguages);
 
                 // Find all authors using this metadata profile

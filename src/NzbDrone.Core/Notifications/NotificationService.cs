@@ -13,6 +13,7 @@ using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Update.History.Events;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Notifications
 {
@@ -137,7 +138,7 @@ namespace NzbDrone.Core.Notifications
             }
 
             //TODO: this message could be more clear
-            _logger.Debug("{0} does not have any intersecting tags with {1}. Notification will not be sent.", definition.Name, author.Name);
+            _logger.DebugSafe("{0} does not have any intersecting tags with {1}. Notification will not be sent.", definition.Name, author.Name);
             return false;
         }
 

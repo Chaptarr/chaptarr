@@ -12,6 +12,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.ThingiProvider;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Indexers.MyAnonaMouse
 {
@@ -94,7 +95,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             if (applyWedge)
             {
                 downloadLink += string.IsNullOrWhiteSpace(queryString) ? "?fl" : "&fl";
-                _logger.Debug("Requesting a MAM personal freeleech wedge for torrent {0}", tid);
+                _logger.DebugSafe("Requesting a MAM personal freeleech wedge for torrent {0}", tid);
             }
 
             var request = new HttpRequest(downloadLink);
@@ -121,9 +122,9 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 var referer = Settings.BaseUrl.TrimEnd('/') + "/t/" + tid;
                 request.Headers.Set("Referer", referer);
-                _logger.Debug("MAM_DOWNLOAD: Added Referer header to {0}", referer);
+                _logger.DebugSafe("MAM_DOWNLOAD: Added Referer header to {0}", referer);
             }
-            _logger.Debug("MAM_DOWNLOAD: Created download request for {0}", downloadLink);
+            _logger.DebugSafe("MAM_DOWNLOAD: Created download request for {0}", downloadLink);
             _logger.Trace("MAM_DOWNLOAD: Cookie configured - mam_id present: {0}, length: {1}",
                 !string.IsNullOrWhiteSpace(Settings.MamId),
                 Settings.MamId?.Length ?? 0);

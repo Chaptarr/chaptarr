@@ -34,6 +34,7 @@ using NzbDrone.Core.MetadataSource.Hardcover;
 using NzbDrone.Core.MetadataSource.Goodreads;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Validation;
+using NzbDrone.Common.Instrumentation;
 // using JsonSerializer = System.Text.Json.JsonSerializer; // Removed - using Newtonsoft.Json instead
 
 namespace NzbDrone.Core.MetadataSource.BookInfo
@@ -160,7 +161,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         public Author GetAuthorInfo(string foreignAuthorId, bool useCache = true)
         {
-            _logger.Debug("Getting Author details for ID: {0}", foreignAuthorId);
+            _logger.DebugSafe("Getting Author details for ID: {0}", foreignAuthorId);
 
             if (LooksLikeV5WorkKey(foreignAuthorId))
             {
@@ -170,7 +171,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             // Check if this is a V5 ID with provider prefix (hc:123, gr:456, etc.)
             if (foreignAuthorId.Contains(":"))
             {
-                _logger.Debug("Detected provider-prefixed V5 ID: {0}", foreignAuthorId);
+                _logger.DebugSafe("Detected provider-prefixed V5 ID: {0}", foreignAuthorId);
                 return GetAuthorInfoFromV5(foreignAuthorId, useCache, importAllWorks: false);
             }
 
@@ -185,7 +186,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             }
 
             // Legacy Goodreads ID - still use old method for backward compatibility
-            _logger.Debug("Using legacy Goodreads fetch for ID: {0}", foreignAuthorId);
+            _logger.DebugSafe("Using legacy Goodreads fetch for ID: {0}", foreignAuthorId);
             try
             {
                 if (useCache)
@@ -228,7 +229,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         {
             try
             {
-                _logger.Debug("GetAuthorInfoFromV5 called with ID: {0}, importAllWorks: {1}", authorId, importAllWorks);
+                _logger.DebugSafe("GetAuthorInfoFromV5 called with ID: {0}, importAllWorks: {1}", authorId, importAllWorks);
 
                 var v5Response = FetchAuthorInfoFromV5Paged(authorId);
                 return ConvertV5AuthorToDomain(v5Response, authorId);
@@ -318,7 +319,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
+                    _logger.ErrorSafe("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
                         authorId,
                         page,
                         httpResponse.StatusCode,
@@ -383,7 +384,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (allBooks.Count > V5AuthorMaxBooks)
                 {
-                    _logger.Warn("V5 author payload exceeded max book threshold ({0}) for author {1}. Returning partial data.", V5AuthorMaxBooks, authorId);
+                    _logger.WarnSafe("V5 author payload exceeded max book threshold ({0}) for author {1}. Returning partial data.", V5AuthorMaxBooks, authorId);
                     break;
                 }
 
@@ -393,7 +394,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 }
             }
 
-            _logger.Debug("V5 author payload received: {0} books, {1} series (authorId={2})", allBooks.Count, allSeries.Count, authorId);
+            _logger.DebugSafe("V5 author payload received: {0} books, {1} series (authorId={2})", allBooks.Count, allSeries.Count, authorId);
 
             return new V5.V5AuthorResponse
             {
@@ -1260,7 +1261,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             var bookDetails = string.Join(" | ", books.Select(book =>
                 $"'{book?.Title ?? "Unknown"}' ({FormatV5BookProviderIds(book)}, editions={book?.Editions?.Count ?? 0})"));
 
-            _logger.Warn("[SERVER-BUG-CANDIDATE] V5 returned {0} books with provider id(s) appearing in multiple pockets: [{1}] for author '{2}' ({3}). Preserving all returned pockets locally; duplicates are not merged locally. Books: {4}",
+            _logger.WarnSafe("[SERVER-BUG-CANDIDATE] V5 returned {0} books with provider id(s) appearing in multiple pockets: [{1}] for author '{2}' ({3}). Preserving all returned pockets locally; duplicates are not merged locally. Books: {4}",
                 books.Count,
                 string.Join(", ", duplicatedProviderIds),
                 author?.Name ?? "Unknown",
@@ -1272,7 +1273,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         {
             var duplicatedProviderIds = FindDuplicatedV5BookProviderIds(new[] { firstBook, duplicateBook });
 
-            _logger.Warn("[SERVER-BUG-CANDIDATE] V5 paged author response returned provider id(s) appearing in multiple book pockets: [{0}] for author '{1}' on page {2}. Keeping first occurrence and dropping duplicate. First: '{3}' ({4}); Duplicate: '{5}' ({6})",
+            _logger.WarnSafe("[SERVER-BUG-CANDIDATE] V5 paged author response returned provider id(s) appearing in multiple book pockets: [{0}] for author '{1}' on page {2}. Keeping first occurrence and dropping duplicate. First: '{3}' ({4}); Duplicate: '{5}' ({6})",
                 string.Join(", ", duplicatedProviderIds),
                 requestedAuthorId,
                 page,
@@ -1286,7 +1287,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         {
             var duplicatedProviderIds = FindDuplicatedV5SeriesProviderIds(new[] { firstSeries, duplicateSeries });
 
-            _logger.Warn("[SERVER-BUG-CANDIDATE] V5 paged author response returned series provider id(s) appearing in multiple series pockets: [{0}] for author '{1}' on page {2}. Keeping first occurrence and dropping duplicate. First: '{3}' ({4}); Duplicate: '{5}' ({6})",
+            _logger.WarnSafe("[SERVER-BUG-CANDIDATE] V5 paged author response returned series provider id(s) appearing in multiple series pockets: [{0}] for author '{1}' on page {2}. Keeping first occurrence and dropping duplicate. First: '{3}' ({4}); Duplicate: '{5}' ({6})",
                 string.Join(", ", duplicatedProviderIds),
                 requestedAuthorId,
                 page,
@@ -2234,27 +2235,27 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             try
             {
-                _logger.Debug("Getting edition info for foreignEditionId: {0}", normalizedForeignEditionId);
+                _logger.DebugSafe("Getting edition info for foreignEditionId: {0}", normalizedForeignEditionId);
                 return PollEditionBook(normalizedForeignEditionId, mediaType);
             }
             catch (WebException e)
             {
-                _logger.Warn(e, "Request failure getting edition info for {0}", normalizedForeignEditionId);
+                _logger.WarnSafe(e, "Request failure getting edition info for {0}", normalizedForeignEditionId);
                 throw new BookNotFoundException(normalizedForeignEditionId);
             }
             catch (HttpException e)
             {
-                _logger.Warn(e, "Request failure getting edition info for {0}", normalizedForeignEditionId);
+                _logger.WarnSafe(e, "Request failure getting edition info for {0}", normalizedForeignEditionId);
                 throw new BookNotFoundException(normalizedForeignEditionId);
             }
             catch (BadRequestException e)
             {
-                _logger.Debug(e, "Bad request getting edition info for {0}", normalizedForeignEditionId);
+                _logger.DebugSafe(e, "Bad request getting edition info for {0}", normalizedForeignEditionId);
                 throw new BookNotFoundException(normalizedForeignEditionId);
             }
             catch (BookInfoException e)
             {
-                _logger.Warn(e, "Unexpected error getting edition info for {0}", normalizedForeignEditionId);
+                _logger.WarnSafe(e, "Unexpected error getting edition info for {0}", normalizedForeignEditionId);
                 throw new BookNotFoundException(normalizedForeignEditionId);
             }
         }
@@ -2276,14 +2277,14 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         public List<object> SearchForNewEntity(string title, string provider)
         {
-            _logger.Debug($"[BookInfoProxy] SearchForNewEntity called with title: '{title}', provider: '{provider ?? "null"}'");
+            _logger.DebugSafe($"[BookInfoProxy] SearchForNewEntity called with title: '{title}', provider: '{provider ?? "null"}'");
 
             // Route the explicit Audible search provider to the Audible catalog
             if (provider?.Equals("audible", StringComparison.OrdinalIgnoreCase) == true)
             {
                 try
                 {
-                    _logger.Debug($"[BookInfoProxy] Routing to Audible catalog for: '{title}'");
+                    _logger.DebugSafe($"[BookInfoProxy] Routing to Audible catalog for: '{title}'");
 
                     // Auto-detect ASIN format: starts with B followed by 9 alphanumeric characters (B + 9 = 10 total)
                     // Examples: B00JCDK5ME, B0B1X2Y3Z4
@@ -2292,7 +2293,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     if (asinPattern.IsMatch(title.Trim()))
                     {
                         var asin = title.Trim().ToUpperInvariant();
-                        _logger.Debug($"[BookInfoProxy] Detected ASIN format: {asin}, performing direct lookup");
+                        _logger.DebugSafe($"[BookInfoProxy] Detected ASIN format: {asin}, performing direct lookup");
 
                         var bookInfo = _audibleCatalogProxy.GetBookInfo(asin, useCache: true);
 
@@ -2305,7 +2306,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                             }
                         }
 
-                        _logger.Warn($"[BookInfoProxy] ASIN {asin} not found in Audible catalog");
+                        _logger.WarnSafe($"[BookInfoProxy] ASIN {asin} not found in Audible catalog");
                         return new List<object>();
                     }
 
@@ -2348,7 +2349,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 try
                 {
-                    _logger.Debug($"[BookInfoProxy] Searching Hardcover for: '{title}'");
+                    _logger.DebugSafe($"[BookInfoProxy] Searching Hardcover for: '{title}'");
 
                     var cacheKey = BuildHardcoverSearchCacheKey(title, _configService.HardcoverApiToken);
                     var rawHc = _hardcoverSearchCache.Find(cacheKey);
@@ -2369,7 +2370,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     }
                     else
                     {
-                        _logger.Debug($"[BookInfoProxy] Reusing cached Hardcover search for: '{title}'");
+                        _logger.DebugSafe($"[BookInfoProxy] Reusing cached Hardcover search for: '{title}'");
                     }
 
                     if (rawHc == null)
@@ -2401,14 +2402,14 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             if (!string.Equals(provider, "goodreads", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.Warn($"[BookInfoProxy] Unknown search provider '{provider ?? "null"}', returning empty results");
+                _logger.WarnSafe($"[BookInfoProxy] Unknown search provider '{provider ?? "null"}', returning empty results");
                 return new List<object>();
             }
 
-            _logger.Debug($"[BookInfoProxy] Using Goodreads search (provider was: '{provider ?? "null"}')");
+            _logger.DebugSafe($"[BookInfoProxy] Using Goodreads search (provider was: '{provider ?? "null"}')");
 
             // Default to Goodreads behavior
-            _logger.Debug($"[BookInfoProxy] Executing Goodreads search for: {title}");
+            _logger.DebugSafe($"[BookInfoProxy] Executing Goodreads search for: {title}");
             var books = SearchForNewBook(title, null, false);
             _logger.Debug($"[BookInfoProxy] Goodreads search returned {books?.Count ?? 0} books");
 
@@ -2586,7 +2587,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             }
             catch (Exception e)
             {
-                _logger.Warn(e, "Error searching for {0}", query);
+                _logger.WarnSafe(e, "Error searching for {0}", query);
                 return new List<Book>();
             }
 
@@ -2973,14 +2974,14 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             var cachedAuthor = _authorCache.Get<Author>(foreignAuthorId);
             if (cachedAuthor != null)
             {
-                _logger.Trace("Using cached author data for {0}", foreignAuthorId);
+                _logger.TraceSafe("Using cached author data for {0}", foreignAuthorId);
                 return cachedAuthor;
             }
 
             return _authorCache.GetOrAdd(foreignAuthorId,
                 () =>
                 {
-                    _logger.Trace("Fetching fresh author data for {0}", foreignAuthorId);
+                    _logger.TraceSafe("Fetching fresh author data for {0}", foreignAuthorId);
                     return PollAuthorUncached(foreignAuthorId);
                 },
                 new LazyCacheEntryOptions
@@ -3011,7 +3012,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 httpRequest.SuppressHttpError = true;
                 httpRequest.RequestTimeout = TimeSpan.FromSeconds(30);
 
-                _logger.Trace("[PERF] Starting author HTTP request for foreignAuthorId: {0}", foreignAuthorId);
+                _logger.TraceSafe("[PERF] Starting author HTTP request for foreignAuthorId: {0}", foreignAuthorId);
                 var httpStopwatch = Stopwatch.StartNew();
 
                 HttpResponse httpResponse = null;
@@ -3100,7 +3101,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             mapStopwatch.Stop();
             overallStopwatch.Stop();
             _logger.Trace("[PERF] MapAuthor completed in {0}ms", mapStopwatch.ElapsedMilliseconds);
-            _logger.Trace("[PERF] Total PollAuthorUncached time: {0}ms for author {1}", overallStopwatch.ElapsedMilliseconds, foreignAuthorId);
+            _logger.TraceSafe("[PERF] Total PollAuthorUncached time: {0}ms for author {1}", overallStopwatch.ElapsedMilliseconds, foreignAuthorId);
 
             return result;
         }
@@ -3227,7 +3228,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (hasWork && editionsCount > 0 && authorsCount > 0)
                 {
-                    _logger.Debug("Successfully parsed V5 work response for {0}", foreignBookId);
+                    _logger.DebugSafe("Successfully parsed V5 work response for {0}", foreignBookId);
                     return new V5WorkLookupResult { WorkResponse = v5Response };
                 }
 
@@ -4176,7 +4177,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         private List<object> FilterHardcoverSearchResultsPreservingOrder(List<object> results, string searchQuery)
         {
-            _logger.Debug($"[BookInfoProxy] Starting filtering of {results.Count} results for query '{searchQuery}'");
+            _logger.DebugSafe($"[BookInfoProxy] Starting filtering of {results.Count} results for query '{searchQuery}'");
 
             var filteredResults = new List<object>();
             var booksFiltered = 0;
@@ -5227,7 +5228,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         private Tuple<string, Book, List<Author>> MapV5WorkResponse(V5Resource.V5WorkResponse v5Response, string foreignBookId, BookMediaType mediaType)
         {
-            _logger.Debug("Mapping canonical V5 work response for {0}", foreignBookId);
+            _logger.DebugSafe("Mapping canonical V5 work response for {0}", foreignBookId);
             var work = PrepareCanonicalV5Work(v5Response);
             var mappedAuthors = MapV5WorkAuthors(v5Response.Authors);
             var primaryAuthor = mappedAuthors.FirstOrDefault();

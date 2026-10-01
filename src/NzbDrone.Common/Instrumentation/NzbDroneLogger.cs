@@ -63,7 +63,10 @@ namespace NzbDrone.Common.Instrumentation
         {
             var target = new DebuggerTarget();
             target.Name = "debuggerLogger";
-            target.Layout = "[${level}] [${threadid}] ${logger}: ${message} ${onexception:inner=${newline}${newline}[v${assembly-version}] ${exception:format=ToString}${newline}${exception:format=Data}${newline}}";
+            target.Layout = new CleanseLayout
+            {
+                Inner = "[${level}] [${threadid}] ${logger}: ${message} ${onexception:inner=${newline}${newline}[v${assembly-version}] ${exception:format=ToString}${newline}${exception:format=Data}${newline}}"
+            };
 
             var loggingRule = new LoggingRule("*", LogLevel.Trace, target);
             LogManager.Configuration.AddTarget("debugger", target);

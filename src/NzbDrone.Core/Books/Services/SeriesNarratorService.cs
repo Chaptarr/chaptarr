@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Repositories;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -263,14 +264,14 @@ namespace NzbDrone.Core.Books.Services
 
         public void SetPreferredSeriesNarrator(int seriesId, string narrator)
         {
-            _logger.Debug("Setting preferred series narrator for series {0}: {1}", seriesId, narrator);
+            _logger.DebugSafe("Setting preferred series narrator for series {0}: {1}", seriesId, narrator);
 
             var series = _seriesRepository.Get(seriesId);
             if (series != null)
             {
                 series.Narrator = narrator;
                 _seriesRepository.Update(series);
-                _logger.Debug("Updated series {0} with preferred narrator: {1}", seriesId, narrator);
+                _logger.DebugSafe("Updated series {0} with preferred narrator: {1}", seriesId, narrator);
             }
         }
 
@@ -295,7 +296,7 @@ namespace NzbDrone.Core.Books.Services
 
         public bool ApplySeriesNarratorToBooks(int seriesId, string narrator, bool overrideExisting = false)
         {
-            _logger.Debug("Applying series narrator '{0}' to books in series {1} (override: {2})", narrator, seriesId, overrideExisting);
+            _logger.DebugSafe("Applying series narrator '{0}' to books in series {1} (override: {2})", narrator, seriesId, overrideExisting);
 
             try
             {
@@ -313,7 +314,7 @@ namespace NzbDrone.Core.Books.Services
                     }
                 }
 
-                _logger.Info("Applied series narrator '{0}' to {1} books in series {2}", narrator, updatedCount, seriesId);
+                _logger.InfoSafe("Applied series narrator '{0}' to {1} books in series {2}", narrator, updatedCount, seriesId);
                 return true;
             }
             catch (Exception ex)

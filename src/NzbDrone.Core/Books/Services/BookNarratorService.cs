@@ -5,6 +5,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Repositories;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -114,7 +115,7 @@ namespace NzbDrone.Core.Books.Services
 
         public void SetPreferredNarrator(int bookId, string narrator)
         {
-            _logger.Debug("Setting preferred narrator for book {0}: {1}", bookId, narrator);
+            _logger.DebugSafe("Setting preferred narrator for book {0}: {1}", bookId, narrator);
             _narratorOptionRepository.SetPreferred(bookId, narrator);
         }
 

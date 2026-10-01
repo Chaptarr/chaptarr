@@ -2,6 +2,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
@@ -22,7 +23,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             if (_logger.IsTraceEnabled)
             {
                 _logger.Trace("[QUALITY_PROFILE_CHECK] ===== QUALITY PROFILE CHECK STARTED =====");
-                _logger.Trace("[QUALITY_PROFILE_CHECK] Release: '{0}'", subject.Release?.Title ?? "NULL");
+                _logger.TraceSafe("[QUALITY_PROFILE_CHECK] Release: '{0}'", subject.Release?.Title ?? "NULL");
                 _logger.Trace("[QUALITY_PROFILE_CHECK] Author: '{0}' (ID: {1})", subject.Author?.Name ?? "NULL", subject.Author?.Id ?? -1);
                 _logger.Trace("[QUALITY_PROFILE_CHECK] Quality being checked: '{0}' (ID: {1})",
                     subject.ParsedBookInfo.Quality.Quality.Name,

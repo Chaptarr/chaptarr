@@ -35,6 +35,7 @@ using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
 using NzbDrone.Http.REST.Attributes;
 using NzbDrone.SignalR;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Books
 {
@@ -246,7 +247,7 @@ namespace Chaptarr.Api.V1.Books
 	        {
             try
             {
-                _logger.Debug("[V1-BOOK-IMPORT] Starting import with foreignBookId: {0}, foreignAuthorId: {1}, mediaType: {2}",
+                _logger.DebugSafe("[V1-BOOK-IMPORT] Starting import with foreignBookId: {0}, foreignAuthorId: {1}, mediaType: {2}",
                     importResource.ForeignBookId, importResource.ForeignAuthorId, importResource.MediaType);
 
                 if (string.IsNullOrWhiteSpace(importResource.ForeignBookId) || string.IsNullOrWhiteSpace(importResource.ForeignAuthorId))
@@ -543,7 +544,7 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? monitored = null,
             [FromQuery] string include = null)
         {
-            _logger.Debug("[API-PERFORMANCE] GetBooks called: authorId={0}, bookIds.Count={1}, bookId='{2}', titleSlug='{3}', mediaType='{4}', monitored={5}",
+            _logger.DebugSafe("[API-PERFORMANCE] GetBooks called: authorId={0}, bookIds.Count={1}, bookId='{2}', titleSlug='{3}', mediaType='{4}', monitored={5}",
                 authorId, bookIds?.Count ?? 0, bookId, titleSlug, mediaType, monitored);
 
             bookIds ??= new List<int>();
@@ -599,7 +600,7 @@ namespace Chaptarr.Api.V1.Books
                             filteredBooks = filteredBooks.Where(b => b.IsMonitored() || HasFiles(b, statsByBookId)).ToList();
                         }
 
-                        _logger.Debug("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
+                        _logger.DebugSafe("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
                     }
                     else
                     {
@@ -616,7 +617,7 @@ namespace Chaptarr.Api.V1.Books
 
             if (authorId.HasValue)
             {
-                _logger.Debug("[API-PERFORMANCE] Taking AUTHOR-SPECIFIC PATH for authorId={0}, mediaType='{1}'", authorId.Value, mediaType);
+                _logger.DebugSafe("[API-PERFORMANCE] Taking AUTHOR-SPECIFIC PATH for authorId={0}, mediaType='{1}'", authorId.Value, mediaType);
 
                 var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
                 var normalizedMediaType = parsedMediaType.HasValue ? MediaTypeParameterParser.ToApiValue(parsedMediaType.Value) : null;
@@ -668,7 +669,7 @@ namespace Chaptarr.Api.V1.Books
                             // No mediaType specified: check either media-type monitoring
                             filteredBooks = filteredBooks.Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
                         }
-                        _logger.Debug("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
+                        _logger.DebugSafe("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
                     }
                     else
                     {
@@ -886,7 +887,7 @@ namespace Chaptarr.Api.V1.Books
 
                 if (matches.Any())
                 {
-                    _logger.Debug("[BOOK-SLUG-ROUTE] titleSlug='{0}' belonged to sibling media type. Resolved to {1} {2} row(s) by provider identity.",
+                    _logger.DebugSafe("[BOOK-SLUG-ROUTE] titleSlug='{0}' belonged to sibling media type. Resolved to {1} {2} row(s) by provider identity.",
                         routeToken,
                         matches.Count,
                         scopedMediaType.Value);
@@ -895,13 +896,13 @@ namespace Chaptarr.Api.V1.Books
 
             if (!matches.Any())
             {
-                _logger.Debug("[BOOK-SLUG-ROUTE] No book found for titleSlug='{0}', mediaType='{1}'", routeToken, mediaType ?? "any");
+                _logger.DebugSafe("[BOOK-SLUG-ROUTE] No book found for titleSlug='{0}', mediaType='{1}'", routeToken, mediaType ?? "any");
                 return null;
             }
 
             if (matches.Count > 1)
             {
-                _logger.Warn("[BOOK-SLUG-ROUTE] titleSlug='{0}', mediaType='{1}' matched {2} local books. Choosing the monitored/lowest-id row deterministically: {3}",
+                _logger.WarnSafe("[BOOK-SLUG-ROUTE] titleSlug='{0}', mediaType='{1}' matched {2} local books. Choosing the monitored/lowest-id row deterministically: {3}",
                     routeToken,
                     mediaType ?? "any",
                     matches.Count,
@@ -1066,7 +1067,7 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? missing = null,
             [FromQuery] bool? wanted = null)
         {
-            _logger.Debug("[API-INFINITE-SCROLL] GetBookBuckets called: includeUnmonitored={0}, sortKey={1}, sortDirection={2}, mediaType={3}, downloaded={4}, monitored={5}, missing={6}, wanted={7}",
+            _logger.DebugSafe("[API-INFINITE-SCROLL] GetBookBuckets called: includeUnmonitored={0}, sortKey={1}, sortDirection={2}, mediaType={3}, downloaded={4}, monitored={5}, missing={6}, wanted={7}",
                 includeUnmonitored, sortKey, sortDirection, mediaType, downloaded, monitored, missing, wanted);
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
 
@@ -1105,7 +1106,7 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? wanted = null,
             [FromQuery] string include = null)
         {
-            _logger.Debug("[API-INFINITE-SCROLL] GetBooksPaged called: offset={0}, pageSize={1}, sortKey={2}, sortDirection={3}, includeUnmonitored={4}, mediaType={5}, downloaded={6}, monitored={7}, missing={8}, wanted={9}",
+            _logger.DebugSafe("[API-INFINITE-SCROLL] GetBooksPaged called: offset={0}, pageSize={1}, sortKey={2}, sortDirection={3}, includeUnmonitored={4}, mediaType={5}, downloaded={6}, monitored={7}, missing={8}, wanted={9}",
                 offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
 
@@ -1182,14 +1183,14 @@ namespace Chaptarr.Api.V1.Books
 		                if (_logger.IsDebugEnabled)
 		                {
 		                    _logger.Debug("[AddBook] Request received");
-		                    _logger.Debug("[AddBook] Title: {0}", bookResource?.Title ?? "NULL");
-		                    _logger.Debug("[AddBook] MediaType (body): {0}", bookResource?.MediaType ?? "NULL");
-		                    _logger.Debug("[AddBook] MediaType (query): {0}", mediaType ?? "NULL");
-		                    _logger.Debug("[AddBook] ForeignBookId: {0}", bookResource?.ForeignBookId ?? "NULL");
-		                    _logger.Debug("[AddBook] HardcoverBookId: {0}", bookResource?.HardcoverBookId ?? "NULL");
-		                    _logger.Debug("[AddBook] GoodreadsBookId: {0}", bookResource?.GoodreadsBookId ?? "NULL");
+		                    _logger.DebugSafe("[AddBook] Title: {0}", bookResource?.Title ?? "NULL");
+		                    _logger.DebugSafe("[AddBook] MediaType (body): {0}", bookResource?.MediaType ?? "NULL");
+		                    _logger.DebugSafe("[AddBook] MediaType (query): {0}", mediaType ?? "NULL");
+		                    _logger.DebugSafe("[AddBook] ForeignBookId: {0}", bookResource?.ForeignBookId ?? "NULL");
+		                    _logger.DebugSafe("[AddBook] HardcoverBookId: {0}", bookResource?.HardcoverBookId ?? "NULL");
+		                    _logger.DebugSafe("[AddBook] GoodreadsBookId: {0}", bookResource?.GoodreadsBookId ?? "NULL");
 		                    _logger.Debug("[AddBook] Author.Id: {0}", bookResource?.Author?.Id ?? 0);
-		                    _logger.Debug("[AddBook] Author.AuthorName: {0}", bookResource?.Author?.AuthorName ?? "NULL");
+		                    _logger.DebugSafe("[AddBook] Author.AuthorName: {0}", bookResource?.Author?.AuthorName ?? "NULL");
 		                    _logger.Debug("[AddBook] Author.AudiobookMonitorExisting: {0}", bookResource?.Author?.AudiobookMonitorExisting ?? 0);
 		                    _logger.Debug("[AddBook] Author.EbookMonitorExisting: {0}", bookResource?.Author?.EbookMonitorExisting ?? 0);
 		                    _logger.Debug("[AddBook] Editions count: {0}", bookResource?.Editions?.Count ?? 0);
@@ -1239,7 +1240,7 @@ namespace Chaptarr.Api.V1.Books
 			                        var model = bookResource.ToModel(facadeContext);
 			                        if (IsMissingUpstreamProviderBookId(model))
 			                        {
-			                            _logger.Warn("[AddBlockedMissingForeignBookId] Blocking AddBook (audiobook) due to missing upstream provider book/work ID. Title='{0}' ForeignBookId='{1}' HardcoverBookId='{2}' GoodreadsBookId='{3}' GoodreadsWorkId='{4}' OpenLibraryWorkId='{5}' GoogleBooksId='{6}' ASIN='{7}' AudibleASIN='{8}'",
+			                            _logger.WarnSafe("[AddBlockedMissingForeignBookId] Blocking AddBook (audiobook) due to missing upstream provider book/work ID. Title='{0}' ForeignBookId='{1}' HardcoverBookId='{2}' GoodreadsBookId='{3}' GoodreadsWorkId='{4}' OpenLibraryWorkId='{5}' GoogleBooksId='{6}' ASIN='{7}' AudibleASIN='{8}'",
 			                                bookResource?.Title ?? "NULL",
 			                                bookResource?.ForeignBookId ?? "NULL",
 			                                bookResource?.HardcoverBookId ?? "NULL",
@@ -1271,7 +1272,7 @@ namespace Chaptarr.Api.V1.Books
 			                        var model = bookResource.ToModel(facadeContext);
 			                        if (IsMissingUpstreamProviderBookId(model))
 			                        {
-			                            _logger.Warn("[AddBlockedMissingForeignBookId] Blocking AddBook (ebook) due to missing upstream provider book/work ID. Title='{0}' ForeignBookId='{1}' HardcoverBookId='{2}' GoodreadsBookId='{3}' GoodreadsWorkId='{4}' OpenLibraryWorkId='{5}' GoogleBooksId='{6}' ASIN='{7}' AudibleASIN='{8}'",
+			                            _logger.WarnSafe("[AddBlockedMissingForeignBookId] Blocking AddBook (ebook) due to missing upstream provider book/work ID. Title='{0}' ForeignBookId='{1}' HardcoverBookId='{2}' GoodreadsBookId='{3}' GoodreadsWorkId='{4}' OpenLibraryWorkId='{5}' GoogleBooksId='{6}' ASIN='{7}' AudibleASIN='{8}'",
 			                                bookResource?.Title ?? "NULL",
 			                                bookResource?.ForeignBookId ?? "NULL",
 			                                bookResource?.HardcoverBookId ?? "NULL",
@@ -1334,7 +1335,7 @@ namespace Chaptarr.Api.V1.Books
 			                var modelToAdd = bookResource.ToModel(facadeContext);
 			                if (IsMissingUpstreamProviderBookId(modelToAdd))
 			                {
-			                    _logger.Warn("[AddBlockedMissingForeignBookId] Blocking AddBook due to missing upstream provider book/work ID. Title='{0}' ForeignBookId='{1}' HardcoverBookId='{2}' GoodreadsBookId='{3}' GoodreadsWorkId='{4}' OpenLibraryWorkId='{5}' GoogleBooksId='{6}' ASIN='{7}' AudibleASIN='{8}'",
+			                    _logger.WarnSafe("[AddBlockedMissingForeignBookId] Blocking AddBook due to missing upstream provider book/work ID. Title='{0}' ForeignBookId='{1}' HardcoverBookId='{2}' GoodreadsBookId='{3}' GoodreadsWorkId='{4}' OpenLibraryWorkId='{5}' GoogleBooksId='{6}' ASIN='{7}' AudibleASIN='{8}'",
 			                        bookResource?.Title ?? "NULL",
 			                        bookResource?.ForeignBookId ?? "NULL",
 			                        bookResource?.HardcoverBookId ?? "NULL",

@@ -7,6 +7,7 @@ using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using MediaCoverModel = NzbDrone.Core.MediaCover.MediaCover;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -129,7 +130,7 @@ namespace NzbDrone.Core.Books.Services
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "[LIBRARY-SEARCH] Failed searching for '{0}'", trimmed);
+                _logger.WarnSafe(ex, "[LIBRARY-SEARCH] Failed searching for '{0}'", trimmed);
                 return new LibrarySearchResult();
             }
         }

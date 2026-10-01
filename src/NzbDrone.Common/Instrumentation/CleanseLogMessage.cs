@@ -88,6 +88,12 @@ namespace NzbDrone.Common.Instrumentation
                     var value = m.Value;
                     foreach (var capture in m.Groups["secret"].Captures.OfType<Capture>().Reverse())
                     {
+                        // Preserve placeholders produced by the URL sanitizer when the safe logger cleanses again.
+                        if (capture.Value == "<REDACTED>")
+                        {
+                            continue;
+                        }
+
                         value = value.Replace(capture.Index - m.Index, capture.Length, "(removed)");
                     }
 
@@ -96,6 +102,12 @@ namespace NzbDrone.Common.Instrumentation
             }
 
             message = CleanseRemoteIPRegex.Replace(message, CleanseRemoteIP);
+
+            message = message.Replace("\r", "\\r")
+                             .Replace("\n", "\\n")
+                             .Replace("\u0085", "\\u0085")
+                             .Replace("\u2028", "\\u2028")
+                             .Replace("\u2029", "\\u2029");
 
             return message;
         }

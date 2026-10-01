@@ -9,6 +9,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Http;
 using NzbDrone.Core.MetadataSource.Audible.Resources;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MetadataSource.Audible
 {
@@ -52,7 +53,7 @@ namespace NzbDrone.Core.MetadataSource.Audible
         {
             try
             {
-                _logger.Debug("Getting book info from Audible catalog for ASIN: {0}", asin);
+                _logger.DebugSafe("Getting book info from Audible catalog for ASIN: {0}", asin);
 
                 var httpRequest = _requestBuilder.Create()
                     .SetSegment("route", $"1.0/catalog/products/{asin}")
@@ -75,7 +76,7 @@ namespace NzbDrone.Core.MetadataSource.Audible
                 {
                     if (httpResponse.StatusCode == HttpStatusCode.NotFound)
                     {
-                        _logger.Debug("Book not found in Audible catalog: {0}", asin);
+                        _logger.DebugSafe("Book not found in Audible catalog: {0}", asin);
                         return null;
                     }
 
@@ -85,12 +86,12 @@ namespace NzbDrone.Core.MetadataSource.Audible
                 var response = Json.Deserialize<AudibleCatalogProductResponse>(httpResponse.Content);
                 var bookInfo = MapProduct(response?.Product);
 
-                _logger.Debug("Retrieved book info from Audible catalog for: {0} - {1}", asin, bookInfo?.Title);
+                _logger.DebugSafe("Retrieved book info from Audible catalog for: {0} - {1}", asin, bookInfo?.Title);
                 return bookInfo;
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error getting book info from Audible catalog for ASIN: {0}", asin);
+                _logger.ErrorSafe(ex, "Error getting book info from Audible catalog for ASIN: {0}", asin);
                 throw new AudibleCatalogException(HttpStatusCode.InternalServerError, $"Failed to get book info: {ex.Message}", ex);
             }
         }
@@ -99,10 +100,10 @@ namespace NzbDrone.Core.MetadataSource.Audible
         {
             try
             {
-                _logger.Debug("Audiobooks search called with Audible catalog query: {0}, useCache: {1}", query, useCache);
+                _logger.DebugSafe("Audiobooks search called with Audible catalog query: {0}, useCache: {1}", query, useCache);
 
                 var sanitizedQuery = SanitizeSearchQuery(query);
-                _logger.Debug("Sanitized query: {0}", sanitizedQuery);
+                _logger.DebugSafe("Sanitized query: {0}", sanitizedQuery);
 
                 var httpRequest = _requestBuilder.Create()
                     .SetSegment("route", "1.0/catalog/products")
@@ -148,12 +149,12 @@ namespace NzbDrone.Core.MetadataSource.Audible
                     .Where(product => product != null)
                     .ToList();
 
-                _logger.Debug("Found {0} results in Audible catalog search for: {1}", searchResults?.Count ?? 0, query);
+                _logger.DebugSafe("Found {0} results in Audible catalog search for: {1}", searchResults?.Count ?? 0, query);
                 return searchResults ?? new List<AudibleCatalogBookResource>();
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error searching Audible catalog for: {0}", query);
+                _logger.ErrorSafe(ex, "Error searching Audible catalog for: {0}", query);
                 return new List<AudibleCatalogBookResource>();
             }
         }

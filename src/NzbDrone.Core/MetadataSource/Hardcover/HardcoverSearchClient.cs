@@ -11,6 +11,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MetadataSource.Hardcover
 {
@@ -114,21 +115,21 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
 
                 if (results == null)
                 {
-                    _logger.Warn($"Hardcover search failed for '{cleanedTerm}'");
+                    _logger.WarnSafe($"Hardcover search failed for '{cleanedTerm}'");
                     return null;
                 }
 
-                _logger.Debug($"Hardcover search successful: {results.Count} total results for '{cleanedTerm}'");
+                _logger.DebugSafe($"Hardcover search successful: {results.Count} total results for '{cleanedTerm}'");
                 return results;
             }
             catch (NzbDroneClientException ex)
             {
-                _logger.Error($"Hardcover search failed for '{searchTerm}': {ex.Message}");
+                _logger.ErrorSafe($"Hardcover search failed for '{searchTerm}': {ex.Message}");
                 throw;
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, $"Hardcover search failed for '{searchTerm}'");
+                _logger.ErrorSafe(ex, $"Hardcover search failed for '{searchTerm}'");
                 return null;
             }
         }
@@ -480,7 +481,7 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                 EnrichAuthorsAndSeries(authors, seriesResults, jsonOptions);
 
                 var orderedResults = OrderSearchResultsAroundAnchor(query, anchor, authors, books, seriesResults);
-                _logger.Debug("Hardcover search anchor for '{0}': {1}; ordered {2} results",
+                _logger.DebugSafe("Hardcover search anchor for '{0}': {1}; ordered {2} results",
                     query,
                     DescribeSearchResult(anchor),
                     orderedResults.Count);

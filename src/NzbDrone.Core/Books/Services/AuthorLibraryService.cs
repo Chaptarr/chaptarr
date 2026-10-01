@@ -28,6 +28,7 @@ using NzbDrone.Core.Qualities;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.ProgressMessaging;
 using NzbDrone.Core.RootFolders;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -198,7 +199,7 @@ namespace NzbDrone.Core.Books.Services
 
         public async Task<Author> AddAuthorAsync(string providerId, MonitoringConfig config = null)
         {
-            _logger.Debug("AddAuthorAsync called with provider ID: {0}", providerId);
+            _logger.DebugSafe("AddAuthorAsync called with provider ID: {0}", providerId);
             var overallStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
             Author author;
@@ -206,7 +207,7 @@ namespace NzbDrone.Core.Books.Services
             try
             {
                 // Fetch author info from metadata server
-                _logger.Debug("Calling GetAuthorInfo with provider ID: {0}", providerId);
+                _logger.DebugSafe("Calling GetAuthorInfo with provider ID: {0}", providerId);
                 var apiStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 author = await FetchAuthorBlobAsync(providerId);
                 apiStopwatch.Stop();
@@ -222,14 +223,14 @@ namespace NzbDrone.Core.Books.Services
                 // Don't re-queue if we're already processing from the queue
                 if (config?.IsFromQueue == true)
                 {
-                    _logger.Debug("Author {0} not found while processing from queue, not re-queuing", providerId);
+                    _logger.DebugSafe("Author {0} not found while processing from queue, not re-queuing", providerId);
                     throw;
                 }
 
                 // Queue if configured to do so
                 if (config?.QueueIfUnavailable == true)
                 {
-                    _logger.Info("Author {0} not available on metadata server, queuing for later import", providerId);
+                    _logger.InfoSafe("Author {0} not available on metadata server, queuing for later import", providerId);
 
                         var pendingId = await _pendingImportService.EnqueueAsync(
                             providerId,
@@ -252,14 +253,14 @@ namespace NzbDrone.Core.Books.Services
                                         var existingAuthor = _authorService.FindByProviderId(prefix, rawId);
                                         if (existingAuthor != null)
                                         {
-                                            _logger.Info("Author {0} already exists locally (ID: {1}); skipping pending queue", providerId, existingAuthor.Id);
+                                            _logger.InfoSafe("Author {0} already exists locally (ID: {1}); skipping pending queue", providerId, existingAuthor.Id);
                                             return existingAuthor;
                                         }
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    _logger.Warn(ex, "Failed to re-check local author existence for {0} after enqueue returned 0", providerId);
+                                    _logger.WarnSafe(ex, "Failed to re-check local author existence for {0} after enqueue returned 0", providerId);
                                 }
 
                                 var existingPending = _pendingImportService.GetByProviderId(providerId);
@@ -490,7 +491,7 @@ namespace NzbDrone.Core.Books.Services
                 return author;
             }
 
-            _logger.Info(
+            _logger.InfoSafe(
                 "Author {0} is available, but requested work(s) [{1}] are not yet present in its authoritative catalog; retaining the request",
                 authorProviderId,
                 string.Join(",", missing.Select(target => target.ProviderId)));
@@ -1197,7 +1198,7 @@ namespace NzbDrone.Core.Books.Services
                     etag: remoteAuthor?.RemoteMetadataETag,
                     httpStatus: 200);
 
-                _logger.Debug("[SYNC-METADATA] Seeded author {0} ({1}) with import ETag {2}",
+                _logger.DebugSafe("[SYNC-METADATA] Seeded author {0} ({1}) with import ETag {2}",
                     persistedAuthor.Name,
                     syncMetadata.ExternalAuthorId,
                     syncMetadata.ETag ?? "none");
@@ -2023,7 +2024,7 @@ namespace NzbDrone.Core.Books.Services
             // Log the discovery context
             if (config != null)
             {
-                _logger.Debug("[DISCOVERY-CONTEXT] Author discovered via: AudiobookRoot={0}, EbookRoot={1}",
+                _logger.DebugSafe("[DISCOVERY-CONTEXT] Author discovered via: AudiobookRoot={0}, EbookRoot={1}",
                     !string.IsNullOrWhiteSpace(config.AudiobookRootFolderPath) ? config.AudiobookRootFolderPath : "NOT SET",
                     !string.IsNullOrWhiteSpace(config.EbookRootFolderPath) ? config.EbookRootFolderPath : "NOT SET");
             }
@@ -2047,7 +2048,7 @@ namespace NzbDrone.Core.Books.Services
                 {
                     _logger.Debug("[SPECIFIC-BOOK-TRACE] ProcessBooksForAuthor checking book '{0}' (HC:{1}, GR:{2}) against specific IDs",
                         book.Title, book.HardcoverBookId, book.GoodreadsBookId);
-                    _logger.Debug("[SPECIFIC-BOOK-TRACE] SpecificBookProviderIds: {0}",
+                    _logger.DebugSafe("[SPECIFIC-BOOK-TRACE] SpecificBookProviderIds: {0}",
                         string.Join(", ", specificBookProviderIds));
                     
                     // Check if this book matches any of the specific provider IDs
@@ -2055,13 +2056,13 @@ namespace NzbDrone.Core.Books.Services
                     {
                         var bookHcId = ExtractRawId(book.HardcoverBookId);
                         var bookGrId = ExtractRawId(book.GoodreadsBookId);
-                        _logger.Debug("[SPECIFIC-BOOK-MATCH] Checking '{0}' against book '{1}' (HC:{2}, GR:{3})", 
+                        _logger.DebugSafe("[SPECIFIC-BOOK-MATCH] Checking '{0}' against book '{1}' (HC:{2}, GR:{3})",
                             providerId, book.Title, bookHcId, bookGrId);
                         
                         if (BookMatchesProviderId(book, providerId))
                         {
                             shouldMonitorThisBook = true;
-                            _logger.Debug("[SPECIFIC-BOOK-MATCH] Book '{0}' matches provider ID '{1}' - will be monitored",
+                            _logger.DebugSafe("[SPECIFIC-BOOK-MATCH] Book '{0}' matches provider ID '{1}' - will be monitored",
                                 book.Title, providerId);
                             break;
                         }

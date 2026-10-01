@@ -10,6 +10,7 @@ using NzbDrone.Core.Books.Extensions;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books
 {
@@ -109,7 +110,7 @@ namespace NzbDrone.Core.Books
         {
             if (string.IsNullOrWhiteSpace(providerPrefix) || string.IsNullOrWhiteSpace(providerId))
             {
-                _logger.Warn("GetEditionsByProviderAndId called with null/empty parameters: provider='{0}', id='{1}'", providerPrefix, providerId);
+                _logger.WarnSafe("GetEditionsByProviderAndId called with null/empty parameters: provider='{0}', id='{1}'", providerPrefix, providerId);
                 return new List<Edition>();
             }
 
@@ -119,7 +120,7 @@ namespace NzbDrone.Core.Books
             switch (prefix)
             {
                 case "hc":
-                    _logger.Debug("Looking up Hardcover edition with ID: {0}", providerId);
+                    _logger.DebugSafe("Looking up Hardcover edition with ID: {0}", providerId);
                     return _editionRepository.FindAllByHardcoverEditionId(id);
 
                 case "gr":
@@ -129,21 +130,21 @@ namespace NzbDrone.Core.Books
                         return _editionRepository.FindAllByGoodreadsEditionId(goodreadsId);
                     }
 
-                    _logger.Error("Invalid Goodreads edition ID format: {0} (expected numeric)", id);
+                    _logger.ErrorSafe("Invalid Goodreads edition ID format: {0} (expected numeric)", id);
                     return new List<Edition>();
 
                 case "ol":
-                    _logger.Debug("Looking up OpenLibrary edition with ID: {0}", providerId);
+                    _logger.DebugSafe("Looking up OpenLibrary edition with ID: {0}", providerId);
                     return _editionRepository.FindAllByOpenLibraryEditionId(id);
 
                 case "gb":
-                    _logger.Debug("Looking up Google Books edition with ID: {0}", providerId);
+                    _logger.DebugSafe("Looking up Google Books edition with ID: {0}", providerId);
                     return _editionRepository.FindAllByGoogleBooksEditionId(id);
 
                 case "az":
                     {
                         var normalized = id.ToUpperInvariant();
-                        _logger.Debug("Looking up edition with ASIN: {0}", normalized);
+                        _logger.DebugSafe("Looking up edition with ASIN: {0}", normalized);
 
                         return DistinctEditions(
                             _editionRepository.FindAllByAsin(normalized),
@@ -161,7 +162,7 @@ namespace NzbDrone.Core.Books
                     }
 
                 default:
-                    _logger.Warn("Unknown provider prefix: {0}. Supported providers: hc, gr, ol, gb, az, isbn", providerPrefix);
+                    _logger.WarnSafe("Unknown provider prefix: {0}. Supported providers: hc, gr, ol, gb, az, isbn", providerPrefix);
                     return new List<Edition>();
             }
         }

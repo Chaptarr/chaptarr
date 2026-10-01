@@ -7,6 +7,7 @@ using Dapper;
 using NLog;
 using NzbDrone.Common;
 using NzbDrone.Core.MediaFiles.BookImport;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Datastore
 {
@@ -921,7 +922,7 @@ namespace NzbDrone.Core.Datastore
 
                     if (deletedQueue > 0 || deletedResults > 0)
                     {
-                        _logger.Debug("[STAGING-DB] Purged {0} queue items and {1} results under '{2}'", deletedQueue, deletedResults, normalizedPrefix);
+                        _logger.DebugSafe("[STAGING-DB] Purged {0} queue items and {1} results under '{2}'", deletedQueue, deletedResults, normalizedPrefix);
                     }
 
                     return deletedQueue;
@@ -929,7 +930,7 @@ namespace NzbDrone.Core.Datastore
                 catch (Exception ex)
                 {
                     transaction.Rollback();
-                    _logger.Debug(ex, "[STAGING-DB] Failed to purge items under prefix='{0}'", pathPrefix);
+                    _logger.DebugSafe(ex, "[STAGING-DB] Failed to purge items under prefix='{0}'", pathPrefix);
                     return 0;
                 }
             }
