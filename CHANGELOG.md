@@ -23,15 +23,15 @@ history grouped from conventional commits.
 - Publish pending ChaptarrNG updates - ([1171a87](https://github.com/snapetech/chaptarrng/commit/1171a870bf1f44dac799eae53f44507562ed78f8))
 
 ### Bug Fixes
+- *(security)* Enumerate only fixture test files - ([4d60eba](https://github.com/snapetech/chaptarrng/commit/4d60eba5e02c72646a0bc144d6bf4b74679e1bce))
+- *(security)* Constrain test fixture file paths - ([14dfae5](https://github.com/snapetech/chaptarrng/commit/14dfae526a54fb3c742bf116927be2afda60f859))
 - Align OpenAPI security scopes with new type - ([9c2d5fe](https://github.com/snapetech/chaptarrng/commit/9c2d5fe93d0157e10e45debc0809a8e4801377bb))
 - Migrate built-in FluentValidation calls to v12 - ([53a09f4](https://github.com/snapetech/chaptarrng/commit/53a09f4ce70f216ccf1223efa4ac462b3e57a256))
 - Migrate configuration change handler for NLog 6 - ([7f8e9f2](https://github.com/snapetech/chaptarrng/commit/7f8e9f2edabefdb5789ac6d790035255e2fde3c0))
 - Resolve CI compatibility blockers - ([accc257](https://github.com/snapetech/chaptarrng/commit/accc257c8938981b20fa276340d2afc19d393b3a))
 
 ### Maintenance
-- Update security dependencies and compatibility - ([63afb7f](https://github.com/snapetech/chaptarrng/commit/63afb7f6b309003fc7d53f8a3772c3a1d271968f))
-
-## [0.9.938](https://github.com/snapetech/chaptarrng/compare/v0.9.937..v0.9.938) - 2026-09-29
+- Update security dependencies and compatibility - ([63afb7f](https://github.com/snapetech/chaptarrng/commit/63afb7f6b309003fc7d53f8a3772c3a1d271968f))## [0.9.938](https://github.com/snapetech/chaptarrng/compare/v0.9.937..v0.9.938) - 2026-09-29
 
 ### Changed
 
