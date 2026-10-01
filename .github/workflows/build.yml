@@ -141,11 +141,28 @@ jobs:
         fi
 
         python3 build-tools/version_guard.py commit-hygiene --compare-ref "$COMPARE_REF"
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24.21.0
+
+    - name: Install Yarn
+      run: npm install --global yarn@1.22.22
+
+    - name: Install frontend dependencies
+      run: yarn install --frozen-lockfile
+
+    - name: Type-check frontend
+      run: yarn typecheck
+
+    - name: Build frontend
+      run: yarn build
     
     - name: Setup .NET
       uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
       with:
-        dotnet-version: 10.0.x
+        dotnet-version: 10.0.401
 
     - name: Cache NuGet packages
       if: runner.os == 'Windows'
@@ -175,6 +192,15 @@ jobs:
       run: |
         dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o ./publish/Chaptarr
         dotnet publish src/NzbDrone.Update/Chaptarr.Update.csproj -c Release -f net10.0 -o ./publish/Chaptarr/Chaptarr.Update
+
+    - name: Include and verify frontend in artifact
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -s ./_output/UI/index.html
+        mkdir -p ./publish/Chaptarr/UI
+        cp -a ./_output/UI/. ./publish/Chaptarr/UI/
+        test -s ./publish/Chaptarr/UI/index.html
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v7
@@ -206,7 +232,7 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
       with:
-        dotnet-version: 10.0.x
+        dotnet-version: 10.0.401
 
     - name: Install PostgreSQL client
       shell: bash

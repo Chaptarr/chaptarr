@@ -1,8 +1,14 @@
 #!/bin/bash
 
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
 source ../settings/scripts/_common.sh
+source /usr/share/yunohost/helpers
 
 service_was_active=false
+
 finish_backup() {
     local exit_code=$?
     trap - EXIT
@@ -16,16 +22,43 @@ finish_backup() {
     fi
     ynh_exit_properly
 }
+
 trap finish_backup EXIT
 
+#=================================================
+# STOP SYSTEMD SERVICE
+#=================================================
 if systemctl is-active --quiet "$app"; then
     service_was_active=true
-    ynh_print_info "Stopping ChaptarrNG for a consistent database backup..."
+    ynh_print_info "Stopping ChaptarrNG for a consistent database snapshot..."
+
     ynh_systemctl --service="$app" --action="stop"
 fi
 
+#=================================================
+# SNAPSHOT THE DATA DIR
+#=================================================
+ynh_print_info "Snapshotting ChaptarrNG configuration and database..."
+
+mkdir -p "$YNH_APP_BACKUP_DIR/data"
+rsync --archive --delete \
+    --exclude="/cache/" \
+    --exclude="/logs/" \
+    "$data_dir/" "$YNH_APP_BACKUP_DIR/data/"
+
+#=================================================
+# BACKUP THE APP MAIN DIR
+#=================================================
 ynh_print_info "Declaring ChaptarrNG files for backup..."
-ynh_backup --src_path="$install_dir"
-ynh_backup --src_path="$data_dir"
-ynh_backup --src_path="/etc/nginx/conf.d/$domain.d/$app.conf"
-ynh_backup --src_path="/etc/systemd/system/$app.service"
+
+ynh_backup "$install_dir"
+
+#=================================================
+# BACKUP SYSTEM CONFIGURATION
+#=================================================
+ynh_backup "/etc/nginx/conf.d/$domain.d/$app.conf"
+ynh_backup "/etc/systemd/system/$app.service"
+
+#=================================================
+# END OF SCRIPT
+#=================================================

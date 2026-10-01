@@ -1,19 +1,50 @@
 #!/bin/bash
 
-source _common.sh
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
 
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# STOP SYSTEMD SERVICE
+#=================================================
 ynh_script_progression "Stopping ChaptarrNG..."
+
 ynh_systemctl --service="$app" --action="stop"
 
-ynh_script_progression "Installing the pinned ChaptarrNG release..."
+#=================================================
+# INSTALL SYSTEM DEPENDENCIES
+#=================================================
+ynh_script_progression "Installing the .NET 10 runtime..."
+
 chaptarrng_install_runtime
-ynh_setup_source --dest_dir="$install_dir" --full_replace=1
+
+#=================================================
+# DOWNLOAD, CHECK AND UNPACK SOURCE
+#=================================================
+ynh_script_progression "Installing the pinned ChaptarrNG release..."
+
+ynh_setup_source --dest_dir="$install_dir" --full_replace
 chown -R "$app:$app" "$install_dir"
 
+#=================================================
+# REAPPLY SYSTEM CONFIGURATION
+#=================================================
 ynh_script_progression "Refreshing ChaptarrNG's service and reverse proxy..."
+
 chaptarrng_prepare_service
+chaptarrng_register_service
 
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
 ynh_script_progression "Starting ChaptarrNG..."
-ynh_systemctl --service="$app" --action="start"
 
+chaptarrng_start_service
+
+#=================================================
+# END OF SCRIPT
+#=================================================
 ynh_script_progression "ChaptarrNG upgrade completed"

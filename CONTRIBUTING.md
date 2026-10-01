@@ -75,6 +75,13 @@ yarn install
 yarn watch
 ```
 
+### Unraid package synchronization
+
+After cloning, run `scripts/install-package-sync-hook.sh` once. The post-commit
+hook mirrors committed files from `packaging/unraid/` into the sibling
+`chaptarrng-unraid` checkout and pushes the package update to its `main` branch.
+Set `CHAPTARRNG_UNRAID_REPO` if that checkout is elsewhere.
+
 ### Development Tips
 - Frontend code is in `/frontend` (React)
 - Backend code is in `/src` (C#/.NET)

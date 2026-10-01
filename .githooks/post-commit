@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+bash "$repo_root/scripts/sync-unraid-package.sh"
+node "$repo_root/scripts/sync-yunohost-package.mjs"

@@ -1,0 +1,18 @@
+# EditorConfig: https://editorconfig.org
+
+# top-most EditorConfig file
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_size = 4
+indent_style = space
+insert_final_newline = true
+spelling_language = en-US
+# Let's also remove trailing whitespaces, even in markdown:
+# https://www.markdownguide.org/basic-syntax/#line-breaks
+trim_trailing_whitespace = true
+
+[**_fr.md]
+spelling_language = fr

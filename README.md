@@ -7,6 +7,7 @@
 A Snapetech-maintained Chaptarr fork for audiobook and eBook libraries.
 
 [![License](https://img.shields.io/github/license/snapetech/chaptarrng)](https://github.com/snapetech/chaptarrng/blob/main/LICENSE)
+[![.NET 10 LTS](https://img.shields.io/badge/.NET-10%20LTS-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/en-us/platform/support/policy)
 
 </div>
 
@@ -23,6 +24,9 @@ We forked Chaptarr so SeerrNG can rely on a book backend with explicit ebook/aud
 The application continues to identify itself as `Chaptarr` through its Readarr-compatible API so SeerrNG can detect it. **ChaptarrNG** is the name of this maintained repository, its container image, and its Unraid template.
 
 ChaptarrNG is independently maintained and is not affiliated with the Servarr team or the Readarr, Sonarr, Radarr, Lidarr, or Prowlarr projects.
+
+The backend is built on .NET 10 LTS. Docker images include the ASP.NET Core
+runtime, while source builds require the .NET 10 SDK.
 
 ### What makes this fork different
 

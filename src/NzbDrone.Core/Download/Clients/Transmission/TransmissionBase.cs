@@ -96,6 +96,10 @@ namespace NzbDrone.Core.Download.Clients.Transmission
                     {
                         item.RemainingTime = TimeSpan.FromMilliseconds(torrent.Eta);
                     }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        item.RemainingTime = TimeSpan.FromMilliseconds(torrent.Eta);
+                    }
                 }
 
                 if (!torrent.ErrorString.IsNullOrWhiteSpace())

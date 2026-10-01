@@ -9,7 +9,7 @@ RUN npm install -g yarn@1.22.22 --force
 FROM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6a60359c29aff84bfacbd8597a4237038c7ccd7628a2d AS mp4v2
 
 ###### deps stage ######
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS deps
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS deps
 WORKDIR /src
 
 # Copy Node + Yarn from the official Node image (avoids curl|bash installers).
@@ -50,9 +50,10 @@ RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
 
 # Copy UI output to final app directory
 RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
+RUN test -s /app/UI/index.html
 
 ###### runtime stage ######
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.12
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     set -eux; \

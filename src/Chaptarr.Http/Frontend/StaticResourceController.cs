@@ -4,6 +4,7 @@ using Chaptarr.Http.Extensions;
 using Chaptarr.Http.Frontend.Mappers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NzbDrone.Common.Instrumentation;
@@ -12,6 +13,7 @@ namespace Chaptarr.Http.Frontend
 {
     [Authorize(Policy = "UI")]
     [ApiController]
+    [AllowCookieRedirect]
     public class StaticResourceController : Controller
     {
         private readonly IEnumerable<IMapHttpRequestsToDisk> _requestMappers;

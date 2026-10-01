@@ -1,17 +1,43 @@
 #!/bin/bash
 
-source _common.sh
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
 
-ynh_script_progression "Installing the pinned ChaptarrNG release..."
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# INSTALL SYSTEM DEPENDENCIES
+#=================================================
+ynh_script_progression "Installing the .NET 10 runtime..."
+
 chaptarrng_install_runtime
+
+#=================================================
+# DOWNLOAD, CHECK AND UNPACK SOURCE
+#=================================================
+ynh_script_progression "Installing the pinned ChaptarrNG release..."
+
 ynh_setup_source --dest_dir="$install_dir"
 chown -R "$app:$app" "$install_dir"
 
+#=================================================
+# SYSTEM CONFIGURATION
+#=================================================
 ynh_script_progression "Configuring the media group, Nginx proxy, and systemd service..."
+
 chaptarrng_prepare_service
 chaptarrng_register_service
 
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
 ynh_script_progression "Starting ChaptarrNG..."
-ynh_systemctl --service="$app" --action="start"
 
+chaptarrng_start_service
+
+#=================================================
+# END OF SCRIPT
+#=================================================
 ynh_script_progression "ChaptarrNG installation completed"

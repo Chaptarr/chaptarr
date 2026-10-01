@@ -31,6 +31,15 @@ namespace Chaptarr.Core.Test.Http
         }
 
         [Test]
+        public void controller_should_allow_cookie_redirects_for_static_ui_routes()
+        {
+            var attributes = typeof(StaticResourceController)
+                .GetCustomAttributes(typeof(AllowCookieRedirectAttribute), inherit: true);
+
+            Assert.That(attributes, Has.Length.EqualTo(1));
+        }
+
+        [Test]
         public void index_routes_should_keep_api_and_feed_exclusions_anchored_to_path_segments()
         {
             var indexTemplates = typeof(StaticResourceController)

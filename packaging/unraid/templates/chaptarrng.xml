@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>ChaptarrNG</Name>
+  <Repository>ghcr.io/snapetech/chaptarrng:latest</Repository>
+  <Registry>https://ghcr.io/snapetech/chaptarrng</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Icon>https://raw.githubusercontent.com/snapetech/chaptarrng/main/Logo/256.png</Icon>
+  <WebUI>http://[IP]:[PORT:8789]/</WebUI>
+  <Overview>Built on .NET 10 LTS, ChaptarrNG manages audiobook and eBook libraries with format-aware automation and optional SeerrNG integration.</Overview>
+  <Description>ChaptarrNG is Snapetech's maintained fork of Chaptarr, with format-scoped book requests and durable pending-import handling for SeerrNG. It is a standalone book manager and does not require SeerrNG. This template installs the ChaptarrNG GHCR image, stores app data under /config, and provides separate audiobook, ebook, and download paths. Set PUID and PGID to match your share ownership; the image defaults to 99:100.</Description>
+  <Support>https://github.com/snapetech/chaptarrng/issues</Support>
+  <Project>https://github.com/snapetech/chaptarrng</Project>
+  <TemplateURL>https://raw.githubusercontent.com/snapetech/chaptarrng-unraid/main/templates/chaptarrng.xml</TemplateURL>
+  <ReadMe>https://github.com/snapetech/chaptarrng-unraid/blob/main/README.md</ReadMe>
+  <Category>MediaApp:Books Status:Beta</Category>
+  <ExtraSearchTerms>chaptarrng chaptarr books ebooks audiobooks readarr seerrng</ExtraSearchTerms>
+  <Changes>Initial ChaptarrNG Community Applications template for the SeerrNG-maintained fork.</Changes>
+  <License>GNU General Public License v3.0 only</License>
+  <Requires>Docker and persistent appdata storage. The default PUID and PGID are 99 and 100. Set the mapped appdata and media paths to locations accessible to that user and group.</Requires>
+  <ExtraParams>--init --restart=unless-stopped</ExtraParams>
+
+  <Config Name="Web UI Port" Target="8789" Default="8789" Mode="tcp" Description="HTTP port for the ChaptarrNG web interface." Type="Port" Display="always" Required="true" Mask="false">8789</Config>
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/chaptarrng" Mode="rw" Description="Persistent ChaptarrNG database, settings, and logs." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/chaptarrng</Config>
+  <Config Name="Audiobooks" Target="/audiobooks" Default="/mnt/user/media/audiobooks" Mode="rw" Description="Audiobook library path. Configure this path as an audiobook root folder in ChaptarrNG." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/audiobooks</Config>
+  <Config Name="eBooks" Target="/ebooks" Default="/mnt/user/media/ebooks" Mode="rw" Description="eBook library path. Configure this path as an ebook root folder in ChaptarrNG." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/ebooks</Config>
+  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/downloads" Mode="rw" Description="Download-client path shared with ChaptarrNG." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/downloads</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Description="UID used by the container. Match this to the owner of the mapped folders." Type="Variable" Display="always" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Description="GID used by the container. Match this to the group of the mapped folders." Type="Variable" Display="always" Required="true" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="022" Description="Optional file-creation mask. Use 002 when a shared group needs write access." Type="Variable" Display="advanced" Required="false" Mask="false">022</Config>
+  <Config Name="Timezone" Target="TZ" Default="America/Regina" Description="Container timezone, using a TZ database name." Type="Variable" Display="always" Required="true" Mask="false">America/Regina</Config>
+</Container>

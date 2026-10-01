@@ -1,17 +1,54 @@
 #!/bin/bash
 
-source ../settings/scripts/_common.sh
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
 
-ynh_script_progression "Restoring ChaptarrNG files..."
-ynh_restore_everything
+source ../settings/scripts/_common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# RESTORE THE APP MAIN DIR
+#=================================================
+ynh_script_progression "Restoring ChaptarrNG application files..."
+
+ynh_restore "$install_dir"
+
+#=================================================
+# RESTORE THE DATA DIRECTORY
+#=================================================
+if [[ ! -d "$YNH_APP_BACKUP_DIR/data" ]]; then
+    ynh_die --message="ChaptarrNG database and configuration snapshot is missing from this backup."
+fi
+install -d -o "$app" -g "$app" -m 0700 "$data_dir" "$data_dir/tmp"
+rsync --archive --delete "$YNH_APP_BACKUP_DIR/data/" "$data_dir/"
+
+#=================================================
+# INSTALL SYSTEM DEPENDENCIES AND RESTORE OWNERSHIP
+#=================================================
 chaptarrng_install_runtime
 
-install -d -o "$app" -g "$app" -m 0700 "$data_dir" "$data_dir/tmp"
 chown -R "$app:$app" "$install_dir" "$data_dir"
+
+#=================================================
+# REAPPLY SYSTEM CONFIGURATION
+#=================================================
+ynh_script_progression "Restoring the ChaptarrNG service and reverse proxy..."
+
 chaptarrng_prepare_service
+ynh_restore "/etc/nginx/conf.d/$domain.d/$app.conf"
+ynh_restore "/etc/systemd/system/$app.service"
+systemctl enable "$app.service" --quiet
 chaptarrng_register_service
 
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
 ynh_script_progression "Starting ChaptarrNG..."
-ynh_systemctl --service="$app" --action="start"
 
+chaptarrng_start_service
+
+#=================================================
+# END OF SCRIPT
+#=================================================
 ynh_script_progression "ChaptarrNG restoration completed"
