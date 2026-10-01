@@ -319,11 +319,9 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.ErrorSafe("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
-                        authorId,
+                    _logger.Error("V5 author API error on page {0}: HTTP status {1}",
                         page,
-                        httpResponse.StatusCode,
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                        httpResponse.StatusCode);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -443,11 +441,9 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.Error("V5 author API error for author {0} (page {1}): Status {2}, Content: {3}",
-                        authorId,
+                    _logger.Error("V5 author API error on page {0}: HTTP status {1}",
                         page,
-                        httpResponse.StatusCode,
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                        httpResponse.StatusCode);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -616,8 +612,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 if (httpResponse.HasHttpError)
                 {
                     var errorMsg = $"Refresh API error for author {authorId}: {httpResponse.StatusCode}";
-                    _logger.Error(errorMsg + ", Content: {0}", 
-                        httpResponse.Content?.Substring(0, Math.Min(500, httpResponse.Content?.Length ?? 0)));
+                    _logger.Error("Refresh API returned HTTP status {0}", httpResponse.StatusCode);
                     return RefreshResult.Error(errorMsg, httpResponse.StatusCode);
                 }
 
