@@ -5,6 +5,8 @@ using FluentValidation;
 using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Organizer
 {
     public static class FileNameValidation
@@ -29,11 +31,11 @@ namespace NzbDrone.Core.Organizer
         }
     }
 
-    public class ValidStandardTrackFormatValidator : PropertyValidator
+    public class ValidStandardTrackFormatValidator : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Must contain Book Title AND PartNumber, OR Original Title";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not string value)
             {
@@ -45,13 +47,13 @@ namespace NzbDrone.Core.Organizer
         }
     }
 
-    public class IllegalCharactersValidator : PropertyValidator
+    public class IllegalCharactersValidator : NzbDronePropertyValidator
     {
         private readonly char[] _invalidPathChars = Path.GetInvalidPathChars();
 
         protected override string GetDefaultMessageTemplate() => "Contains illegal characters: {InvalidCharacters}";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             var value = context.PropertyValue as string;
 

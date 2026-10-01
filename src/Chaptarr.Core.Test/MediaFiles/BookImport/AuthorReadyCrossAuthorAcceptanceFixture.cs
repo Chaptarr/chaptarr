@@ -471,7 +471,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public bool FileExists(string path) => false;
             public bool FileExistsCanonical(string path) => false;
             public bool FileExists(string path, StringComparison stringComparison) => false;
-            public IFileInfo GetFileInfo(string path) => new FileSystem().FileInfo.FromFileName(path);
+            public IFileInfo GetFileInfo(string path) => new FileSystem().FileInfo.New(path);
 
             public long? GetAvailableSpace(string path) => throw new NotImplementedException();
             public void InheritFolderPermissions(string filename) => throw new NotImplementedException();

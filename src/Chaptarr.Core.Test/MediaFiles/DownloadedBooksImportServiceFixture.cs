@@ -171,7 +171,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool FileExists(string path) => File.Exists(path);
             public bool FileExistsCanonical(string path) => File.Exists(path);
             public bool FileExists(string path, StringComparison stringComparison) => File.Exists(path);
-            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.FromFileName(path);
+            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.New(path);
             public long GetFileSize(string path) => new FileInfo(path).Length;
             public DateTime FileGetLastWrite(string path) => new FileInfo(path).LastWriteTimeUtc;
             public bool IsFileLocked(string path) => false;
@@ -215,13 +215,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             public FileStream OpenWriteStream(string path) => throw new NotImplementedException();
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
-            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.FromDirectoryName(path);
+            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.New(path);
             public List<IDirectoryInfo> GetDirectoryInfos(string path) => throw new NotImplementedException();
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false)
             {
                 var option = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
                 return Directory.EnumerateFiles(path, "*", option)
-                    .Select(file => _fileSystem.FileInfo.FromFileName(file))
+                    .Select(file => _fileSystem.FileInfo.New(file))
                     .Cast<IFileInfo>()
                     .ToList();
             }

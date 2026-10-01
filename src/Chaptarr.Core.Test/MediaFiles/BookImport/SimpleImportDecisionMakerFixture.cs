@@ -186,7 +186,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
                     logger: LogManager.GetCurrentClassLogger());
 
-                var file = new FileSystem().FileInfo.FromFileName(path);
+                var file = new FileSystem().FileInfo.New(path);
                 var decisions = sut.GetImportDecisions(
                     new List<IFileInfo> { file },
                     idOverrides: null,
@@ -272,7 +272,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
                     logger: LogManager.GetCurrentClassLogger());
 
-                var file = new FileSystem().FileInfo.FromFileName(path);
+                var file = new FileSystem().FileInfo.New(path);
                 var decisions = sut.GetImportDecisions(
                     new List<IFileInfo> { file },
                     idOverrides: null,
@@ -358,7 +358,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
                     logger: LogManager.GetCurrentClassLogger());
 
-                var file = new FileSystem().FileInfo.FromFileName(path);
+                var file = new FileSystem().FileInfo.New(path);
                 var decisions = sut.GetImportDecisions(
                     new List<IFileInfo> { file },
                     idOverrides: null,

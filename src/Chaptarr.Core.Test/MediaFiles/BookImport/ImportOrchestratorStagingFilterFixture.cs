@@ -29,7 +29,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             File.WriteAllText(path, contents);
             File.SetLastWriteTimeUtc(path, modifiedUtc);
 
-            return new FileSystem().FileInfo.FromFileName(path);
+            return new FileSystem().FileInfo.New(path);
         }
 
         [Test]

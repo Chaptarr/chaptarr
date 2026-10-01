@@ -118,13 +118,10 @@ namespace NzbDrone.Common.Instrumentation
             fileTarget.FileName = Path.Combine(appFolderInfo.GetLogFolder(), fileName);
             fileTarget.AutoFlush = true;
             fileTarget.KeepFileOpen = false;
-            fileTarget.ConcurrentWrites = false;
-            fileTarget.ConcurrentWriteAttemptDelay = 50;
-            fileTarget.ConcurrentWriteAttempts = 10;
             fileTarget.ArchiveAboveSize = 1024000;
             fileTarget.MaxArchiveFiles = maxArchiveFiles;
             fileTarget.EnableFileDelete = true;
-            fileTarget.ArchiveNumbering = ArchiveNumberingMode.Rolling;
+            fileTarget.ArchiveSuffixFormat = "_{0:00}";
             fileTarget.Layout = FILE_LOG_LAYOUT;
 
             var loggingRule = new LoggingRule("*", minLogLevel, fileTarget);
@@ -141,13 +138,10 @@ namespace NzbDrone.Common.Instrumentation
             fileTarget.FileName = Path.Combine(appFolderInfo.GetLogFolder(), "chaptarr.matching.txt");
             fileTarget.AutoFlush = true;
             fileTarget.KeepFileOpen = false;
-            fileTarget.ConcurrentWrites = false;
-            fileTarget.ConcurrentWriteAttemptDelay = 50;
-            fileTarget.ConcurrentWriteAttempts = 10;
             fileTarget.ArchiveAboveSize = 1024000;
             fileTarget.MaxArchiveFiles = 10;
             fileTarget.EnableFileDelete = true;
-            fileTarget.ArchiveNumbering = ArchiveNumberingMode.Rolling;
+            fileTarget.ArchiveSuffixFormat = "_{0:00}";
             fileTarget.Layout = FILE_LOG_LAYOUT;
 
             // Only capture matching-related loggers
@@ -178,9 +172,6 @@ namespace NzbDrone.Common.Instrumentation
             fileTarget.FileName = Path.Combine(appFolderInfo.GetUpdateLogFolder(), DateTime.Now.ToString("yyyy.MM.dd-HH.mm") + ".txt");
             fileTarget.AutoFlush = true;
             fileTarget.KeepFileOpen = false;
-            fileTarget.ConcurrentWrites = false;
-            fileTarget.ConcurrentWriteAttemptDelay = 50;
-            fileTarget.ConcurrentWriteAttempts = 100;
             fileTarget.Layout = FILE_LOG_LAYOUT;
 
             var loggingRule = new LoggingRule("*", LogLevel.Trace, fileTarget);

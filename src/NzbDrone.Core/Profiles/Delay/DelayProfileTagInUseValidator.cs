@@ -3,9 +3,11 @@ using System.Linq;
 using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Profiles.Delay
 {
-    public class DelayProfileTagInUseValidator : PropertyValidator
+    public class DelayProfileTagInUseValidator : NzbDronePropertyValidator
     {
         private readonly IDelayProfileService _delayProfileService;
 
@@ -16,7 +18,7 @@ namespace NzbDrone.Core.Profiles.Delay
 
         protected override string GetDefaultMessageTemplate() => "One or more tags is used in another profile";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

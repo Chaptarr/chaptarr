@@ -77,8 +77,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 fileSystem.File.SetLastWriteTimeUtc(mappedPath, new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc));
                 fileSystem.File.SetLastWriteTimeUtc(unmappedPath, new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc));
 
-                var mappedDisk = fileSystem.FileInfo.FromFileName(mappedPath);
-                var unmappedDisk = fileSystem.FileInfo.FromFileName(unmappedPath);
+                var mappedDisk = fileSystem.FileInfo.New(mappedPath);
+                var unmappedDisk = fileSystem.FileInfo.New(unmappedPath);
 
                 var known = new Dictionary<string, BookFile>(PathEqualityComparer.Instance)
                 {

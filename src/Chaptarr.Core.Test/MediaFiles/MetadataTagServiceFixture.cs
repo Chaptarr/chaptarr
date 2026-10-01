@@ -188,8 +188,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var audioTagService = new CountingAudioTagService();
                 var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
 
-                var first = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
-                var second = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                var first = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
+                var second = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 Assert.That(first.Tags, Is.Not.Null);
                 Assert.That(second.Tags, Is.Not.Null);
@@ -223,8 +223,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var audioTagService = new CountingAudioTagService();
                 var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
 
-                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
-                _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
+                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
+                _ = sut.ReadAllTags(fileSystem.FileInfo.New(path));
 
                 Assert.That(ebookTagService.ReadAllTagsCalls, Is.EqualTo(1));
             }
@@ -256,8 +256,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var audioTagService = new CountingAudioTagService();
                 var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
 
-                _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
-                _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
+                _ = sut.ReadAllTags(fileSystem.FileInfo.New(path));
+                _ = sut.ReadAllTags(fileSystem.FileInfo.New(path));
 
                 Assert.That(ebookTagService.ReadAllTagsCalls, Is.EqualTo(1));
             }
@@ -289,8 +289,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var audioTagService = new CountingAudioTagService();
                 var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
 
-                _ = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
-                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                _ = sut.ReadAllTags(fileSystem.FileInfo.New(path));
+                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 Assert.That(ebookTagService.ReadAllTagsCalls, Is.EqualTo(1));
             }
@@ -322,8 +322,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var audioTagService = new CountingAudioTagService();
                 var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
 
-                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
-                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
+                _ = sut.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 Assert.That(audioTagService.ReadAllTagsAndDurationCalls, Is.EqualTo(1));
             }
@@ -360,7 +360,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                var firstResult = first.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                var firstResult = first.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 var secondEbookTagService = new CountingEBookTagService();
                 var second = new MetadataTagService(
@@ -369,7 +369,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 Assert.That(firstResult.Tags["title"], Is.EquivalentTo(new[] { "Test Ebook" }));
                 Assert.That(secondResult.Tags["title"], Is.EquivalentTo(new[] { "Test Ebook" }));
@@ -410,7 +410,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                _ = first.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                _ = first.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 File.WriteAllText(path, "hello changed");
                 File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(1));
@@ -422,7 +422,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                _ = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                _ = second.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 Assert.That(firstEbookTagService.ReadAllTagsCalls, Is.EqualTo(1));
                 Assert.That(secondEbookTagService.ReadAllTagsCalls, Is.EqualTo(1));
@@ -461,7 +461,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                var firstResult = first.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                var firstResult = first.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 var secondAudioTagService = new CountingAudioTagService();
                 var second = new MetadataTagService(
@@ -470,7 +470,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 Assert.That(firstResult.DurationSeconds, Is.EqualTo(123));
                 Assert.That(secondResult.DurationSeconds, Is.EqualTo(123));
@@ -511,7 +511,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                _ = first.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
+                _ = first.ReadAllTags(fileSystem.FileInfo.New(path));
 
                 var secondAudioTagService = new CountingAudioTagService();
                 var second = new MetadataTagService(
@@ -520,7 +520,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     LogManager.GetLogger("test"),
                     fileTagCache);
 
-                var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(path));
+                var secondResult = second.ReadAllTagsAndDuration(fileSystem.FileInfo.New(path));
 
                 Assert.That(secondResult.DurationSeconds, Is.EqualTo(123));
                 Assert.That(firstAudioTagService.ReadAllTagsCalls, Is.EqualTo(1));
@@ -560,7 +560,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }, 10);
                 var noisyService = new MetadataTagService(noisyAudio, new CountingEBookTagService(), LogManager.GetLogger("test"), noisyCache);
 
-                _ = noisyService.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(noisyPath));
+                _ = noisyService.ReadAllTagsAndDuration(fileSystem.FileInfo.New(noisyPath));
 
                 Assert.That(noisyCache.LastExtractionStatus, Is.EqualTo("noisy_only"));
 
@@ -568,7 +568,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var taglessAudio = new ResultAudioTagService(new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase), 10);
                 var taglessService = new MetadataTagService(taglessAudio, new CountingEBookTagService(), LogManager.GetLogger("test"), taglessCache);
 
-                _ = taglessService.ReadAllTagsAndDuration(fileSystem.FileInfo.FromFileName(taglessPath));
+                _ = taglessService.ReadAllTagsAndDuration(fileSystem.FileInfo.New(taglessPath));
 
                 Assert.That(taglessCache.LastExtractionStatus, Is.EqualTo("tagless"));
             }
@@ -595,7 +595,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var service = new MetadataTagService(audio, new CountingEBookTagService(), LogManager.GetLogger("test"), cache);
 
                 Assert.Throws<TagExtractionException>(() =>
-                    service.ReadAllTagsAndDuration(new FileSystem().FileInfo.FromFileName(path)));
+                    service.ReadAllTagsAndDuration(new FileSystem().FileInfo.New(path)));
                 Assert.That(cache.UpsertCalls, Is.Zero);
             }
             finally
@@ -615,7 +615,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             try
             {
-                var file = new FileSystem().FileInfo.FromFileName(path);
+                var file = new FileSystem().FileInfo.New(path);
                 var cache = new RecordingFileTagCacheRepository();
                 var mtimeNs = Math.Max(0, file.LastWriteTimeUtc.Ticks - unixEpochTicks) * 100;
                 cache.SeedLegacy(path, mtimeNs, file.Length, "{}", null);

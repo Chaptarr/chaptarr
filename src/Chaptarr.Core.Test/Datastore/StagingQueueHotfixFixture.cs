@@ -617,9 +617,9 @@ namespace Chaptarr.Core.Test.Datastore
             public FileStream OpenWriteStream(string path) => File.OpenWrite(path);
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
-            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.FromDirectoryName(path);
+            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.New(path);
             public List<IDirectoryInfo> GetDirectoryInfos(string path) => throw new NotImplementedException();
-            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.FromFileName(path);
+            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.New(path);
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false) => throw new NotImplementedException();
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();

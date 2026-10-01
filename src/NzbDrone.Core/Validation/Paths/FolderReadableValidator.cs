@@ -3,9 +3,11 @@ using FluentValidation.Validators;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Validation.Paths
 {
-    public class FolderReadableValidator : PropertyValidator
+    public class FolderReadableValidator : NzbDronePropertyValidator
     {
         private readonly IDiskProvider _diskProvider;
         private string _errorMessage;
@@ -17,7 +19,7 @@ namespace NzbDrone.Core.Validation.Paths
 
         protected override string GetDefaultMessageTemplate() => _errorMessage ?? "Folder '{path}' is not accessible.";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

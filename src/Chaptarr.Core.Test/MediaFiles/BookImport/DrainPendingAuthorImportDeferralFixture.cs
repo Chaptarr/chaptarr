@@ -780,7 +780,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             try
             {
-                var fileInfo = new FileSystem().FileInfo.FromFileName(scannedPath);
+                var fileInfo = new FileSystem().FileInfo.New(scannedPath);
                 var queue = new RecordingIngestQueueRepository();
                 queue.QueueItems.Add(new IngestQueueItem
                 {

@@ -198,7 +198,7 @@ namespace Chaptarr.Api.V1.BookFiles
             {
                 try
                 {
-                    var fileInfo = new global::System.IO.Abstractions.FileSystem().FileInfo.FromFileName(resource.Path);
+                    var fileInfo = new global::System.IO.Abstractions.FileSystem().FileInfo.New(resource.Path);
                     resource.Tags = fileInfo.Exists
                         ? _metadataTagService.ReadAllTags(fileInfo) ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
                         : new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);

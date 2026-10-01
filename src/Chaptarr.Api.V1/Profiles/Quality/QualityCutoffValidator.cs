@@ -3,6 +3,8 @@ using System.Linq;
 using FluentValidation;
 using FluentValidation.Validators;
 
+using NzbDrone.Core.Validation;
+
 namespace Chaptarr.Api.V1.Profiles.Quality
 {
     public static class QualityCutoffValidator
@@ -13,11 +15,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         }
     }
 
-    public class ValidCutoffValidator<T> : PropertyValidator
+    public class ValidCutoffValidator<T> : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Cutoff must be an allowed quality or group";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             var cutoff = (int)context.PropertyValue;
             dynamic instance = context.ParentContext.InstanceToValidate;

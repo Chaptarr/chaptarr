@@ -67,7 +67,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 var ebookTagService = new StubEBookTagService();
                 var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
-                var tags = sut.ReadAllTags(new FileSystem().FileInfo.FromFileName(path));
+                var tags = sut.ReadAllTags(new FileSystem().FileInfo.New(path));
 
                 Assert.That(tags.ContainsKey("TITLE"), Is.True);
                 Assert.That(tags.ContainsKey("COMMENT"), Is.True);

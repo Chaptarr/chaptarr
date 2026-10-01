@@ -2,9 +2,11 @@ using FluentValidation.Validators;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Validation.Paths
 {
-    public class StartupFolderValidator : PropertyValidator
+    public class StartupFolderValidator : NzbDronePropertyValidator
     {
         private readonly IAppFolderInfo _appFolderInfo;
 
@@ -15,7 +17,7 @@ namespace NzbDrone.Core.Validation.Paths
 
         protected override string GetDefaultMessageTemplate() => "Path '{path}' cannot be {relationship} the start up folder";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {
