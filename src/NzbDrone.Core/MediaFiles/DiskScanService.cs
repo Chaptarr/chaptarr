@@ -26,6 +26,7 @@ using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.ProgressMessaging;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -483,21 +484,21 @@ namespace NzbDrone.Core.MediaFiles
 
             if (rootFolder != null && rootFolder.IsCalibreLibrary && rootFolder.CalibreSettings != null)
             {
-                _logger.Info("Getting book list from calibre for {0}", path);
+                _logger.InfoSafe("Getting book list from calibre for {0}", path);
                 var paths = _calibre.GetAllBookFilePaths(rootFolder.CalibreSettings);
                 var folderPaths = paths.Where(x => path.IsParentPath(x));
                 filesOnDisk = folderPaths.Select(x => _diskProvider.GetFileInfo(x));
             }
             else
             {
-                _logger.Debug("Scanning '{0}' for book files", path);
+                _logger.DebugSafe("Scanning '{0}' for book files", path);
                 filesOnDisk = _diskProvider.GetFileInfos(path, allDirectories);
             }
 
             var mediaFileList = filesOnDisk.Where(file => MediaFileExtensions.AllExtensions.Contains(file.Extension))
                 .ToArray();
 
-            _logger.Debug("{0} book files found in {1}", mediaFileList.Length, path);
+            _logger.DebugSafe("{0} book files found in {1}", mediaFileList.Length, path);
             return mediaFileList;
         }
 

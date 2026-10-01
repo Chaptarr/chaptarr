@@ -7,6 +7,7 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Releases;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
@@ -50,7 +51,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (_logger.IsTraceEnabled)
             {
-                _logger.Trace("Term matching against title variants: {0}", string.Join(" | ", titleVariants));
+                _logger.TraceSafe("Term matching against title variants: {0}", string.Join(" | ", titleVariants));
             }
 
             var required = releaseProfiles.Where(r => r.Required.Any());
@@ -64,14 +65,14 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 if (foundTerms.Empty())
                 {
                     var terms = string.Join(", ", requiredTerms);
-                    _logger.Trace("[{0}] does not contain one of the required terms: {1}", title, terms);
+                    _logger.TraceSafe("[{0}] does not contain one of the required terms: {1}", title, terms);
                     return Decision.RejectSoftFilter("Does not contain one of the required terms: {0}", "Release Profile", terms);
                 }
                 else
                 {
                     if (_logger.IsTraceEnabled)
                     {
-                        _logger.Trace("[{0}] matched required terms: {1}", title, string.Join(", ", foundTerms));
+                        _logger.TraceSafe("[{0}] matched required terms: {1}", title, string.Join(", ", foundTerms));
                     }
                 }
             }
@@ -84,7 +85,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 if (foundTerms.Any())
                 {
                     var terms = string.Join(", ", foundTerms);
-                    _logger.Trace("[{0}] contains these ignored terms: {1}", title, terms);
+                    _logger.TraceSafe("[{0}] contains these ignored terms: {1}", title, terms);
                     return Decision.RejectSoftFilter("Contains these ignored terms: {0}", "Release Profile", terms);
                 }
             }

@@ -11,6 +11,7 @@ using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Indexers
 {
@@ -48,8 +49,8 @@ namespace Chaptarr.Api.V1.Indexers
         [Consumes("application/json")]
         public ActionResult<ReleaseResource> Create([FromBody] ReleaseResource release)
         {
-            _logger.Info("Release pushed: {0}", release.Title);
-            _logger.Debug("Release push source URL: {0}", release.DownloadUrl ?? release.MagnetUrl);
+            _logger.InfoSafe("Release pushed: {0}", release.Title);
+            _logger.DebugSafe("Release push source URL: {0}", release.DownloadUrl ?? release.MagnetUrl);
 
             ValidateResource(release);
 
@@ -89,11 +90,11 @@ namespace Chaptarr.Api.V1.Indexers
                 if (indexer != null)
                 {
                     release.IndexerId = indexer.Id;
-                    _logger.Debug("Push Release {0} associated with indexer {1} - {2}.", release.Title, release.IndexerId, release.Indexer);
+                    _logger.DebugSafe("Push Release {0} associated with indexer {1} - {2}.", release.Title, release.IndexerId, release.Indexer);
                 }
                 else
                 {
-                    _logger.Debug("Push Release {0} not associated with known indexer {1}.", release.Title, release.Indexer);
+                    _logger.DebugSafe("Push Release {0} not associated with known indexer {1}.", release.Title, release.Indexer);
                 }
             }
             else if (release.IndexerId != 0 && release.Indexer.IsNullOrWhiteSpace())
@@ -102,17 +103,17 @@ namespace Chaptarr.Api.V1.Indexers
                 {
                     var indexer = _indexerFactory.Get(release.IndexerId);
                     release.Indexer = indexer.Name;
-                    _logger.Debug("Push Release {0} associated with indexer {1} - {2}.", release.Title, release.IndexerId, release.Indexer);
+                    _logger.DebugSafe("Push Release {0} associated with indexer {1} - {2}.", release.Title, release.IndexerId, release.Indexer);
                 }
                 catch (ModelNotFoundException)
                 {
-                    _logger.Debug("Push Release {0} not associated with known indexer {1}.", release.Title, release.IndexerId);
+                    _logger.DebugSafe("Push Release {0} not associated with known indexer {1}.", release.Title, release.IndexerId);
                     release.IndexerId = 0;
                 }
             }
             else
             {
-                _logger.Debug("Push Release {0} not associated with an indexer.", release.Title);
+                _logger.DebugSafe("Push Release {0} not associated with an indexer.", release.Title);
             }
         }
 
@@ -126,12 +127,12 @@ namespace Chaptarr.Api.V1.Indexers
 
                 if (downloadClient != null)
                 {
-                    _logger.Debug("Push Release {0} associated with download client {1} - {2}.", release.Title, downloadClientId, release.DownloadClient);
+                    _logger.DebugSafe("Push Release {0} associated with download client {1} - {2}.", release.Title, downloadClientId, release.DownloadClient);
 
                     return downloadClient.Id;
                 }
 
-                _logger.Debug("Push Release {0} not associated with known download client {1}.", release.Title, release.DownloadClient);
+                _logger.DebugSafe("Push Release {0} not associated with known download client {1}.", release.Title, release.DownloadClient);
             }
 
             return release.DownloadClientId;

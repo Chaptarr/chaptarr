@@ -15,6 +15,7 @@ using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.RemotePathMappings;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.RootFolders
 {
@@ -113,7 +114,7 @@ namespace NzbDrone.Core.RootFolders
 	        public RootFolder Add(RootFolder rootFolder)
 	        {
 	            // CRITICAL: Log the incoming FolderType to ensure it's set correctly
-	            _logger.Info($"Adding root folder '{rootFolder.Path}' with type {rootFolder.FolderType} (numeric: {(int)rootFolder.FolderType})");
+	            _logger.InfoSafe($"Adding root folder '{rootFolder.Path}' with type {rootFolder.FolderType} (numeric: {(int)rootFolder.FolderType})");
 
 	            VerifyRootFolder(rootFolder);
 
@@ -128,7 +129,7 @@ namespace NzbDrone.Core.RootFolders
 	            }
 	            catch (Exception ex)
 	            {
-	                _logger.Debug(ex, "[STAGING-DB] Failed to purge staging entries under new root folder '{0}'", rootFolder.Path);
+	                _logger.DebugSafe(ex, "[STAGING-DB] Failed to purge staging entries under new root folder '{0}'", rootFolder.Path);
 	            }
 
 	            // REMOVED RESTRICTION: Now allowing multiple root folders per media type
@@ -152,12 +153,12 @@ namespace NzbDrone.Core.RootFolders
 
             _rootFolderRepository.Insert(rootFolder);
 
-            _logger.Info($"Successfully inserted root folder '{rootFolder.Path}' with type {rootFolder.FolderType}");
+            _logger.InfoSafe($"Successfully inserted root folder '{rootFolder.Path}' with type {rootFolder.FolderType}");
 
             GetDetails(rootFolder);
 
             // Start an initial scan so existing on-disk files can be discovered and imported.
-            _logger.Info($"Starting initial scan of new root folder '{rootFolder.Path}'");
+            _logger.InfoSafe($"Starting initial scan of new root folder '{rootFolder.Path}'");
             _commandQueueManager.Push(new RescanFoldersCommand(new List<string> { rootFolder.Path }, FilterFilesType.None, null, true));
 
             return rootFolder;

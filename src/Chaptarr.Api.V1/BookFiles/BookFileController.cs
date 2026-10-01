@@ -21,6 +21,7 @@ using NzbDrone.Http.REST.Attributes;
 using NzbDrone.SignalR;
 using BadRequestException = NzbDrone.Core.Exceptions.BadRequestException;
 using HttpStatusCode = System.Net.HttpStatusCode;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.BookFiles
 {
@@ -215,7 +216,7 @@ namespace Chaptarr.Api.V1.BookFiles
         [HttpGet]
         public List<BookFileResource> GetBookFiles(int? authorId, [FromQuery] List<int> bookFileIds, [FromQuery(Name = "bookId")] List<int> bookIds, bool? unmapped, string mediaType = null)
         {
-            _logger.Debug($"[BOOKFILE-API] GetBookFiles called - authorId: {authorId}, bookIds: [{string.Join(",", bookIds)}], bookFileIds: [{string.Join(",", bookFileIds)}], unmapped: {unmapped}, mediaType: {mediaType}");
+            _logger.DebugSafe($"[BOOKFILE-API] GetBookFiles called - authorId: {authorId}, bookIds: [{string.Join(",", bookIds)}], bookFileIds: [{string.Join(",", bookFileIds)}], unmapped: {unmapped}, mediaType: {mediaType}");
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
             
             if (!authorId.HasValue && !bookFileIds.Any() && !bookIds.Any() && !unmapped.HasValue)

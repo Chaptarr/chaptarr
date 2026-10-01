@@ -9,6 +9,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.ThingiProvider.Events;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.RemotePathMappings
 {
@@ -271,15 +272,15 @@ namespace NzbDrone.Core.RemotePathMappings
                 return remotePath;
             }
 
-            _logger.Trace("Evaluating remote path remote mappings for match to download client [{0}], host [{1}] and remote path [{2}]", downloadClientId, host, remotePath.FullPath);
+            _logger.TraceSafe("Evaluating remote path remote mappings for match to download client [{0}], host [{1}] and remote path [{2}]", downloadClientId, host, remotePath.FullPath);
 
             foreach (var mapping in GetMappingsForScope(mappingsList, downloadClientId, host, m => m.RemotePath))
             {
-                _logger.Trace("Checking configured remote path mapping: {0} - {1} - {2}", mapping.DownloadClientId, mapping.Host, mapping.RemotePath);
+                _logger.TraceSafe("Checking configured remote path mapping: {0} - {1} - {2}", mapping.DownloadClientId, mapping.Host, mapping.RemotePath);
                 if (new OsPath(mapping.RemotePath).Contains(remotePath))
                 {
                     var localPath = new OsPath(mapping.LocalPath) + (remotePath - new OsPath(mapping.RemotePath));
-                    _logger.Debug("Remapped remote path [{0}] to local path [{1}] for download client [{2}], host [{3}]", remotePath, localPath, downloadClientId, host);
+                    _logger.DebugSafe("Remapped remote path [{0}] to local path [{1}] for download client [{2}], host [{3}]", remotePath, localPath, downloadClientId, host);
 
                     return localPath;
                 }

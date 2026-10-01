@@ -6,6 +6,7 @@ using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 {
@@ -48,7 +49,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 
             if (indexerTags.Any() && indexerTags.Intersect(authorTags).Empty())
             {
-                _logger.Trace("Indexer {0} has tags. None of these are present on author {1}. Rejecting", subject.Release.Indexer, subject.Author);
+                _logger.TraceSafe("Indexer {0} has tags. None of these are present on author {1}. Rejecting", subject.Release.Indexer, subject.Author);
 
                 return Decision.Reject("Author tags do not match any of the indexer tags");
             }

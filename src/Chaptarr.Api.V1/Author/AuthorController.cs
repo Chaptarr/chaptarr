@@ -46,6 +46,7 @@ using NLog;
 using Newtonsoft.Json;
 using SystemTextJsonIgnoreAttribute = System.Text.Json.Serialization.JsonIgnoreAttribute;
 using SystemTextJsonIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Author
 {
@@ -470,7 +471,7 @@ namespace Chaptarr.Api.V1.Author
         {
             try
             {
-                _logger.Debug("[V1-AUTHOR-IMPORT] Starting import with foreignAuthorId: {0}, mediaType: {1}",
+                _logger.DebugSafe("[V1-AUTHOR-IMPORT] Starting import with foreignAuthorId: {0}, mediaType: {1}",
                     importResource.ForeignAuthorId, importResource.MediaType);
 
 	                var facadeContext = HttpContext.GetReadarrFacadeContext();
@@ -681,13 +682,13 @@ namespace Chaptarr.Api.V1.Author
                             // Keep the settings update, but skip hydration.
                             var mediaLabel = bookMediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
                             hydrationWarning = $"Author settings were saved, but the {mediaLabel} catalog could not be loaded from the metadata server. You may need to refresh the author later.";
-                            _logger.Error(ex, "[V1-AUTHOR-IMPORT] Unable to hydrate missing media type for existing author: {0}", importResource.ForeignAuthorId);
+                            _logger.ErrorSafe(ex, "[V1-AUTHOR-IMPORT] Unable to hydrate missing media type for existing author: {0}", importResource.ForeignAuthorId);
                         }
                         catch (Exception ex)
                         {
                             var mediaLabel = bookMediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
                             hydrationWarning = $"Author settings were saved, but the {mediaLabel} catalog could not be loaded due to an unexpected error. You may need to refresh the author later.";
-                            _logger.Error(ex, "[V1-AUTHOR-IMPORT] Unexpected error while hydrating existing author: {0}", importResource.ForeignAuthorId);
+                            _logger.ErrorSafe(ex, "[V1-AUTHOR-IMPORT] Unexpected error while hydrating existing author: {0}", importResource.ForeignAuthorId);
                         }
                     }
 

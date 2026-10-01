@@ -16,6 +16,7 @@ using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine
 {
@@ -123,7 +124,7 @@ namespace NzbDrone.Core.DecisionEngine
                 }
 
                 _logger.ProgressTrace("Processing release {0}/{1}", reportNumber, reports.Count);
-                _logger.Trace("Processing release '{0}' from '{1}'", report.Title, report.Indexer);
+                _logger.TraceSafe("Processing release '{0}' from '{1}'", report.Title, report.Indexer);
 
                 try
                 {
@@ -189,11 +190,11 @@ namespace NzbDrone.Core.DecisionEngine
                         remoteBook = _parsingService.Map(parsedBookInfo, searchCriteria);
                     }
 
-                    _logger.Trace("MAM_DEBUG_PARSING: Title='{0}', ParsedBookInfo={1}, AuthorName='{2}', BookTitle='{3}'", report.Title, parsedBookInfo != null ? "NOT_NULL" : "NULL", parsedBookInfo?.AuthorName ?? "NULL", parsedBookInfo?.BookTitle ?? "NULL");
+                    _logger.TraceSafe("MAM_DEBUG_PARSING: Title='{0}', ParsedBookInfo={1}, AuthorName='{2}', BookTitle='{3}'", report.Title, parsedBookInfo != null ? "NOT_NULL" : "NULL", parsedBookInfo?.AuthorName ?? "NULL", parsedBookInfo?.BookTitle ?? "NULL");
 
                     if (isMamIndexer)
                     {
-                        _logger.Trace("MAM_REPORT_DETAILS: Indexer='{0}', Author='{1}', Title='{2}'", report.Indexer, report.Author ?? "NULL", report.Title);
+                        _logger.TraceSafe("MAM_REPORT_DETAILS: Indexer='{0}', Author='{1}', Title='{2}'", report.Indexer, report.Author ?? "NULL", report.Title);
                     }
 
                     if (remoteBook != null)
@@ -210,7 +211,7 @@ namespace NzbDrone.Core.DecisionEngine
                         // try parsing again using the search criteria, in case it parsed but parsed incorrectly
                         if ((remoteBook.Author == null || remoteBook.Books.Empty()) && searchCriteria != null)
                         {
-                            _logger.Trace("Author/Book null for {0}, reparsing with search criteria", report.Title);
+                            _logger.TraceSafe("Author/Book null for {0}, reparsing with search criteria", report.Title);
                             var parsedBookInfoWithCriteria = Parser.Parser.ParseBookTitleWithSearchCriteria(report.Title,
                                                                                                             searchCriteria.Author,
                                                                                                             searchCriteria.Books);
@@ -233,7 +234,7 @@ namespace NzbDrone.Core.DecisionEngine
                             var torrentInfo = report as TorrentInfo;
                             if (torrentInfo?.FileType != null && isMamIndexer)
                             {
-                                _logger.Trace("MAM_FILETYPE_PARSING: Using FileType '{0}' for title '{1}'", torrentInfo.FileType, report.Title);
+                                _logger.TraceSafe("MAM_FILETYPE_PARSING: Using FileType '{0}' for title '{1}'", torrentInfo.FileType, report.Title);
                                 remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQualityFromFileType(
                                     torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer);
                                 _logger.Trace("MAM_FILETYPE_RESULT: Parsed quality '{0}' from FileType", remoteBook.ParsedBookInfo.Quality);
@@ -250,14 +251,14 @@ namespace NzbDrone.Core.DecisionEngine
                             var torrentInfo = report as TorrentInfo;
                             if (torrentInfo?.FileType != null)
                             {
-                                _logger.Trace("MAM_FILETYPE_REPARSE: Using FileType '{0}' for enhanced parsing of '{1}'", torrentInfo.FileType, report.Title);
+                                _logger.TraceSafe("MAM_FILETYPE_REPARSE: Using FileType '{0}' for enhanced parsing of '{1}'", torrentInfo.FileType, report.Title);
                                 remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQualityFromFileType(
                                     torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer);
                                 _logger.Trace("MAM_FILETYPE_REPARSE_RESULT: Enhanced quality '{0}' from FileType", remoteBook.ParsedBookInfo.Quality);
                             }
                             else
                             {
-                                _logger.Trace("MAM_NO_FILETYPE: No FileType available for '{0}', using standard parsing", report.Title);
+                                _logger.TraceSafe("MAM_NO_FILETYPE: No FileType available for '{0}', using standard parsing", report.Title);
                                 remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
                             }
                         }
@@ -350,7 +351,7 @@ namespace NzbDrone.Core.DecisionEngine
                     }
                     catch (Exception ex)
                     {
-                        _logger.Debug(ex, "Failed to derive quality for errored release '{0}'", report.Title);
+                        _logger.DebugSafe(ex, "Failed to derive quality for errored release '{0}'", report.Title);
                     }
 
                     var remoteBook = new RemoteBook { Release = report, ParsedBookInfo = parsedBookInfo, ReleaseSource = releaseSource };
@@ -452,7 +453,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (tokens.Count == 0)
             {
-                _logger.Trace("RSS FTS recall skipped for release '{0}': no usable tokens in the release title or feed metadata", report.Title);
+                _logger.TraceSafe("RSS FTS recall skipped for release '{0}': no usable tokens in the release title or feed metadata", report.Title);
                 return null;
             }
 
@@ -474,7 +475,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (recalls.Count == 0)
             {
-                _logger.Trace("RSS FTS recall found no monitored candidates for release '{0}' from {1} token(s)", report.Title, tokens.Count);
+                _logger.TraceSafe("RSS FTS recall found no monitored candidates for release '{0}' from {1} token(s)", report.Title, tokens.Count);
                 return null;
             }
 
@@ -511,7 +512,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (matches.Count == 0)
             {
-                _logger.Trace("RSS FTS recall produced no title/author match for release '{0}' across {1} shortlisted monitored book(s)", report.Title, recalls.Count);
+                _logger.TraceSafe("RSS FTS recall produced no title/author match for release '{0}' across {1} shortlisted monitored book(s)", report.Title, recalls.Count);
                 return null;
             }
 
@@ -526,7 +527,7 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (selected == null)
             {
-                _logger.Trace("RSS FTS recall found {0} proven matches for release '{1}' across {2} monitored author/media candidates", viableMatches.Count, report.Title, matches.Count);
+                _logger.TraceSafe("RSS FTS recall found {0} proven matches for release '{1}' across {2} monitored author/media candidates", viableMatches.Count, report.Title, matches.Count);
                 return null;
             }
 
@@ -539,7 +540,7 @@ namespace NzbDrone.Core.DecisionEngine
             parsedBookInfo.ReleaseTitle = FirstNotBlank(parsedBookInfo.ReleaseTitle, report.Title);
             parsedBookInfo.ReleaseGroup = FirstNotBlank(parsedBookInfo.ReleaseGroup, Parser.Parser.ParseReleaseGroup(report.Title));
 
-            _logger.Trace("RSS FTS mapped '{0}' to monitored book {1} after hydrating {2} shortlisted books",
+            _logger.TraceSafe("RSS FTS mapped '{0}' to monitored book {1} after hydrating {2} shortlisted books",
                 report.Title,
                 selected.Match.Book.Id,
                 books.Count);
@@ -708,7 +709,7 @@ namespace NzbDrone.Core.DecisionEngine
             {
                 if (_logger.IsTraceEnabled)
                 {
-                    _logger.Trace("Using detected quality '{0}' for multi-format release '{1}' instead of primary '{2}'. All detected formats: [{3}]",
+                    _logger.TraceSafe("Using detected quality '{0}' for multi-format release '{1}' instead of primary '{2}'. All detected formats: [{3}]",
                         selectedQuality.Name,
                         remoteBook.Release?.Title ?? "Unknown",
                         qualityModel.Quality?.Name ?? "Unknown",
@@ -819,7 +820,7 @@ namespace NzbDrone.Core.DecisionEngine
             {
                 e.Data.Add("report", remoteBook.Release.ToJson());
                 e.Data.Add("parsed", remoteBook.ParsedBookInfo.ToJson());
-                _logger.Error(e, "Couldn't evaluate decision on {0}", remoteBook.Release.Title);
+                _logger.ErrorSafe(e, "Couldn't evaluate decision on {0}", remoteBook.Release.Title);
                 return new Rejection($"{spec.GetType().Name}: {e.Message}");
             }
 

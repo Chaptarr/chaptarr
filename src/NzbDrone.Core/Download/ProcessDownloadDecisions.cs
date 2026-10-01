@@ -8,6 +8,7 @@ using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Download
 {
@@ -202,34 +203,34 @@ namespace NzbDrone.Core.Download
 
             try
             {
-                _logger.Trace("Grabbing from Indexer {0} at priority {1}.", remoteBook.Release.Indexer, remoteBook.Release.IndexerPriority);
+                _logger.TraceSafe("Grabbing from Indexer {0} at priority {1}.", remoteBook.Release.Indexer, remoteBook.Release.IndexerPriority);
                 await _downloadService.DownloadReport(remoteBook, downloadClientId);
 
                 return ProcessedDecisionResult.Grabbed;
             }
             catch (MamUnsatisfiedSlotsUnavailableException ex)
             {
-                _logger.Debug(ex, "MAM has no safely available unsatisfied-torrent slot; storing release until later. " + remoteBook);
+                _logger.DebugSafe(ex, "MAM has no safely available unsatisfied-torrent slot; storing release until later. " + remoteBook);
 
                 return ProcessedDecisionResult.Pending;
             }
             catch (ReleaseUnavailableException)
             {
-                _logger.Warn("Failed to download release from indexer, no longer available. " + remoteBook);
+                _logger.WarnSafe("Failed to download release from indexer, no longer available. " + remoteBook);
                 return ProcessedDecisionResult.Rejected;
             }
             catch (Exception ex)
             {
                 if (ex is DownloadClientUnavailableException || ex is DownloadClientAuthenticationException)
                 {
-                    _logger.Debug(ex,
+                    _logger.DebugSafe(ex,
                         "Failed to send release to download client, storing until later. " + remoteBook);
 
                     return ProcessedDecisionResult.Failed;
                 }
                 else
                 {
-                    _logger.Warn(ex, "Couldn't add report to download queue. " + remoteBook);
+                    _logger.WarnSafe(ex, "Couldn't add report to download queue. " + remoteBook);
                     return ProcessedDecisionResult.Skipped;
                 }
             }

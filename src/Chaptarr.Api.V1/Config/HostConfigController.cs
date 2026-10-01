@@ -20,6 +20,7 @@ using NzbDrone.Core.Update;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
 using NzbDrone.Http.REST.Attributes;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Config
 {
@@ -309,7 +310,7 @@ namespace Chaptarr.Api.V1.Config
                             Name = resource.ProxyName.IsNotNullOrWhiteSpace() ? resource.ProxyName : "Default Proxy"
                         };
                         _proxyService.Add(target);
-                        _logger.Info("Created proxy '{0}' from quickstart configuration", target.Name);
+                        _logger.InfoSafe("Created proxy '{0}' from quickstart configuration", target.Name);
                     }
 
                     target.ProxyType = resource.ProxyType;
@@ -530,7 +531,7 @@ namespace Chaptarr.Api.V1.Config
                 // shared enum guard without implying this endpoint changes proxy routing mode.
                 EnsureValidProxyEnums(ProxyMode.ProxyEverything, request.ProxyType);
 
-                _logger.Debug("Proxy test endpoint called - Host: {0}, Port: {1}, Type: {2}", request.ProxyHostname, request.ProxyPort, request.ProxyType);
+                _logger.DebugSafe("Proxy test endpoint called - Host: {0}, Port: {1}, Type: {2}", request.ProxyHostname, request.ProxyPort, request.ProxyType);
 
                 var result = await _proxyTestService.TestProxy(
                     request.ProxyHostname,

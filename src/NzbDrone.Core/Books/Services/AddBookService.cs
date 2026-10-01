@@ -14,6 +14,7 @@ using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Books.Calibre;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books
 {
@@ -79,16 +80,16 @@ namespace NzbDrone.Core.Books
 
         public async Task<Book> AddBook(Book book, bool doRefresh = true)
         {
-            _logger.Debug("Adding book {0} with provider IDs - HC: {1}, GR-work: {2}, edition: {3}",
+            _logger.DebugSafe("Adding book {0} with provider IDs - HC: {1}, GR-work: {2}, edition: {3}",
                 book.Title,
                 book.HardcoverBookId,
                 book.GoodreadsWorkId,
                 BookEditionIdentity.GetGoodreadsEditionProviderId(book, _logger, "AddBookService.AddBook"));
             
             // DEBUG: Log monitoring mode
-                _logger.Debug("[SPECIFIC-BOOK-DEBUG] AddBook called for '{0}' with Monitor mode: {1}",
+                _logger.DebugSafe("[SPECIFIC-BOOK-DEBUG] AddBook called for '{0}' with Monitor mode: {1}",
                     book.Title, book.Author?.AddOptions?.Monitor);
-                _logger.Debug("[SPECIFIC-BOOK-DEBUG] MediaType: {0}, Author: {1}",
+                _logger.DebugSafe("[SPECIFIC-BOOK-DEBUG] MediaType: {0}, Author: {1}",
                     book.MediaType, book.Author?.Name ?? "NULL");
 
             // we allow adding extra editions, so check if the book already exists
@@ -300,7 +301,7 @@ namespace NzbDrone.Core.Books
                 {
                     book.Author.Monitored = true;
                     _authorService.UpdateAuthor(book.Author);
-                    _logger.Debug("Set author '{0}' to monitored because a monitored book was added", book.Author.Name);
+                    _logger.DebugSafe("Set author '{0}' to monitored because a monitored book was added", book.Author.Name);
                 }
 
             // Fallback: if this book was not imported with the author, ensure a best edition is monitored
@@ -805,7 +806,7 @@ namespace NzbDrone.Core.Books
 
             if (retainedEditions.Any(e => e.ReadingFormatId == nativeFormat))
             {
-                _logger.Debug("Requested add edition matched retained edition '{0}' but was not honored because it is non-native for {1} and a native edition survived retention. Requested IDs: {2}",
+                _logger.DebugSafe("Requested add edition matched retained edition '{0}' but was not honored because it is non-native for {1} and a native edition survived retention. Requested IDs: {2}",
                     requested.ForeignEditionId ?? requested.Id.ToString(),
                     mediaType,
                     string.Join(", ", requestedEditionProviderIds));

@@ -19,7 +19,11 @@ namespace Chaptarr.Http.Middleware
         {
             if (_urlBase.IsNotNullOrWhiteSpace() && context.Request.PathBase.Value.IsNullOrWhiteSpace())
             {
-                context.Response.Redirect($"{_urlBase}{context.Request.Path}{context.Request.QueryString}");
+                // Build a single-rooted local path. Request.Path is user-controlled and may
+                // start with slashes that would otherwise turn the Location into a network path.
+                var path = $"{_urlBase.TrimEnd('/')}/{context.Request.Path.Value?.TrimStart('/', '\\')}";
+                path = "/" + path.TrimStart('/', '\\');
+                context.Response.Redirect($"{path}{context.Request.QueryString}");
                 context.Response.StatusCode = 307;
 
                 return;

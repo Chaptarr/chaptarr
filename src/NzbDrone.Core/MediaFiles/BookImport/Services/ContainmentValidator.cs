@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.Parser;
 using NLog;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
@@ -202,7 +203,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                     if (CheckWordContainment(authorWords, fieldValue, tagField.Key))
                     {
-                            _logger.Trace("[CONTAINMENT] Author '{0}' MATCHED in field '{1}' = '{2}'",
+                            _logger.TraceSafe("[CONTAINMENT] Author '{0}' MATCHED in field '{1}' = '{2}'",
                                 authorName, tagField.Key,
                                 fieldValue.Length > 100 ? fieldValue.Substring(0, 100) + "..." : fieldValue);
                         return true;

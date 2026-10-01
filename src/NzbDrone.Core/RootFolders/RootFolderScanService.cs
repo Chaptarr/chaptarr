@@ -6,6 +6,7 @@ using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.RootFolders
 {
@@ -51,7 +52,7 @@ namespace NzbDrone.Core.RootFolders
             {
                 if (!_diskProvider.FolderExists(folderPath))
                 {
-                    _logger.Warn($"Cannot link author to non-existent folder: {folderPath}");
+                    _logger.WarnSafe($"Cannot link author to non-existent folder: {folderPath}");
                     return null;
                 }
 
@@ -61,7 +62,7 @@ namespace NzbDrone.Core.RootFolders
 
                 if (!normalizedFolder.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.Warn($"Rejected LinkAuthorToFolder: '{folderPath}' is not inside root folder '{rootFolder.Path}'");
+                    _logger.WarnSafe($"Rejected LinkAuthorToFolder: '{folderPath}' is not inside root folder '{rootFolder.Path}'");
                     return null;
                 }
 
@@ -82,7 +83,7 @@ namespace NzbDrone.Core.RootFolders
 
                 if (!rootCanLinkAudiobook && !rootCanLinkEbook)
                 {
-                    _logger.Debug($"No relevant media files found in mixed root folder '{folderPath}' for author '{author.Name}', skipping link");
+                    _logger.DebugSafe($"No relevant media files found in mixed root folder '{folderPath}' for author '{author.Name}', skipping link");
                     return null;
                 }
 
@@ -251,13 +252,13 @@ namespace NzbDrone.Core.RootFolders
 
                 _authorService.UpdateAuthor(author);
 
-                _logger.Debug($"Linked author '{author.Name}' to folder '{folderPath}' ({update.FileCount} existing files found)");
+                _logger.DebugSafe($"Linked author '{author.Name}' to folder '{folderPath}' ({update.FileCount} existing files found)");
 
                 return update;
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, $"Error linking author {author.Name} to folder {folderPath}");
+                _logger.ErrorSafe(ex, $"Error linking author {author.Name} to folder {folderPath}");
                 return null;
             }
         }

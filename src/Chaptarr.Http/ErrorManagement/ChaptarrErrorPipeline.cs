@@ -10,6 +10,7 @@ using NLog;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Http.ErrorManagement
 {
@@ -63,17 +64,17 @@ namespace Chaptarr.Http.ErrorManagement
             }
             else if (exception is NzbDroneClientException clientException)
             {
-                _logger.Debug(clientException, "Client error during request {0} {1}: {2}", context.Request.Method, context.Request.Path, clientException.Message);
+                _logger.DebugSafe(clientException, "Client error during request {0} {1}: {2}", context.Request.Method, context.Request.Path, clientException.Message);
                 statusCode = clientException.StatusCode;
             }
             else if (exception is ModelNotFoundException)
             {
-                _logger.Debug(exception, "Model not found during request {0} {1}", context.Request.Method, context.Request.Path);
+                _logger.DebugSafe(exception, "Model not found during request {0} {1}", context.Request.Method, context.Request.Path);
                 statusCode = HttpStatusCode.NotFound;
             }
             else if (exception is ModelConflictException)
             {
-                _logger.Warn(exception, "Model conflict during request {0} {1}", context.Request.Method, context.Request.Path);
+                _logger.WarnSafe(exception, "Model conflict during request {0} {1}", context.Request.Method, context.Request.Path);
                 statusCode = HttpStatusCode.Conflict;
             }
             else if (exception is SqliteException sqLiteException)
@@ -87,12 +88,12 @@ namespace Chaptarr.Http.ErrorManagement
                     }
                 }
 
-                _logger.Error(sqLiteException, "[{0} {1}]", context.Request.Method, context.Request.Path);
+                _logger.ErrorSafe(sqLiteException, "[{0} {1}]", context.Request.Method, context.Request.Path);
             }
             else
             {
-                _logger.Error(exception, "Unhandled exception occurred during request {0} {1}", context.Request.Method, context.Request.Path);
-                _logger.Fatal(exception, "Request Failed. {0} {1}", context.Request.Method, context.Request.Path);
+                _logger.ErrorSafe(exception, "Unhandled exception occurred during request {0} {1}", context.Request.Method, context.Request.Path);
+                _logger.FatalSafe(exception, "Request Failed. {0} {1}", context.Request.Method, context.Request.Path);
             }
 
             await errorModel.WriteToResponse(response, statusCode);

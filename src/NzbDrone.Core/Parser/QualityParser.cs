@@ -49,7 +49,7 @@ namespace NzbDrone.Core.Parser
 
         public static QualityModel ParseQuality(string name, string desc = null, List<int> categories = null, string indexerName = null, List<string> tags = null, int indexerFlags = 0)
         {
-            Logger.Trace("Trying to parse quality for '{0}'", name);
+            Logger.TraceSafe("Trying to parse quality for '{0}'", name);
 
             if (name.IsNullOrWhiteSpace() && desc.IsNullOrWhiteSpace())
             {
@@ -133,7 +133,7 @@ namespace NzbDrone.Core.Parser
 
         public static QualityModel ParseQualityFromFileType(string fileType, string title, int indexerFlags, string indexerName = null)
         {
-            Logger.Trace("Parsing quality from fileType '{0}' for title '{1}'", fileType, title);
+            Logger.TraceSafe("Parsing quality from fileType '{0}' for title '{1}'", fileType, title);
 
             var result = ParseQualityModifiers(title, title.Replace('_', ' ').Trim().ToLower());
 

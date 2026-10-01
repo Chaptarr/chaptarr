@@ -12,6 +12,7 @@ using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Download.Clients.Pneumatic
 {
@@ -48,7 +49,7 @@ namespace NzbDrone.Core.Download.Clients.Pneumatic
             //Save to the Pneumatic directory (The user will need to ensure its accessible by XBMC)
             var nzbFile = Path.Combine(Settings.NzbFolder, title + ".nzb");
 
-            _logger.Debug("Downloading NZB from: {0} to: {1}", url, nzbFile);
+            _logger.DebugSafe("Downloading NZB from: {0} to: {1}", url, nzbFile);
             if (indexer == null)
             {
                 await _httpClient.DownloadFileAsync(url, nzbFile);

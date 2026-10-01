@@ -16,6 +16,7 @@ using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Books
 {
@@ -873,7 +874,7 @@ namespace Chaptarr.Api.V1.Books
 
         private static void WarnMissingFacadeId(string entityType, string dialect, int? localId, string title)
         {
-            Logger.Debug("[ReadarrFacade] Cannot emit {0} identity in {1} dialect for localId={2} title='{3}'. Omitting compatibility ID instead of falling back across providers.",
+            Logger.DebugSafe("[ReadarrFacade] Cannot emit {0} identity in {1} dialect for localId={2} title='{3}'. Omitting compatibility ID instead of falling back across providers.",
                 entityType,
                 dialect,
                 localId?.ToString() ?? "none",

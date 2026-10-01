@@ -1,0 +1,6 @@
+extensions:
+  - addsTo:
+      pack: codeql/csharp-all
+      extensible: barrierModel
+    data:
+      - ["NzbDrone.Common.Instrumentation", "CleanseLogMessage", false, "Cleanse", "(System.String)", "", "ReturnValue", "log-injection", "manual"]

@@ -29,6 +29,7 @@ using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Identification;
 using NzbDrone.Core.MediaFiles.BookImport;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 {
@@ -211,7 +212,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                }
 	                catch (Exception ex)
 	                {
-	                    _logger.Debug(ex, "Failed to build tracked-download overrides for manual import (downloadId={0})", downloadId);
+	                    _logger.DebugSafe(ex, "Failed to build tracked-download overrides for manual import (downloadId={0})", downloadId);
 	                    downloadOverrides = null;
 	                    downloadItemInfo = null;
 	                }
@@ -272,7 +273,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 		            cancellationToken.ThrowIfCancellationRequested();
                 if (_logger.IsDebugEnabled)
                 {
-                    _logger.Debug("[MEMORY] Manual import preview start for '{0}': {1}", folder, MemorySnapshot.CaptureDetailed());
+                    _logger.DebugSafe("[MEMORY] Manual import preview start for '{0}': {1}", folder, MemorySnapshot.CaptureDetailed());
                 }
 
 	            DownloadClientItem downloadClientItem = null;
@@ -309,7 +310,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                }
 	                catch (Exception ex)
 	                {
-	                    _logger.Debug(ex, "Failed to resolve tracked-download book override for manual import (downloadId={0})", downloadId);
+	                    _logger.DebugSafe(ex, "Failed to resolve tracked-download book override for manual import (downloadId={0})", downloadId);
 	                }
 	            }
 
@@ -386,7 +387,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             var result = newItems.Concat(existingItems).ToList();
             if (_logger.IsDebugEnabled)
             {
-                _logger.Debug("[MEMORY] Manual import preview complete for '{0}' ({1} items): {2}", folder, result.Count, MemorySnapshot.CaptureDetailed());
+                _logger.DebugSafe("[MEMORY] Manual import preview complete for '{0}' ({1} items): {2}", folder, result.Count, MemorySnapshot.CaptureDetailed());
             }
             return result;
         }

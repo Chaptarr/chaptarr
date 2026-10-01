@@ -7,6 +7,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.ProviderIds
 {
@@ -68,7 +69,7 @@ namespace Chaptarr.Api.V1.ProviderIds
             }
 
             var normalizedProviderId = NormalizeProviderId(provider, providerId);
-            logger?.Warn("[API-AMBIGUOUS-PROVIDER] {0}={1} matched {2} local authors{3}; refusing to choose one",
+            logger?.WarnSafe("[API-AMBIGUOUS-PROVIDER] {0}={1} matched {2} local authors{3}; refusing to choose one",
                 field,
                 normalizedProviderId,
                 matches.Count,
@@ -136,7 +137,7 @@ namespace Chaptarr.Api.V1.ProviderIds
             }
 
             var normalizedProviderId = NormalizeProviderId(provider, providerId);
-            logger?.Warn("[API-AMBIGUOUS-PROVIDER] {0}={1} mediaType={2} matched {3} local books{4}; refusing to choose one",
+            logger?.WarnSafe("[API-AMBIGUOUS-PROVIDER] {0}={1} mediaType={2} matched {3} local books{4}; refusing to choose one",
                 field,
                 normalizedProviderId,
                 mediaType,
@@ -198,7 +199,7 @@ namespace Chaptarr.Api.V1.ProviderIds
                 }
                 catch (Exception ex)
                 {
-                    logger?.Warn(ex, "Unable to check provider alias ambiguity for author provider id {0}", normalizedProviderId);
+                    logger?.WarnSafe(ex, "Unable to check provider alias ambiguity for author provider id {0}", normalizedProviderId);
                 }
             }
 

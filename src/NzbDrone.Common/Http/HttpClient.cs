@@ -12,6 +12,7 @@ using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http.Dispatchers;
 using NzbDrone.Common.TPL;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Common.Http
 {
@@ -335,7 +336,7 @@ namespace NzbDrone.Common.Http
                     fileInfo.Directory.Create();
                 }
 
-                _logger.Debug("Downloading [{0}] to [{1}]", url, fileName);
+                _logger.DebugSafe("Downloading [{0}] to [{1}]", url, fileName);
 
                 var stopWatch = Stopwatch.StartNew();
                 await using (var fileStream = new FileStream(fileNamePart, FileMode.Create, FileAccess.ReadWrite))

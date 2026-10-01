@@ -1,6 +1,7 @@
 using NLog;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
@@ -20,7 +21,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         {
             if (subject?.ParsedBookInfo?.Discography == true)
             {
-                _logger.Trace("Discography release {0} rejected as a multi-book pack.", subject.Release?.Title);
+                _logger.TraceSafe("Discography release {0} rejected as a multi-book pack.", subject.Release?.Title);
                 return Decision.RejectHardFilter("Release appears to contain multiple books (discography)", "Pack");
             }
 

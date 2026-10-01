@@ -13,6 +13,7 @@ using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Http.REST.Attributes;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Profiles.Metadata
 {
@@ -110,7 +111,7 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
 
                 if (authorsUsingProfile.Any())
                 {
-                    logger.Info("Metadata profile '{0}' updated; refreshing {1} authors to apply new filters", model.Name, authorsUsingProfile.Count);
+                    logger.InfoSafe("Metadata profile '{0}' updated; refreshing {1} authors to apply new filters", model.Name, authorsUsingProfile.Count);
 
                     var command = new BulkRefreshAuthorCommand(authorsUsingProfile, refreshMetadata: true, rescanFolders: false, trigger: CommandTrigger.Manual, forceRefresh: true);
                     _commandQueueManager.Push(command, trigger: CommandTrigger.Manual);

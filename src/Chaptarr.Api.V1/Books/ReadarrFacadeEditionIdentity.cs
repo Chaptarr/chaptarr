@@ -6,6 +6,7 @@ using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Validation;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Books
 {
@@ -54,7 +55,7 @@ namespace Chaptarr.Api.V1.Books
 
             if (!string.IsNullOrWhiteSpace(foreignEditionId))
             {
-                Logger.Warn("[NativeIdentity] Omitting bare foreign edition ID from native response. localEditionId={0} title='{1}' foreignEditionId='{2}'.",
+                Logger.WarnSafe("[NativeIdentity] Omitting bare foreign edition ID from native response. localEditionId={0} title='{1}' foreignEditionId='{2}'.",
                     edition.Id,
                     edition.Title ?? string.Empty,
                     foreignEditionId);
@@ -116,7 +117,7 @@ namespace Chaptarr.Api.V1.Books
                 }
 
                 omittedCount++;
-                Logger.Debug("[ReadarrFacade] Cannot emit edition identity in {0} dialect for localEditionId={1} title='{2}'. Omitting edition row.",
+                Logger.DebugSafe("[ReadarrFacade] Cannot emit edition identity in {0} dialect for localEditionId={1} title='{2}'. Omitting edition row.",
                     facadeContext.Dialect,
                     edition.Id,
                     edition.Title ?? string.Empty);

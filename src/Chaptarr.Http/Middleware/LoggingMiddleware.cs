@@ -54,7 +54,7 @@ namespace Chaptarr.Http.Middleware
 
             if (isHttpTraceEnabled)
             {
-                _loggerHttp.Trace("Req: {0} [{1}] {2} (from {3})", id, context.Request.Method, reqPath, GetOrigin(context));
+                _loggerHttp.TraceSafe("Req: {0} [{1}] {2} (from {3})", id, context.Request.Method, reqPath, GetOrigin(context));
             }
 
             try
@@ -68,12 +68,12 @@ namespace Chaptarr.Http.Middleware
 
                 if (isHttpTraceEnabled)
                 {
-                    _loggerHttp.Trace("Res: {0} [{1}] {2}: {3}.{4} ({5} ms)", id, context.Request.Method, reqPath, context.Response.StatusCode, (HttpStatusCode)context.Response.StatusCode, (int)duration.TotalMilliseconds);
+                    _loggerHttp.TraceSafe("Res: {0} [{1}] {2}: {3}.{4} ({5} ms)", id, context.Request.Method, reqPath, context.Response.StatusCode, (HttpStatusCode)context.Response.StatusCode, (int)duration.TotalMilliseconds);
                 }
 
                 if (isApiDebugEnabled)
                 {
-                    _loggerApi.Debug("[{0}] {1}: {2}.{3} ({4} ms)", context.Request.Method, reqPath, context.Response.StatusCode, (HttpStatusCode)context.Response.StatusCode, (int)duration.TotalMilliseconds);
+                    _loggerApi.DebugSafe("[{0}] {1}: {2}.{3} ({4} ms)", context.Request.Method, reqPath, context.Response.StatusCode, (HttpStatusCode)context.Response.StatusCode, (int)duration.TotalMilliseconds);
                 }
             }
         }

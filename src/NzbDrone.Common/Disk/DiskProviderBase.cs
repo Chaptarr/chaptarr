@@ -181,7 +181,7 @@ namespace NzbDrone.Common.Disk
             }
             catch (Exception e)
             {
-                Logger.Trace("Directory '{0}' isn't writable. {1}", path, e.Message);
+                Logger.TraceSafe("Directory '{0}' isn't writable. {1}", path, e.Message);
                 return false;
             }
         }
@@ -550,7 +550,7 @@ namespace NzbDrone.Common.Disk
             }
             catch (Exception ex)
             {
-                Logger.Debug(ex, $"Failed to get mount for path {path}");
+                Logger.DebugSafe(ex, $"Failed to get mount for path {path}");
                 return null;
             }
         }
@@ -654,7 +654,7 @@ namespace NzbDrone.Common.Disk
 
             if (_fileSystem.File.Exists(current))
             {
-                Logger.Debug("Resolved best-effort file path '{0}' -> '{1}'", path, current);
+                Logger.DebugSafe("Resolved best-effort file path '{0}' -> '{1}'", path, current);
                 return current;
             }
 

@@ -97,6 +97,12 @@ namespace NzbDrone.Common.Instrumentation
 
             message = CleanseRemoteIPRegex.Replace(message, CleanseRemoteIP);
 
+            message = message.Replace("\r", "\\r")
+                             .Replace("\n", "\\n")
+                             .Replace("\u0085", "\\u0085")
+                             .Replace("\u2028", "\\u2028")
+                             .Replace("\u2029", "\\u2029");
+
             return message;
         }
 

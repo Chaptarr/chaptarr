@@ -3,6 +3,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Configuration
 {
@@ -54,7 +55,7 @@ namespace NzbDrone.Core.Configuration
                 throw new System.InvalidOperationException($"Proxy with name '{proxy.Name}' already exists.");
             }
 
-            _logger.Info("Adding proxy: {0}", proxy.Name);
+            _logger.InfoSafe("Adding proxy: {0}", proxy.Name);
             var addedProxy = _proxyRepository.Insert(proxy);
             _eventAggregator.PublishEvent(new ProxyAddedEvent(addedProxy));
             return addedProxy;

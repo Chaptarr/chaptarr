@@ -6,6 +6,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Authentication;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Http.Authentication
 {
@@ -89,7 +90,7 @@ namespace Chaptarr.Http.Authentication
 
         public void LogUnauthorized(HttpRequest context)
         {
-            _authLogger.Info("Auth-Unauthorized ip {0} url '{1}'", context.GetRemoteIP(), context.Path);
+            _authLogger.InfoSafe("Auth-Unauthorized ip {0} url '{1}'", context.GetRemoteIP(), context.Path);
         }
 
         private void LogInvalidated(HttpRequest context)
@@ -99,12 +100,12 @@ namespace Chaptarr.Http.Authentication
 
         private void LogFailure(HttpRequest context, string username)
         {
-            _authLogger.Warn("Auth-Failure ip {0} username '{1}'", context.GetRemoteIP(), username);
+            _authLogger.WarnSafe("Auth-Failure ip {0} username '{1}'", context.GetRemoteIP(), username);
         }
 
         private void LogSuccess(HttpRequest context, string username)
         {
-            _authLogger.Info("Auth-Success ip {0} username '{1}'", context.GetRemoteIP(), username);
+            _authLogger.InfoSafe("Auth-Success ip {0} username '{1}'", context.GetRemoteIP(), username);
         }
 
         private void LogLogout(HttpRequest context, string username)

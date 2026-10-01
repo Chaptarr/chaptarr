@@ -17,6 +17,7 @@ using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.RootFolders;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books
 {
@@ -1726,7 +1727,7 @@ namespace NzbDrone.Core.Books
 
             if (narratorChanged)
             {
-                _logger.Info($"User manually selected narrator '{book.Narrator}' for book '{book.Title}' (ID: {book.Id})");
+                _logger.InfoSafe($"User manually selected narrator '{book.Narrator}' for book '{book.Title}' (ID: {book.Id})");
 
                 // Mark the current monitored edition as manually selected
                 var monitoredEdition = _editionService.GetEditionsByBook(book.Id)

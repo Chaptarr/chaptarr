@@ -59,13 +59,13 @@ namespace NzbDrone.Mono.Disk
         {
             Ensure.That(path, () => path).IsValidPath(PathValidationType.CurrentOs);
 
-            Logger.Debug($"path: {path}");
+            Logger.DebugSafe($"path: {path}");
 
             var mount = GetMount(path);
 
             if (mount == null)
             {
-                Logger.Debug("Unable to get free space for '{0}', unable to find suitable drive", path);
+                Logger.DebugSafe("Unable to get free space for '{0}', unable to find suitable drive", path);
                 return null;
             }
 
