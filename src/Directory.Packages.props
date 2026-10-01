@@ -43,7 +43,7 @@
     <PackageVersion Include="NunitXml.TestLogger" Version="3.0.117" />
     <PackageVersion Include="PdfSharpCore" Version="1.3.67" />
     <PackageVersion Include="RestSharp.Serializers.SystemTextJson" Version="113.0.0" />
-    <PackageVersion Include="RestSharp" Version="113.0.0" />
+    <PackageVersion Include="RestSharp" Version="114.0.0" />
     <PackageVersion Include="Selenium.Support" Version="3.141.0" />
     <PackageVersion Include="Selenium.WebDriver.ChromeDriver" Version="134.0.6998.16500" />
     <PackageVersion Include="Sentry" Version="6.0.0" />
