@@ -17,6 +17,51 @@ import { icons, inputTypes, kinds, tooltipPositions } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import styles from './EditMetadataProfileModalContent.css';
 
+// Each option is a combination of the existing skipMissingIsbn/skipMissingAsin flags. The backend
+// keeps an edition when: neither flag -> always; isbn only -> ISBN or ASIN; asin only -> ASIN;
+// both -> ISBN and ASIN. Requiring ISBN alone has no flag combination, so it isn't offered.
+const identifierRequirementFlags = {
+  none: { skipMissingIsbn: false, skipMissingAsin: false },
+  missingBoth: { skipMissingIsbn: true, skipMissingAsin: false },
+  missingEither: { skipMissingIsbn: true, skipMissingAsin: true },
+  missingAsin: { skipMissingIsbn: false, skipMissingAsin: true }
+};
+
+const identifierRequirementOptions = [
+  {
+    key: 'none',
+    get value() {
+      return translate('SkipMissingIdentifierNone');
+    }
+  },
+  {
+    key: 'missingBoth',
+    get value() {
+      return translate('SkipMissingIdentifierMissingBoth');
+    }
+  },
+  {
+    key: 'missingEither',
+    get value() {
+      return translate('SkipMissingIdentifierMissingEither');
+    }
+  },
+  {
+    key: 'missingAsin',
+    get value() {
+      return translate('SkipMissingIdentifierMissingAsin');
+    }
+  }
+];
+
+function getIdentifierRequirement(skipMissingIsbn, skipMissingAsin) {
+  if (skipMissingIsbn) {
+    return skipMissingAsin ? 'missingEither' : 'missingBoth';
+  }
+
+  return skipMissingAsin ? 'missingAsin' : 'none';
+}
+
 function fieldWithDefault(field, value) {
   return field ?? {
     value,
@@ -75,6 +120,17 @@ function EditMetadataProfileModalContent(props) {
   const isAudiobook = profileTypeValue === 1;
   const labelSuffix = isAudiobook ? 'Audiobook' : 'Book';
   const deleteDisabledTooltip = translate('IsInUseCantDeleteAMetadataProfileThatIsAttachedToAnAuthorImportListOrRootFolder');
+
+  const identifierRequirement = getIdentifierRequirement(skipMissingIsbnField.value, skipMissingAsinField.value);
+  const identifierRequirementErrors = [...skipMissingIsbnField.errors, ...skipMissingAsinField.errors];
+  const identifierRequirementWarnings = [...skipMissingIsbnField.warnings, ...skipMissingAsinField.warnings];
+
+  const onIdentifierRequirementChange = ({ value }) => {
+    const flags = identifierRequirementFlags[value] ?? identifierRequirementFlags.none;
+
+    onInputChange({ name: 'skipMissingIsbn', value: flags.skipMissingIsbn });
+    onInputChange({ name: 'skipMissingAsin', value: flags.skipMissingAsin });
+  };
 
   return (
     <ModalContent onModalClose={onModalClose}>
@@ -162,25 +218,14 @@ function EditMetadataProfileModalContent(props) {
                 </FormLabel>
 
                 <FormInputGroup
-                  type={inputTypes.CHECK}
-                  name="skipMissingIsbn"
-                  {...skipMissingIsbnField}
+                  type={inputTypes.SELECT}
+                  name="identifierRequirement"
+                  value={identifierRequirement}
+                  values={identifierRequirementOptions}
+                  errors={identifierRequirementErrors}
+                  warnings={identifierRequirementWarnings}
                   helpText={translate(`SkipMissingIdentifier${labelSuffix}HelpText`)}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate(`SkipMissingAsin${labelSuffix}`)}
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.CHECK}
-                  name="skipMissingAsin"
-                  {...skipMissingAsinField}
-                  helpText={translate(`SkipMissingAsin${labelSuffix}HelpText`)}
-                  onChange={onInputChange}
+                  onChange={onIdentifierRequirementChange}
                 />
               </FormGroup>
 
