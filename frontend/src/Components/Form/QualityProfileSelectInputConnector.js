@@ -163,6 +163,8 @@ class QualityProfileSelectInputConnector extends Component {
       values,
       hasError,
       hasWarning,
+      // Pulled out so it can't override this.onChange, which parses the id to a number
+      onChange,
       ...otherProps
     } = this.props;
 
