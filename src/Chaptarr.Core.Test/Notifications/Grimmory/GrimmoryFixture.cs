@@ -21,6 +21,18 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
         private const long AudiobookLibraryId = 20;
 
         [Test]
+        public void definition_should_be_enabled_by_push_or_forward_toggles_without_any_trigger()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(new NotificationDefinition { Implementation = "Grimmory", Settings = new GrimmorySettings() }.Enable, Is.False);
+                Assert.That(new NotificationDefinition { Implementation = "Grimmory", Settings = new GrimmorySettings { PushMetadata = true } }.Enable, Is.True);
+                Assert.That(new NotificationDefinition { Implementation = "Grimmory", Settings = new GrimmorySettings { PushCovers = true } }.Enable, Is.True);
+                Assert.That(new NotificationDefinition { Implementation = "Grimmory", Settings = new GrimmorySettings { ForwardEdits = true } }.Enable, Is.True);
+            });
+        }
+
+        [Test]
         public void should_not_refresh_at_event_time_and_refresh_on_process_queue()
         {
             var proxy = new FakeGrimmoryProxy();
