@@ -43,6 +43,9 @@ namespace NzbDrone.Core.Notifications
             // Always enable AudioBookShelf for metadata search functionality
             (Implementation == "AudioBookShelf") ||
 
+            // Grimmory pushes and edit forwarding run without any event trigger
+            (Settings is Grimmory.GrimmorySettings grimmory && (grimmory.PushMetadata || grimmory.PushCovers || grimmory.ForwardEdits)) ||
+
             // Standard notification trigger logic for other providers
             (OnGrab || OnReleaseImport || (OnReleaseImport && OnUpgrade) || OnRename || OnAuthorAdded || OnBookAdded || OnAuthorDelete || OnBookDelete || OnBookFileDelete || OnBookFileDeleteForUpgrade || OnHealthIssue || OnHealthRestored || OnDownloadFailure || OnImportFailure || OnBookRetag || OnApplicationUpdate);
     }

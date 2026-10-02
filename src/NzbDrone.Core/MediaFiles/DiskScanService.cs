@@ -185,7 +185,21 @@ namespace NzbDrone.Core.MediaFiles
                     }
                     else if (!result.ScannedFilePaths.Any())
                     {
-                        _logger.Warn("Skipping scan cleanup for {0} because the scan found no media files. This avoids wiping tracked files when a mount is visible but empty.", folder);
+                        // An empty result means either a dropped mount or a genuine delete;
+                        // only a root-level scan can still be a dropped mount.
+                        var subfolderOfHealthyRoot = !rootFolder.Path.PathEquals(folder) &&
+                            _diskProvider.FolderExists(rootFolder.Path) &&
+                            _diskProvider.GetDirectories(rootFolder.Path).Any();
+
+                        if (subfolderOfHealthyRoot)
+                        {
+                            _logger.Debug("Scan of {0} found no media files but root folder {1} is populated; cleaning up files tracked under it", folder, rootFolder.Path);
+                            CleanMediaFiles(folder, result.ScannedFilePaths, rootFolder);
+                        }
+                        else
+                        {
+                            _logger.Warn("Skipping scan cleanup for {0} because the scan found no media files. This avoids wiping tracked files when a mount is visible but empty.", folder);
+                        }
                     }
                     else
                     {

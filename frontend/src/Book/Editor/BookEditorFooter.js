@@ -1,9 +1,15 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import { connect } from 'react-redux';
+import * as commandNames from 'Commands/commandNames';
 import SelectInput from 'Components/Form/SelectInput';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import PageContentFooter from 'Components/Page/PageContentFooter';
+import GrimmoryPushModal from 'Grimmory/GrimmoryPushModal';
 import { kinds } from 'Helpers/Props';
+import { executeCommand } from 'Store/Actions/commandActions';
+import { fetchNotifications } from 'Store/Actions/settingsActions';
+import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import translate from 'Utilities/String/translate';
 import BookEditorFooterLabel from './BookEditorFooterLabel';
 import DeleteBookModal from './Delete/DeleteBookModal';
@@ -24,10 +30,15 @@ class BookEditorFooter extends Component {
       rootFolderPath: NO_CHANGE,
       savingTags: false,
       isDeleteBookModalOpen: false,
+      isGrimmoryPushModalOpen: false,
       isTagsModalOpen: false,
       isConfirmMoveModalOpen: false,
       destinationRootFolder: null
     };
+  }
+
+  componentDidMount() {
+    this.props.fetchNotifications();
   }
 
   componentDidUpdate(prevProps) {
@@ -72,6 +83,24 @@ class BookEditorFooter extends Component {
     this.setState({ isDeleteBookModalOpen: false });
   };
 
+  onPushToGrimmoryPress = () => {
+    this.setState({ isGrimmoryPushModalOpen: true });
+  };
+
+  onGrimmoryPushModalClose = () => {
+    this.setState({ isGrimmoryPushModalOpen: false });
+  };
+
+  onGrimmoryPushConfirmed = (fields) => {
+    this.setState({ isGrimmoryPushModalOpen: false });
+
+    this.props.executeCommand({
+      name: commandNames.PUSH_GRIMMORY_METADATA,
+      bookIds: this.props.bookIds,
+      fields
+    });
+  };
+
   //
   // Render
 
@@ -80,12 +109,15 @@ class BookEditorFooter extends Component {
       bookIds,
       selectedCount,
       isSaving,
-      isDeleting
+      isDeleting,
+      isPushingToGrimmory,
+      showPushToGrimmory
     } = this.props;
 
     const {
       monitored,
-      isDeleteBookModalOpen
+      isDeleteBookModalOpen,
+      isGrimmoryPushModalOpen
     } = this.state;
 
     const monitoredOptions = [
@@ -119,6 +151,20 @@ class BookEditorFooter extends Component {
             />
 
             <div className={styles.buttons}>
+              {
+                showPushToGrimmory ?
+                  <SpinnerButton
+                    className={styles.organizeSelectedButton}
+                    kind={kinds.WARNING}
+                    isSpinning={isPushingToGrimmory}
+                    isDisabled={!selectedCount || isPushingToGrimmory}
+                    onPress={this.onPushToGrimmoryPress}
+                  >
+                    {translate('PushChaptarrMetadataToGrimmory')}
+                  </SpinnerButton> :
+                  null
+              }
+
               <SpinnerButton
                 className={styles.deleteSelectedButton}
                 kind={kinds.DANGER}
@@ -138,6 +184,13 @@ class BookEditorFooter extends Component {
           onModalClose={this.onDeleteBookModalClose}
         />
 
+        <GrimmoryPushModal
+          isOpen={isGrimmoryPushModalOpen}
+          bookCount={selectedCount}
+          onPushPress={this.onGrimmoryPushConfirmed}
+          onModalClose={this.onGrimmoryPushModalClose}
+        />
+
       </PageContentFooter>
     );
   }
@@ -150,7 +203,20 @@ BookEditorFooter.propTypes = {
   saveError: PropTypes.object,
   isDeleting: PropTypes.bool.isRequired,
   deleteError: PropTypes.object,
+  isPushingToGrimmory: PropTypes.bool.isRequired,
+  showPushToGrimmory: PropTypes.bool.isRequired,
+  fetchNotifications: PropTypes.func.isRequired,
+  executeCommand: PropTypes.func.isRequired,
   onSaveSelected: PropTypes.func.isRequired
 };
 
-export default BookEditorFooter;
+const selectIsPushingToGrimmory = createCommandExecutingSelector(commandNames.PUSH_GRIMMORY_METADATA);
+
+function mapStateToProps(state) {
+  return {
+    isPushingToGrimmory: selectIsPushingToGrimmory(state),
+    showPushToGrimmory: state.settings.notifications.items.some((n) => n.implementation === 'Grimmory')
+  };
+}
+
+export default connect(mapStateToProps, { executeCommand, fetchNotifications })(BookEditorFooter);

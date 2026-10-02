@@ -185,12 +185,18 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool FileExistsResult { get; set; } = true;
             public long FileLength { get; set; } = 100;
             public DateTime FileLastWriteTime { get; set; } = DateTime.UtcNow;
+            public string[] GetDirectoriesResult { get; set; } = { "/books/Some Author" };
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == "FolderExists")
                 {
                     return FolderExistsResult;
+                }
+
+                if (targetMethod?.Name == "GetDirectories")
+                {
+                    return GetDirectoriesResult;
                 }
 
                 if (targetMethod?.Name == "GetFileInfo")
@@ -801,6 +807,26 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(importOrchestratorProxy.Calls, Is.EqualTo(1));
             Assert.That(cleanupProxy.CleanedPaths, Is.Empty);
+        }
+
+        [Test]
+        public void scan_should_cleanup_empty_subfolder_when_root_is_populated()
+        {
+            var sut = CreateScanService(
+                folderExists: true,
+                orchestratorResult: new OrchestratorImportResult
+                {
+                    CleanupSafe = true,
+                    ScannedFilePaths = new List<string>()
+                },
+                out var importOrchestratorProxy,
+                out var cleanupProxy);
+
+            sut.Scan(new List<string> { "/books/Some Author/Deleted Book" }, authorIds: new List<int>());
+
+            Assert.That(importOrchestratorProxy.Calls, Is.EqualTo(1));
+            Assert.That(cleanupProxy.CleanedPaths, Has.Count.EqualTo(1));
+            Assert.That(cleanupProxy.CleanedPaths.Single(), Is.Empty);
         }
 
         [Test]

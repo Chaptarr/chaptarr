@@ -305,6 +305,10 @@ namespace NzbDrone.Core.MediaFiles
             {
                 CleanupEmptyFolders(author, folder);
             }
+
+            // Providers queue work on OnBookDelete and drain it on this event; author
+            // deletes already publish it.
+            _eventAggregator.PublishEvent(new DeleteCompletedEvent());
         }
 
         private static void CollectFolder(List<string> folders, string folder)

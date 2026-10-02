@@ -104,6 +104,13 @@
   <!-- Use the SDK's built-in Source Link; an explicit package overrides its serviced
        Git tasks and can reintroduce vulnerable build tooling. -->
 
+  <ItemGroup>
+    <!-- Moderate advisory against Microsoft.Build.Tasks.Git with no fixed release yet
+         (all versions through 10.x are flagged); it fails every restore because audit
+         warnings are errors. Remove once a patched sourcelink ships. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-23fw-v26w-5fgq" />
+  </ItemGroup>
+
   <!-- Sentry specific configuration: Only in Release mode -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <!-- https://docs.sentry.io/platforms/dotnet/configuration/msbuild/ -->

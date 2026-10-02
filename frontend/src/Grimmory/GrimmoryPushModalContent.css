@@ -1,0 +1,29 @@
+.description {
+  margin-bottom: 20px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.field:last-child {
+  border-bottom: none;
+}
+
+.check {
+  flex: 0 0 30px;
+}
+
+.label {
+  flex: 0 0 130px;
+  font-weight: bold;
+}
+
+.value {
+  flex: 1 1 auto;
+  color: var(--helpTextColor);
+  word-break: break-word;
+}

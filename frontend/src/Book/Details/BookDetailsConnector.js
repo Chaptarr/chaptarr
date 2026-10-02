@@ -11,6 +11,7 @@ import { executeCommand } from 'Store/Actions/commandActions';
 import { clearEditions, fetchEditions } from 'Store/Actions/editionActions';
 import { clearQueueDetails, fetchQueueDetails } from 'Store/Actions/queueActions';
 import { cancelFetchReleases, clearReleases } from 'Store/Actions/releaseActions';
+import { fetchNotifications } from 'Store/Actions/settingsActions';
 import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
@@ -18,6 +19,34 @@ import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
 import BookDetails from './BookDetails';
+
+function buildGrimmoryPreview(book, author, edition) {
+  const identifiers = [];
+
+  if (edition?.isbn13) {
+    identifiers.push(`isbn: ${edition.isbn13}`);
+  }
+
+  if (edition?.asin) {
+    identifiers.push(`asin: ${edition.asin}`);
+  }
+
+  if (edition?.foreignEditionId) {
+    identifiers.push(`goodreads: ${edition.foreignEditionId}`);
+  }
+
+  return {
+    title: edition?.title || book.title,
+    authors: author.authorName,
+    series: book.seriesTitle,
+    description: edition?.overview || book.overview,
+    publisher: edition?.publisher,
+    publisheddate: book.releaseDate,
+    language: edition?.language,
+    tags: (book.genres || []).join(', '),
+    identifiers: identifiers.join(', ')
+  };
+}
 
 const selectBookFiles = createSelector(
   (state) => state.bookFiles,
@@ -51,7 +80,8 @@ function createMapStateToProps() {
     createCommandsSelector(),
     createUISettingsSelector(),
     createDimensionsSelector(),
-    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions) => {
+    (state) => state.settings.notifications.items,
+    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions, notifications) => {
       try {
         const book = books.items.find((b) => b.id === bookId);
 
@@ -116,6 +146,15 @@ function createMapStateToProps() {
         isRenamingAuthorCommand.body.authorIds.indexOf(author.id) > -1
         );
 
+        const grimmoryPushCommand = findCommand(commands, { name: commandNames.PUSH_GRIMMORY_METADATA });
+        const isPushingToGrimmory = !!(
+          grimmoryPushCommand &&
+        isCommandExecuting(grimmoryPushCommand) &&
+        grimmoryPushCommand.body &&
+        (grimmoryPushCommand.body.bookIds || []).includes(book.id)
+        );
+        const showPushToGrimmory = notifications.some((n) => n.implementation === 'Grimmory');
+
         const isFetching = isBookFilesFetching || editions.isFetching;
         const isPopulated = isBookFilesPopulated && editions.isPopulated;
         const selectedEdition = editions.items
@@ -140,6 +179,9 @@ function createMapStateToProps() {
           author,
           isRefreshing,
           isSearching,
+          showPushToGrimmory,
+          isPushingToGrimmory,
+          grimmoryPreview: buildGrimmoryPreview(book, author, selectedEdition),
           isRenamingFiles,
           isRenamingAuthor,
           isFetching,
@@ -163,6 +205,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   executeCommand,
+  fetchNotifications,
   fetchBookFiles,
   clearBookFiles,
   fetchEditions,
@@ -228,6 +271,7 @@ class BookDetailsConnector extends Component {
     this.props.fetchBookFiles({ bookId });
     this.props.fetchEditions({ bookId });
     this.props.fetchQueueDetails({ bookIds: [bookId] });
+    this.props.fetchNotifications();
   };
 
   unpopulate = () => {
@@ -262,6 +306,14 @@ class BookDetailsConnector extends Component {
     });
   };
 
+  onPushToGrimmoryPress = (fields) => {
+    this.props.executeCommand({
+      name: commandNames.PUSH_GRIMMORY_METADATA,
+      bookIds: [this.props.id],
+      fields
+    });
+  };
+
   //
   // Render
 
@@ -272,6 +324,7 @@ class BookDetailsConnector extends Component {
         onMonitorTogglePress={this.onMonitorTogglePress}
         onRefreshPress={this.onRefreshPress}
         onSearchPress={this.onSearchPress}
+        onPushToGrimmoryPress={this.onPushToGrimmoryPress}
       />
     );
   }
@@ -286,6 +339,7 @@ BookDetailsConnector.propTypes = {
   isBookFetching: PropTypes.bool,
   isBookPopulated: PropTypes.bool,
   bookId: PropTypes.number.isRequired,
+  fetchNotifications: PropTypes.func.isRequired,
   fetchBookFiles: PropTypes.func.isRequired,
   clearBookFiles: PropTypes.func.isRequired,
   fetchEditions: PropTypes.func.isRequired,

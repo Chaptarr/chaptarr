@@ -12,6 +12,7 @@ import translate from 'Utilities/String/translate';
 import QuickstartAudioBookShelfSection from './QuickstartAudioBookShelfSection';
 import QuickstartCustomFormatsSection from './QuickstartCustomFormatsSection';
 import QuickstartDownloadClientsSection from './QuickstartDownloadClientsSection';
+import QuickstartGrimmorySection from './QuickstartGrimmorySection';
 import QuickstartHardcoverSection from './QuickstartHardcoverSection';
 import QuickstartMAMSection from './QuickstartMAMSection';
 import QuickstartMatchingSection from './QuickstartMatchingSection';
@@ -98,6 +99,8 @@ function Quickstart(props) {
   const {
     hasActiveAudioBookShelf,
     audioBookShelfNotification,
+    hasActiveGrimmory,
+    grimmoryNotification,
     mamIndexer,
     indexersState,
     notificationsState,
@@ -160,6 +163,19 @@ function Quickstart(props) {
                   <QuickstartAudioBookShelfSection
                     hasActiveAudioBookShelf={hasActiveAudioBookShelf}
                     audioBookShelfNotification={audioBookShelfNotification}
+                    notificationsState={notificationsState}
+                    fetchNotificationSchema={fetchNotificationSchema}
+                    selectNotificationSchema={selectNotificationSchema}
+                    markSectionInteracted={markSectionInteracted}
+                    fetchNotifications={fetchNotifications}
+                    compact={true}
+                  />
+                </div>
+
+                <div className={styles.optionalConnectionItem}>
+                  <QuickstartGrimmorySection
+                    hasActiveGrimmory={hasActiveGrimmory}
+                    grimmoryNotification={grimmoryNotification}
                     notificationsState={notificationsState}
                     fetchNotificationSchema={fetchNotificationSchema}
                     selectNotificationSchema={selectNotificationSchema}
@@ -251,6 +267,8 @@ function Quickstart(props) {
 Quickstart.propTypes = {
   hasActiveAudioBookShelf: PropTypes.bool,
   audioBookShelfNotification: PropTypes.object,
+  hasActiveGrimmory: PropTypes.bool,
+  grimmoryNotification: PropTypes.object,
   mamIndexer: PropTypes.object,
   indexersState: PropTypes.object.isRequired,
   notificationsState: PropTypes.object.isRequired,
