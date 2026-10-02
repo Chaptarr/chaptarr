@@ -408,8 +408,8 @@ namespace NzbDrone.Core.Notifications.Grimmory
 
             try
             {
-                payload.CoverBytes = _proxy.GetBookCover(settings, grimmoryBook.Id);
-                payload.CoverUrl = _proxy.BuildCoverUrl(settings, grimmoryBook.Id);
+                payload.CoverBytes = _proxy.GetBookCover(settings, grimmoryBook);
+                payload.CoverUrl = _proxy.BuildCoverUrl(settings, grimmoryBook);
             }
             catch (Exception ex)
             {

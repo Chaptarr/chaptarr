@@ -320,7 +320,14 @@ namespace NzbDrone.Core.Notifications.Grimmory
 
             if (Settings.PushCovers && payload.CoverBytes?.Length > 0)
             {
-                _proxy.UploadBookCover(Settings, grimmoryBook.Id, payload.CoverBytes, "cover.jpg");
+                try
+                {
+                    _proxy.UploadBookCover(Settings, grimmoryBook, payload.CoverBytes, "cover.jpg");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Grimmory rejected the forwarded cover for '{0}' on {1}", book.Title, Settings.Url);
+                }
             }
 
             _logger.Debug("Applied external library edit of '{0}' to Grimmory book {1} on {2}", book.Title, grimmoryBook.Id, Settings.Url);

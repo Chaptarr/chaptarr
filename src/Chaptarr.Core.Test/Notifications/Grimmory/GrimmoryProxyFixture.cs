@@ -16,7 +16,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
     public class GrimmoryProxyFixture
     {
         private const string LibrariesJson = "[{\"id\":10,\"name\":\"Ebooks\",\"allowedFormats\":[\"EPUB\",\"PDF\"]},{\"id\":20,\"name\":\"Audiobooks\",\"allowedFormats\":[\"AUDIOBOOK\"]}]";
-        private const string LibraryBooksJson = "[{\"id\":100,\"libraryId\":10,\"primaryFile\":{\"fileName\":\"Book One.epub\",\"fileSubPath\":\"Author Name/Book One\"},\"metadata\":{\"title\":\"Book One\"}},{\"id\":200,\"libraryId\":20,\"primaryFile\":{\"fileName\":\"Book Two\",\"fileSubPath\":\"Author Name\",\"folderBased\":true},\"metadata\":{\"title\":\"Book Two\"}}]";
+        private const string LibraryBooksJson = "[{\"id\":100,\"libraryId\":10,\"primaryFile\":{\"fileName\":\"Book One.epub\",\"fileSubPath\":\"Author Name/Book One\"},\"metadata\":{\"title\":\"Book One\"}},{\"id\":200,\"libraryId\":20,\"primaryFile\":{\"fileName\":\"Book Two\",\"fileSubPath\":\"Author Name\",\"folderBased\":true,\"bookType\":\"AUDIOBOOK\"},\"metadata\":{\"title\":\"Book Two\"}}]";
 
         [Test]
         public void should_login_and_fetch_libraries_with_bearer_token()
@@ -180,7 +180,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             var httpClient = new ScriptedHttpClient { ValidTokens = { "token1" } };
             var proxy = CreateProxy(httpClient);
 
-            proxy.UploadBookCover(BuildSettings(), 100, new byte[] { 1, 2, 3 }, "cover.jpg");
+            proxy.UploadBookCover(BuildSettings(), new GrimmoryBook { Id = 100 }, new byte[] { 1, 2, 3 }, "cover.jpg");
 
             var request = httpClient.Requests.Last();
 
@@ -190,6 +190,19 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
                 Assert.That(request.Url.ToString(), Does.EndWith("/api/v1/books/100/metadata/cover/upload"));
                 Assert.That(request.Headers.ContentType, Does.Contain("multipart/form-data"));
             });
+        }
+
+        [Test]
+        public void should_upload_an_audiobooks_cover_to_the_audiobook_cover_endpoint()
+        {
+            var httpClient = new ScriptedHttpClient { ValidTokens = { "token1" } };
+            var proxy = CreateProxy(httpClient);
+
+            var book = proxy.FindBookByPath(BuildSettings(), 20, "Author Name/Book Two/Book Two (001).mp3");
+            proxy.UploadBookCover(BuildSettings(), book, new byte[] { 1, 2, 3 }, "cover.jpg");
+
+            Assert.That(httpClient.Requests.Last().Url.ToString(), Does.EndWith("/api/v1/books/200/metadata/audiobook-cover/upload"));
+            Assert.That(proxy.BuildCoverUrl(BuildSettings(), book), Does.Contain("/api/v1/media/book/200/audiobook-cover?"));
         }
 
         private static GrimmoryProxy CreateProxy(ScriptedHttpClient httpClient)
@@ -259,7 +272,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
                     return new HttpResponse(request, headers, LibraryBooksJson);
                 }
 
-                if (url.Contains("/metadata/cover/upload"))
+                if (url.Contains("/metadata/cover/upload") || url.Contains("/metadata/audiobook-cover/upload"))
                 {
                     return new HttpResponse(request, headers, string.Empty);
                 }

@@ -73,9 +73,9 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             }
 
             public void UpdateBookMetadata(GrimmorySettings settings, long bookId, Dictionary<string, object> metadata) => MetadataUpdates.Add((bookId, metadata));
-            public void UploadBookCover(GrimmorySettings settings, long bookId, byte[] image, string fileName) { }
-            public byte[] GetBookCover(GrimmorySettings settings, long bookId) => new byte[] { 9 };
-            public string BuildCoverUrl(GrimmorySettings settings, long bookId) => $"http://grimmory/cover/{bookId}";
+            public void UploadBookCover(GrimmorySettings settings, GrimmoryBook book, byte[] image, string fileName) { }
+            public byte[] GetBookCover(GrimmorySettings settings, GrimmoryBook book) => new byte[] { 9 };
+            public string BuildCoverUrl(GrimmorySettings settings, GrimmoryBook book) => $"http://grimmory/cover/{book.Id}";
             public ValidationFailure Test(GrimmorySettings settings) => null;
         }
 

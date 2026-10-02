@@ -222,7 +222,7 @@ namespace NzbDrone.Core.Notifications.Grimmory
 
                 // Grimmory rejects a cover upload outright once the cover is locked, where it
                 // skips a locked metadata field silently.
-                var pushCover = coverPath != null && grimmoryBook.Metadata?.CoverLocked != true;
+                var pushCover = coverPath != null && !grimmoryBook.CoverIsLocked;
 
                 if (metadata.Any() || pushCover)
                 {
@@ -231,12 +231,22 @@ namespace NzbDrone.Core.Notifications.Grimmory
                     GrimmoryPushRegistry.RecordPush(book.Id);
                 }
 
+                var coverPushed = false;
+
                 if (pushCover)
                 {
-                    _proxy.UploadBookCover(settings, grimmoryBook.Id, File.ReadAllBytes(coverPath), Path.GetFileName(coverPath));
+                    try
+                    {
+                        _proxy.UploadBookCover(settings, grimmoryBook, File.ReadAllBytes(coverPath), Path.GetFileName(coverPath));
 
-                    // Locked only once the upload has landed, for the same reason.
-                    metadata["coverLocked"] = true;
+                        // Locked only once the upload has landed, for the same reason.
+                        metadata[grimmoryBook.CoverLockField] = true;
+                        coverPushed = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Grimmory rejected the cover for '{0}' on {1}; pushing the metadata without it", book.Title, settings.Url);
+                    }
                 }
 
                 if (metadata.Any())
@@ -244,6 +254,11 @@ namespace NzbDrone.Core.Notifications.Grimmory
                     // Grimmory skips locked fields even for the writer that locked them, so a
                     // re-push only lands on fields someone has unlocked there.
                     _proxy.UpdateBookMetadata(settings, grimmoryBook.Id, metadata);
+                }
+
+                if (!metadata.Any() && !coverPushed)
+                {
+                    continue;
                 }
 
                 _logger.Debug("Pushed '{0}' to Grimmory book {1} on {2}", book.Title, grimmoryBook.Id, settings.Url);

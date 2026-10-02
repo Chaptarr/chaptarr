@@ -56,6 +56,7 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             public Dictionary<string, GrimmoryBook> BooksByPath { get; } = new Dictionary<string, GrimmoryBook>(StringComparer.OrdinalIgnoreCase);
             public List<(long BookId, Dictionary<string, object> Metadata)> MetadataUpdates { get; } = new List<(long, Dictionary<string, object>)>();
             public List<(long BookId, string FileName)> CoverUploads { get; } = new List<(long, string)>();
+            public Exception CoverUploadFailure { get; set; }
 
             public List<GrimmoryLibrary> GetLibraries(GrimmorySettings settings) => new List<GrimmoryLibrary>();
             public void RefreshLibrary(GrimmorySettings settings, long libraryId) { }
@@ -66,9 +67,18 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
             }
 
             public void UpdateBookMetadata(GrimmorySettings settings, long bookId, Dictionary<string, object> metadata) => MetadataUpdates.Add((bookId, metadata));
-            public void UploadBookCover(GrimmorySettings settings, long bookId, byte[] image, string fileName) => CoverUploads.Add((bookId, fileName));
-            public byte[] GetBookCover(GrimmorySettings settings, long bookId) => null;
-            public string BuildCoverUrl(GrimmorySettings settings, long bookId) => $"http://grimmory/cover/{bookId}";
+            public void UploadBookCover(GrimmorySettings settings, GrimmoryBook book, byte[] image, string fileName)
+            {
+                if (CoverUploadFailure != null)
+                {
+                    throw CoverUploadFailure;
+                }
+
+                CoverUploads.Add((book.Id, fileName));
+            }
+
+            public byte[] GetBookCover(GrimmorySettings settings, GrimmoryBook book) => null;
+            public string BuildCoverUrl(GrimmorySettings settings, GrimmoryBook book) => $"http://grimmory/cover/{book.Id}";
             public ValidationFailure Test(GrimmorySettings settings) => null;
         }
 
@@ -278,6 +288,62 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
         }
 
         [Test]
+        public void should_lock_the_audiobook_cover_when_grimmorys_primary_file_is_an_audiobook()
+        {
+            var coverFile = Path.GetTempFileName();
+            File.WriteAllBytes(coverFile, new byte[] { 1, 2, 3 });
+
+            try
+            {
+                var context = CreateContext(coverPath: coverFile);
+                var grimmoryBook = GrimmoryBookAt("Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub");
+                grimmoryBook.PrimaryFile.BookType = "AUDIOBOOK";
+                context.Proxy.BooksByPath["Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub"] = grimmoryBook;
+
+                context.Service.Execute(new PushGrimmoryMetadataCommand
+                {
+                    BookIds = new List<int> { 10 },
+                    Fields = new List<string> { "cover" }
+                });
+
+                Assert.That(context.Proxy.CoverUploads, Has.Count.EqualTo(1));
+                Assert.That(context.Proxy.MetadataUpdates[0].Metadata.Keys, Is.EqualTo(new[] { "audiobookCoverLocked" }));
+            }
+            finally
+            {
+                File.Delete(coverFile);
+            }
+        }
+
+        [Test]
+        public void should_leave_a_locked_audiobook_cover_alone()
+        {
+            var coverFile = Path.GetTempFileName();
+            File.WriteAllBytes(coverFile, new byte[] { 1, 2, 3 });
+
+            try
+            {
+                var context = CreateContext(coverPath: coverFile);
+                var grimmoryBook = GrimmoryBookAt("Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub");
+                grimmoryBook.PrimaryFile.BookType = "AUDIOBOOK";
+                grimmoryBook.Metadata = new GrimmoryBookMetadata { AudiobookCoverLocked = true };
+                context.Proxy.BooksByPath["Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub"] = grimmoryBook;
+
+                context.Service.Execute(new PushGrimmoryMetadataCommand
+                {
+                    BookIds = new List<int> { 10 },
+                    Fields = new List<string> { "cover" }
+                });
+
+                Assert.That(context.Proxy.CoverUploads, Is.Empty);
+            }
+            finally
+            {
+                File.Delete(coverFile);
+            }
+        }
+
+        [Test]
         public void should_leave_a_locked_cover_alone()
         {
             var coverFile = Path.GetTempFileName();
@@ -482,6 +548,61 @@ namespace Chaptarr.Core.Test.Notifications.Grimmory
                 Assert.That(context.Proxy.CoverUploads, Has.Count.EqualTo(1));
                 Assert.That(context.Proxy.MetadataUpdates, Has.Count.EqualTo(1));
                 Assert.That(context.Proxy.MetadataUpdates[0].Metadata.Keys, Is.EqualTo(new[] { "coverLocked" }));
+            }
+            finally
+            {
+                File.Delete(coverFile);
+            }
+        }
+
+        [Test]
+        public void should_still_push_metadata_when_grimmory_rejects_the_cover()
+        {
+            var coverFile = Path.GetTempFileName();
+            File.WriteAllBytes(coverFile, new byte[] { 1, 2, 3 });
+
+            try
+            {
+                var context = CreateContext(coverPath: coverFile);
+                context.Proxy.CoverUploadFailure = new InvalidOperationException("500 An unexpected error occurred.");
+                context.Proxy.BooksByPath["Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub"] = GrimmoryBookAt("Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub");
+
+                context.Service.Execute(new PushGrimmoryMetadataCommand
+                {
+                    BookIds = new List<int> { 10 }
+                });
+
+                Assert.That(context.Proxy.CoverUploads, Is.Empty);
+                Assert.That(context.Proxy.MetadataUpdates, Has.Count.EqualTo(1));
+                Assert.That(context.Proxy.MetadataUpdates[0].Metadata.Keys, Does.Contain("title"));
+                Assert.That(context.Proxy.MetadataUpdates[0].Metadata.Keys, Does.Not.Contain("coverLocked"));
+            }
+            finally
+            {
+                File.Delete(coverFile);
+            }
+        }
+
+        [Test]
+        public void should_still_mirror_to_other_targets_when_grimmory_rejects_a_cover_only_push()
+        {
+            var coverFile = Path.GetTempFileName();
+            File.WriteAllBytes(coverFile, new byte[] { 1, 2, 3 });
+
+            try
+            {
+                var context = CreateContext(coverPath: coverFile);
+                context.Proxy.CoverUploadFailure = new InvalidOperationException("500 An unexpected error occurred.");
+                context.Proxy.BooksByPath["Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub"] = GrimmoryBookAt("Robin Hobb/Assassin's Apprentice/Assassin's Apprentice.epub");
+
+                context.Service.Execute(new PushGrimmoryMetadataCommand
+                {
+                    BookIds = new List<int> { 10 },
+                    Fields = new List<string> { "cover" }
+                });
+
+                Assert.That(context.Proxy.MetadataUpdates, Is.Empty);
+                Assert.That(context.Target.Pushes, Has.Count.EqualTo(1));
             }
             finally
             {

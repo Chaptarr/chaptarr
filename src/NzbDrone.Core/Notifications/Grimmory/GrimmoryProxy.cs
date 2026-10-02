@@ -19,9 +19,9 @@ namespace NzbDrone.Core.Notifications.Grimmory
         void RefreshLibrary(GrimmorySettings settings, long libraryId);
         GrimmoryBook FindBookByPath(GrimmorySettings settings, long libraryId, string relativePath, bool bypassCache = false);
         void UpdateBookMetadata(GrimmorySettings settings, long bookId, Dictionary<string, object> metadata);
-        void UploadBookCover(GrimmorySettings settings, long bookId, byte[] image, string fileName);
-        byte[] GetBookCover(GrimmorySettings settings, long bookId);
-        string BuildCoverUrl(GrimmorySettings settings, long bookId);
+        void UploadBookCover(GrimmorySettings settings, GrimmoryBook book, byte[] image, string fileName);
+        byte[] GetBookCover(GrimmorySettings settings, GrimmoryBook book);
+        string BuildCoverUrl(GrimmorySettings settings, GrimmoryBook book);
         ValidationFailure Test(GrimmorySettings settings);
     }
 
@@ -137,11 +137,11 @@ namespace NzbDrone.Core.Notifications.Grimmory
             _logger.Debug("Updated Grimmory metadata for book {0}", bookId);
         }
 
-        public void UploadBookCover(GrimmorySettings settings, long bookId, byte[] image, string fileName)
+        public void UploadBookCover(GrimmorySettings settings, GrimmoryBook book, byte[] image, string fileName)
         {
             ExecuteWithAuth(settings, token =>
             {
-                var request = BuildRequest(settings, $"api/v1/books/{bookId}/metadata/cover/upload", token)
+                var request = BuildRequest(settings, $"api/v1/books/{book.Id}/metadata/{book.CoverSlot}/upload", token)
                     .Post()
                     .AddFormUpload("file", fileName, image, GetImageContentType(fileName))
                     .Build();
@@ -149,16 +149,35 @@ namespace NzbDrone.Core.Notifications.Grimmory
                 return _httpClient.Execute(request);
             });
 
-            _logger.Debug("Uploaded Grimmory cover for book {0}", bookId);
+            _logger.Debug("Uploaded Grimmory {0} for book {1}", book.CoverSlot, book.Id);
         }
 
-        public byte[] GetBookCover(GrimmorySettings settings, long bookId)
+        public byte[] GetBookCover(GrimmorySettings settings, GrimmoryBook book)
+        {
+            var cover = FetchCover(settings, book.Id, book.CoverSlot);
+
+            if (cover == null && book.IsAudiobook)
+            {
+                cover = FetchCover(settings, book.Id, "cover");
+            }
+
+            return cover;
+        }
+
+        public string BuildCoverUrl(GrimmorySettings settings, GrimmoryBook book)
+        {
+            var token = GetAccessToken(settings, false);
+
+            return $"{HttpUri.CombinePath(settings.Url, $"api/v1/media/book/{book.Id}/{book.CoverSlot}")}?token={token}";
+        }
+
+        private byte[] FetchCover(GrimmorySettings settings, long bookId, string slot)
         {
             try
             {
                 var response = ExecuteWithAuth(settings, token =>
                 {
-                    var request = BuildRequest(settings, $"api/v1/media/book/{bookId}/cover", token).Build();
+                    var request = BuildRequest(settings, $"api/v1/media/book/{bookId}/{slot}", token).Build();
                     return _httpClient.Get(request);
                 });
 
@@ -168,13 +187,6 @@ namespace NzbDrone.Core.Notifications.Grimmory
             {
                 return null;
             }
-        }
-
-        public string BuildCoverUrl(GrimmorySettings settings, long bookId)
-        {
-            var token = GetAccessToken(settings, false);
-
-            return $"{HttpUri.CombinePath(settings.Url, $"api/v1/media/book/{bookId}/cover")}?token={token}";
         }
 
         public ValidationFailure Test(GrimmorySettings settings)
@@ -340,6 +352,16 @@ namespace NzbDrone.Core.Notifications.Grimmory
         [JsonProperty("metadata")]
         public GrimmoryBookMetadata Metadata { get; set; }
 
+        // Grimmory keeps a separate cover, lock and upload endpoint for books whose primary
+        // file is an audiobook, and its UI shows only that one for them.
+        public bool IsAudiobook => string.Equals(PrimaryFile?.BookType, "AUDIOBOOK", StringComparison.OrdinalIgnoreCase);
+
+        public string CoverSlot => IsAudiobook ? "audiobook-cover" : "cover";
+
+        public string CoverLockField => IsAudiobook ? "audiobookCoverLocked" : "coverLocked";
+
+        public bool CoverIsLocked => IsAudiobook ? Metadata?.AudiobookCoverLocked == true : Metadata?.CoverLocked == true;
+
         public IEnumerable<GrimmoryBookFile> AllFiles()
         {
             if (PrimaryFile != null)
@@ -364,6 +386,9 @@ namespace NzbDrone.Core.Notifications.Grimmory
 
         [JsonProperty("folderBased")]
         public bool FolderBased { get; set; }
+
+        [JsonProperty("bookType")]
+        public string BookType { get; set; }
 
         public string RelativePath()
         {
@@ -417,6 +442,9 @@ namespace NzbDrone.Core.Notifications.Grimmory
 
         [JsonProperty("coverLocked")]
         public bool? CoverLocked { get; set; }
+
+        [JsonProperty("audiobookCoverLocked")]
+        public bool? AudiobookCoverLocked { get; set; }
 
         [JsonProperty("coverUpdatedOn")]
         public DateTime? CoverUpdatedOn { get; set; }
