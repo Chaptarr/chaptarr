@@ -231,6 +231,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 EstimatedOutputSize = 1024
             };
 
+            public M4bMergeSourceInfo ProbeMergeSources(string[] inputFiles) => new();
+
             public ConversionResult ConvertToM4b(string[] inputFiles, string outputFile, ConversionOptions options = null)
             {
                 ConvertCalls++;
@@ -261,6 +263,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                 TotalInputSize = 1024,
                 EstimatedOutputSize = 1024
             };
+
+            public M4bMergeSourceInfo MergeSources { get; set; } = new();
+
+            public M4bMergeSourceInfo ProbeMergeSources(string[] inputFiles) => MergeSources;
 
             public ConversionResult ConvertToM4b(string[] inputFiles, string outputFile, ConversionOptions options = null)
             {
@@ -2581,6 +2587,185 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(chaptersTxt, Does.Contain("00:05:00.000 Chapter 1"));
                 Assert.That(chaptersTxt, Does.Contain("00:15:00.000 Chapter 2"));
                 Assert.That(conversion.LastOptions.TagOptions.ProviderChapterCount, Is.EqualTo(3));
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+
+                if (Directory.Exists(destinationDir))
+                {
+                    Directory.Delete(destinationDir, recursive: true);
+                }
+            }
+        }
+
+        [Test]
+        public void should_merge_multi_part_m4b_with_embedded_chapters_without_reencoding()
+        {
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"m4b-merge-{Guid.NewGuid():N}");
+            var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
+            var destinationPath = Path.Combine(destinationDir, "Black Sheep.m4b");
+            Directory.CreateDirectory(tempDir);
+            Directory.CreateDirectory(destinationDir);
+
+            var part1 = Path.Combine(tempDir, "Black Sheep (1).m4b");
+            var part2 = Path.Combine(tempDir, "Black Sheep (2).m4b");
+            File.WriteAllText(part1, "fake m4b");
+            File.WriteAllText(part2, "fake m4b");
+
+            try
+            {
+                var (qualityProfile, author, book, edition) = CreateAudiobookConversionGraph(26);
+                qualityProfile.MergeMultiPartFiles = true;
+
+                var conversion = new SuccessfulM4bConversionService
+                {
+                    MergeSources = new M4bMergeSourceInfo
+                    {
+                        CanCopyAudio = true,
+                        EmbeddedChapterCount = 2,
+                        ChaptersTxtContent = "## total-length 00:20:00.000\n00:00:00.000 Opening\n00:10:00.000 Chapter 1"
+                    }
+                };
+
+                var service = new ImportApprovedBooks(
+                    new StubMediaFileService(),
+                    new StubMetadataTagService(),
+                    new StubMediaInfoExtractor(),
+                    Proxy<IAuthorService>(),
+                    Proxy<IBookService>(),
+                    CreateEditionService(new List<Edition> { edition }),
+                    Proxy<IRecycleBinProvider>(),
+                    Proxy<IExtraService>(),
+                    new StubMoveBookFiles { DestinationPath = destinationPath },
+                    Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                    new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(),
+                    Proxy<ISeriesBookLinkService>(),
+                    Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(),
+                    conversion,
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+
+                LocalBook LocalBookFor(string path) => new()
+                {
+                    Path = path,
+                    Book = book,
+                    Author = author,
+                    Edition = edition,
+                    Quality = new QualityModel { Quality = Quality.M4B, Revision = new Revision() },
+                    RawTags = new RawFileTags
+                    {
+                        AllTags = new Dictionary<string, List<string>>
+                        {
+                            ["title"] = new() { "Black Sheep" },
+                            ["album"] = new() { "Black Sheep (Unabridged)" }
+                        }
+                    }
+                };
+
+                service.Import(
+                    new List<ImportDecision<LocalBook>>
+                    {
+                        new(LocalBookFor(part1)),
+                        new(LocalBookFor(part2))
+                    },
+                    replaceExisting: false,
+                    downloadClientItem: new DownloadClientItem { DownloadId = "m4b-merge" },
+                    importMode: ImportMode.Move,
+                    cancellationToken: CancellationToken.None);
+
+                Assert.That(conversion.ConvertCalls, Is.EqualTo(1));
+                Assert.That(conversion.LastOptions.NoConversion, Is.True);
+                Assert.That(conversion.LastOptions.TagOptions.Name, Is.EqualTo("Black Sheep"));
+                Assert.That(conversion.LastOptions.TagOptions.RemoveTags, Is.EquivalentTo(new[] { "track", "tracks", "disk", "disks" }));
+                Assert.That(conversion.LastOptions.TagOptions.UseFilenamesAsChapters, Is.False);
+
+                var chaptersPath = Path.Combine(Path.GetDirectoryName(conversion.LastInputFiles[0]), "chapters.txt");
+                Assert.That(File.ReadAllText(chaptersPath), Does.Contain("00:10:00.000 Chapter 1"));
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+
+                if (Directory.Exists(destinationDir))
+                {
+                    Directory.Delete(destinationDir, recursive: true);
+                }
+            }
+        }
+
+        [Test]
+        public void should_import_parts_unmerged_when_optional_m4b_merge_fails()
+        {
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"m4b-merge-fails-{Guid.NewGuid():N}");
+            var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
+            var destinationPath = Path.Combine(destinationDir, "Black Sheep.m4b");
+            Directory.CreateDirectory(tempDir);
+            Directory.CreateDirectory(destinationDir);
+
+            var part1 = Path.Combine(tempDir, "Black Sheep (1).m4b");
+            var part2 = Path.Combine(tempDir, "Black Sheep (2).m4b");
+            File.WriteAllText(part1, "fake m4b");
+            File.WriteAllText(part2, "fake m4b");
+
+            try
+            {
+                var (qualityProfile, author, book, edition) = CreateAudiobookConversionGraph(27);
+                qualityProfile.MergeMultiPartFiles = true;
+
+                var conversion = new FailingM4bConversionService();
+                var service = new ImportApprovedBooks(
+                    new StubMediaFileService(),
+                    new StubMetadataTagService(),
+                    new StubMediaInfoExtractor(),
+                    Proxy<IAuthorService>(),
+                    Proxy<IBookService>(),
+                    CreateEditionService(new List<Edition> { edition }),
+                    Proxy<IRecycleBinProvider>(),
+                    Proxy<IExtraService>(),
+                    new StubMoveBookFiles { DestinationPath = destinationPath },
+                    Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                    new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(),
+                    Proxy<ISeriesBookLinkService>(),
+                    Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(),
+                    conversion,
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+
+                LocalBook LocalBookFor(string path) => new()
+                {
+                    Path = path,
+                    Book = book,
+                    Author = author,
+                    Edition = edition,
+                    Quality = new QualityModel { Quality = Quality.M4B, Revision = new Revision() }
+                };
+
+                var results = service.Import(
+                    new List<ImportDecision<LocalBook>>
+                    {
+                        new(LocalBookFor(part1)),
+                        new(LocalBookFor(part2))
+                    },
+                    replaceExisting: false,
+                    downloadClientItem: new DownloadClientItem { DownloadId = "m4b-merge-fails" },
+                    importMode: ImportMode.Move,
+                    cancellationToken: CancellationToken.None);
+
+                Assert.That(conversion.ConvertCalls, Is.EqualTo(1));
+                Assert.That(results.SelectMany(r => r.Errors), Does.Not.Contain("synthetic conversion failure"));
+                Assert.That(results.Select(r => r.ImportDecision.Item.Path), Is.EquivalentTo(new[] { part1, part2 }));
+                Assert.That(Directory.Exists(Path.Combine(destinationDir, ".chaptarr-conversions")), Is.False);
             }
             finally
             {

@@ -16,6 +16,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private const int MaxManifestTagFieldsPerFile = 48;
         private const int MaxManifestValuesPerField = 4;
         private const int MaxManifestValueLength = 500;
+        private static readonly string[] TitleTagKeys = { "TITLE", "MP4:©nam", "ID3v2:TIT2", "XIPH:TITLE", "APE:Title" };
 
         public static ConversionTagOptions BuildOptions(
             IEnumerable<LocalBook> sourceBooks,
@@ -37,6 +38,46 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             options.Mode = normalizedMode;
             RefreshManifestJson(options, sources);
             return options;
+        }
+
+        public static void ApplyMultiPartMergeTags(ConversionTagOptions options, IEnumerable<LocalBook> sourceBooks)
+        {
+            if (options == null)
+            {
+                return;
+            }
+
+            options.RemoveTags = new List<string> { "track", "tracks", "disk", "disks" };
+
+            if (options.IgnoreSourceTags)
+            {
+                return;
+            }
+
+            var titles = (sourceBooks ?? Enumerable.Empty<LocalBook>())
+                .Where(source => source != null)
+                .Select(source => GetSingleTitleTag(ToCaseInsensitiveTags(source.RawTags?.AllTags)))
+                .ToList();
+
+            if (titles.Count > 1 &&
+                titles.All(title => title.IsNotNullOrWhiteSpace()) &&
+                titles.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
+            {
+                options.Name = titles[0];
+            }
+        }
+
+        private static string GetSingleTitleTag(Dictionary<string, List<string>> tags)
+        {
+            foreach (var key in TitleTagKeys)
+            {
+                if (tags.TryGetValue(key, out var values))
+                {
+                    return values.Count == 1 ? values[0] : null;
+                }
+            }
+
+            return null;
         }
 
         public static void RefreshManifestJson(ConversionTagOptions options, IEnumerable<LocalBook> sourceBooks)

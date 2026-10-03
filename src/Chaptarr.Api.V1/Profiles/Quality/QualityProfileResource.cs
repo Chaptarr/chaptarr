@@ -17,6 +17,7 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         public bool PreferCustomFormatsOverQuality { get; set; }
         public bool ConvertMp3ToM4b { get; set; }
         public int? ConvertToQualityId { get; set; }
+        public bool MergeMultiPartFiles { get; set; }
         public int Cutoff { get; set; }
         public List<QualityProfileQualityItemResource> Items { get; set; }
         public int MinFormatScore { get; set; }
@@ -79,6 +80,7 @@ namespace Chaptarr.Api.V1.Profiles.Quality
                 PreferCustomFormatsOverQuality = model.ProfileType == ProfileType.Audiobook && model.PreferCustomFormatsOverQuality,
                 ConvertMp3ToM4b = model.ConvertMp3ToM4b,
                 ConvertToQualityId = convertToQualityId,
+                MergeMultiPartFiles = model.MergeMultiPartFiles,
                 Cutoff = cutoff,
                 Items = items.ConvertAll(ToResource),
                 MinFormatScore = model.MinFormatScore,
@@ -140,6 +142,7 @@ namespace Chaptarr.Api.V1.Profiles.Quality
                 // toggle. ConvertToQualityId is the canonical conversion target.
                 ConvertMp3ToM4b = convertToQualityId == NzbDrone.Core.Qualities.Quality.M4B.Id,
                 ConvertToQualityId = convertToQualityId,
+                MergeMultiPartFiles = resource.ProfileType == ProfileType.Audiobook && resource.MergeMultiPartFiles,
                 Cutoff = resource.Cutoff,
                 Items = (resource.Items ?? new List<QualityProfileQualityItemResource>()).ConvertAll(ToModel),
                 MinFormatScore = resource.MinFormatScore,

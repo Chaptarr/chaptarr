@@ -39,6 +39,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public bool CanConvert(string[] inputFiles) => true;
             public ConversionEstimate EstimateConversion(string[] inputFiles) => new() { CanConvert = true };
+            public M4bMergeSourceInfo ProbeMergeSources(string[] inputFiles) => new();
         }
 
         private sealed class BlockingConversionService : IM4bConversionService
@@ -59,6 +60,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public bool CanConvert(string[] inputFiles) => true;
             public ConversionEstimate EstimateConversion(string[] inputFiles) => new() { CanConvert = true };
+            public M4bMergeSourceInfo ProbeMergeSources(string[] inputFiles) => new();
         }
 
         private sealed class TokenRecordingConversionService : IM4bConversionService
@@ -90,6 +92,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public bool CanConvert(string[] inputFiles) => true;
             public ConversionEstimate EstimateConversion(string[] inputFiles) => new() { CanConvert = true };
+            public M4bMergeSourceInfo ProbeMergeSources(string[] inputFiles) => new();
         }
 
         private class RecordingCommandQueueProxy : DispatchProxy
