@@ -98,7 +98,7 @@ namespace Chaptarr.Core.Test.Api
 
             var ex = Assert.Throws<ValidationException>(() => Validate(controller, resource));
 
-            Assert.That(ex.Message, Does.Contain("minRefreshInterval is fixed by the list type"));
+            Assert.That(ex.Message, Does.Contain("minRefreshInterval is read-only"));
             Assert.That(ex.Message, Does.Contain("12:00:00"));
         }
 

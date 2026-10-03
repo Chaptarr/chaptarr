@@ -38,8 +38,8 @@ namespace Chaptarr.Api.V1.ImportLists
                 SharedValidator.RuleFor(c => c.MetadataProfileId).SetValidator(metadataProfileExistsValidator);
             });
 
-            // MinRefreshInterval is a fixed, per-list-type constant (see each IImportList implementation)
-            // and is intentionally excluded from persistence (TableMapping ignores it). Prior to this
+            // MinRefreshInterval is computed by each IImportList implementation (usually a per-list-type
+            // constant) and is intentionally excluded from persistence (TableMapping ignores it). Prior to this
             // check, a PUT changing it was silently accepted (202) with the change discarded - the
             // response goes on to echo the provider's value, not the one that was requested. Reject a
             // real change explicitly instead so the client gets a clear error. TimeSpan.Zero (the value
@@ -48,7 +48,7 @@ namespace Chaptarr.Api.V1.ImportLists
             // keeps clients that only send the fields they mean to change from getting a spurious 400.
             PutValidator.RuleFor(c => c.MinRefreshInterval)
                 .Must((resource, value) => value == default || IsUnchangedOrUnknownList(resource.Id, value))
-                .WithMessage(resource => $"minRefreshInterval is fixed by the list type and cannot be changed (current value: {GetProviderMinRefreshInterval(resource.Id)})");
+                .WithMessage(resource => $"minRefreshInterval is read-only and cannot be set directly (current value: {GetProviderMinRefreshInterval(resource.Id)}). If this list type has a refresh interval setting, change that instead.");
         }
 
         private bool IsUnchangedOrUnknownList(int id, TimeSpan value)
