@@ -56,7 +56,7 @@ Chaptarr is not compatible with Readarr's metadata sources. It uses its own modu
 
 Pull the image:
 ```bash
-docker pull chaptarr/chaptarr:latest
+docker pull chaptarr/chaptarr:develop
 ```
 
 Run with Docker:
@@ -71,7 +71,7 @@ docker run -d \
   -v /path/to/ebooks:/ebooks \
   -v /path/to/downloads:/downloads \
   --restart unless-stopped \
-  chaptarr/chaptarr:latest
+  chaptarr/chaptarr:develop
 ```
 
 Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarr sh -c 'id; touch /audiobooks/.chaptarr-write-test && rm /audiobooks/.chaptarr-write-test'`.
