@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Indexers;
+using Chaptarr.Core.Test.DecisionEngine;
 using Chaptarr.Http.REST;
 using BadRequestException = Chaptarr.Http.REST.BadRequestException;
 using Microsoft.AspNetCore.Http;
@@ -17,8 +18,10 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Delay;
 using NzbDrone.Core.Qualities;
 using NzbDrone.SignalR;
 
@@ -31,6 +34,49 @@ namespace Chaptarr.Core.Test.Indexers
         private const int IndexerId = 9;
         private const string SearchId = "7f2f1c72-3491-451a-946f-4222fc0dcb73";
         private const string SharedGuid = "same-indexer-guid";
+
+        [TestCase(BookMediaType.Ebook)]
+        [TestCase(BookMediaType.Audiobook)]
+        public async Task preferred_resource_and_stream_should_follow_torrent_health_before_size(BookMediaType mediaType)
+        {
+            var delay = DispatchProxy.Create<IDelayProfileService, DownloadDecisionSizeTieBreakerFixture.DelayProxy>();
+            var prioritizer = new DownloadDecisionPriorizationService(null, delay, null, LogManager.GetCurrentClassLogger());
+            var harness = CreateHarness(prioritizer: prioritizer);
+            var author = CreateAuthor();
+            var book = CreateBook(101, "Ranking test", author);
+            book.MediaType = mediaType;
+            var large = CreateDecision(author, book, "large");
+            var small = CreateDecision(author, book, "healthy");
+            large.RemoteBook.Release.Size = 400_000_000;
+            small.RemoteBook.Release.Size = 4_000_000;
+            foreach (var decision in new[] { large, small })
+            {
+                decision.RemoteBook.Release.DownloadProtocol = DownloadProtocol.Torrent;
+                decision.RemoteBook.ParsedBookInfo.Quality = new QualityModel(mediaType == BookMediaType.Ebook ? Quality.PDF : Quality.MP3);
+            }
+
+            ((TorrentInfo)large.RemoteBook.Release).Seeders = 5;
+            ((TorrentInfo)small.RemoteBook.Release).Seeders = 500;
+            harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
+            {
+                await onSearchStarted(new[] { book });
+                await onBookCompleted(book, new List<DownloadDecision> { large, small }, null);
+            };
+            var response = (AuthorReleaseSearchResponse)await harness.Controller.GetReleases(
+                null, AuthorId, mediaType: mediaType.ToString().ToLowerInvariant(), searchId: SearchId);
+            var streamed = GroupedMessages(harness.Broadcaster).SelectMany(message => message.BookResults)
+                .Where(group => group.Releases.Count > 0);
+            foreach (var group in response.BookResults.Concat(streamed))
+            {
+                Assert.That(group.Releases.Single(release => release.IsPreferredChoice).Guid, Is.EqualTo("healthy"));
+                Assert.That(group.Releases.First().AutoPickReasons, Is.EqualTo(new[] { "Better torrent health" }));
+            }
+
+            harness.Search.CancellableFlatHandler = (_, _, _, _, _, _) => Task.FromResult(new List<DownloadDecision> { large, small });
+            var legacy = (ReleaseSearchResponse)await harness.Controller.GetReleases(null, AuthorId, mediaType: mediaType.ToString().ToLowerInvariant());
+            Assert.That(legacy.Releases.Single(release => release.IsPreferredChoice).Guid, Is.EqualTo("healthy"));
+            Assert.That(legacy.Releases.First().AutoPickReasons, Is.EqualTo(new[] { "Better torrent health" }));
+        }
 
         [Test]
         public async Task empty_author_catalog_should_publish_an_empty_roster_and_complete_response()
@@ -716,10 +762,10 @@ namespace Chaptarr.Core.Test.Indexers
             }, rejections);
         }
 
-        private static Harness CreateHarness(CancellationToken cancellationToken = default, ICacheManager cacheManager = null)
+        private static Harness CreateHarness(CancellationToken cancellationToken = default, ICacheManager cacheManager = null, IPrioritizeDownloadDecision prioritizer = null)
         {
             var search = DispatchProxy.Create<ISearchForReleases, SearchServiceProxy>();
-            var prioritize = DispatchProxy.Create<IPrioritizeDownloadDecision, PrioritizeProxy>();
+            var prioritize = prioritizer ?? DispatchProxy.Create<IPrioritizeDownloadDecision, PrioritizeProxy>();
             var broadcaster = new RecordingBroadcaster();
             var downloads = new RecordingDownloadService();
             var controller = new ReleaseController(
