@@ -91,22 +91,55 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                 Settings.EbookImportedCategory);
         }
 
-        private bool TorrentExistsInClient(string hash)
+        private bool TryAdoptExistingTorrent(RemoteBook remoteBook, string hash, string category, DownloadClientException addException)
         {
             if (hash.IsNullOrWhiteSpace())
             {
                 return false;
             }
 
+            string existingCategory;
+            bool existsElsewhere;
+
             try
             {
-                return Proxy.GetTorrents(Settings).Any(t => hash.Equals(t.Hash, StringComparison.OrdinalIgnoreCase));
+                existingCategory = new[] { Settings.AudiobookCategory, Settings.EbookCategory, Settings.AudiobookImportedCategory, Settings.EbookImportedCategory }
+                    .Where(c => c.IsNotNullOrWhiteSpace())
+                    .Distinct(StringComparer.InvariantCultureIgnoreCase)
+                    .FirstOrDefault(c => Proxy.GetTorrents(Settings, c).Any(t => hash.Equals(t.Hash, StringComparison.OrdinalIgnoreCase)));
+
+                existsElsewhere = existingCategory == null && Proxy.IsTorrentLoaded(hash.ToLower(), Settings);
             }
             catch (Exception ex)
             {
                 _logger.Debug(ex, "Unable to check whether torrent {0} already exists in qBittorrent", hash);
                 return false;
             }
+
+            if (existsElsewhere)
+            {
+                throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent already has this torrent outside Chaptarr's categories", addException);
+            }
+
+            if (existingCategory == null)
+            {
+                return false;
+            }
+
+            if (category.IsNotNullOrWhiteSpace() && !category.Equals(existingCategory, StringComparison.InvariantCultureIgnoreCase))
+            {
+                try
+                {
+                    Proxy.SetTorrentLabel(hash.ToLower(), category, Settings);
+                }
+                catch (DownloadClientException ex)
+                {
+                    _logger.Warn(ex, "Failed to move existing torrent {0} from category \"{1}\" to \"{2}\" in qBittorrent.", hash, existingCategory, category);
+                }
+            }
+
+            _logger.Info("qBittorrent already has torrent {0} in Chaptarr category \"{1}\"; continuing with the existing download instead of failing the grab", hash, existingCategory);
+            return true;
         }
 
         protected override string AddFromMagnetLink(RemoteBook remoteBook, string hash, string magnetLink)
@@ -131,9 +164,12 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             {
                 throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the magnet link due to a conflict", ex);
             }
-            catch (DownloadClientException) when (TorrentExistsInClient(hash))
+            catch (DownloadClientException ex)
             {
-                _logger.Info("qBittorrent already has torrent {0}; adopting the existing download instead of failing the grab", hash);
+                if (!TryAdoptExistingTorrent(remoteBook, hash, category, ex))
+                {
+                    throw;
+                }
             }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
@@ -200,9 +236,12 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             {
                 throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the torrent file due to a conflict", ex);
             }
-            catch (DownloadClientException) when (TorrentExistsInClient(hash))
+            catch (DownloadClientException ex)
             {
-                _logger.Info("qBittorrent already has torrent {0}; adopting the existing download instead of failing the grab", hash);
+                if (!TryAdoptExistingTorrent(remoteBook, hash, category, ex))
+                {
+                    throw;
+                }
             }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
