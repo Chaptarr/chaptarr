@@ -457,6 +457,15 @@
       } else if (ssoError === "cookie_or_proxy_issue") {
         message =
           "SSO sign-in failed. This is often caused by blocked cookies or a reverse proxy misconfiguration.";
+      } else if (ssoError === "oidc_email_missing") {
+        message =
+          "SSO sign-in failed. Your identity provider did not send an email claim, which Chaptarr needs to check its email allow-list. Make sure the 'email' scope is granted.";
+      } else if (ssoError === "oidc_email_not_verified") {
+        message =
+          "SSO sign-in failed. Your identity provider reported this account's email as not verified (email_verified=false). Chaptarr does not match unverified emails against its allow-list; verify the email at your identity provider.";
+      } else if (ssoError === "oidc_user_not_allowed") {
+        message =
+          "SSO sign-in failed. This account's email is not in Chaptarr's allowed emails or domains.";
       }
 
       ssoFailedDiv.textContent = message;

@@ -31,6 +31,9 @@ namespace Chaptarr.Http.Authentication
         internal const string OidcOpenIdConnectScheme = "OidcOpenIdConnect";
         internal const string UiAuthScheme = "UIAuth";
         internal const string AuthStampClaim = "auth_stamp";
+        private const string OidcEmailRequiredFailure = "Email claim is required to sign in.";
+        private const string OidcVerifiedEmailRequiredFailure = "Verified email claim is required to sign in.";
+        private const string OidcUserNotAllowedFailure = "User is not allowed to sign in.";
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private static readonly Regex CookieNameRegex = new Regex(@"[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -352,16 +355,7 @@ namespace Chaptarr.Http.Authentication
 
                     options.Events = new OpenIdConnectEvents
                     {
-                        OnTicketReceived = context =>
-                        {
-                            var failure = ValidateAndNormalizeOidcPrincipal(context.Principal, configFileProvider);
-                            if (failure.IsNotNullOrWhiteSpace())
-                            {
-                                context.Fail(failure);
-                            }
-
-                            return System.Threading.Tasks.Task.CompletedTask;
-                        },
+                        OnTicketReceived = context => HandleOidcTicketReceived(context, configFileProvider),
                         OnRemoteFailure = context =>
                         {
                             var baseException = context.Failure?.GetBaseException();
@@ -398,18 +392,8 @@ namespace Chaptarr.Http.Authentication
                             LogManager.GetCurrentClassLogger()
                                 .Warn(context.Failure, "OIDC remote login failed: {0}", exceptionMessage);
 
-                            var urlBase = configFileProvider.UrlBase ?? string.Empty;
-                            var returnUrl = context.Properties?.RedirectUri;
-
-                            if (string.IsNullOrWhiteSpace(returnUrl) || !returnUrl.StartsWith("/"))
-                            {
-                                returnUrl = urlBase + "/";
-                            }
-
-                            var loginUrl = $"{urlBase}/login?ssoFailed=true&ssoError={Uri.EscapeDataString(errorCode)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
-
                             context.HandleResponse();
-                            context.Response.Redirect(loginUrl);
+                            context.Response.Redirect(BuildSsoFailedLoginUrl(configFileProvider, context.Properties?.RedirectUri, errorCode));
                             return System.Threading.Tasks.Task.CompletedTask;
                         }
                     };
@@ -508,6 +492,48 @@ namespace Chaptarr.Http.Authentication
                 });
         }
 
+        private static System.Threading.Tasks.Task HandleOidcTicketReceived(TicketReceivedContext context, IConfigFileProvider configFileProvider)
+        {
+            var failure = ValidateAndNormalizeOidcPrincipal(context.Principal, configFileProvider);
+            if (failure.IsNullOrWhiteSpace())
+            {
+                return System.Threading.Tasks.Task.CompletedTask;
+            }
+
+            // TicketReceivedContext.Fail() does not stop the remote handler: ASP.NET only honours
+            // HandleResponse()/SkipHandler() here and otherwise signs the ticket in regardless. That
+            // issued a cookie without the auth_stamp claim, which the cookie validator then rejected,
+            // so a policy rejection surfaced as a silent redirect loop back to /login.
+            Logger.Warn("OIDC sign-in rejected by Chaptarr policy: {0}", failure);
+
+            context.HandleResponse();
+            context.Response.Redirect(BuildSsoFailedLoginUrl(configFileProvider, context.ReturnUri, GetOidcPolicyErrorCode(failure)));
+            return System.Threading.Tasks.Task.CompletedTask;
+        }
+
+        private static string GetOidcPolicyErrorCode(string failure)
+        {
+            return failure switch
+            {
+                OidcEmailRequiredFailure => "oidc_email_missing",
+                OidcVerifiedEmailRequiredFailure => "oidc_email_not_verified",
+                OidcUserNotAllowedFailure => "oidc_user_not_allowed",
+                _ => "sso_failed"
+            };
+        }
+
+        private static string BuildSsoFailedLoginUrl(IConfigFileProvider configFileProvider, string returnUrl, string errorCode)
+        {
+            var urlBase = configFileProvider.UrlBase ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(returnUrl) || !returnUrl.StartsWith("/"))
+            {
+                returnUrl = urlBase + "/";
+            }
+
+            return $"{urlBase}/login?ssoFailed=true&ssoError={Uri.EscapeDataString(errorCode)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        }
+
         private static string ValidateAndNormalizeOidcPrincipal(ClaimsPrincipal principal, IConfigFileProvider configFileProvider)
         {
             var allowedEmails = ParseCsvToSet(configFileProvider.OidcAllowedEmails);
@@ -521,21 +547,21 @@ namespace Chaptarr.Http.Authentication
 
             if ((requiresTrustedEmail || requiresVerifiedEmail) && string.IsNullOrWhiteSpace(email))
             {
-                return "Email claim is required to sign in.";
+                return OidcEmailRequiredFailure;
             }
 
             var emailVerified = GetEmailVerifiedClaimValue(principal);
 
             if ((requiresTrustedEmail || requiresVerifiedEmail) && IsEmailExplicitlyUnverified(emailVerified))
             {
-                return "Verified email claim is required to sign in.";
+                return OidcVerifiedEmailRequiredFailure;
             }
 
             if (string.IsNullOrWhiteSpace(emailVerified))
             {
                 if (requiresVerifiedEmail)
                 {
-                    return "Verified email claim is required to sign in.";
+                    return OidcVerifiedEmailRequiredFailure;
                 }
 
                 if (requiresTrustedEmail)
@@ -546,7 +572,7 @@ namespace Chaptarr.Http.Authentication
 
             if (allowedEmails.Count > 0 && !allowedEmails.Contains(email.ToLowerInvariant()))
             {
-                return "User is not allowed to sign in.";
+                return OidcUserNotAllowedFailure;
             }
 
             if (allowedDomains.Count > 0)
@@ -555,7 +581,7 @@ namespace Chaptarr.Http.Authentication
                 var domain = at >= 0 && at < email.Length - 1 ? email[(at + 1)..] : string.Empty;
                 if (string.IsNullOrWhiteSpace(domain) || !allowedDomains.Contains(domain.ToLowerInvariant()))
                 {
-                    return "User is not allowed to sign in.";
+                    return OidcUserNotAllowedFailure;
                 }
             }
 
