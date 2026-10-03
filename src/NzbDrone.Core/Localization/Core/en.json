@@ -1130,7 +1130,7 @@
   "Medium": "Medium",
   "Member": "Member",
   "MergeMultiPartFiles": "Create Single File",
-  "MergeMultiPartFilesHelpText": "All multi-part downloads will be merged into a single M4B file",
+  "MergeMultiPartFilesHelpText": "Merge multi-part M4B downloads into a single M4B file on import",
   "Message": "Message",
   "Metadata": "Metadata",
   "MetadataConsumers": "Metadata Consumers",

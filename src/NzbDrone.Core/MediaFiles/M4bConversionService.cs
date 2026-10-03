@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using NLog;
@@ -18,6 +19,7 @@ namespace NzbDrone.Core.MediaFiles
         ConversionResult ConvertToM4b(string[] inputFiles, string outputFile, ConversionOptions options = null);
         bool CanConvert(string[] inputFiles);
         ConversionEstimate EstimateConversion(string[] inputFiles);
+        M4bMergeSourceInfo ProbeMergeSources(string[] inputFiles);
     }
 
     public enum ConversionFailureCategory
@@ -257,6 +259,197 @@ namespace NzbDrone.Core.MediaFiles
             return estimate;
         }
 
+        public M4bMergeSourceInfo ProbeMergeSources(string[] inputFiles)
+        {
+            var info = new M4bMergeSourceInfo();
+            if (inputFiles == null || inputFiles.Length < 2)
+            {
+                return info;
+            }
+
+            var formats = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var chapters = new List<(TimeSpan Start, string Title)>();
+            var offset = TimeSpan.Zero;
+            var embeddedChapterCount = 0;
+
+            foreach (var inputFile in inputFiles)
+            {
+                var source = ProbeMergeSource(inputFile);
+                if (source == null || source.Duration <= TimeSpan.Zero)
+                {
+                    return new M4bMergeSourceInfo();
+                }
+
+                formats.Add(source.AudioFormat ?? string.Empty);
+
+                var partChapters = source.Chapters.Where(chapter => chapter.Start < source.Duration).ToList();
+                if (partChapters.Count > 0)
+                {
+                    embeddedChapterCount += partChapters.Count;
+                    chapters.AddRange(partChapters.Select(chapter =>
+                        (offset + chapter.Start, chapter.Title.IsNullOrWhiteSpace() ? Path.GetFileNameWithoutExtension(inputFile) : chapter.Title)));
+                }
+                else
+                {
+                    chapters.Add((offset, Path.GetFileNameWithoutExtension(inputFile)));
+                }
+
+                offset += source.Duration;
+            }
+
+            info.CanCopyAudio = formats.Count == 1 && formats.Single().IsNotNullOrWhiteSpace();
+
+            if (embeddedChapterCount > 0)
+            {
+                info.EmbeddedChapterCount = embeddedChapterCount;
+                info.ChaptersTxtContent = BuildChaptersTxt(chapters, offset);
+            }
+
+            return info;
+        }
+
+        private MergeSourceProbe ProbeMergeSource(string inputFile)
+        {
+            try
+            {
+                var output = _externalTools.ExecuteFFprobe(
+                    new[]
+                    {
+                        "-v", "error",
+                        "-select_streams", "a:0",
+                        "-show_entries", "format=duration:stream=codec_name,sample_rate,channels",
+                        "-show_chapters",
+                        "-of", "json",
+                        inputFile
+                    },
+                    timeoutMs: 30000);
+
+                if (output.IsNullOrWhiteSpace())
+                {
+                    return null;
+                }
+
+                using var document = JsonDocument.Parse(output);
+                var root = document.RootElement;
+                var probe = new MergeSourceProbe();
+
+                if (root.TryGetProperty("format", out var format) &&
+                    TryGetSeconds(format, "duration", out var duration))
+                {
+                    probe.Duration = duration;
+                }
+
+                if (root.TryGetProperty("streams", out var streams) &&
+                    streams.ValueKind == JsonValueKind.Array &&
+                    streams.GetArrayLength() > 0)
+                {
+                    var stream = streams[0];
+                    var codec = GetJsonString(stream, "codec_name");
+                    var sampleRate = GetJsonString(stream, "sample_rate");
+                    var channels = GetJsonString(stream, "channels");
+                    if (codec.IsNotNullOrWhiteSpace() && sampleRate.IsNotNullOrWhiteSpace() && channels.IsNotNullOrWhiteSpace())
+                    {
+                        probe.AudioFormat = $"{codec}/{sampleRate}/{channels}";
+                    }
+                }
+
+                if (root.TryGetProperty("chapters", out var chapters) &&
+                    chapters.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var chapter in chapters.EnumerateArray())
+                    {
+                        if (!TryGetSeconds(chapter, "start_time", out var start) || start < TimeSpan.Zero)
+                        {
+                            continue;
+                        }
+
+                        var title = chapter.TryGetProperty("tags", out var tags) ? GetJsonString(tags, "title") : null;
+                        probe.Chapters.Add((start, SanitizeChapterTitle(title)));
+                    }
+
+                    probe.Chapters.Sort((left, right) => left.Start.CompareTo(right.Start));
+                }
+
+                return probe;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to probe multi-part M4B source {0}", inputFile);
+                return null;
+            }
+        }
+
+        private static bool TryGetSeconds(JsonElement element, string propertyName, out TimeSpan value)
+        {
+            value = TimeSpan.Zero;
+            var raw = GetJsonString(element, propertyName);
+            if (raw.IsNullOrWhiteSpace() ||
+                !double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) ||
+                double.IsNaN(seconds) ||
+                double.IsInfinity(seconds))
+            {
+                return false;
+            }
+
+            value = TimeSpan.FromSeconds(seconds);
+            return true;
+        }
+
+        private static string GetJsonString(JsonElement element, string propertyName)
+        {
+            if (element.ValueKind != JsonValueKind.Object ||
+                !element.TryGetProperty(propertyName, out var property))
+            {
+                return null;
+            }
+
+            return property.ValueKind switch
+            {
+                JsonValueKind.String => property.GetString(),
+                JsonValueKind.Number => property.GetRawText(),
+                _ => null
+            };
+        }
+
+        private static string BuildChaptersTxt(IEnumerable<(TimeSpan Start, string Title)> chapters, TimeSpan totalLength)
+        {
+            var lines = new List<string>
+            {
+                "## total-length " + FormatChapterTime(totalLength)
+            };
+
+            lines.AddRange(chapters.Select(chapter => FormatChapterTime(chapter.Start) + " " + SanitizeChapterTitle(chapter.Title)));
+
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        private static string FormatChapterTime(TimeSpan value)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0:D2}:{1:D2}:{2:D2}.{3:D3}",
+                (int)Math.Floor(value.TotalHours),
+                value.Minutes,
+                value.Seconds,
+                value.Milliseconds);
+        }
+
+        private static string SanitizeChapterTitle(string title)
+        {
+            return string.Join(" ", (title ?? string.Empty)
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Replace('\t', ' ')
+                .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private sealed class MergeSourceProbe
+        {
+            public TimeSpan Duration { get; set; }
+            public string AudioFormat { get; set; }
+            public List<(TimeSpan Start, string Title)> Chapters { get; } = new();
+        }
+
         private IReadOnlyList<string> BuildM4bToolArguments(string[] inputFiles, string outputFile, ConversionOptions options, ConversionTagOptions tagOptions = null)
         {
             var args = new List<string>
@@ -278,25 +471,32 @@ namespace NzbDrone.Core.MediaFiles
                 args.Add($"--tmp-dir={options.TempDirectory}");
             }
 
-            // Audio quality settings
-            if (options.AudioBitrate > 0)
+            if (options.NoConversion)
             {
-                args.Add($"--audio-bitrate={options.AudioBitrate}k");
+                args.Add("--no-conversion");
             }
             else
             {
-                // Default to 64kbps for audiobooks
-                args.Add("--audio-bitrate=64k");
-            }
+                // Audio quality settings
+                if (options.AudioBitrate > 0)
+                {
+                    args.Add($"--audio-bitrate={options.AudioBitrate}k");
+                }
+                else
+                {
+                    // Default to 64kbps for audiobooks
+                    args.Add("--audio-bitrate=64k");
+                }
 
-            if (options.AudioSampleRate > 0)
-            {
-                args.Add($"--audio-samplerate={options.AudioSampleRate}");
-            }
+                if (options.AudioSampleRate > 0)
+                {
+                    args.Add($"--audio-samplerate={options.AudioSampleRate}");
+                }
 
-            if (options.AudioChannels > 0)
-            {
-                args.Add($"--audio-channels={options.AudioChannels}");
+                if (options.AudioChannels > 0)
+                {
+                    args.Add($"--audio-channels={options.AudioChannels}");
+                }
             }
 
             // Performance settings
@@ -430,6 +630,7 @@ namespace NzbDrone.Core.MediaFiles
                 EncodedBy = source.EncodedBy,
                 UseFilenamesAsChapters = source.UseFilenamesAsChapters,
                 IgnoreSourceTags = source.IgnoreSourceTags,
+                RemoveTags = source.RemoveTags?.ToList(),
                 ChaptersTxtContent = source.ChaptersTxtContent,
                 ProviderChapterCount = source.ProviderChapterCount,
                 CoverPolicySignature = source.CoverPolicySignature,
@@ -467,6 +668,11 @@ namespace NzbDrone.Core.MediaFiles
             if (tagOptions.IgnoreSourceTags)
             {
                 args.Add("--ignore-source-tags");
+            }
+
+            if (tagOptions.RemoveTags?.Count > 0)
+            {
+                args.Add("--remove=" + string.Join(",", tagOptions.RemoveTags));
             }
         }
 
@@ -1194,6 +1400,7 @@ namespace NzbDrone.Core.MediaFiles
         public int FfmpegThreads { get; set; } = 0; // 0 = ffmpeg default
         public bool SkipCover { get; set; } = false;
         public bool Force { get; set; } = true; // Overwrite existing
+        public bool NoConversion { get; set; }
         public string TempDirectory { get; set; }
         public TimeSpan ExpectedSourceDuration { get; set; }
         public int TimeoutMs { get; set; }
@@ -1222,10 +1429,18 @@ namespace NzbDrone.Core.MediaFiles
         public string EncodedBy { get; set; }
         public bool UseFilenamesAsChapters { get; set; }
         public bool IgnoreSourceTags { get; set; }
+        public List<string> RemoveTags { get; set; }
         public string ChaptersTxtContent { get; set; }
         public int? ProviderChapterCount { get; set; }
         public string CoverPolicySignature { get; set; }
         public string ManifestJson { get; set; }
+    }
+
+    public class M4bMergeSourceInfo
+    {
+        public bool CanCopyAudio { get; set; }
+        public string ChaptersTxtContent { get; set; }
+        public int EmbeddedChapterCount { get; set; }
     }
 
     public class ConversionProgressUpdate

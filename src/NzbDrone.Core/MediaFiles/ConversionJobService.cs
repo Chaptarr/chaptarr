@@ -489,6 +489,7 @@ namespace NzbDrone.Core.MediaFiles
                             TempDirectory = request.WorkFolder,
                             AudioBitrate = request.AudioBitrate,
                             AudioChannels = request.AudioChannels,
+                            NoConversion = request.NoConversion,
                             ExpectedSourceDuration = TimeSpan.FromTicks(request.ExpectedSourceDurationTicks),
                             Jobs = threadPlan.ParallelFiles,
                             FfmpegThreads = threadPlan.FfmpegThreads,
@@ -801,6 +802,7 @@ namespace NzbDrone.Core.MediaFiles
                        manifest.TargetQualityId == request.TargetQualityId &&
                        manifest.AudioBitrate == request.AudioBitrate &&
                        manifest.AudioChannels == request.AudioChannels &&
+                       manifest.NoConversion == request.NoConversion &&
                        string.Equals(manifest.TagSignature, request.TagSignature, StringComparison.Ordinal) &&
                        manifest.Sources.Count == request.Sources.Count &&
                        manifest.Sources.Zip(request.Sources, SourcesMatch).All(matches => matches);
@@ -830,6 +832,7 @@ namespace NzbDrone.Core.MediaFiles
                 TargetQualityName = request.TargetQualityName,
                 AudioBitrate = request.AudioBitrate,
                 AudioChannels = request.AudioChannels,
+                NoConversion = request.NoConversion,
                 TagMode = request.TagOptions?.Mode,
                 TagSignature = request.TagSignature,
                 Sources = request.Sources

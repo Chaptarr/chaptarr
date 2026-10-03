@@ -3,7 +3,7 @@ using NzbDrone.Core.Datastore.Migration.Framework;
 
 namespace NzbDrone.Core.Datastore.Migration
 {
-    [Migration(103)]
+    [Migration(108)]
     public class add_quality_profile_merge_multi_part_files : NzbDroneMigrationBase
     {
         protected override void MainDbUpgrade()

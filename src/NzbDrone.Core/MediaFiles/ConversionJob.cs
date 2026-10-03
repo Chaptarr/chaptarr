@@ -49,6 +49,7 @@ namespace NzbDrone.Core.MediaFiles
         public string TargetQualityName { get; set; }
         public int AudioBitrate { get; set; }
         public int AudioChannels { get; set; }
+        public bool NoConversion { get; set; }
         public long ExpectedSourceDurationTicks { get; set; }
         public string TagSignature { get; set; }
         public ConversionTagOptions TagOptions { get; set; }
@@ -69,6 +70,7 @@ namespace NzbDrone.Core.MediaFiles
         public string TargetQualityName { get; set; }
         public int AudioBitrate { get; set; }
         public int AudioChannels { get; set; }
+        public bool NoConversion { get; set; }
         public string TagMode { get; set; }
         public string TagSignature { get; set; }
         public List<ConversionArtifactSource> Sources { get; set; } = new();
