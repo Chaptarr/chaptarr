@@ -20,6 +20,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
 
     steps:
     - name: Checkout repository
@@ -27,6 +29,12 @@ jobs:
       with:
         ref: ${{ inputs.sha }}
         fetch-depth: 0
+
+    - name: Set up QEMU for target-platform runtime steps
+      uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      with:
+        image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm,arm64
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
@@ -97,6 +105,7 @@ jobs:
 
     - name: Build and push Docker image
       if: steps.docker-tags.outputs.has_tags == 'true'
+      id: build
       uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
       with:
         context: .
@@ -109,3 +118,13 @@ jobs:
           org.opencontainers.image.revision=${{ inputs.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        sbom: true
+        provenance: mode=max
+
+    - name: Attest published image provenance
+      if: steps.docker-tags.outputs.has_tags == 'true'
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+      with:
+        subject-name: ghcr.io/${{ github.repository }}
+        subject-digest: ${{ steps.build.outputs.digest }}
+        push-to-registry: true

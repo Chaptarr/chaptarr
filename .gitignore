@@ -53,6 +53,7 @@ config.xml
 # Runtime data directory created when the app is started from a checkout.
 # Root-anchored so source directories named "config" are unaffected.
 /config/
+/secrets/
 *.pid
 appsettings.Development.json
 appsettings.Local.json

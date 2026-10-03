@@ -16,6 +16,12 @@ services:
       # - Chaptarr__Postgres__MainDb=chaptarr-main
       # - Chaptarr__Postgres__LogDb=chaptarr-log
       # - Chaptarr__Postgres__CacheDb=chaptarr-cache
+      # Optional: point to a mounted secret file containing a long random passphrase.
+      # Keep the file contents stable so old backups remain restorable.
+      # - CHAPTARR_BACKUP_ENCRYPTION_KEY_FILE=/run/secrets/chaptarr_backup_passphrase
+    # To enable encryption, also grant the secret below to this service.
+    # secrets:
+    #   - chaptarr_backup_passphrase
     volumes:
       # If ./config doesn't exist, Docker will create it as root:root; create it first (or fix ownership) so it matches PUID/PGID.
       - ./config:/config
@@ -23,7 +29,9 @@ services:
       - /path/to/ebooks:/ebooks          # Change to your ebook path
       - /path/to/downloads:/downloads    # Change to your download path
     ports:
-      - 8789:8789
+      - "${CHAPTARRNG_BIND_ADDRESS:-127.0.0.1}:8789:8789"
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 # Optional: Add your download client
@@ -43,6 +51,12 @@ services:
   #     - 6881:6881
   #     - 6881:6881/udp
   #   restart: unless-stopped
+
+# Optional: enable full-backup encryption by creating the secret file first,
+# then uncommenting both the service-level reference and this declaration.
+# secrets:
+#   chaptarr_backup_passphrase:
+#     file: ./secrets/chaptarr_backup_passphrase
 
 # Optional: Add proxy for MAM
   # flaresolverr:

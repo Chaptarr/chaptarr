@@ -2,6 +2,42 @@
 
 This document is the public-facing contract for clients building against ChaptarrNG and the Chaptarr Metadata Server. It describes identity semantics that the generated OpenAPI schema cannot express by itself. ChaptarrNG's system-status API continues to report the app name `Chaptarr` for Readarr-compatible client detection; this fork's additional API behavior is maintained in the `snapetech/chaptarrng` repository.
 
+## System Integration Capabilities
+
+`GET /api/v1/system/capabilities` is an additive discovery endpoint for
+integrations such as SeerrNG. The existing `GET /api/v1/system/status`
+response continues to report `appName: "Chaptarr"` for Readarr-compatible
+detection.
+
+The response declares the integration contract and version, the configured
+provider-ID dialect, supported facade dialects and media types, and the
+available integration features. Clients should ignore unknown fields and
+require a recognized `contract` and `contractVersion` before relying on the
+feature list. The current contract is:
+
+```json
+{
+  "contract": "chaptarrng-seerr-bookshelf",
+  "contractVersion": 1,
+  "appName": "Chaptarr",
+  "providerIdDialect": "hc",
+  "facadePathTemplate": "/readarr/{dialect}/{mediaType}/api/v1",
+  "facadeDialects": ["hc", "gr"],
+  "mediaTypes": ["ebook", "audiobook"],
+  "features": {
+    "formatScopedFacade": true,
+    "pagedLibrary": true,
+    "providerScopedEditionIdentity": true,
+    "pendingAuthorImports": true,
+    "pendingImportCancellation": true
+  }
+}
+```
+
+`providerIdDialect` is `hc` when Hardcover is enabled and `gr` otherwise.
+Older ChaptarrNG builds do not expose this endpoint; SeerrNG keeps its existing
+Hardcover-setting fallback for those builds.
+
 ## Identity Model
 
 Provider IDs are durable identity. Local database row IDs are not.

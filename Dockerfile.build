@@ -2,14 +2,14 @@
 
 ###### node stage ######
 # Use a pinned Node image instead of curl|bash installers.
-FROM node:26.10.0-bookworm-slim AS node
+FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS node
 RUN npm install -g yarn@1.22.22 --force
 
 ###### mp4v2 stage ######
 FROM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6a60359c29aff84bfacbd8597a4237038c7ccd7628a2d AS mp4v2
 
 ###### deps stage ######
-FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS deps
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS deps
 WORKDIR /src
 
 # Copy Node + Yarn from the official Node image (avoids curl|bash installers).
@@ -53,7 +53,7 @@ RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
 RUN test -s /app/UI/index.html
 
 ###### runtime stage ######
-FROM mcr.microsoft.com/dotnet/aspnet:10.0.12
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/aspnet@sha256:0fa044f682cb7d93a5a90401a00c626c66f7b00b86922be9441f869eae039f80
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     set -eux; \

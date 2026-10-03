@@ -27,12 +27,18 @@ namespace NzbDrone.Core.Instrumentation
 
         public void Register()
         {
+            var configuration = LogManager.Configuration;
+            if (configuration == null)
+            {
+                return;
+            }
+
             var target = new SlowRunningAsyncTargetWrapper(this) { TimeToSleepBetweenBatches = 500 };
 
             Rule = new LoggingRule("*", LogLevel.Warn, target);
 
-            LogManager.Configuration.AddTarget("DbLogger", target);
-            LogManager.Configuration.LoggingRules.Add(Rule);
+            configuration.AddTarget("DbLogger", target);
+            configuration.LoggingRules.Add(Rule);
             LogManager.ConfigurationChanged += OnLogManagerOnConfigurationChanged;
             LogManager.ReconfigExistingLoggers();
         }
@@ -40,9 +46,18 @@ namespace NzbDrone.Core.Instrumentation
         public void UnRegister()
         {
             LogManager.ConfigurationChanged -= OnLogManagerOnConfigurationChanged;
-            LogManager.Configuration.RemoveTarget("DbLogger");
-            LogManager.Configuration.LoggingRules.Remove(Rule);
-            LogManager.ReconfigExistingLoggers();
+            var configuration = LogManager.Configuration;
+            if (configuration != null)
+            {
+                configuration.RemoveTarget("DbLogger");
+                if (Rule != null)
+                {
+                    configuration.LoggingRules.Remove(Rule);
+                }
+
+                LogManager.ReconfigExistingLoggers();
+            }
+
             Dispose();
         }
 

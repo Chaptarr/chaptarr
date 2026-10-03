@@ -11721,6 +11721,35 @@
         }
       }
     },
+    "/api/v1/system/capabilities": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemIntegrationCapabilitiesResource"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemIntegrationCapabilitiesResource"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemIntegrationCapabilitiesResource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/system/statistics": {
       "get": {
         "tags": [
@@ -20091,6 +20120,70 @@
         ],
         "type": "string"
       },
+      "SystemIntegrationCapabilitiesResource": {
+        "type": "object",
+        "properties": {
+          "contract": {
+            "type": "string",
+            "nullable": true
+          },
+          "contractVersion": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "appName": {
+            "type": "string",
+            "nullable": true
+          },
+          "providerIdDialect": {
+            "type": "string",
+            "nullable": true
+          },
+          "facadePathTemplate": {
+            "type": "string",
+            "nullable": true
+          },
+          "facadeDialects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "mediaTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "features": {
+            "$ref": "#/components/schemas/SystemIntegrationFeaturesResource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SystemIntegrationFeaturesResource": {
+        "type": "object",
+        "properties": {
+          "formatScopedFacade": {
+            "type": "boolean"
+          },
+          "pagedLibrary": {
+            "type": "boolean"
+          },
+          "providerScopedEditionIdentity": {
+            "type": "boolean"
+          },
+          "pendingAuthorImports": {
+            "type": "boolean"
+          },
+          "pendingImportCancellation": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "SystemResetResource": {
         "type": "object",
         "properties": {
@@ -20672,6 +20765,269 @@
     },
     {
       "apikey": [ ]
+    }
+  ],
+  "tags": [
+    {
+      "name": "AddSeries"
+    },
+    {
+      "name": "ApiInfo"
+    },
+    {
+      "name": "Authentication"
+    },
+    {
+      "name": "StaticResource"
+    },
+    {
+      "name": "Author"
+    },
+    {
+      "name": "AuthorEditor"
+    },
+    {
+      "name": "AuthorLookup"
+    },
+    {
+      "name": "Backup"
+    },
+    {
+      "name": "Blocklist"
+    },
+    {
+      "name": "Book"
+    },
+    {
+      "name": "BookEditor"
+    },
+    {
+      "name": "BookFile"
+    },
+    {
+      "name": "BookLookup"
+    },
+    {
+      "name": "Bookshelf"
+    },
+    {
+      "name": "Calendar"
+    },
+    {
+      "name": "CalendarFeed"
+    },
+    {
+      "name": "Command"
+    },
+    {
+      "name": "ConversionConfig"
+    },
+    {
+      "name": "CustomFilter"
+    },
+    {
+      "name": "CustomFormat"
+    },
+    {
+      "name": "Cutoff"
+    },
+    {
+      "name": "DelayProfile"
+    },
+    {
+      "name": "DevelopmentConfig"
+    },
+    {
+      "name": "DiskSpace"
+    },
+    {
+      "name": "DownloadClient"
+    },
+    {
+      "name": "DownloadClientConfig"
+    },
+    {
+      "name": "Edition"
+    },
+    {
+      "name": "FileSystem"
+    },
+    {
+      "name": "HardcoverConfig"
+    },
+    {
+      "name": "Health"
+    },
+    {
+      "name": "History"
+    },
+    {
+      "name": "HostConfig"
+    },
+    {
+      "name": "Ignored"
+    },
+    {
+      "name": "ImportList"
+    },
+    {
+      "name": "ImportListExclusion"
+    },
+    {
+      "name": "Indexer"
+    },
+    {
+      "name": "IndexerConfig"
+    },
+    {
+      "name": "IndexerFlag"
+    },
+    {
+      "name": "Language"
+    },
+    {
+      "name": "LibrarySearch"
+    },
+    {
+      "name": "Localization"
+    },
+    {
+      "name": "Log"
+    },
+    {
+      "name": "LogFile"
+    },
+    {
+      "name": "ManualImport"
+    },
+    {
+      "name": "MatchingLog"
+    },
+    {
+      "name": "MediaCover"
+    },
+    {
+      "name": "MediaManagementConfig"
+    },
+    {
+      "name": "Metadata"
+    },
+    {
+      "name": "MetadataProfile"
+    },
+    {
+      "name": "MetadataProfileSchema"
+    },
+    {
+      "name": "MetadataProviderConfig"
+    },
+    {
+      "name": "Missing"
+    },
+    {
+      "name": "NamingConfig"
+    },
+    {
+      "name": "NamingPattern"
+    },
+    {
+      "name": "Notification"
+    },
+    {
+      "name": "OidcAuthentication"
+    },
+    {
+      "name": "Parse"
+    },
+    {
+      "name": "PendingAuthorImport"
+    },
+    {
+      "name": "Ping"
+    },
+    {
+      "name": "PlexAuthentication"
+    },
+    {
+      "name": "Proxy"
+    },
+    {
+      "name": "ProxyDebug"
+    },
+    {
+      "name": "QualityDefinition"
+    },
+    {
+      "name": "QualityProfile"
+    },
+    {
+      "name": "QualityProfileSchema"
+    },
+    {
+      "name": "Queue"
+    },
+    {
+      "name": "QueueAction"
+    },
+    {
+      "name": "QueueDetails"
+    },
+    {
+      "name": "QueueStatus"
+    },
+    {
+      "name": "Release"
+    },
+    {
+      "name": "ReleaseProfile"
+    },
+    {
+      "name": "ReleasePush"
+    },
+    {
+      "name": "RemotePathMapping"
+    },
+    {
+      "name": "RenameBook"
+    },
+    {
+      "name": "RetagBook"
+    },
+    {
+      "name": "RootFolder"
+    },
+    {
+      "name": "Search"
+    },
+    {
+      "name": "Series"
+    },
+    {
+      "name": "SeriesLookup"
+    },
+    {
+      "name": "SettingsBackup"
+    },
+    {
+      "name": "System"
+    },
+    {
+      "name": "Tag"
+    },
+    {
+      "name": "TagDetails"
+    },
+    {
+      "name": "Task"
+    },
+    {
+      "name": "UiConfig"
+    },
+    {
+      "name": "Update"
+    },
+    {
+      "name": "UpdateLogFile"
     }
   ]
 }

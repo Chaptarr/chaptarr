@@ -227,6 +227,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
     with:
       sha: ${{ needs.release.outputs.sha }}
       branch: ${{ github.ref_name }}

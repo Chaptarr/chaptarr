@@ -80,7 +80,7 @@ Run with Docker:
 ```bash
 docker run -d \
   --name chaptarrng \
-  -p 8789:8789 \
+  -p 127.0.0.1:8789:8789 \
   -e PUID=1000 \
   -e PGID=1000 \
   -v /path/to/config:/config \
@@ -92,6 +92,12 @@ docker run -d \
 ```
 
 Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarrng sh -c 'id; touch /audiobooks/.chaptarr-write-test && rm /audiobooks/.chaptarr-write-test'`.
+
+The host port is bound to loopback by default. To expose ChaptarrNG directly on
+your LAN, change the mapping to `-p 8789:8789` and restrict access with your
+firewall or reverse proxy. If SeerrNG runs in another container, attach both
+containers to a shared Docker network and use `http://chaptarrng:8789`; do not
+use `localhost` from inside SeerrNG.
 
 Or use Docker Compose:
 ```bash
@@ -202,9 +208,41 @@ ChaptarrNG inherits the Readarr-derived operational model and security work from
 - API responses redact provider secrets
 - No analytics or crash reporting is enabled
 - Optional passphrase-encrypted Quickstart Settings Backups
+- Optional authenticated encryption for full backup archives
 - Update binaries are verified by SHA256 before install
 
-Traditional full backups contain the database and config file, including credentials, in an unencrypted zip. Do not share them or upload them to public cloud storage unless you have encrypted them separately.
+CI runs CodeQL and Trivy dependency/secret scans. Published container images
+include a BuildKit SBOM and provenance metadata, plus a GitHub build-provenance
+attestation. The Compose example also enables `no-new-privileges` and binds
+the published web port to loopback by default.
+
+Use the `X-Api-Key` header for API clients. ChaptarrNG still accepts the legacy
+`apikey` query parameter for compatibility, so reverse proxies should redact
+that parameter from access logs.
+
+Traditional full backups contain the database and config file, including credentials. Without the setting below they are stored as plain ZIP files; protect them as secrets.
+
+To encrypt scheduled, update, and manual full backups, store a randomly
+generated passphrase with at least 16 non-whitespace characters in a secret
+file, mount it read-only in the ChaptarrNG container, and set
+`CHAPTARR_BACKUP_ENCRYPTION_KEY_FILE` to its in-container path (for example,
+`/run/secrets/chaptarr_backup_passphrase`). The Compose example includes a
+commented Docker secret setup. Backups are then written as authenticated,
+chunk-encrypted `.zip.enc` files; existing `.zip` backups remain restorable.
+Mount the same secret file on a replacement instance before restoring an
+encrypted backup. Keep the secret outside `Config.xml` and the backup archive;
+losing it makes those encrypted backups unrecoverable. Enabling encryption does
+not convert existing `.zip` backups, so protect or remove those separately.
+With the file path unset, new backups retain the legacy plain ZIP format.
+Protect the secret file through your container secret manager, and retain old
+secret files if you need to restore archives made with them.
+On POSIX systems, backup staging, temporary archives, and restore extraction
+directories are restricted to the application owner while the files are in use.
+
+The Compose example publishes its web port on `127.0.0.1` by default. Set
+`CHAPTARRNG_BIND_ADDRESS=0.0.0.0` in the host environment to publish it on all
+host interfaces, or use a shared Docker network for container-to-container
+access without publishing the port.
 
 ## Privacy
 

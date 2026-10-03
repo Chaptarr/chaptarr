@@ -109,13 +109,15 @@ namespace Chaptarr.Api.V1.System.Backup
 
             var file = files.First();
             var extension = Path.GetExtension(file.FileName);
+            var isEncryptedFullBackup = file.FileName.EndsWith(".zip.enc", StringComparison.OrdinalIgnoreCase);
 
-            if (!ValidExtensions.Contains(extension))
+            if (!ValidExtensions.Contains(extension) && !isEncryptedFullBackup)
             {
-                throw new UnsupportedMediaTypeException($"Invalid extension, must be one of: {ValidExtensions.Join(", ")}");
+                throw new UnsupportedMediaTypeException($"Invalid extension, must be .zip or .zip.enc");
             }
 
-            var path = Path.Combine(_appFolderInfo.TempFolder, $"chaptarr_backup_restore_{Guid.NewGuid():N}{extension}");
+            var restoreExtension = isEncryptedFullBackup ? ".zip.enc" : extension;
+            var path = Path.Combine(_appFolderInfo.TempFolder, $"chaptarr_backup_restore_{Guid.NewGuid():N}{restoreExtension}");
 
             try
             {

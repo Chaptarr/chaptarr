@@ -5,7 +5,7 @@
 
 ###### node stage ######
 # Use a pinned Node image instead of curl|bash installers.
-FROM --platform=$BUILDPLATFORM node:26.10.0-bookworm-slim AS node
+FROM --platform=$BUILDPLATFORM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS node
 RUN npm install -g yarn@1.22.22 --force
 
 ###### mp4v2 stage ######
@@ -13,7 +13,7 @@ FROM --platform=$TARGETPLATFORM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6
 
 ###### deps stage ######
 # Always build on the native architecture for speed
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.401 AS deps
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.401@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS deps
 WORKDIR /src
 
 # Copy Node + Yarn from the official Node image (avoids curl|bash installers).
@@ -57,7 +57,8 @@ RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
 RUN test -s /app/UI/index.html
 
 ###### runtime stage ######
-# This stage runs on the target platform
+# Keep the cross-platform runtime on the exact .NET patch tag. MCR advertises
+# an index digest for this image but currently rejects requests by that digest.
 FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:10.0.12
 
 # Install runtime dependencies (these are architecture-specific)

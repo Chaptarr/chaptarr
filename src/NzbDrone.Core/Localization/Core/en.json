@@ -227,7 +227,7 @@
   "BackupNow": "Backup Now",
   "BackupRetentionHelpText": "Automatic backups older than the retention period will be cleaned up automatically",
   "Backups": "Backups",
-  "BackupsContainUnencryptedCredentials": "Backups contain unencrypted credentials. Do not share them or upload them to public cloud storage. Quickstart Settings Backup uses a passphrase if you need a portable encrypted export.",
+  "BackupsContainUnencryptedCredentials": "Full backups include credentials. Without a mounted secret file configured through CHAPTARR_BACKUP_ENCRYPTION_KEY_FILE, they are stored as plain ZIP files. Quickstart Settings Backup remains a separate passphrase-encrypted export.",
   "BindAddress": "Bind Address",
   "BindAddressHelpText": "Valid IP address, localhost or '*' for all interfaces",
   "BindAddressHelpTextWarning": "Requires restart to take effect",

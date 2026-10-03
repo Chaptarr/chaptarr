@@ -43,7 +43,7 @@ trap cleanup EXIT
 
 dotnet msbuild -restore "$SLN_FILE"   -p:Configuration=Debug   -p:Platform=Posix   -p:RuntimeIdentifiers="$RUNTIME"   -t:PublishAllRids
 
-dotnet tool install --tool-path "$TOOL_DIR" --version 9.0.6 Swashbuckle.AspNetCore.Cli
+dotnet tool install --tool-path "$TOOL_DIR" --version 10.2.3 Swashbuckle.AspNetCore.Cli
 
 rm -f "$OUTPUT_FILE"
 

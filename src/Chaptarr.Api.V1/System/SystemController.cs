@@ -25,6 +25,7 @@ namespace Chaptarr.Api.V1.System
         private readonly IPlatformInfo _platformInfo;
         private readonly IOsInfo _osInfo;
         private readonly IConfigFileProvider _configFileProvider;
+        private readonly IConfigService _configService;
         private readonly IMainDatabase _database;
         private readonly ILifecycleService _lifecycleService;
         private readonly IDeploymentInfoProvider _deploymentInfoProvider;
@@ -39,6 +40,7 @@ namespace Chaptarr.Api.V1.System
                                 IPlatformInfo platformInfo,
                                 IOsInfo osInfo,
                                 IConfigFileProvider configFileProvider,
+                                IConfigService configService,
                                 IMainDatabase database,
                                 ILifecycleService lifecycleService,
                                 IDeploymentInfoProvider deploymentInfoProvider,
@@ -53,6 +55,7 @@ namespace Chaptarr.Api.V1.System
             _platformInfo = platformInfo;
             _osInfo = osInfo;
             _configFileProvider = configFileProvider;
+            _configService = configService;
             _database = database;
             _lifecycleService = lifecycleService;
             _deploymentInfoProvider = deploymentInfoProvider;
@@ -120,6 +123,13 @@ namespace Chaptarr.Api.V1.System
                 PackageUpdateMechanism = _deploymentInfoProvider.PackageUpdateMechanism,
                 PackageUpdateMechanismMessage = _deploymentInfoProvider.PackageUpdateMechanismMessage
             };
+        }
+
+        [HttpGet("capabilities")]
+        [ProducesResponseType(typeof(SystemIntegrationCapabilitiesResource), 200)]
+        public SystemIntegrationCapabilitiesResource GetIntegrationCapabilities()
+        {
+            return SystemIntegrationCapabilitiesResource.Create(_configService.HardcoverEnabled);
         }
 
         private static string BuildFacadeUrlBase(string configuredUrlBase, ReadarrFacadeContext facadeContext)
