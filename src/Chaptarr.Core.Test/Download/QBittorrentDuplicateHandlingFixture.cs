@@ -43,12 +43,19 @@ namespace Chaptarr.Core.Test.Download
 
             public QBittorrentPreferences GetConfig(QBittorrentSettings settings) => new QBittorrentPreferences { DhtEnabled = true };
 
-            public List<QBittorrentTorrent> GetTorrents(QBittorrentSettings settings, string category = null) => throw new NotImplementedException();
+            public Dictionary<string, List<string>> HashesByCategory { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public bool TorrentLoaded { get; set; }
+
+            public List<QBittorrentTorrent> GetTorrents(QBittorrentSettings settings, string category = null)
+            {
+                var hashes = category != null && HashesByCategory.TryGetValue(category, out var found) ? found : new List<string>();
+                return hashes.ConvertAll(hash => new QBittorrentTorrent { Hash = hash });
+            }
 
             public bool IsTorrentLoaded(string hash, QBittorrentSettings settings)
             {
                 LoadedHashes.Add(hash);
-                return false;
+                return TorrentLoaded;
             }
 
             public QBittorrentTorrentProperties GetTorrentProperties(string hash, QBittorrentSettings settings) => throw new NotImplementedException();
@@ -242,9 +249,82 @@ namespace Chaptarr.Core.Test.Download
             Assert.Multiple(() =>
             {
                 Assert.That(exception, Is.SameAs(original));
+                Assert.That(proxy.Labels, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_continue_with_existing_torrent_already_in_a_chaptarr_category()
+        {
+            var proxy = new TestProxy { AddException = new DownloadClientException("qBittorrent rejected the torrent add request (response: Fails.).") };
+            proxy.HashesByCategory["ebooks"] = new List<string> { "abcdef1234" };
+            var client = CreateClient(proxy);
+
+            var result = client.AddTorrentFile(CreateRemoteBook(), "ABCDEF1234");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result, Is.EqualTo("ABCDEF1234"));
                 Assert.That(proxy.LoadedHashes, Is.Empty);
                 Assert.That(proxy.Labels, Is.Empty);
             });
+        }
+
+        [Test]
+        public void should_move_existing_torrent_back_from_post_import_category()
+        {
+            var proxy = new TestProxy { AddException = new DownloadClientException("qBittorrent rejected the torrent add request (response: Fails.).") };
+            proxy.HashesByCategory["ebooks-imported"] = new List<string> { "abcdef1234" };
+            var client = CreateClient(proxy);
+
+            client.AddMagnet(CreateRemoteBook(), "ABCDEF1234");
+
+            Assert.That(proxy.Labels, Is.EqualTo(new[] { ("abcdef1234", "ebooks") }));
+        }
+
+        [Test]
+        public void should_reject_without_adopting_when_existing_torrent_is_outside_chaptarr_categories()
+        {
+            var proxy = new TestProxy
+            {
+                AddException = new DownloadClientException("qBittorrent rejected the torrent add request (response: Fails.)."),
+                TorrentLoaded = true
+            };
+            var client = CreateClient(proxy);
+
+            var exception = Assert.Throws<DownloadClientRejectedReleaseException>(() => client.AddTorrentFile(CreateRemoteBook(), "ABCDEF1234"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(exception.Message, Is.EqualTo("qBittorrent already has this torrent outside Chaptarr's categories"));
+                Assert.That(proxy.Labels, Is.Empty);
+            });
+        }
+
+        private static TestQBittorrent CreateClient(TestProxy proxy)
+        {
+            return new TestQBittorrent(new TestProxySelector(proxy, new Version(2, 11, 0)), new CacheManager(), LogManager.GetCurrentClassLogger())
+            {
+                Definition = new DownloadClientDefinition
+                {
+                    Name = "qBittorrent",
+                    Settings = new QBittorrentSettings
+                    {
+                        EbookCategory = "ebooks",
+                        AudiobookCategory = "audiobooks",
+                        EbookImportedCategory = "ebooks-imported"
+                    }
+                }
+            };
+        }
+
+        private static RemoteBook CreateRemoteBook()
+        {
+            return new RemoteBook
+            {
+                Books = new List<Book> { new Book { MediaType = BookMediaType.Ebook } },
+                Release = new TorrentInfo()
+            };
         }
 
         private static DownloadClientException ConflictException()
