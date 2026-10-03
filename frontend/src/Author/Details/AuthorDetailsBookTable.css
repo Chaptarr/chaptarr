@@ -1,6 +1,8 @@
 .table {
   composes: table from '~Components/Table/Table.css';
 
+  /* Fixed layout gives the title only the leftover width, so keep room for it and scroll instead */
+  min-width: 920px;
   table-layout: fixed;
 }
 
@@ -40,13 +42,12 @@
 }
 
 @media only screen and (max-width: 768px) {
-  .narrator {
-    display: none;
+  /* Rating, status, and duration keep their full width: the stars, status label, and "7 hr 58 min" don't fit in less */
+  .table {
+    min-width: 850px;
   }
 
-  .position,
-  .rating,
-  .status {
+  .position {
     width: 80px;
   }
 
@@ -57,24 +58,15 @@
   .pageCount {
     width: 60px;
   }
-
-  .duration {
-    width: 70px;
-  }
 }
 
 @media only screen and (max-width: 480px) {
+  .table {
+    min-width: 700px;
+  }
+
   .position,
   .rating {
     display: none;
-  }
-
-  .status {
-    width: 60px;
-  }
-
-  .pageCount,
-  .duration {
-    width: 55px;
   }
 }
