@@ -83,6 +83,8 @@ const bookTokens = [
 
   { token: '{Book Disambiguation}', example: 'Disambiguation' },
 
+  { token: '{Edition AudibleAsin}', example: 'B0ABCDEFGH' },
+
   { token: '{PartNumber:0}', example: '2' },
   { token: '{PartNumber:00}', example: '02' },
   { token: '{PartNumber:smart}', example: '02' },

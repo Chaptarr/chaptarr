@@ -60,6 +60,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             { "ReleaseYear", "{Release Year}" },
             { "ReleaseYearFirst", "{Release YearFirst}" },
             { "EditionYear", "{Edition Year}" },
+            { "EditionAudibleAsin", "{Edition AudibleAsin}" },
 
             // GraphicAudio tokens
             { "GraphicAudio", "{GraphicAudio}" },

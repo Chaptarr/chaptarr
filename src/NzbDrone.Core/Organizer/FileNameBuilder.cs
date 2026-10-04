@@ -407,6 +407,8 @@ namespace NzbDrone.Core.Organizer
             return segmentCount > 0;
         }
 
+        private const string AudibleAsinToken = "{Edition AudibleAsin}";
+
         private void AddBookTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, Edition edition)
         {
             tokenHandlers["{Book Title}"] = m => edition.Title;
@@ -493,6 +495,10 @@ namespace NzbDrone.Core.Organizer
 
                 return bookTitle;
             };
+
+            // Audible ASIN of the selected edition only (never an ISBN or a non-Audible ASIN; Edition.Asin may hold ISBN-10).
+            // Empty when missing so conditional brackets such as {[Edition AudibleAsin]} collapse.
+            tokenHandlers[AudibleAsinToken] = m => (edition.AudibleASIN ?? string.Empty).Trim().ToUpperInvariant();
 
             if (edition.Disambiguation != null)
             {
@@ -788,7 +794,11 @@ namespace NzbDrone.Core.Organizer
 
             var replacementText = tokenHandler(tokenMatch).Trim();
 
-            if (tokenMatch.Token.All(t => !char.IsLetter(t) || char.IsLower(t)))
+            if (FileNameBuilderTokenEqualityComparer.Instance.Equals(tokenMatch.Token, AudibleAsinToken))
+            {
+                // ASINs must stay uppercase ([A-Z0-9]{10}); do not mirror the token spelling's case.
+            }
+            else if (tokenMatch.Token.All(t => !char.IsLetter(t) || char.IsLower(t)))
             {
                 replacementText = replacementText.ToLower();
             }
