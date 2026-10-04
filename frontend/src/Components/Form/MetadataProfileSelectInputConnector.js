@@ -155,29 +155,16 @@ class MetadataProfileSelectInputConnector extends Component {
   // Render
 
   render() {
-    const {
-      className,
-      name,
-      value,
-      hasError,
-      hasWarning,
-      ...otherProps
-    } = this.props;
-
+    const { value } = this.props;
     const { isFetching } = this.state;
-    const selectValue = value ?? '';
 
     return (
       <SelectInput
-        className={className}
-        name={name}
-        value={selectValue}
+        {...this.props}
+        value={value ?? ''}
         values={this.getSelectValues()}
-        hasError={hasError}
-        hasWarning={hasWarning}
         onChange={this.onChange}
-        isDisabled={isFetching}
-        {...otherProps}
+        isDisabled={this.props.isDisabled || isFetching}
       />
     );
   }
@@ -190,6 +177,7 @@ MetadataProfileSelectInputConnector.propTypes = {
   values: PropTypes.arrayOf(PropTypes.object),
   hasError: PropTypes.bool,
   hasWarning: PropTypes.bool,
+  isDisabled: PropTypes.bool,
   includeNoChange: PropTypes.bool.isRequired,
   includeNoChangeDisabled: PropTypes.bool,
   includeMixed: PropTypes.bool.isRequired,
