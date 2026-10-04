@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.Text;
@@ -39,28 +40,47 @@ namespace NzbDrone.Core.Utilities
             if (sourceSpans == null || sourceSpans.Count != text.Length)
             {
                 var generatedSpans = new List<(int Start, int End)>(text.Length);
-                for (var i = 0; i < text.Length; i++)
+                for (var spanIndex = 0; spanIndex < text.Length; spanIndex++)
                 {
-                    generatedSpans.Add((i, i + 1));
+                    generatedSpans.Add((spanIndex, spanIndex + 1));
                 }
 
                 sourceSpans = generatedSpans;
             }
+
+            // Sanitize first so every remaining surrogate is part of a valid pair - this guarantees the
+            // per-scalar Normalize() call below can never throw (Chaptarr/chaptarr#116), without needing
+            // a try/catch on this hot RSS-matching path. Length-preserving, so `sourceSpans` (indexed by
+            // original UTF-16 code unit) stays valid against the sanitized text.
+            text = SanitizeUnpairedSurrogates(text);
 
             var builder = new StringBuilder(text.Length);
             var spans = new List<(int Start, int End)>();
             var pendingSeparator = false;
             (int Start, int End)? pendingSeparatorSpan = null;
 
-            for (var i = 0; i < text.Length; i++)
+            var i = 0;
+            while (i < text.Length)
             {
-                var sourceSpan = sourceSpans[i];
-                var decomposed = text[i].ToString().Normalize(NormalizationForm.FormD);
+                // Walk one Unicode scalar value at a time (not one UTF-16 code unit at a time) so that
+                // a surrogate pair - e.g. an emoji or a CJK Extension ideograph outside the Basic
+                // Multilingual Plane - is normalized as a whole character instead of being split into
+                // two lone surrogates, which String.Normalize() rejects with
+                // "String contains invalid Unicode code points" (Chaptarr/chaptarr#116).
+                var codePointLength = char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])
+                    ? 2
+                    : 1;
+
+                var sourceSpan = codePointLength == 2
+                    ? (sourceSpans[i].Start, sourceSpans[i + 1].End)
+                    : sourceSpans[i];
+
+                var decomposed = text.Substring(i, codePointLength).Normalize(NormalizationForm.FormD);
                 var letterOrDigitSegment = new StringBuilder(decomposed.Length);
 
-                foreach (var ch in decomposed)
+                foreach (var rune in decomposed.EnumerateRunes())
                 {
-                    var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+                    var category = Rune.GetUnicodeCategory(rune);
 
                     if (stripDiacritics &&
                         (category == UnicodeCategory.NonSpacingMark ||
@@ -70,7 +90,7 @@ namespace NzbDrone.Core.Utilities
                         continue;
                     }
 
-                    if (ch == '\uFFFD')
+                    if (rune.Value == '\uFFFD')
                     {
                         if (builder.Length > 0)
                         {
@@ -81,13 +101,13 @@ namespace NzbDrone.Core.Utilities
                         continue;
                     }
 
-                    if (char.IsLetterOrDigit(ch))
+                    if (Rune.IsLetterOrDigit(rune))
                     {
-                        letterOrDigitSegment.Append(char.ToLowerInvariant(ch));
+                        letterOrDigitSegment.Append(Rune.ToLowerInvariant(rune).ToString());
                         continue;
                     }
 
-                    if (IsSeparator(ch, category) && builder.Length > 0)
+                    if (IsSeparator(rune, category) && builder.Length > 0)
                     {
                         pendingSeparator = true;
                         pendingSeparatorSpan ??= sourceSpan;
@@ -96,6 +116,7 @@ namespace NzbDrone.Core.Utilities
 
                 if (letterOrDigitSegment.Length == 0)
                 {
+                    i += codePointLength;
                     continue;
                 }
 
@@ -114,6 +135,7 @@ namespace NzbDrone.Core.Utilities
 
                 pendingSeparator = false;
                 pendingSeparatorSpan = null;
+                i += codePointLength;
             }
 
             return new NormalizedMappedText
@@ -130,13 +152,26 @@ namespace NzbDrone.Core.Utilities
                 return string.Empty;
             }
 
-            var normalized = text.Normalize(NormalizationForm.FormD);
+            string normalized;
+            try
+            {
+                normalized = text.Normalize(NormalizationForm.FormD);
+            }
+            catch (ArgumentException)
+            {
+                // An unpaired surrogate anywhere in the text makes it ill-formed UTF-16, which
+                // String.Normalize() rejects outright (Chaptarr/chaptarr#116). Replace any such code
+                // unit with U+FFFD - handled the same as the existing replacement-character case below -
+                // and retry once on the now well-formed text.
+                normalized = SanitizeUnpairedSurrogates(text).Normalize(NormalizationForm.FormD);
+            }
+
             var builder = new StringBuilder(normalized.Length);
             var pendingSeparator = false;
 
-            foreach (var ch in normalized)
+            foreach (var rune in normalized.EnumerateRunes())
             {
-                var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+                var category = Rune.GetUnicodeCategory(rune);
 
                 if (stripDiacritics &&
                     (category == UnicodeCategory.NonSpacingMark ||
@@ -146,7 +181,7 @@ namespace NzbDrone.Core.Utilities
                     continue;
                 }
 
-                if (ch == '\uFFFD')
+                if (rune.Value == '\uFFFD')
                 {
                     if (preserveWhitespace && builder.Length > 0)
                     {
@@ -156,19 +191,19 @@ namespace NzbDrone.Core.Utilities
                     continue;
                 }
 
-                if (char.IsLetterOrDigit(ch))
+                if (Rune.IsLetterOrDigit(rune))
                 {
                     if (preserveWhitespace && pendingSeparator && builder.Length > 0 && builder[builder.Length - 1] != ' ')
                     {
                         builder.Append(' ');
                     }
 
-                    builder.Append(char.ToLowerInvariant(ch));
+                    builder.Append(Rune.ToLowerInvariant(rune).ToString());
                     pendingSeparator = false;
                     continue;
                 }
 
-                if (preserveWhitespace && IsSeparator(ch, category) && builder.Length > 0)
+                if (preserveWhitespace && IsSeparator(rune, category) && builder.Length > 0)
                 {
                     pendingSeparator = true;
                 }
@@ -184,9 +219,37 @@ namespace NzbDrone.Core.Utilities
             return CollapseWhitespaceRegex.Replace(result, " ").Trim();
         }
 
-        private static bool IsSeparator(char ch, UnicodeCategory category)
+        // Replaces any UTF-16 code unit that isn't part of a valid surrogate pair with U+FFFD, so that
+        // callers can safely pass the result to String.Normalize() without it throwing on ill-formed
+        // input (Chaptarr/chaptarr#116). Leaves well-formed text (including valid surrogate pairs)
+        // completely untouched.
+        private static string SanitizeUnpairedSurrogates(string text)
         {
-            if (char.IsWhiteSpace(ch))
+            StringBuilder sanitized = null;
+
+            for (var i = 0; i < text.Length; i++)
+            {
+                var ch = text[i];
+                var isWellFormed = char.IsHighSurrogate(ch)
+                    ? i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])
+                    : !char.IsLowSurrogate(ch) || (i > 0 && char.IsHighSurrogate(text[i - 1]));
+
+                if (isWellFormed)
+                {
+                    sanitized?.Append(ch);
+                    continue;
+                }
+
+                sanitized ??= new StringBuilder(text, 0, i, text.Length);
+                sanitized.Append('\uFFFD');
+            }
+
+            return sanitized?.ToString() ?? text;
+        }
+
+        private static bool IsSeparator(Rune rune, UnicodeCategory category)
+        {
+            if (Rune.IsWhiteSpace(rune))
             {
                 return true;
             }
