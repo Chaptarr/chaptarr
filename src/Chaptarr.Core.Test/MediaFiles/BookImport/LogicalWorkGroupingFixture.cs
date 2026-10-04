@@ -200,6 +200,72 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 logger: logger);
         }
 
+        [TestCase("The Primal Hunter 6", 6598)]
+        [TestCase("The Primal Hunter 6: A LitRPG Adventure", 6598)]
+        [TestCase("The Primal Hunter", 6589)]
+        public void should_keep_numbered_book_identity_when_file_title_has_a_subtitle(string fileTitle, int expectedBookId)
+        {
+            var books = new List<Book>
+            {
+                new Book
+                {
+                    Id = 6598,
+                    Title = "The Primal Hunter 6",
+                    BaseBookId = "hc:1093426",
+                    AuthorId = 25,
+                    MediaType = BookMediaType.Ebook
+                },
+                new Book
+                {
+                    Id = 6589,
+                    Title = "The Primal Hunter, Vol. 1",
+                    BaseBookId = "primal-hunter-1",
+                    AuthorId = 25,
+                    MediaType = BookMediaType.Ebook
+                }
+            };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new EditionFtsMatch
+                {
+                    EditionId = 16318,
+                    BookId = 6598,
+                    EditionTitle = "The Primal Hunter 6",
+                    BookTitle = "The Primal Hunter 6",
+                    AuthorId = 25,
+                    AuthorName = "J.K. Rowling",
+                    ReadingFormatId = 3,
+                    MatchScore = 10.0
+                },
+                new EditionFtsMatch
+                {
+                    EditionId = 16309,
+                    BookId = 6589,
+                    EditionTitle = "The Primal Hunter",
+                    BookTitle = "The Primal Hunter, Vol. 1",
+                    AuthorId = 25,
+                    AuthorName = "J.K. Rowling",
+                    ReadingFormatId = 3,
+                    MatchScore = 9.0
+                }
+            };
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/ebooks/The Primal Hunter/book.epub",
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "TITLE", new List<string> { fileTitle } },
+                    { "AUTHOR", new List<string> { "J.K. Rowling" } }
+                }
+            };
+
+            var match = CreateSut(candidates, books).HolyGrailMatchFile(file, BookMediaType.Ebook, restrictToAuthorId: 25);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(expectedBookId));
+            Assert.That(match.EditionId, Is.EqualTo(expectedBookId == 6598 ? 16318 : 16309));
+        }
+
         [Test]
         public void should_treat_same_provider_work_clones_as_one_title_candidate()
         {
