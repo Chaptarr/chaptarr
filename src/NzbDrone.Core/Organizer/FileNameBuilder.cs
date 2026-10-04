@@ -509,7 +509,7 @@ namespace NzbDrone.Core.Organizer
             }
             else
             {
-                tokenHandlers["{Release Year}"] = m => "Unknown";
+                tokenHandlers["{Release Year}"] = m => m.DefaultValue("");
             }
 
             if (edition.ReleaseDate.HasValue)
