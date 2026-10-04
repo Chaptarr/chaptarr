@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.IndexerSearch.Definitions
 {
     public class BookSearchCriteria : SearchCriteriaBase
     {
+        private static readonly Regex BoxSetSuffix = new Regex(@"\s+(?:series\s+)?\d+[\s-]+books?\s+(?:box(?:ed)?\s+)?set\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         public string BookTitle { get; set; }
         public int BookYear { get; set; }
         public string BookIsbn { get; set; }
@@ -26,7 +29,11 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
             }
 
             var mainTitle = titleWithoutAuthor.SplitBookTitle(author).Item1;
-            return string.IsNullOrWhiteSpace(mainTitle) ? titleWithoutAuthor : mainTitle;
+            var searchTitle = string.IsNullOrWhiteSpace(mainTitle) ? titleWithoutAuthor : mainTitle;
+
+            // Retail packaging terms rarely appear in indexer titles. Broaden only the
+            // query; identity and pack checks still use the original selected title.
+            return BoxSetSuffix.Replace(searchTitle, string.Empty);
         }
 
         internal static string RemoveLeadingAuthorPrefix(string title, string author)
