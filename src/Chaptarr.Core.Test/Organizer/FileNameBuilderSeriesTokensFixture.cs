@@ -77,6 +77,103 @@ namespace Chaptarr.Core.Test.Organizer
             Assert.That(result, Is.EqualTo("Dresden Files #3"));
         }
 
+        // The stored pair is only rewritten by the next refresh, so a rename preview has to read the
+        // links itself or it keeps proposing the stale path until then.
+        [Test]
+        public void should_take_series_tokens_from_the_links_over_a_stale_stored_pair()
+        {
+            var book = new Book
+            {
+                SeriesName = "The Cosmere",
+                SeriesPosition = "6",
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    Link("The Cosmere", "6", workCount: 40),
+                    Link("The Stormlight Archive", "1", workCount: 5)
+                }
+            };
+
+            var result = RenderSeriesTokens(book, "{Book Series}/{Book SeriesPosition}");
+
+            Assert.That(result, Is.EqualTo(Path.Combine("The Stormlight Archive", "1")));
+        }
+
+        [Test]
+        public void should_not_pair_a_stored_series_name_with_a_link_position()
+        {
+            var book = new Book
+            {
+                SeriesName = "The Cosmere",
+                SeriesLinks = new List<SeriesBookLink> { Link("The Stormlight Archive", "1") }
+            };
+
+            Assert.That(RenderSeriesTokens(book, "{Book SeriesTitle}"), Is.EqualTo("The Stormlight Archive #1"));
+        }
+
+        [Test]
+        public void should_not_borrow_the_stored_position_for_a_link_without_one()
+        {
+            var book = new Book
+            {
+                SeriesName = "La caduta di Malazan",
+                SeriesPosition = "28",
+                SeriesLinks = new List<SeriesBookLink> { Link("Malazan Book of the Fallen", null) }
+            };
+
+            Assert.That(RenderSeriesTokens(book, "{Book SeriesTitle}"), Is.EqualTo("Malazan Book of the Fallen"));
+        }
+
+        // A work also published in split form can carry every slot it holds as one position. It is
+        // rendered as the link has it; nothing here guesses a single volume out of the list.
+        [Test]
+        public void should_render_a_multipart_series_position_literally()
+        {
+            var book = new Book
+            {
+                SeriesLinks = new List<SeriesBookLink> { Link("The Stormlight Archive", "1, 1, Part 1, 1, Part 2") }
+            };
+
+            var result = RenderSeriesTokens(book, "{Book Series}/{Book SeriesPosition}");
+
+            Assert.That(result, Is.EqualTo(Path.Combine("The Stormlight Archive", "1, 1, Part 1, 1, Part 2")));
+        }
+
+        private static SeriesBookLink Link(string title, string position, int workCount = 0)
+        {
+            return new SeriesBookLink
+            {
+                Position = position,
+                IsPrimary = true,
+                Series = new Series { Title = title, PrimaryWorkCount = workCount }
+            };
+        }
+
+        private static string RenderSeriesTokens(Book book, string format)
+        {
+            var builder = new FileNameBuilder(
+                new StubNamingConfigService(),
+                new StubQualityDefinitionService(),
+                new CacheManager(),
+                new StubCustomFormatCalculationService(),
+                LogManager.GetCurrentClassLogger());
+
+            var author = new Author { Name = "Brandon Sanderson" };
+            book.Author = author;
+
+            var edition = new Edition { Title = "Book Title", Book = book };
+            var bookFile = new BookFile
+            {
+                Path = "/books/Book Title.m4b",
+                Quality = new QualityModel(Quality.Unknown)
+            };
+
+            var namingConfig = NamingConfig.Default;
+            namingConfig.RenameBooks = true;
+            namingConfig.StandardBookFormat = format;
+
+            return builder.BuildBookFileName(author, edition, bookFile, namingConfig, customFormats: new List<CustomFormat>());
+        }
+
         [Test]
         public void should_drop_connector_only_series_path_segments_when_series_is_missing()
         {

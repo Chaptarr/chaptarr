@@ -16,9 +16,20 @@ namespace Chaptarr.Core.Test.Books
         private class BookServiceProxy : DispatchProxy
         {
             public List<Book> Books { get; set; } = new List<Book>();
+            public List<int> ResyncedAuthorIds { get; } = new List<int>();
+            public Action OnResync { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IBookService.ResyncDenormalizedSeriesFields) &&
+                    args?.Length == 1 &&
+                    args[0] is int resyncAuthorId)
+                {
+                    ResyncedAuthorIds.Add(resyncAuthorId);
+                    OnResync?.Invoke();
+                    return 0;
+                }
+
                 if (targetMethod?.Name == nameof(IBookService.GetBooksByAuthor) &&
                     args?.Length == 1 &&
                     args[0] is int authorId)
@@ -367,6 +378,63 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(linkService.Inserted.Select(x => x.BookId), Is.EqualTo(new[] { ebookBook.Id }));
                 Assert.That(linkService.GetLinksBySeries(existingSeries.Id).Select(x => x.BookId), Is.EqualTo(new[] { ebookBook.Id }));
                 Assert.That(seriesService.Updated.Select(x => x.Id), Contains.Item(existingSeries.Id));
+            });
+        }
+
+        // The stored Book.SeriesName/SeriesPosition pair is repaired here, as the last step of the
+        // series refresh, so it is derived from the links this same refresh just reconciled.
+        [Test]
+        public void should_resync_denormalized_series_fields_after_reconciling_links()
+        {
+            var ebookBook = new Book
+            {
+                Id = 201,
+                AuthorId = 29,
+                Title = "The Housemaid",
+                MediaType = BookMediaType.Ebook,
+                GoodreadsWorkId = "gr:203559547"
+            };
+
+            var existingSeries = new Series
+            {
+                Id = 873,
+                Title = "The Housemaid",
+                GoodreadsSeriesId = "gr:353739",
+                MediaType = BookMediaType.Ebook
+            };
+
+            var remoteSeries = CreateRemoteSeries(
+                title: "The Housemaid",
+                goodreadsSeriesId: "gr:353739",
+                mediaType: BookMediaType.Ebook,
+                books: new[] { ebookBook });
+
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var bookServiceProxy = (BookServiceProxy)(object)bookService;
+            bookServiceProxy.Books = new List<Book> { ebookBook };
+
+            var seriesService = new StubSeriesService();
+            seriesService.SeriesByAuthor.Add(existingSeries);
+
+            var linkService = new StubSeriesBookLinkService();
+            linkService.SetLinks(existingSeries.Id);
+
+            var linkedBookIdsAtResync = new List<int>();
+            bookServiceProxy.OnResync = () => linkedBookIdsAtResync.AddRange(linkService.GetLinksBySeries(existingSeries.Id).Select(x => x.BookId));
+
+            var sut = new TestableRefreshSeriesService(
+                bookService,
+                seriesService,
+                linkService,
+                new RefreshSeriesBookLinkService(linkService, LogManager.GetCurrentClassLogger()),
+                LogManager.GetCurrentClassLogger());
+
+            sut.RefreshSeriesInfo(29, new List<Series> { remoteSeries }, new Author { Id = 29 }, false, false, null);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(bookServiceProxy.ResyncedAuthorIds, Is.EqualTo(new[] { 29 }));
+                Assert.That(linkedBookIdsAtResync, Is.EqualTo(new[] { ebookBook.Id }));
             });
         }
 

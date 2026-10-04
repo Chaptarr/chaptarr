@@ -424,24 +424,19 @@ namespace NzbDrone.Core.Organizer
             tokenHandlers["{Book CleanSubtitle}"] = m => CleanTitle(subtitle);
             tokenHandlers["{Book SubtitleThe}"] = m => TitleThe(subtitle);
 
-            // Series tokens - automatically handle "if applicable" logic
-            var seriesName = edition.Book?.SeriesName;
-            var seriesPosition = edition.Book?.SeriesPosition;
+            // Series tokens - automatically handle "if applicable" logic.
+            // The links are the authoritative membership, so name and position are taken from the
+            // display link as a pair: the stored pair may be stale until the next refresh rewrites it,
+            // and filling one half from each source can put one series' number on another's title.
+            var (seriesName, seriesPosition) = BookSeriesLabel.Resolve(edition.Book?.SeriesLinks);
 
-            // Fall back to SeriesLinks if present (not always loaded during renaming).
-            var seriesLinks = edition.Book?.SeriesLinks;
-            var primarySeries = seriesLinks?.OrderBy(x => x.SeriesPosition).FirstOrDefault();
-
+            // Fall back to the stored pair when no link resolves (not always loaded during renaming).
             if (seriesName.IsNullOrWhiteSpace())
             {
-                seriesName = primarySeries?.Series?.Value?.Title;
+                seriesName = edition.Book?.SeriesName;
+                seriesPosition = edition.Book?.SeriesPosition;
             }
 
-            if (seriesPosition.IsNullOrWhiteSpace())
-            {
-                seriesPosition = primarySeries?.Position;
-            }
-            
             // Series name only (returns empty if no series)
             tokenHandlers["{Book Series}"] = m => 
                 seriesName ?? m.DefaultValue("");

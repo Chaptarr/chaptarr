@@ -151,19 +151,17 @@ namespace Chaptarr.Api.V1.Books
             var selectedEdition = SelectMonitoredEdition(model.Editions);
             var title = (selectedEdition?.Title ?? model.Title) ?? string.Empty;
 
-            // Use SeriesName and SeriesPosition from Book model until SeriesBookLink is properly populated
-            var seriesTitle = !string.IsNullOrWhiteSpace(model.SeriesName)
-                ? model.SeriesName + (!string.IsNullOrWhiteSpace(model.SeriesPosition) ? $" #{model.SeriesPosition}" : string.Empty)
-                : null;
+            var seriesTitle = BookSeriesLabel.Build(model.SeriesLinks);
 
-            // Fallback to SeriesLinks if available (for future when SeriesBookLink is populated)
-            if (string.IsNullOrWhiteSpace(seriesTitle) && model.SeriesLinks?.Any() == true)
+            // Lookup and search results are not persisted and therefore never carry links, so the
+            // denormalized pair from the metadata server is all they have. For a library book the
+            // links are the truth, including when there are none.
+            if (seriesTitle.IsNullOrWhiteSpace() && model.Id <= 0)
             {
-                var seriesLinks = model.SeriesLinks.OrderBy(x => x.SeriesPosition);
-                seriesTitle = seriesLinks.Select(x => x?.Series?.Value?.Title + (x?.Position.IsNotNullOrWhiteSpace() ?? false ? $" #{x.Position}" : string.Empty)).ConcatToString("; ");
+                seriesTitle = BookSeriesLabel.Format(model.SeriesName, model.SeriesPosition);
             }
 
-            title = StripDuplicatedSeriesSuffix(title, seriesTitle);
+            title = StripDuplicatedSeriesSuffix(title, BuildSuffixCandidates(model, seriesTitle));
 
             var authorTitle = $"{model.Author?.SortNameLastFirst} {title}";
             var hasFiles = options.Statistics != null
@@ -258,12 +256,36 @@ namespace Chaptarr.Api.V1.Books
             return resource;
         }
 
-            private static string StripDuplicatedSeriesSuffix(string title, string seriesTitle)
+            private static List<string> BuildSuffixCandidates(Book model, string seriesTitle)
+            {
+                var candidates = new List<string>();
+
+                if (seriesTitle.IsNotNullOrWhiteSpace())
+                {
+                    candidates.Add(seriesTitle);
+                }
+
+                candidates.AddRange(BookSeriesLabel.BuildAll(model.SeriesLinks));
+
+                var denormalized = BookSeriesLabel.Format(model.SeriesName, model.SeriesPosition);
+                if (denormalized.IsNotNullOrWhiteSpace())
+                {
+                    candidates.Add(denormalized);
+                }
+
+                return candidates;
+            }
+
+            private static string StripDuplicatedSeriesSuffix(string title, IEnumerable<string> seriesTitles)
             {
                 title ??= string.Empty;
                 title = title.Trim();
 
-                if (title.Length == 0 || string.IsNullOrWhiteSpace(seriesTitle))
+                var candidates = (seriesTitles ?? Enumerable.Empty<string>())
+                    .Where(x => x.IsNotNullOrWhiteSpace())
+                    .ToList();
+
+                if (title.Length == 0 || candidates.Count == 0)
                 {
                     return title;
                 }
@@ -275,7 +297,7 @@ namespace Chaptarr.Api.V1.Books
                 }
 
                 var suffix = match.Groups["suffix"].Value;
-                if (!SuffixMatchesSeriesTitle(suffix, seriesTitle))
+                if (!candidates.Any(candidate => SuffixMatchesSeriesTitle(suffix, candidate)))
                 {
                     return title;
                 }

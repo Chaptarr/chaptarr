@@ -386,7 +386,7 @@ BookDetails.propTypes = {
   id: PropTypes.number.isRequired,
   titleSlug: PropTypes.string.isRequired,
   title: PropTypes.string.isRequired,
-  seriesTitle: PropTypes.string.isRequired,
+  seriesTitle: PropTypes.string,
   pageCount: PropTypes.number,
   overview: PropTypes.string,
   releaseDate: PropTypes.string.isRequired,
