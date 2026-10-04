@@ -138,6 +138,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubMoveBookFiles : IMoveBookFiles
         {
             public string DestinationPath { get; set; }
+            public Func<int, string> MultiPartDestinationPath { get; set; }
             public int MoveCalls { get; private set; }
             public int CopyCalls { get; private set; }
             public int PreviewCalls { get; private set; }
@@ -171,6 +172,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook)
             {
                 PreviewCalls++;
+
+                // Stands in for a {PartNumber} naming pattern when set.
+                if (MultiPartDestinationPath != null && bookFile.PartCount > 1)
+                {
+                    return MultiPartDestinationPath(bookFile.Part);
+                }
+
                 return DestinationPath;
             }
 
@@ -2140,6 +2148,125 @@ namespace Chaptarr.Core.Test.MediaFiles
                 if (File.Exists(tempPath))
                 {
                     File.Delete(tempPath);
+                }
+
+                if (Directory.Exists(destinationDir))
+                {
+                    Directory.Delete(destinationDir, recursive: true);
+                }
+            }
+        }
+
+        [Test]
+        public void should_skip_multi_file_conversion_when_merged_destination_is_occupied()
+        {
+            RunMultiFileConversionOverOccupiedDestination(manualImport: false, (results, conversion, destinationDir) =>
+            {
+                Assert.That(results, Has.Count.EqualTo(2));
+                Assert.That(results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Skipped));
+                Assert.That(results[0].Errors.Single(), Does.Contain("destination is already occupied"));
+                Assert.That(conversion.ConvertCalls, Is.EqualTo(0));
+                Assert.That(Directory.Exists(Path.Combine(destinationDir, ".chaptarr-conversions")), Is.False);
+            });
+        }
+
+        [Test]
+        public void should_convert_manual_multi_file_import_that_replaces_the_books_own_file()
+        {
+            // Manual imports replace the book's own file even when the profile disallows upgrades.
+            RunMultiFileConversionOverOccupiedDestination(manualImport: true, (results, conversion, destinationDir) =>
+            {
+                Assert.That(conversion.ConvertCalls, Is.EqualTo(1));
+                Assert.That(Path.GetFileName(conversion.LastOutputFile), Is.EqualTo("Black Sheep.m4b"));
+            });
+        }
+
+        private static void RunMultiFileConversionOverOccupiedDestination(bool manualImport, Action<List<ImportResult>, FailingM4bConversionService, string> assert)
+        {
+            var sourceDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-multi-file-{Guid.NewGuid():N}");
+            var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
+            var destinationPath = Path.Combine(destinationDir, "Black Sheep.m4b");
+            var sourcePaths = new[] { Path.Combine(sourceDir, "01.mp3"), Path.Combine(sourceDir, "02.mp3") };
+            Directory.CreateDirectory(sourceDir);
+            Directory.CreateDirectory(destinationDir);
+            foreach (var sourcePath in sourcePaths)
+            {
+                File.WriteAllText(sourcePath, "fake mp3");
+            }
+
+            File.WriteAllText(destinationPath, "already imported m4b");
+
+            try
+            {
+                var (_, author, book, edition) = CreateAudiobookConversionGraph(60);
+                var mediaFileService = new StubMediaFileService();
+                mediaFileService.AddMany(new List<BookFile>
+                {
+                    new()
+                    {
+                        Id = 123,
+                        Path = destinationPath,
+                        EditionId = edition.Id,
+                        Edition = edition,
+                        Quality = new QualityModel(Quality.M4B)
+                    }
+                });
+
+                var conversion = new FailingM4bConversionService();
+                var mover = new StubMoveBookFiles
+                {
+                    DestinationPath = destinationPath,
+                    MultiPartDestinationPath = part => Path.Combine(destinationDir, $"Black Sheep - {part:00}.m4b")
+                };
+
+                var service = new ImportApprovedBooks(
+                    mediaFileService,
+                    new StubMetadataTagService(),
+                    Proxy<IMediaInfoExtractor>(),
+                    Proxy<IAuthorService>(),
+                    Proxy<IBookService>(),
+                    CreateEditionService(new List<Edition> { edition }),
+                    Proxy<IRecycleBinProvider>(),
+                    Proxy<IExtraService>(),
+                    mover,
+                    Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                    new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(),
+                    Proxy<ISeriesBookLinkService>(),
+                    Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(),
+                    conversion,
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+
+                var decisions = new List<ImportDecision<LocalBook>>();
+                foreach (var sourcePath in sourcePaths)
+                {
+                    decisions.Add(new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = sourcePath,
+                        Book = book,
+                        Author = author,
+                        Edition = edition,
+                        Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() },
+                        IsManualImport = manualImport
+                    }));
+                }
+
+                var results = service.Import(
+                    decisions,
+                    replaceExisting: true,
+                    downloadClientItem: new DownloadClientItem { DownloadId = "conversion-multi-file" },
+                    importMode: ImportMode.Move,
+                    cancellationToken: CancellationToken.None);
+
+                assert(results, conversion, destinationDir);
+            }
+            finally
+            {
+                if (Directory.Exists(sourceDir))
+                {
+                    Directory.Delete(sourceDir, recursive: true);
                 }
 
                 if (Directory.Exists(destinationDir))

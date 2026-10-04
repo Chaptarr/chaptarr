@@ -1564,6 +1564,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 var convertedQuality = new QualityModel(Qualities.Quality.M4B);
                 var useDetachedJob = _conversionJobService != null && bookDecisions.All(decision => decision.Item?.IsManualImport != true);
+                var manualReplaceExisting = replaceExisting && (downloadForced || bookDecisions.Any(d => d.Item?.IsManualImport == true));
 
                 if (!_m4bConversionService.CanConvert(inputFiles))
                 {
@@ -1580,7 +1581,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 try
                 {
-                    var finalDestinationPath = GetConvertedImportDestinationPath(first, book, author, outputName, convertedQuality);
+                    var finalDestinationPath = GetConvertedImportDestinationPath(first, book, author, outputName, inputFiles, convertedQuality);
                     var finalDestinationFolder = Path.GetDirectoryName(finalDestinationPath);
                     if (finalDestinationFolder.IsNullOrWhiteSpace())
                     {
@@ -1590,7 +1591,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return (bookDecisions, null, true, error);
                     }
 
-                    var destinationConflict = GetConversionDestinationConflictReason(finalDestinationPath, book, qualityProfile, replaceExisting, downloadForced);
+                    var destinationConflict = GetConversionDestinationConflictReason(finalDestinationPath, book, qualityProfile, replaceExisting, manualReplaceExisting);
                     if (destinationConflict.IsNotNullOrWhiteSpace())
                     {
                         _conversionTrackingService?.Fail(downloadClientItem.DownloadId, destinationConflict);
@@ -2328,11 +2329,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             private LocalBook CreateGeneratedConversionLocalBook(LocalBook first, IReadOnlyList<ImportDecision<LocalBook>> bookDecisions, string outputPath, string[] inputFiles, QualityModel convertedQuality, ConversionTagOptions tagOptions)
             {
                 var outputInfo = new FileInfo(outputPath);
+                var localBook = PlanGeneratedConversionLocalBook(first, outputPath, inputFiles, convertedQuality);
+                localBook.Size = outputInfo.Length;
+                localBook.Modified = outputInfo.LastWriteTimeUtc;
+                localBook.GeneratedConversionOutputSize = outputInfo.Length;
+                localBook.GeneratedConversionTagMode = tagOptions.Mode;
+                localBook.GeneratedConversionTagManifestJson = tagOptions.ManifestJson;
+                return localBook;
+            }
+
+            // The converted file as import will see it, before it exists. The destination check
+            // before conversion names this same object, so the two cannot disagree.
+            private static LocalBook PlanGeneratedConversionLocalBook(LocalBook first, string outputPath, string[] inputFiles, QualityModel convertedQuality)
+            {
                 return new LocalBook
                 {
                     Path = outputPath,
-                    Size = outputInfo.Length,
-                    Modified = outputInfo.LastWriteTimeUtc,
                     RawTags = first.RawTags,
                     FolderTrackInfo = first.FolderTrackInfo,
                     DownloadClientBookInfo = first.DownloadClientBookInfo,
@@ -2346,10 +2358,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     IsGeneratedConversion = true,
                     GeneratedConversionSourcePaths = inputFiles.ToList(),
                     GeneratedConversionOutputPath = outputPath,
-                    GeneratedConversionOutputSize = outputInfo.Length,
                     GeneratedConversionSourceQuality = first.Quality,
-                    GeneratedConversionTagMode = tagOptions.Mode,
-                    GeneratedConversionTagManifestJson = tagOptions.ManifestJson,
                     AdditionalFile = first.AdditionalFile,
                     SceneSource = first.SceneSource,
                     ReleaseGroup = first.ReleaseGroup,
@@ -2364,7 +2373,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 };
             }
 
-            private string GetConvertedImportDestinationPath(LocalBook source, Book book, Author author, string outputName, QualityModel convertedQuality)
+            private string GetConvertedImportDestinationPath(LocalBook source, Book book, Author author, string outputName, string[] inputFiles, QualityModel convertedQuality)
             {
                 if (source?.Edition == null)
                 {
@@ -2378,17 +2387,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     ? Path.Combine(sourceFolder, outputName + ".m4b")
                     : Path.GetFullPath(outputName + ".m4b");
 
-                var previewLocalBook = new LocalBook
-                {
-                    Path = previewPath,
-                    Author = author,
-                    Book = book,
-                    Edition = source.Edition,
-                    Quality = convertedQuality,
-                    Part = source.Part > 0 ? source.Part : 1,
-                    PartCount = source.PartCount
-                };
+                var previewLocalBook = PlanGeneratedConversionLocalBook(source, previewPath, inputFiles, convertedQuality);
+                previewLocalBook.Author = author;
+                previewLocalBook.Book = book;
 
+                // Same part numbering ImportFile gives the BookFile it moves.
                 var previewBookFile = new BookFile
                 {
                     Path = previewLocalBook.Path.CleanFilePath(),
@@ -2396,7 +2399,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     EditionId = source.Edition.Id,
                     Edition = source.Edition,
                     Author = author,
-                    Part = previewLocalBook.Part,
+                    Part = previewLocalBook.Part > 0 ? previewLocalBook.Part : 1,
                     PartCount = previewLocalBook.PartCount,
                     MediaType = BookFile.DetermineMediaType(convertedQuality)
                 };
@@ -2404,7 +2407,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return _bookFileMover.GetImportDestinationPath(previewBookFile, previewLocalBook);
             }
 
-            private string GetConversionDestinationConflictReason(string finalDestinationPath, Book book, QualityProfile qualityProfile, bool replaceExisting, bool downloadForced)
+            private string GetConversionDestinationConflictReason(string finalDestinationPath, Book book, QualityProfile qualityProfile, bool replaceExisting, bool manualReplaceExisting)
             {
                 if (finalDestinationPath.IsNullOrWhiteSpace())
                 {
@@ -2425,7 +2428,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return null;
                 }
 
-                if (CanReplaceExistingConversionDestination(existingTracked, book, qualityProfile, replaceExisting, downloadForced))
+                if (CanReplaceExistingConversionDestination(existingTracked, book, qualityProfile, replaceExisting, manualReplaceExisting))
                 {
                     return null;
                 }
@@ -2443,9 +2446,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return $"Conversion skipped because an untracked file already exists at the destination: {finalDestinationPath}. It will not appear in Chaptarr's Files tab. Remove or rename the file, or change naming settings, then retry.";
             }
 
-            private bool CanReplaceExistingConversionDestination(BookFile existingTracked, Book book, QualityProfile qualityProfile, bool replaceExisting, bool downloadForced)
+            private bool CanReplaceExistingConversionDestination(BookFile existingTracked, Book book, QualityProfile qualityProfile, bool replaceExisting, bool manualReplaceExisting)
             {
-                if (!replaceExisting || (!downloadForced && qualityProfile?.UpgradeAllowed != true) || existingTracked == null)
+                // Mirrors Import(): forced and manual imports replace even when the profile disallows upgrades.
+                if (!replaceExisting || (!manualReplaceExisting && qualityProfile?.UpgradeAllowed != true) || existingTracked == null)
                 {
                     return false;
                 }
