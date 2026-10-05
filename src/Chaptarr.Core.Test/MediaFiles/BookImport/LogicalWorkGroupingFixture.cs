@@ -153,7 +153,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => _editionsById.Values.FirstOrDefault(e => string.Equals(e.OpenLibraryEditionId, openLibraryEditionId, StringComparison.OrdinalIgnoreCase));
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => _editionsById.Values.Where(e => e.Monitored).ToList();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => _editionsById.Values.Where(e => e.Monitored).ToList();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();

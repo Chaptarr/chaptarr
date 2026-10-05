@@ -12,7 +12,7 @@ namespace NzbDrone.Core.Books
 {
     public interface IEditionRepository : IBasicRepository<Edition>
     {
-        List<Edition> GetAllMonitoredEditions();
+        List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType);
         Edition FindByForeignEditionId(string foreignEditionId);
         List<Edition> FindAllByForeignEditionId(string foreignEditionId);
         Edition FindByHardcoverEditionId(string hardcoverEditionId);
@@ -41,18 +41,47 @@ namespace NzbDrone.Core.Books
     public class EditionRepository : BasicRepository<Edition>, IEditionRepository
     {
         private readonly Logger _logger;
+        private readonly string _bookListColumns;
 
         public EditionRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
             _logger = LogManager.GetCurrentClassLogger();
+            _bookListColumns = BuildBookListColumns();
         }
 
-        public List<Edition> GetAllMonitoredEditions()
+        public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType)
         {
             // WhereBuilderSqlite requires a concrete value; avoid boolean-expression simplification.
             var monitored = true;
-            return Query(x => x.Monitored == monitored);
+            var builder = Builder()
+                .Select(_bookListColumns)
+                .Where<Edition>(e => e.Monitored == monitored);
+
+            if (mediaType.HasValue)
+            {
+                var bookMediaType = mediaType.Value;
+                builder = builder.Join<Edition, Book>((e, b) => e.BookId == b.Id)
+                    .Where<Book>(b => b.MediaType == bookMediaType);
+            }
+
+            var sql = builder.AddSelectTemplate(typeof(Edition));
+            return _database.Query<Edition>(sql.RawSql, sql.Parameters).ToList();
+        }
+
+        // Book lists never read Chapters, and on large libraries it is most of the Editions table.
+        private string BuildBookListColumns()
+        {
+            var excluded = TableMapping.Mapper.ExcludeProperties(typeof(Edition))
+                .Select(x => x.Name)
+                .ToHashSet();
+            excluded.Add(nameof(Edition.Chapters));
+
+            var columns = typeof(Edition).GetProperties()
+                .Where(x => x.IsMappableProperty() && !excluded.Contains(x.Name))
+                .Select(x => $"\"{_table}\".\"{x.Name}\"");
+
+            return string.Join(", ", columns);
         }
 
         public int CountMissingMatchingTitles()

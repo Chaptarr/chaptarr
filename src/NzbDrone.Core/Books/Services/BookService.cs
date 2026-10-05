@@ -2222,25 +2222,11 @@ namespace NzbDrone.Core.Books
         {
             _logger.Debug("[DISPLAY-DEBUG] GetBooksForDisplay called with authorId={0}, mediaType={1}", authorId, mediaType);
 
-            List<Book> allBooks;
+            BookMediaType? targetMediaType = null;
 
-            if (authorId.HasValue)
-            {
-                allBooks = GetBooksByAuthor(authorId.Value);
-                _logger.Debug("[DISPLAY-DEBUG] GetBooksByAuthor returned {0} books for author {1}", allBooks.Count, authorId.Value);
-            }
-            else
-            {
-                allBooks = GetAllBooks();
-                _logger.Debug("[DISPLAY-DEBUG] GetAllBooks returned {0} books", allBooks.Count);
-            }
-
-            // NEW DUAL-INSTANCE LOGIC: Filter by MediaType enum if specified
             if (!string.IsNullOrEmpty(mediaType))
             {
-                var targetMediaType = mediaType.ToLower() == "ebook" ? BookMediaType.Ebook : BookMediaType.Audiobook;
-                allBooks = allBooks.Where(b => b.MediaType == targetMediaType).ToList();
-                _logger.Debug("[DISPLAY-DEBUG] Filtered to {0} books with MediaType={1}", allBooks.Count, targetMediaType);
+                targetMediaType = mediaType.ToLower() == "ebook" ? BookMediaType.Ebook : BookMediaType.Audiobook;
 
                 // CRITICAL: Check if root folder exists for this media type
                 // If no root folder, return empty list (GUI shows nothing)
@@ -2256,6 +2242,32 @@ namespace NzbDrone.Core.Books
                 }
             }
 
+            List<Book> allBooks;
+
+            if (authorId.HasValue)
+            {
+                allBooks = GetBooksByAuthor(authorId.Value);
+                _logger.Debug("[DISPLAY-DEBUG] GetBooksByAuthor returned {0} books for author {1}", allBooks.Count, authorId.Value);
+
+                if (targetMediaType.HasValue)
+                {
+                    allBooks = allBooks.Where(b => b.MediaType == targetMediaType.Value).ToList();
+                    _logger.Debug("[DISPLAY-DEBUG] Filtered to {0} books with MediaType={1}", allBooks.Count, targetMediaType.Value);
+                }
+            }
+            else if (targetMediaType.HasValue)
+            {
+                // The general list can be the whole library, so filter in SQL. Series links are
+                // left to the API mapper, which loads them for the books it returns.
+                allBooks = _bookRepository.GetBooksByMediaType(targetMediaType.Value);
+                _logger.Debug("[DISPLAY-DEBUG] GetBooksByMediaType returned {0} books with MediaType={1}", allBooks.Count, targetMediaType.Value);
+            }
+            else
+            {
+                allBooks = _bookRepository.All().ToList();
+                _logger.Debug("[DISPLAY-DEBUG] Loaded all {0} books", allBooks.Count);
+            }
+
             // Bulk API/index sync path is intentionally lean: one monitored edition per book, no files.
             // Author-scoped detail paths stay rich because the UI needs all editions/files there.
             if (allBooks.Any())
@@ -2264,7 +2276,7 @@ namespace NzbDrone.Core.Books
                 var bookIdSet = bookIds.ToHashSet();
                 var allEditions = authorId.HasValue
                     ? _editionService.GetEditionsByBook(bookIds)
-                    : _editionService.GetAllMonitoredEditions().Where(e => e != null && bookIdSet.Contains(e.BookId)).ToList();
+                    : _editionService.GetMonitoredEditionsForBookList(targetMediaType).Where(e => e != null && bookIdSet.Contains(e.BookId)).ToList();
                 var editionsByBook = allEditions.GroupBy(e => e.BookId).ToDictionary(g => g.Key, g => g.ToList());
 
                 var filesByEdition = new Dictionary<int, List<BookFile>>();

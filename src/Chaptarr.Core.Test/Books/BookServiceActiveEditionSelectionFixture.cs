@@ -122,7 +122,7 @@ namespace Chaptarr.Core.Test.Books
             public Edition GetEditionByGoogleBooksEditionId(string googleBooksEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions()
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType)
             {
                 LoadedAllMonitoredEditions = true;
                 return _editions.Where(e => e.Monitored).ToList();

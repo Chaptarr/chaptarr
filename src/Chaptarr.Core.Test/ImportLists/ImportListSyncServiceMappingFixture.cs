@@ -67,7 +67,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => null;
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => null;
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
@@ -103,7 +103,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => null;
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => null;
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();

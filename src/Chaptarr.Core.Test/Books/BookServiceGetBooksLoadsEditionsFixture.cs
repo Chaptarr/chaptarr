@@ -11,6 +11,7 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -100,6 +101,11 @@ namespace Chaptarr.Core.Test.Books
             public void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
             public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
+
+            public List<Book> GetBooksByMediaType(BookMediaType mediaType)
+            {
+                return _booksById.Values.Where(b => b.MediaType == mediaType).ToList();
+            }
         }
 
         private sealed class StubEditionService : IEditionService
@@ -126,7 +132,13 @@ namespace Chaptarr.Core.Test.Books
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public BookMediaType? BookListMediaType { get; private set; }
+
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType)
+            {
+                BookListMediaType = mediaType;
+                return _editions.Where(e => e.Monitored).ToList();
+            }
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
@@ -138,6 +150,28 @@ namespace Chaptarr.Core.Test.Books
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+        }
+
+        private sealed class StubRootFolderService : IRootFolderService
+        {
+            private readonly List<RootFolder> _rootFolders;
+
+            public StubRootFolderService(params RootFolder[] rootFolders)
+            {
+                _rootFolders = rootFolders.ToList();
+            }
+
+            public List<RootFolder> All() => _rootFolders;
+            public List<RootFolder> AllWithSpaceStats() => throw new NotImplementedException();
+            public RootFolder Add(RootFolder rootFolder) => throw new NotImplementedException();
+            public RootFolder Update(RootFolder rootFolder) => throw new NotImplementedException();
+            public void Remove(int id) => throw new NotImplementedException();
+            public RootFolder Get(int id) => throw new NotImplementedException();
+            public List<RootFolder> AllForTag(int tagId) => throw new NotImplementedException();
+            public RootFolder GetBestRootFolder(string path) => throw new NotImplementedException();
+            public RootFolder GetBestRootFolder(string path, List<RootFolder> allRootFolders) => throw new NotImplementedException();
+            public string GetBestRootFolderPath(string path) => throw new NotImplementedException();
+            public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders) => throw new NotImplementedException();
         }
 
         private sealed class StubAuthorService : IAuthorService
@@ -349,6 +383,43 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(result.Editions[0].BookFiles.Select(file => file.Id), Is.EqualTo(new[] { 100, 200 }));
             Assert.That(result.Editions[1].BookFiles.Select(file => file.Id), Is.EqualTo(new[] { 300 }));
             Assert.That(result.Editions[2].BookFiles, Is.Null);
+        }
+
+        [TestCase("audiobook", BookMediaType.Audiobook, 1, 10)]
+        [TestCase("ebook", BookMediaType.Ebook, 2, 20)]
+        public void general_display_list_should_load_only_the_requested_media_type(string mediaType, BookMediaType expectedMediaType, int expectedBookId, int expectedEditionId)
+        {
+            var author = new Author { Id = 10, Name = "Isaac Asimov" };
+            var books = new[]
+            {
+                new Book { Id = 1, AuthorId = 10, Title = "Foundation", MediaType = BookMediaType.Audiobook },
+                new Book { Id = 2, AuthorId = 10, Title = "Foundation", MediaType = BookMediaType.Ebook }
+            };
+            var editions = new[]
+            {
+                new Edition { Id = 10, BookId = 1, Title = "Foundation", Monitored = true },
+                new Edition { Id = 20, BookId = 2, Title = "Foundation", Monitored = true },
+                new Edition { Id = 21, BookId = 2, Title = "Foundation", Monitored = false }
+            };
+            var editionService = new StubEditionService(editions);
+
+            // The stub repository throws from All(), so loading the whole library fails the test.
+            var service = new BookService(
+                new StubBookRepository(books),
+                editionService,
+                eventAggregator: null,
+                authorService: new StubAuthorService(new[] { author }),
+                mediaFileService: null,
+                rootFolderService: new StubRootFolderService(new RootFolder { FolderType = FolderType.Mixed }),
+                new StubSeriesBookLinkRepository(),
+                multiCopySeriesService: null,
+                logger: LogManager.GetCurrentClassLogger());
+
+            var results = service.GetBooksForDisplay(authorId: null, mediaType: mediaType);
+
+            Assert.That(results.Select(book => book.Id), Is.EqualTo(new[] { expectedBookId }));
+            Assert.That(results[0].Editions.Select(edition => edition.Id), Is.EqualTo(new[] { expectedEditionId }));
+            Assert.That(editionService.BookListMediaType, Is.EqualTo(expectedMediaType));
         }
     }
 }
