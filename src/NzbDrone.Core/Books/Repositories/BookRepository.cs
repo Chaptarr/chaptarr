@@ -965,7 +965,7 @@ namespace NzbDrone.Core.Books
             if (!effectiveMonitored.HasValue && !includeUnmonitored)
             {
                 var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
-                builder.Where($"(\"AudiobookMonitored\" = {trueIndicator} OR \"EbookMonitored\" = {trueIndicator})");
+                builder.Where($"(\"{tableName}\".\"AudiobookMonitored\" = {trueIndicator} OR \"{tableName}\".\"EbookMonitored\" = {trueIndicator})");
             }
 
             if (!string.IsNullOrWhiteSpace(normalizedMediaType))
@@ -974,7 +974,7 @@ namespace NzbDrone.Core.Books
                 {
                     normalizedMediaTypeForFiles = normalizedMediaType;
                     var mediaTypeValue = normalizedMediaType == "audiobook" ? 0 : 1;
-                    builder.Where("\"MediaType\" = @mediaType", new { mediaType = mediaTypeValue });
+                    builder.Where($"\"{tableName}\".\"MediaType\" = @mediaType", new { mediaType = mediaTypeValue });
                 }
             }
 
@@ -984,15 +984,15 @@ namespace NzbDrone.Core.Books
 
                 if (normalizedMediaTypeForFiles == "audiobook")
                 {
-                    builder.Where("\"AudiobookMonitored\" = @monitored", new { monitored = monitoredValue });
+                    builder.Where($"\"{tableName}\".\"AudiobookMonitored\" = @monitored", new { monitored = monitoredValue });
                 }
                 else if (normalizedMediaTypeForFiles == "ebook")
                 {
-                    builder.Where("\"EbookMonitored\" = @monitored", new { monitored = monitoredValue });
+                    builder.Where($"\"{tableName}\".\"EbookMonitored\" = @monitored", new { monitored = monitoredValue });
                 }
                 else
                 {
-                    builder.Where("((\"MediaType\" = @audiobookMediaType AND \"AudiobookMonitored\" = @monitored) OR (\"MediaType\" = @ebookMediaType AND \"EbookMonitored\" = @monitored))",
+                    builder.Where($"((\"{tableName}\".\"MediaType\" = @audiobookMediaType AND \"{tableName}\".\"AudiobookMonitored\" = @monitored) OR (\"{tableName}\".\"MediaType\" = @ebookMediaType AND \"{tableName}\".\"EbookMonitored\" = @monitored))",
                         new
                         {
                             audiobookMediaType = (int)BookMediaType.Audiobook,
@@ -1061,7 +1061,7 @@ namespace NzbDrone.Core.Books
             offset = Math.Max(0, offset);
             pageSize = Math.Clamp(pageSize, 1, 500);
 
-            var allowedSortKeys = new HashSet<string> { "cleantitle", "title", "authortitle", "releasedate", "added", "id", "sizeondisk" };
+            var allowedSortKeys = new HashSet<string> { "cleantitle", "title", "authortitle", "authorname", "narrator", "duration", "releasedate", "qualityprofileid", "added", "id", "bookfilecount", "path", "sizeondisk" };
             if (string.IsNullOrWhiteSpace(sortKey) || !allowedSortKeys.Contains(sortKey.ToLowerInvariant()))
             {
                 sortKey = "title";
@@ -1070,6 +1070,7 @@ namespace NzbDrone.Core.Books
             sortDirection = sortDirection?.ToUpperInvariant() == "DESC" ? "DESC" : "ASC";
 
             var tableName = TableMapping.Mapper.TableNameMapping(typeof(Book));
+            var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
             var columnMap = new Dictionary<string, string>
             {
                 ["cleantitle"] = $"LOWER(COALESCE(\"{tableName}\".\"CleanTitle\", \"{tableName}\".\"Title\", ''))",
@@ -1078,33 +1079,59 @@ namespace NzbDrone.Core.Books
                 ["releasedate"] = $"\"{tableName}\".\"ReleaseDate\"",
                 ["added"] = $"\"{tableName}\".\"Added\"",
                 ["id"] = $"\"{tableName}\".\"Id\"",
-                ["sizeondisk"] = "COALESCE(\"FileStatistics\".\"SizeOnDisk\", 0)"
+                ["sizeondisk"] = "COALESCE(\"FileStatistics\".\"SizeOnDisk\", 0)",
+                ["authorname"] = "LOWER(COALESCE(\"Authors\".\"SortName\", \"Authors\".\"Name\", ''))",
+
+                // The list shows the narrator of the monitored edition; books without one sort last when ascending.
+                ["narrator"] = $"COALESCE(NULLIF(LOWER((SELECT \"Editions\".\"Narrator\" FROM \"Editions\" WHERE \"Editions\".\"BookId\" = \"{tableName}\".\"Id\" AND \"Editions\".\"Monitored\" = {trueIndicator} ORDER BY \"Editions\".\"Id\" LIMIT 1)), ''), 'zzz')",
+                ["duration"] = $"COALESCE(\"{tableName}\".\"DurationMinutes\", 0)",
+                ["bookfilecount"] = "COALESCE(\"FileStatistics\".\"BookFileCount\", 0)",
+                ["qualityprofileid"] = $"COALESCE(CASE WHEN \"{tableName}\".\"MediaType\" = 1 THEN \"Authors\".\"EbookQualityProfileId\" ELSE \"Authors\".\"AudiobookQualityProfileId\" END, 0)",
+                ["path"] = $"LOWER(COALESCE(CASE WHEN \"{tableName}\".\"MediaType\" = 1 THEN \"Authors\".\"EbookPath\" ELSE \"Authors\".\"AudiobookPath\" END, ''))"
             };
+
+            var sortKeysJoiningAuthors = new HashSet<string> { "authortitle", "authorname", "qualityprofileid", "path" };
+            var sortKeysJoiningFileStatistics = new HashSet<string> { "sizeondisk", "bookfilecount" };
 
             var normalizedSortKey = sortKey.ToLowerInvariant();
             var sortColumn = columnMap[normalizedSortKey];
             var countBuilder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
             var countTemplate = countBuilder.AddTemplate($"SELECT COUNT(*) FROM \"{tableName}\" /**where**/");
 
+            int totalCount;
+            List<int> pageIds;
+
             using (var conn = _database.OpenConnection())
             {
-                var totalCount = conn.QuerySingle<int>(countTemplate.RawSql, countTemplate.Parameters);
+                totalCount = conn.QuerySingle<int>(countTemplate.RawSql, countTemplate.Parameters);
                 var builder = CreatePagedBooksBuilder(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
-                builder.Select(typeof(Book));
 
-                if (normalizedSortKey == "sizeondisk")
+                // Sort and page only the IDs. Sorting whole rows means carrying every column of the
+                // library through the sort, which spills to disk on large libraries.
+                builder.Select($"\"{tableName}\".\"Id\"");
+
+                if (sortKeysJoiningFileStatistics.Contains(normalizedSortKey))
                 {
                     builder.LeftJoin($@"({BookFileStatisticsSql.GroupedByBook}) AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""{tableName}"".""Id""");
                 }
 
-                if (normalizedSortKey == "authortitle")
+                if (sortKeysJoiningAuthors.Contains(normalizedSortKey))
                 {
                     builder.InnerJoin($"\"Authors\" ON \"Authors\".\"Id\" = \"{tableName}\".\"AuthorId\"");
+                }
+
+                if (normalizedSortKey == "authortitle")
+                {
                     builder.OrderBy($"{sortColumn} {sortDirection}, LOWER(COALESCE(\"{tableName}\".\"CleanTitle\", \"{tableName}\".\"Title\", '')) {sortDirection}, \"{tableName}\".\"Id\" {sortDirection}");
                 }
                 else if (normalizedSortKey == "id")
                 {
                     builder.OrderBy($"{sortColumn} {sortDirection}");
+                }
+                else if (normalizedSortKey == "path")
+                {
+                    // Books whose author has no folder for this side stay at the end in both directions.
+                    builder.OrderBy($"CASE WHEN {sortColumn} = '' THEN 1 ELSE 0 END, {sortColumn} {sortDirection}, \"{tableName}\".\"Id\" {sortDirection}");
                 }
                 else
                 {
@@ -1115,16 +1142,40 @@ namespace NzbDrone.Core.Books
                     $"SELECT /**select**/ FROM \"{tableName}\" /**join**/ /**innerjoin**/ /**leftjoin**/ /**where**/ /**groupby**/ /**having**/ /**orderby**/ LIMIT {pageSize} OFFSET {offset}"
                 );
 
-                var books = conn.Query<Book>(template.RawSql, template.Parameters).ToList();
-
-                return new PagedBookResource
-                {
-                    Records = books,
-                    TotalCount = totalCount,
-                    Offset = offset,
-                    PageSize = pageSize
-                };
+                pageIds = conn.Query<int>(template.RawSql, template.Parameters).ToList();
             }
+
+            return new PagedBookResource
+            {
+                Records = GetBooksInIdOrder(pageIds),
+                TotalCount = totalCount,
+                Offset = offset,
+                PageSize = pageSize
+            };
+        }
+
+        // Tolerates books deleted between the ID query and this one; they're simply left out.
+        private List<Book> GetBooksInIdOrder(List<int> ids)
+        {
+            if (ids.Count == 0)
+            {
+                return new List<Book>();
+            }
+
+            var idsArray = ids.ToArray();
+            var booksById = Query(Builder().Where<Book>(x => Enumerable.Contains(idsArray, x.Id)))
+                .ToDictionary(book => book.Id);
+
+            var books = new List<Book>(ids.Count);
+            foreach (var id in ids)
+            {
+                if (booksById.TryGetValue(id, out var book))
+                {
+                    books.Add(book);
+                }
+            }
+
+            return books;
         }
 
         public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null)

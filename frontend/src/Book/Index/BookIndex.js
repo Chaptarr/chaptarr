@@ -26,24 +26,26 @@ import BookIndexFilterMenu from './Menus/BookIndexFilterMenu';
 import BookIndexSortMenu from './Menus/BookIndexSortMenu';
 import BookIndexViewMenu from './Menus/BookIndexViewMenu';
 import BookIndexOverviewsConnector from './Overview/BookIndexOverviewsConnector';
+import BookIndexOverviewsInfiniteConnector from './Overview/BookIndexOverviewsInfiniteConnector';
 import BookIndexOverviewOptionsModal from './Overview/Options/BookIndexOverviewOptionsModal';
 import BookIndexPostersConnector from './Posters/BookIndexPostersConnector';
 import BookIndexPostersInfiniteConnector from './Posters/BookIndexPostersInfiniteConnector';
 import BookIndexPosterOptionsModal from './Posters/Options/BookIndexPosterOptionsModal';
 import BookIndexTableConnector from './Table/BookIndexTableConnector';
+import BookIndexTableInfiniteConnector from './Table/BookIndexTableInfiniteConnector';
 import BookIndexTableOptionsConnector from './Table/BookIndexTableOptionsConnector';
 import styles from './BookIndex.css';
 
-function getViewComponent(view, useClientSidePosters) {
+function getViewComponent(view, useClientSideBooks) {
   if (view === 'posters') {
-    return useClientSidePosters ? BookIndexPostersConnector : BookIndexPostersInfiniteConnector;
+    return useClientSideBooks ? BookIndexPostersConnector : BookIndexPostersInfiniteConnector;
   }
 
   if (view === 'overview') {
-    return BookIndexOverviewsConnector;
+    return useClientSideBooks ? BookIndexOverviewsConnector : BookIndexOverviewsInfiniteConnector;
   }
 
-  return BookIndexTableConnector;
+  return useClientSideBooks ? BookIndexTableConnector : BookIndexTableInfiniteConnector;
 }
 
 class BookIndex extends Component {
@@ -83,11 +85,12 @@ class BookIndex extends Component {
       view,
       selectedFilterKey,
       selectedMediaType,
-      posterBuckets
+      bookBuckets,
+      useClientSideBooks
     } = this.props;
 
     const itemsChanged = hasDifferentItemsOrOrder(prevProps.items, items);
-    const bucketsChanged = prevProps.posterBuckets !== posterBuckets;
+    const bucketsChanged = prevProps.bookBuckets !== bookBuckets;
 
     const sortChanged = sortKey !== prevProps.sortKey || sortDirection !== prevProps.sortDirection;
     const viewChanged = view !== prevProps.view;
@@ -95,11 +98,11 @@ class BookIndex extends Component {
       selectedFilterKey !== prevProps.selectedFilterKey ||
       selectedMediaType !== prevProps.selectedMediaType;
 
-    // Jump bar in infinite posters view is driven by server-provided buckets.
-    // Avoid re-building it on every infinite scroll page load (itemsChanged).
+    // Jump bar in server-paged views is driven by server-provided buckets.
+    // Avoid re-building it on every page load (itemsChanged).
     if (sortChanged ||
         viewChanged ||
-        (view === 'posters' ? bucketsChanged : itemsChanged)) {
+        (useClientSideBooks ? itemsChanged : bucketsChanged)) {
       this.setJumpBarItems();
     }
 
@@ -132,7 +135,7 @@ class BookIndex extends Component {
   setSelectedState(reset = false) {
     const {
       items,
-      view
+      useClientSideBooks
     } = this.props;
 
     const {
@@ -140,7 +143,8 @@ class BookIndex extends Component {
       allSelected
     } = this.state;
 
-    const newSelectedState = view === 'posters' && !reset ? { ...selectedState } : {};
+    // Paged views only list the pages loaded so far, so keep selections from earlier loads.
+    const newSelectedState = !useClientSideBooks && !reset ? { ...selectedState } : {};
 
     items.forEach((book) => {
       const isItemSelected = reset ? undefined : selectedState[book.id];
@@ -172,9 +176,8 @@ class BookIndex extends Component {
       sortKey,
       sortDirection,
       isPopulated,
-      view,
-      posterBuckets,
-      useClientSidePosters
+      bookBuckets,
+      useClientSideBooks
     } = this.props;
 
     const isSortableForJumpBar = sortKey === 'title' || sortKey === 'authorTitle' || sortKey === 'cleanTitle';
@@ -185,20 +188,20 @@ class BookIndex extends Component {
       return;
     }
 
-    // Infinite scroll posters view: use bucket counts from the server so jump bar covers the full dataset.
-    if (view === 'posters' && !useClientSidePosters) {
-      if (!posterBuckets || posterBuckets.status !== 'succeeded' || !posterBuckets.order?.length) {
+    // Server-paged views: use bucket counts from the server so the jump bar covers the full dataset.
+    if (!useClientSideBooks) {
+      if (!bookBuckets || bookBuckets.status !== 'succeeded' || !bookBuckets.order?.length) {
         this.setState({ jumpBarItems: { order: [] } });
         return;
       }
 
       const order = sortDirection === sortDirections.DESCENDING ?
-        [...posterBuckets.order].reverse() :
-        posterBuckets.order;
+        [...bookBuckets.order].reverse() :
+        bookBuckets.order;
 
       this.setState({
         jumpBarItems: {
-          characters: posterBuckets.counts,
+          characters: bookBuckets.counts,
           order
         }
       });
@@ -290,17 +293,16 @@ class BookIndex extends Component {
     }
 
     const {
-      view,
-      posterQueryKey,
-      posterQueryParams,
+      bookQueryKey,
+      bookQueryParams,
       onFetchBookIds,
-      useClientSidePosters
+      useClientSideBooks
     } = this.props;
 
-    if (view === 'posters' && !useClientSidePosters) {
+    if (!useClientSideBooks) {
       this.setState({ isSelectingAll: true });
 
-      Promise.resolve(onFetchBookIds(posterQueryKey, posterQueryParams))
+      Promise.resolve(onFetchBookIds(bookQueryKey, bookQueryParams))
         .then((response) => {
           const ids = Array.isArray(response) ? response : (response?.ids || []);
           const nextSelectedState = {};
@@ -368,11 +370,37 @@ class BookIndex extends Component {
   };
 
   onSearchConfirmed = () => {
-    const selectedBookIds = this.getSelectedIds();
-    const searchIds = this.state.isEditorActive && selectedBookIds.length > 0 ? selectedBookIds : this.props.items.map((m) => m.id);
+    const {
+      items,
+      useClientSideBooks,
+      bookQueryKey,
+      bookQueryParams,
+      onFetchBookIds,
+      onSearchPress
+    } = this.props;
 
-    this.props.onSearchPress(searchIds);
+    const selectedBookIds = this.getSelectedIds();
     this.setState({ isConfirmSearchModalOpen: false });
+
+    if (this.state.isEditorActive && selectedBookIds.length > 0) {
+      onSearchPress(selectedBookIds);
+      return;
+    }
+
+    // Paged views only hold the loaded pages, so ask the server for every book in the list.
+    if (!useClientSideBooks) {
+      Promise.resolve(onFetchBookIds(bookQueryKey, bookQueryParams)).then((response) => {
+        const ids = Array.isArray(response) ? response : (response?.ids || []);
+
+        if (ids.length) {
+          onSearchPress(ids);
+        }
+      });
+
+      return;
+    }
+
+    onSearchPress(items.map((m) => m.id));
   };
 
   onConfirmSearchModalClose = () => {
@@ -410,9 +438,9 @@ class BookIndex extends Component {
       onRssSyncPress,
       selectedMediaType,
       onMediaTypeChange,
-      useClientSidePosters,
-      posterBuckets,
-      posterTotalCount,
+      useClientSideBooks,
+      bookBuckets,
+      bookTotalCount,
       ...otherProps
     } = this.props;
 
@@ -432,25 +460,26 @@ class BookIndex extends Component {
 
     const selectedBookIds = this.getSelectedIds();
 
-    const ViewComponent = getViewComponent(view, useClientSidePosters);
-    const isInfinitePostersView = view === 'posters' && !useClientSidePosters;
-    const isInfinitePostersEmpty = isInfinitePostersView &&
-      posterTotalCount === 0 &&
-      posterBuckets?.status !== 'failed';
-    const isLoaded = !!(!error && (isInfinitePostersView || (isPopulated && items.length)) && scroller);
-    const hasNoAuthor = (view !== 'posters' || useClientSidePosters) && !totalItems;
+    const ViewComponent = getViewComponent(view, useClientSideBooks);
+    const isPagedView = !useClientSideBooks;
+    const isPagedViewEmpty = isPagedView &&
+      bookTotalCount === 0 &&
+      bookBuckets?.status !== 'failed';
+    const isLoaded = !!(!error && (isPagedView || (isPopulated && items.length)) && scroller);
+    const hasNoAuthor = useClientSideBooks && !totalItems;
     const showNoBooks = !error && (
-      isInfinitePostersEmpty ||
-      (isPopulated && !items.length && (view !== 'posters' || useClientSidePosters))
+      isPagedViewEmpty ||
+      (isPopulated && !items.length && useClientSideBooks)
     );
     const isFiltered = selectedFilterKey !== 'all';
-    const showFilteredEmptyState = isFiltered && (totalItems > 0 || isInfinitePostersEmpty);
-    const noBooksTotalItems = isInfinitePostersEmpty ? 0 : totalItems;
+    const showFilteredEmptyState = isFiltered && (totalItems > 0 || isPagedViewEmpty);
+    const noBooksTotalItems = isPagedViewEmpty ? 0 : totalItems;
 
     const refreshLabel = isEditorActive && selectedBookIds.length > 0 ? translate('UpdateSelected') : translate('UpdateAll');
     const searchIndexLabel = selectedFilterKey === 'all' ? translate('SearchAll') : translate('SearchFiltered');
     const searchEditorLabel = selectedBookIds.length > 0 ? translate('SearchSelected') : translate('SearchAll');
-    const searchWarningCount = isEditorActive && selectedBookIds.length > 0 ? selectedBookIds.length : items.length;
+    const listedBookCount = isPagedView ? (bookTotalCount || 0) : items.length;
+    const searchWarningCount = isEditorActive && selectedBookIds.length > 0 ? selectedBookIds.length : listedBookCount;
 
     return (
       <PageContent>
@@ -482,7 +511,7 @@ class BookIndex extends Component {
             <PageToolbarButton
               label={isEditorActive ? searchEditorLabel : searchIndexLabel}
               iconName={icons.SEARCH}
-              isDisabled={isSearching || !items.length}
+              isDisabled={isSearching || !listedBookCount}
               onPress={this.onSearchPress}
             />
 
@@ -726,15 +755,15 @@ BookIndex.propTypes = {
   onSaveSelected: PropTypes.func.isRequired,
   onFetchBookIds: PropTypes.func.isRequired,
   selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
-  posterQueryKey: PropTypes.string.isRequired,
-  posterQueryParams: PropTypes.object.isRequired,
-  posterBuckets: PropTypes.shape({
+  bookQueryKey: PropTypes.string.isRequired,
+  bookQueryParams: PropTypes.object.isRequired,
+  bookBuckets: PropTypes.shape({
     counts: PropTypes.object,
     order: PropTypes.arrayOf(PropTypes.string),
     status: PropTypes.string
   }),
-  posterTotalCount: PropTypes.number,
-  useClientSidePosters: PropTypes.bool.isRequired,
+  bookTotalCount: PropTypes.number,
+  useClientSideBooks: PropTypes.bool.isRequired,
   onMediaTypeChange: PropTypes.func.isRequired
 };
 

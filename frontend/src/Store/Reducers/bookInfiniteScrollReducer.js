@@ -1,4 +1,5 @@
 import { handleActions } from 'redux-actions';
+import { REMOVE_ITEM, UPDATE_ITEM } from 'Store/Actions/baseActions';
 
 //
 // Action Types
@@ -16,6 +17,7 @@ export const SET_BOOKS_ACTIVE_QUERY = 'books/setActiveQuery';
 export const INVALIDATE_BOOKS_QUERY = 'books/invalidateQuery';
 export const CLEAR_BOOKS_QUERIES = 'books/clearQueries';
 export const ABORT_ALL_BOOK_REQUESTS = 'books/abortAllRequests';
+export const MARK_BOOKS_QUERY_STALE = 'books/markQueryStale';
 
 //
 // Initial State
@@ -25,7 +27,10 @@ export const initialState = {
   entities: {},
   queries: {},
   activeQueryKey: null,
-  pageSize: 200
+  pageSize: 200,
+
+  // Bumped whenever a book is edited or deleted elsewhere, so paged views know to refresh.
+  changeVersion: 0
 };
 
 //
@@ -415,6 +420,84 @@ const actionHandlers = {
       entities: clearEntities ? {} : state.entities,
       queries: {},
       activeQueryKey: null
+    };
+  },
+
+  // Book edits and deletes (editor saves, monitor toggles, SignalR) only update the `books`
+  // section. Mirror edits into loaded entities so rows update now, and record the change so
+  // paged views re-fetch for filter, sort and delete changes.
+  [UPDATE_ITEM]: (state, { payload }) => {
+    if (payload.section !== 'books') {
+      return state;
+    }
+
+    const {
+      section,
+      updateOnly,
+      ...changes
+    } = payload;
+
+    const existing = state.entities[payload.id];
+    const entities = existing ?
+      { ...state.entities, [payload.id]: { ...existing, ...changes } } :
+      state.entities;
+
+    return {
+      ...state,
+      entities,
+      changeVersion: state.changeVersion + 1
+    };
+  },
+
+  [REMOVE_ITEM]: (state, { payload }) => {
+    if (payload.section !== 'books') {
+      return state;
+    }
+
+    return {
+      ...state,
+      changeVersion: state.changeVersion + 1
+    };
+  },
+
+  // Keep the pages on screen, marked stale so they reload in place, and drop the rest so they
+  // reload when scrolled to.
+  [MARK_BOOKS_QUERY_STALE]: (state, { payload }) => {
+    const { queryKey, keepPageIndexes } = payload;
+    const query = state.queries[queryKey];
+
+    if (!query) {
+      return state;
+    }
+
+    const pages = {};
+    const latestRequests = {};
+
+    keepPageIndexes.forEach((pageIndex) => {
+      const page = query.pages[pageIndex];
+
+      if (!page) {
+        return;
+      }
+
+      pages[pageIndex] = page.status === 'loading' ? page : { ...page, status: 'stale' };
+      latestRequests[pageIndex] = query.latestRequests[pageIndex];
+    });
+
+    return {
+      ...state,
+      queries: {
+        ...state.queries,
+        [queryKey]: {
+          ...query,
+          pages,
+          latestRequests,
+          buckets: {
+            ...query.buckets,
+            status: 'idle'
+          }
+        }
+      }
     };
   },
 

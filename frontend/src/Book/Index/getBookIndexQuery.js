@@ -37,7 +37,7 @@ export default function getBookIndexQuery(bookIndex = {}, selectedMediaType) {
 
   return {
     queryKey: `${sortKey}_${sortDirection}_${filterKey}_${mediaType}`,
-    useClientSidePosters: !isServerSideBookIndexFilter(filterKey),
+    useClientSideBooks: !isServerSideBookIndexFilter(filterKey),
     queryParams: {
       sortKey,
       sortDirection,

@@ -26,10 +26,14 @@ class BookIndexTable extends Component {
     const {
       items,
       sortKey,
-      jumpToCharacter
+      jumpToCharacter,
+      scrollToIndex
     } = this.props;
 
-    if (jumpToCharacter != null && jumpToCharacter !== prevProps.jumpToCharacter) {
+    // Paged lists resolve jump bar letters on the server and pass the row index in.
+    if (scrollToIndex !== prevProps.scrollToIndex) {
+      this.setState({ scrollIndex: scrollToIndex });
+    } else if (jumpToCharacter != null && jumpToCharacter !== prevProps.jumpToCharacter) {
 
       const scrollIndex = getIndexOfFirstCharacter(items, sortKey, jumpToCharacter);
 
@@ -51,10 +55,21 @@ class BookIndexTable extends Component {
       selectedMediaType,
       selectedState,
       onSelectedChange,
-      isEditorActive
+      isEditorActive,
+      getBookAtIndex
     } = this.props;
 
-    const book = items[rowIndex];
+    const book = getBookAtIndex ? getBookAtIndex(rowIndex) : items[rowIndex];
+
+    if (!book) {
+      // Placeholder while the page holding this row loads.
+      return (
+        <VirtualTableRow
+          key={key}
+          style={style}
+        />
+      );
+    }
 
     return (
       <VirtualTableRow
@@ -64,6 +79,7 @@ class BookIndexTable extends Component {
         <BookIndexItemConnector
           key={book.id}
           component={BookIndexRow}
+          book={getBookAtIndex ? book : undefined}
           style={style}
           columns={columns}
           selectedMediaType={selectedMediaType}
@@ -94,8 +110,23 @@ class BookIndexTable extends Component {
       allUnselected,
       onSelectAllChange,
       isEditorActive,
-      selectedState
+      selectedState,
+      rowCount,
+      dataVersion,
+      onRowsRendered
     } = this.props;
+
+    // Paged lists know the full row count before every page has loaded. dataVersion changes
+    // with the loaded books so the grid redraws rows when they're edited.
+    const pagedProps = onRowsRendered ?
+      {
+        rowCount,
+        dataVersion,
+        onSectionRendered: ({ rowOverscanStartIndex, rowOverscanStopIndex }) => {
+          onRowsRendered({ startIndex: rowOverscanStartIndex, stopIndex: rowOverscanStopIndex });
+        }
+      } :
+      {};
 
     return (
       <VirtualTable
@@ -124,6 +155,7 @@ class BookIndexTable extends Component {
         columns={columns}
         sortKey={sortKey}
         sortDirection={sortDirection}
+        {...pagedProps}
       />
     );
   }
@@ -145,7 +177,12 @@ BookIndexTable.propTypes = {
   selectedState: PropTypes.object.isRequired,
   onSelectedChange: PropTypes.func.isRequired,
   onSelectAllChange: PropTypes.func.isRequired,
-  isEditorActive: PropTypes.bool.isRequired
+  isEditorActive: PropTypes.bool.isRequired,
+  rowCount: PropTypes.number,
+  getBookAtIndex: PropTypes.func,
+  dataVersion: PropTypes.number,
+  scrollToIndex: PropTypes.number,
+  onRowsRendered: PropTypes.func
 };
 
 export default BookIndexTable;

@@ -43,20 +43,18 @@ function createMapStateToProps() {
       const isRefreshingBook = isRefreshingBookCommand || isRefreshingAuthorCommand;
       const mediaType = selectedMediaType || 'audiobook';
       const {
-        queryKey: posterQueryKey,
-        queryParams: posterQueryParams,
-        useClientSidePosters
+        queryKey: bookQueryKey,
+        queryParams: bookQueryParams,
+        useClientSideBooks
       } = getBookIndexQuery(book, mediaType);
-      const posterBuckets = bookInfiniteScroll?.queries?.[posterQueryKey]?.buckets;
-      const posterTotalCount = bookInfiniteScroll?.queries?.[posterQueryKey]?.totalCount;
-      const useInfinitePosters = book.view === 'posters' && !useClientSidePosters;
-
-      // In posters (infinite scroll) view, the main `books` collection is not fetched.
-      // Provide the currently loaded poster items to BookIndex so editor selection
-      // (Select All / bulk actions) works consistently across views.
-      const selectionItems = useInfinitePosters ?
-        selectQueryBooks({ bookInfiniteScroll }, posterQueryKey).map((b) => ({ id: b.id })) :
-        book.items;
+      const bookBuckets = bookInfiniteScroll?.queries?.[bookQueryKey]?.buckets;
+      const bookTotalCount = bookInfiniteScroll?.queries?.[bookQueryKey]?.totalCount;
+      // Server-paged views don't fetch the main `books` collection. Provide the currently
+      // loaded paged items to BookIndex so editor selection (Select All / bulk actions)
+      // works consistently across views.
+      const selectionItems = useClientSideBooks ?
+        book.items :
+        selectQueryBooks({ bookInfiniteScroll }, bookQueryKey).map((b) => ({ id: b.id }));
 
       return {
         ...book,
@@ -66,11 +64,11 @@ function createMapStateToProps() {
         isSearching: isCutoffBooksSearch || isMissingBooksSearch,
         isSmallScreen: dimensionsState.isSmallScreen,
         selectedMediaType: mediaType,
-        posterQueryKey,
-        posterQueryParams,
-        posterBuckets,
-        posterTotalCount,
-        useClientSidePosters
+        bookQueryKey,
+        bookQueryParams,
+        bookBuckets,
+        bookTotalCount,
+        useClientSideBooks
       };
     }
   );
@@ -164,7 +162,8 @@ class BookIndexConnector extends Component {
   }
 
   needsClientSideBooks(props = this.props) {
-    return props.view !== 'posters' || props.useClientSidePosters;
+    // Only custom filters still need the whole list; built-in filters page on the server.
+    return props.useClientSideBooks;
   }
 
   //
@@ -202,8 +201,8 @@ BookIndexConnector.propTypes = {
   view: PropTypes.string.isRequired,
   isPopulated: PropTypes.bool.isRequired,
   selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
-  useClientSidePosters: PropTypes.bool.isRequired,
-  posterTotalCount: PropTypes.number,
+  useClientSideBooks: PropTypes.bool.isRequired,
+  bookTotalCount: PropTypes.number,
   dispatchSetBookView: PropTypes.func.isRequired,
   dispatchSaveBookEditor: PropTypes.func.isRequired,
   dispatchFetchBooks: PropTypes.func.isRequired,
