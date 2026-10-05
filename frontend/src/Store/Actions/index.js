@@ -14,6 +14,7 @@ import * as bookStudio from './bookshelfActions';
 import * as calendar from './calendarActions';
 import * as captcha from './captchaActions';
 import * as commands from './commandActions';
+import * as convertPreview from './convertPreviewActions';
 import * as customFilters from './customFilterActions';
 import * as editions from './editionActions';
 import * as history from './historyActions';
@@ -53,6 +54,7 @@ export default [
   calendar,
   captcha,
   commands,
+  convertPreview,
   customFilters,
   editions,
   history,

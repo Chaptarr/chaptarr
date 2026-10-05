@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common;
 using NzbDrone.Common.Disk;
@@ -51,6 +52,9 @@ namespace NzbDrone.Core.MediaFiles
 
     public class BookFileMovingService : IMoveBookFiles
     {
+        // "CD1", "CD 01", "Disc 2", "Disk 03": a disc of one book rather than a book of its own.
+        private static readonly Regex DiscFolderRegex = new(@"^(cd|dis[ck])\s*\d{1,3}$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         private readonly IEditionService _editionService;
         private readonly IUpdateBookFileService _updateBookFileService;
         private readonly IBuildFileNames _buildFileNames;
@@ -275,6 +279,72 @@ namespace NzbDrone.Core.MediaFiles
             return GetImportDestinationPath(bookFile, localBook, out _);
         }
 
+        /// <summary>
+        /// The folder a library conversion should write its output to: the one folder all source
+        /// files share, or their parent when they sit in per-disc subfolders (Book/CD1, Book/CD2).
+        /// Null means "use normal naming": not a library conversion, sources that do not form one
+        /// book folder, or a folder that is not strictly inside the author's root folder.
+        /// </summary>
+        private static string GetLibraryConversionFolder(LocalBook localBook, BookFile bookFile)
+        {
+            if (localBook?.IsLibraryConversion != true)
+            {
+                return null;
+            }
+
+            var sourceFolders = (localBook.GeneratedConversionSourcePaths ?? new List<string>())
+                .Where(path => path.IsNotNullOrWhiteSpace())
+                .Select(Path.GetDirectoryName)
+                .Where(folder => folder.IsNotNullOrWhiteSpace())
+                .Distinct(PathEqualityComparer.Instance)
+                .ToList();
+
+            if (sourceFolders.Count == 0)
+            {
+                return null;
+            }
+
+            string bookFolder;
+
+            if (sourceFolders.Count == 1)
+            {
+                bookFolder = sourceFolders[0];
+            }
+            else
+            {
+                // Disc subfolders only: every source folder must be a disc-named direct child of
+                // one parent, which is how Audiobookshelf and most players read a single book laid
+                // out as CD1/CD2. Anything else, such as files spread across sibling book folders,
+                // falls back to naming rather than climbing to the author folder.
+                if (!sourceFolders.All(folder => DiscFolderRegex.IsMatch(Path.GetFileName(folder) ?? string.Empty)))
+                {
+                    return null;
+                }
+
+                var parents = sourceFolders
+                    .Select(Path.GetDirectoryName)
+                    .Distinct(PathEqualityComparer.Instance)
+                    .ToList();
+
+                if (parents.Count != 1 || parents[0].IsNullOrWhiteSpace())
+                {
+                    return null;
+                }
+
+                bookFolder = parents[0];
+            }
+
+            var rootFolder = localBook.Author?.GetRootFolderForQuality(bookFile?.Quality?.Quality);
+
+            // Never write outside the library, and never loose into the root folder itself.
+            if (rootFolder.IsNullOrWhiteSpace() || !rootFolder.IsParentPath(bookFolder))
+            {
+                return null;
+            }
+
+            return bookFolder;
+        }
+
         private string GetImportDestinationPath(BookFile bookFile, LocalBook localBook, out List<string> replicaPaths)
         {
             replicaPaths = null;
@@ -282,6 +352,18 @@ namespace NzbDrone.Core.MediaFiles
             var newFileName = _buildFileNames.BuildBookFileName(localBook.Author, localBook.Edition, bookFile);
             var extension = Path.GetExtension(localBook.Path);
             var fileNameOnly = Path.GetFileName(newFileName) + extension;
+
+            // A library conversion changes a book's format, not where it lives. Tools that sit on
+            // top of the library key books by folder: Audiobookshelf keeps listening progress per
+            // folder, so a converted file written to a newly named folder shows up there as a new
+            // book with no progress, and the old one as missing. Keep the converted file in the
+            // folder its source files already occupy and apply naming to the file name only.
+            // Organize still moves the book to the naming scheme when the user asks for that.
+            var libraryConversionFolder = GetLibraryConversionFolder(localBook, bookFile);
+            if (libraryConversionFolder != null)
+            {
+                return Path.Combine(libraryConversionFolder, fileNameOnly);
+            }
 
             var bookPath = _authorPathBuilder.BuildPathForQuality(localBook.Author, bookFile.Quality.Quality, useExistingRelativeFolder: false);
             var filePath = Path.Combine(bookPath, newFileName + extension);

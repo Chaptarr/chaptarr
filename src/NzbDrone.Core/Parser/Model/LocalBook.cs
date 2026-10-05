@@ -42,6 +42,12 @@ namespace NzbDrone.Core.Parser.Model
         public string Narrator { get; set; }
         public bool IsInitialImport { get; set; }
         public bool IsManualImport { get; set; }
+
+        // Set when the file is being re-imported from the library purely so the configured
+        // conversion target can be applied to a book that is already on disk. It is an explicit
+        // user action, so it bypasses quality gating the same way a manual import does, but it
+        // must never widen file replacement to the whole book the way a manual import does.
+        public bool IsLibraryConversion { get; set; }
         public MatchProvenance MatchProvenance { get; set; }
 
         // Manual import suggestion metadata (V5 match) - must not cause DB side effects during suggestion generation.

@@ -138,6 +138,10 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubMoveBookFiles : IMoveBookFiles
         {
             public string DestinationPath { get; set; }
+
+            // When set, names destinations from the BookFile, the way the file name builder does,
+            // instead of returning DestinationPath for everything.
+            public Func<BookFile, string> DestinationFor { get; set; }
             public int MoveCalls { get; private set; }
             public int CopyCalls { get; private set; }
             public int PreviewCalls { get; private set; }
@@ -155,7 +159,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile MoveBookFile(BookFile bookFile, LocalBook localBook)
             {
                 MoveCalls++;
-                bookFile.Path = DestinationPath ?? bookFile.Path;
+                bookFile.Path = DestinationFor?.Invoke(bookFile) ?? DestinationPath ?? bookFile.Path;
                 TransferFile(localBook.Path, bookFile.Path, copy: false);
                 return bookFile;
             }
@@ -163,7 +167,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile CopyBookFile(BookFile bookFile, LocalBook localBook)
             {
                 CopyCalls++;
-                bookFile.Path = DestinationPath ?? bookFile.Path;
+                bookFile.Path = DestinationFor?.Invoke(bookFile) ?? DestinationPath ?? bookFile.Path;
                 TransferFile(localBook.Path, bookFile.Path, copy: true);
                 return bookFile;
             }
@@ -171,7 +175,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook)
             {
                 PreviewCalls++;
-                return DestinationPath;
+                return DestinationFor?.Invoke(bookFile) ?? DestinationPath;
             }
 
             private void TransferFile(string sourcePath, string destinationPath, bool copy)
@@ -2063,6 +2067,128 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Directory.Delete(destinationDir, recursive: true);
                 }
             }
+        }
+
+        // #284: a multi-file download is merged into one M4B with no part number, so the check
+        // before conversion has to look at "Black Sheep.m4b", not the first part's "Black Sheep - 01.m4b".
+        [Test]
+        public void should_find_a_taken_destination_before_converting_a_multi_part_download()
+        {
+            var sourceDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"multi-part-conflict-{Guid.NewGuid():N}");
+            var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(sourceDir);
+            Directory.CreateDirectory(destinationDir);
+            File.WriteAllText(Path.Combine(destinationDir, "Black Sheep.m4b"), "already imported m4b");
+
+            try
+            {
+                var (_, author, book, edition) = CreateAudiobookConversionGraph(24);
+                var conversion = new SuccessfulM4bConversionService();
+                var service = CreateServiceForPartNaming(edition, conversion, destinationDir);
+
+                var results = service.Import(
+                    MultiPartDecisions(sourceDir, author, book, edition, partCount: 3),
+                    replaceExisting: false,
+                    downloadClientItem: new DownloadClientItem { DownloadId = "multi-part-conflict" },
+                    importMode: ImportMode.Move,
+                    cancellationToken: CancellationToken.None);
+
+                Assert.That(conversion.ConvertCalls, Is.EqualTo(0), "nothing is converted when the destination is taken");
+                Assert.That(results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Skipped));
+                Assert.That(results.SelectMany(r => r.Errors).Distinct().Single(),
+                    Does.Contain("untracked file already exists at the destination").And.Contain("Black Sheep.m4b"));
+                Assert.That(Directory.Exists(Path.Combine(destinationDir, ".chaptarr-conversions")), Is.False);
+            }
+            finally
+            {
+                Directory.Delete(sourceDir, recursive: true);
+                Directory.Delete(destinationDir, recursive: true);
+            }
+        }
+
+        [Test]
+        public void should_name_a_merged_multi_part_conversion_without_a_part_suffix()
+        {
+            var sourceDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"multi-part-name-{Guid.NewGuid():N}");
+            var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(sourceDir);
+            Directory.CreateDirectory(destinationDir);
+
+            try
+            {
+                var (_, author, book, edition) = CreateAudiobookConversionGraph(25);
+                var conversion = new FailingM4bConversionService();
+                var service = CreateServiceForPartNaming(edition, conversion, destinationDir);
+
+                service.Import(
+                    MultiPartDecisions(sourceDir, author, book, edition, partCount: 3),
+                    replaceExisting: false,
+                    downloadClientItem: new DownloadClientItem { DownloadId = "multi-part-name" },
+                    importMode: ImportMode.Move,
+                    cancellationToken: CancellationToken.None);
+
+                Assert.That(conversion.ConvertCalls, Is.EqualTo(1));
+                Assert.That(Path.GetFileName(conversion.LastOutputFile), Is.EqualTo("Black Sheep.m4b"));
+            }
+            finally
+            {
+                Directory.Delete(sourceDir, recursive: true);
+                Directory.Delete(destinationDir, recursive: true);
+            }
+        }
+
+        // Names files the way the file name builder does with a {PartNumber} token: a suffix only
+        // when the file is one part of several.
+        private static ImportApprovedBooks CreateServiceForPartNaming(Edition edition, IM4bConversionService conversion, string destinationDir)
+        {
+            var mover = new StubMoveBookFiles
+            {
+                DestinationFor = bookFile => Path.Combine(
+                    destinationDir,
+                    bookFile.PartCount > 1 ? $"Black Sheep - {bookFile.Part:00}{Path.GetExtension(bookFile.Path)}" : $"Black Sheep{Path.GetExtension(bookFile.Path)}")
+            };
+
+            return new ImportApprovedBooks(
+                new StubMediaFileService(),
+                new StubMetadataTagService(),
+                Proxy<IMediaInfoExtractor>(),
+                Proxy<IAuthorService>(),
+                Proxy<IBookService>(),
+                CreateEditionService(new List<Edition> { edition }),
+                Proxy<IRecycleBinProvider>(),
+                Proxy<IExtraService>(),
+                mover,
+                Proxy<IHistoryService>(),
+                Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                new NoOpEventAggregator(),
+                Proxy<IManageCommandQueue>(),
+                Proxy<ISeriesBookLinkService>(),
+                Proxy<ISeriesService>(),
+                Proxy<IQualityProfileService>(),
+                conversion,
+                LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+        }
+
+        private static List<ImportDecision<LocalBook>> MultiPartDecisions(string sourceDir, Author author, Book book, Edition edition, int partCount)
+        {
+            return Enumerable.Range(1, partCount)
+                .Select(part =>
+                {
+                    var path = Path.Combine(sourceDir, $"{part:00}.mp3");
+                    File.WriteAllText(path, "fake mp3");
+
+                    return new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = path,
+                        Book = book,
+                        Author = author,
+                        Edition = edition,
+                        Part = part,
+                        PartCount = partCount,
+                        Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
+                    });
+                })
+                .ToList();
         }
 
         [Test]
