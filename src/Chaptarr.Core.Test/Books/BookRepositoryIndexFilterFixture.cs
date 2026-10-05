@@ -261,6 +261,39 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [Test]
+        public void bookshelf_author_counts_should_count_each_media_type_separately()
+        {
+            WithRepository(sut =>
+            {
+                var ebookCounts = sut.GetBookCountsByAuthor(BookMediaType.Ebook)
+                    .OrderBy(count => count.AuthorId)
+                    .Select(count => (count.AuthorId, count.BookCount));
+                Assert.That(ebookCounts, Is.EqualTo(new[] { (10, 5), (30, 1) }));
+
+                var audiobookCounts = sut.GetBookCountsByAuthor(BookMediaType.Audiobook)
+                    .OrderBy(count => count.AuthorId)
+                    .Select(count => (count.AuthorId, count.BookCount));
+                Assert.That(audiobookCounts, Is.EqualTo(new[] { (10, 1), (20, 1) }));
+            });
+        }
+
+        [Test]
+        public void bookshelf_books_should_return_only_the_requested_authors_and_media_type()
+        {
+            WithRepository(sut =>
+            {
+                Assert.That(
+                    sut.GetBooksByAuthorIds(new[] { 10, 20 }, BookMediaType.Audiobook).Select(book => book.Id).OrderBy(id => id),
+                    Is.EqualTo(new[] { 6, 7 }));
+                Assert.That(
+                    sut.GetBooksByAuthorIds(new[] { 10, 30 }, BookMediaType.Ebook).Select(book => book.Id).OrderBy(id => id),
+                    Is.EqualTo(new[] { 1, 2, 3, 4, 5, 8 }));
+                Assert.That(sut.GetBooksByAuthorIds(new[] { 20 }, BookMediaType.Ebook), Is.Empty);
+                Assert.That(sut.GetBooksByAuthorIds(Array.Empty<int>(), BookMediaType.Ebook), Is.Empty);
+            });
+        }
+
         private static void WithRepository(Action<BookRepository> action)
         {
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"book_index_filter_{Guid.NewGuid():N}.db");

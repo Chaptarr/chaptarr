@@ -13,6 +13,7 @@ namespace NzbDrone.Core.AuthorStats
         List<BookStatistics> AuthorStatistics(int authorId);
         List<BookStatistics> AuthorStatistics(string mediaType);
         List<BookStatistics> AuthorStatistics(int authorId, string mediaType);
+        List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType);
     }
 
     public class AuthorStatisticsRepository : IAuthorStatisticsRepository
@@ -49,6 +50,19 @@ namespace NzbDrone.Core.AuthorStats
         public List<BookStatistics> AuthorStatistics(int authorId, string mediaType)
         {
             var builder = Builder(_database.DatabaseType).Where<Author>(author => author.Id == authorId);
+            ApplyMediaTypeFilter(builder, mediaType);
+            return Query(builder);
+        }
+
+        public List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType)
+        {
+            var idsArray = authorIds?.Distinct().ToArray() ?? Array.Empty<int>();
+            if (idsArray.Length == 0)
+            {
+                return new List<BookStatistics>();
+            }
+
+            var builder = Builder(_database.DatabaseType).Where<Author>(author => Enumerable.Contains(idsArray, author.Id));
             ApplyMediaTypeFilter(builder, mediaType);
             return Query(builder);
         }

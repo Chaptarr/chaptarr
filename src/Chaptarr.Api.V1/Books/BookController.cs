@@ -52,6 +52,8 @@ namespace Chaptarr.Api.V1.Books
 	        IHandle<TrackImportedEvent>,
 	        IHandle<BookFileDeletedEvent>
 	    {
+        private const int MaxBookshelfAuthorIds = 100;
+
         protected readonly IAuthorService _authorService;
         protected readonly IEditionService _editionService;
 	        protected readonly IAddBookService _addBookService;
@@ -1187,6 +1189,58 @@ namespace Chaptarr.Api.V1.Books
                 pagedResource.Records.Count, pagedResource.Offset, pagedResource.TotalCount);
 
             return Ok(pagedResource);
+        }
+
+        [HttpGet("shelf/authors")]
+        public ActionResult<List<BookshelfAuthorCountResource>> GetBookshelfAuthors([FromQuery] string mediaType)
+        {
+            var parsedMediaType = MediaTypeParameterParser.ParseRequired(mediaType);
+            var counts = _bookService.GetBookshelfAuthorCounts(parsedMediaType);
+
+            return counts.Select(count => new BookshelfAuthorCountResource
+            {
+                AuthorId = count.AuthorId,
+                BookCount = count.BookCount
+            }).ToList();
+        }
+
+        [HttpGet("shelf")]
+        public ActionResult<List<BookResource>> GetBookshelfBooks([FromQuery] List<int> authorIds, [FromQuery] string mediaType)
+        {
+            var parsedMediaType = MediaTypeParameterParser.ParseRequired(mediaType);
+            var distinctAuthorIds = (authorIds ?? new List<int>()).Distinct().ToList();
+
+            if (distinctAuthorIds.Count == 0 || distinctAuthorIds.Count > MaxBookshelfAuthorIds)
+            {
+                return BadRequest($"authorIds must contain between 1 and {MaxBookshelfAuthorIds} author IDs");
+            }
+
+            var books = _bookService.GetBooksForBookshelf(distinctAuthorIds, parsedMediaType);
+            if (books.Count == 0)
+            {
+                return new List<BookResource>();
+            }
+
+            // The resource mapper reads each book's author; load them once instead of lazily per book.
+            var authorsById = _authorService.GetAuthors(distinctAuthorIds).ToDictionary(author => author.Id);
+            foreach (var book in books)
+            {
+                if (authorsById.TryGetValue(book.AuthorId, out var author))
+                {
+                    book.Author = author;
+                }
+            }
+
+            // Statistics for just these authors, so a page of shelf rows doesn't compute them for the whole library.
+            var apiMediaType = MediaTypeParameterParser.ToApiValue(parsedMediaType);
+            var authorStatistics = _authorStatisticsService.AuthorStatistics(distinctAuthorIds, apiMediaType);
+            var statsByBookId = BuildBookStatisticsById(authorStatistics);
+
+            return MapToResource(books,
+                includeAuthor: false,
+                statsByBookId,
+                includeOverview: false,
+                includeLinks: false);
         }
 
         [HttpGet("{id:int}/overview")]

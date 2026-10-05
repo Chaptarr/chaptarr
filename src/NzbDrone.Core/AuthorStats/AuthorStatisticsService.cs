@@ -15,6 +15,7 @@ namespace NzbDrone.Core.AuthorStats
         AuthorStatistics AuthorStatistics(int authorId);
         List<AuthorStatistics> AuthorStatistics(string mediaType);
         AuthorStatistics AuthorStatistics(int authorId, string mediaType);
+        List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType);
         void InvalidateAuthorCache(int authorId);
     }
 
@@ -81,7 +82,7 @@ namespace NzbDrone.Core.AuthorStats
 
         public AuthorStatistics AuthorStatistics(int authorId, string mediaType)
         {
-            var cacheKey = string.IsNullOrEmpty(mediaType) ? authorId.ToString() : $"{authorId}_{mediaType}";
+            var cacheKey = GetAuthorCacheKey(authorId, mediaType);
             var statistics = _cache.Get(cacheKey, () => _authorStatisticsRepository.AuthorStatistics(authorId, mediaType));
 
             if (statistics == null || statistics.Count == 0)
@@ -90,6 +91,54 @@ namespace NzbDrone.Core.AuthorStats
             }
 
             return MapAuthorStatistics(statistics);
+        }
+
+        // One query for every author that isn't cached yet, stored under the same keys as the single-author lookup.
+        public List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType)
+        {
+            var results = new List<AuthorStatistics>();
+            var uncachedAuthorIds = new List<int>();
+
+            foreach (var authorId in authorIds.Distinct())
+            {
+                var cached = _cache.Find(GetAuthorCacheKey(authorId, mediaType));
+
+                if (cached == null)
+                {
+                    uncachedAuthorIds.Add(authorId);
+                }
+                else
+                {
+                    results.Add(cached.Count == 0 ? new AuthorStatistics() : MapAuthorStatistics(cached));
+                }
+            }
+
+            if (uncachedAuthorIds.Count == 0)
+            {
+                return results;
+            }
+
+            var statisticsByAuthor = _authorStatisticsRepository.AuthorStatistics(uncachedAuthorIds, mediaType)
+                .GroupBy(statistics => statistics.AuthorId)
+                .ToDictionary(group => group.Key, group => group.ToList());
+
+            foreach (var authorId in uncachedAuthorIds)
+            {
+                if (!statisticsByAuthor.TryGetValue(authorId, out var statistics))
+                {
+                    statistics = new List<BookStatistics>();
+                }
+
+                _cache.Set(GetAuthorCacheKey(authorId, mediaType), statistics);
+                results.Add(statistics.Count == 0 ? new AuthorStatistics() : MapAuthorStatistics(statistics));
+            }
+
+            return results;
+        }
+
+        private static string GetAuthorCacheKey(int authorId, string mediaType)
+        {
+            return string.IsNullOrEmpty(mediaType) ? authorId.ToString() : $"{authorId}_{mediaType}";
         }
 
         private static AuthorStatistics MapAuthorStatistics(List<BookStatistics> bookStatistics)

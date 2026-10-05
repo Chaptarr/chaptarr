@@ -3,6 +3,7 @@ import React, { Component } from 'react';
 import AuthorNameLink from 'Author/AuthorNameLink';
 import { getAuthorStatusDetails } from 'Author/AuthorStatus';
 import Icon from 'Components/Icon';
+import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import VirtualTableRowCell from 'Components/Table/Cells/VirtualTableRowCell';
 import VirtualTableSelectCell from 'Components/Table/Cells/VirtualTableSelectCell';
 import BookshelfBook from './BookshelfBook';
@@ -20,6 +21,7 @@ class BookshelfRow extends Component {
       titleSlug,
       authorName,
       books,
+      isBooksLoaded,
       isSelected,
       onSelectedChange,
       onBookMonitoredPress
@@ -55,6 +57,14 @@ class BookshelfRow extends Component {
 
         <VirtualTableRowCell className={styles.books}>
           {
+            !isBooksLoaded && !books.length &&
+              <LoadingIndicator
+                className={styles.booksLoading}
+                size={20}
+              />
+          }
+
+          {
             books.map((book) => {
               return (
                 <BookshelfBook
@@ -77,6 +87,7 @@ BookshelfRow.propTypes = {
   titleSlug: PropTypes.string.isRequired,
   authorName: PropTypes.string.isRequired,
   books: PropTypes.arrayOf(PropTypes.object).isRequired,
+  isBooksLoaded: PropTypes.bool.isRequired,
   isSelected: PropTypes.bool,
   onSelectedChange: PropTypes.func.isRequired,
   onBookMonitoredPress: PropTypes.func.isRequired

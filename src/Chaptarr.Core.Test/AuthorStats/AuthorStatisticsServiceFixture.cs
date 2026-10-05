@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Core.AuthorStats;
@@ -24,7 +25,20 @@ namespace Chaptarr.Core.Test.AuthorStats
 
             public List<BookStatistics> AuthorStatistics(int authorId) => Stats();
             public List<BookStatistics> AuthorStatistics(string mediaType) => Stats();
-            public List<BookStatistics> AuthorStatistics(int authorId, string mediaType) => Stats();
+            public List<BookStatistics> AuthorStatistics(int authorId, string mediaType)
+            {
+                SingleAuthorCalls++;
+                return Stats();
+            }
+            public List<List<int>> BatchCalls { get; } = new();
+            public int SingleAuthorCalls { get; private set; }
+
+            public List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType)
+            {
+                BatchCalls.Add(new List<int>(authorIds));
+                return Stats();
+            }
+
             private static List<BookStatistics> Stats()
             {
                 return new()
@@ -81,6 +95,34 @@ namespace Chaptarr.Core.Test.AuthorStats
             service.AuthorStatistics();
 
             Assert.That(repository.AllAuthorCalls, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void batched_author_statistics_should_query_only_uncached_authors_and_share_the_single_author_cache()
+        {
+            var repository = new RecordingRepository();
+            var service = new AuthorStatisticsService(repository, new CacheManager());
+
+            var first = service.AuthorStatistics(new[] { 1, 2 }, "audiobook");
+
+            Assert.That(repository.BatchCalls, Has.Count.EqualTo(1));
+            Assert.That(repository.BatchCalls[0], Is.EquivalentTo(new[] { 1, 2 }));
+            Assert.That(first.Select(statistics => statistics.TotalBookCount).OrderBy(count => count), Is.EqualTo(new[] { 0, 1 }));
+
+            service.AuthorStatistics(new[] { 1, 2 }, "audiobook");
+            service.AuthorStatistics(1, "audiobook");
+
+            Assert.That(repository.BatchCalls, Has.Count.EqualTo(1));
+            Assert.That(repository.SingleAuthorCalls, Is.EqualTo(0));
+
+            service.Handle(new BookFileAddedEvent(new BookFile
+            {
+                Author = new NzbDrone.Core.Books.Author { Id = 1 }
+            }));
+            service.AuthorStatistics(new[] { 1, 2 }, "audiobook");
+
+            Assert.That(repository.BatchCalls, Has.Count.EqualTo(2));
+            Assert.That(repository.BatchCalls[1], Is.EqualTo(new[] { 1 }));
         }
     }
 }
