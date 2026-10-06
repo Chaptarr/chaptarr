@@ -6,7 +6,7 @@ namespace NzbDrone.Core.Notifications.Kavita;
 
 public interface IKavitaService
 {
-    void Notify(KavitaSettings settings, string message);
+    void Notify(KavitaSettings settings, string folderPath);
     ValidationFailure Test(KavitaSettings settings, string message);
 }
 

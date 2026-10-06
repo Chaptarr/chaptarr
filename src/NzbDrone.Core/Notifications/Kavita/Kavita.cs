@@ -24,15 +24,23 @@ public class Kavita : NotificationBase<KavitaSettings>
     public override void OnReleaseImport(BookDownloadMessage message)
     {
         var allPaths = message.BookFiles.Select(v => v.Path).Distinct();
-        var path = Directory.GetParent(allPaths.First())?.FullName;
-        Notify(Settings, BOOK_DOWNLOADED_TITLE_BRANDED, path);
+        var firstPath = allPaths.FirstOrDefault();
+        if (firstPath != null)
+        {
+            var path = Directory.GetParent(firstPath)?.FullName;
+            Notify(Settings, BOOK_DOWNLOADED_TITLE_BRANDED, path);
+        }
     }
 
     public override void OnBookDelete(BookDeleteMessage deleteMessage)
     {
         var allPaths = deleteMessage.Book.BookFiles.Select(v => v.Path).Distinct();
-        var path = Directory.GetParent(allPaths.First())?.FullName;
-        Notify(Settings, BOOK_FILE_DELETED_TITLE_BRANDED, path);
+        var firstPath = allPaths.FirstOrDefault();
+        if (firstPath != null)
+        {
+            var path = Directory.GetParent(firstPath)?.FullName;
+            Notify(Settings, BOOK_FILE_DELETED_TITLE_BRANDED, path);
+        }
     }
 
     public override void OnBookFileDelete(BookFileDeleteMessage message)
@@ -60,14 +68,14 @@ public class Kavita : NotificationBase<KavitaSettings>
     {
         try
         {
-            if (Settings.Notify)
+            if (Settings.Notify && !string.IsNullOrWhiteSpace(message))
             {
-                _kavitaService.Notify(Settings, $"{header} - {message}");
+                _kavitaService.Notify(Settings, message);
             }
         }
         catch (SocketException ex)
         {
-            var logMessage = $"Unable to connect to Subsonic Host: {Settings.Host}:{Settings.Port}";
+            var logMessage = $"Unable to connect to Kavita Host: {Settings.Host}:{Settings.Port}";
             _logger.Debug(ex, logMessage);
         }
     }
