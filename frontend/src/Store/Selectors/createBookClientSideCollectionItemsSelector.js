@@ -1,8 +1,7 @@
-import { createSelector, createSelectorCreator, defaultMemoize } from 'reselect';
-import hasDifferentItemsOrOrder from 'Utilities/Object/hasDifferentItemsOrOrder';
+import { createSelector } from 'reselect';
 import createBooksClientSideCollectionSelector from './createBooksClientSideCollectionSelector';
 
-function createUnoptimizedSelector(uiSection) {
+function createBookClientSideCollectionItemsSelector(uiSection) {
   return createSelector(
     createBooksClientSideCollectionSelector(uiSection),
     (books) => {
@@ -25,22 +24,6 @@ function createUnoptimizedSelector(uiSection) {
         items
       };
     }
-  );
-}
-
-function bookListEqual(a, b) {
-  return hasDifferentItemsOrOrder(a, b);
-}
-
-const createBookEqualSelector = createSelectorCreator(
-  defaultMemoize,
-  bookListEqual
-);
-
-function createBookClientSideCollectionItemsSelector(uiSection) {
-  return createBookEqualSelector(
-    createUnoptimizedSelector(uiSection),
-    (book) => book
   );
 }
 
