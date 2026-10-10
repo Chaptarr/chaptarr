@@ -77,6 +77,47 @@ namespace Chaptarr.Core.Test.Organizer
             Assert.That(result, Is.EqualTo("Dresden Files #3"));
         }
 
+        [TestCase("1", "{Book SeriesPosition:00} - {Book Title}", "01 - Grave Peril")]
+        [TestCase("10", "{Book SeriesPosition:00} - {Book Title}", "10 - Grave Peril")]
+        [TestCase("3", "{Book SeriesPosition:000} - {Book Title}", "003 - Grave Peril")]
+        [TestCase("2.5", "{Book SeriesPosition:00} - {Book Title}", "02.5 - Grave Peril")]
+        [TestCase("2, Part 1", "{Book SeriesPosition:00} - {Book Title}", "02, Part 1 - Grave Peril")]
+        [TestCase("1-3", "{Book SeriesPosition:00} - {Book Title}", "01-3 - Grave Peril")]
+        [TestCase("3", "{Book SeriesPosition} - {Book Title}", "3 - Grave Peril")]
+        [TestCase("Prequel", "{Book SeriesPosition:00} - {Book Title}", "Prequel - Grave Peril")]
+        public void should_apply_custom_format_to_series_position(string position, string format, string expected)
+        {
+            var cacheManager = new CacheManager();
+            var builder = new FileNameBuilder(
+                new StubNamingConfigService(),
+                new StubQualityDefinitionService(),
+                cacheManager,
+                new StubCustomFormatCalculationService(),
+                LogManager.GetCurrentClassLogger());
+
+            var author = new Author { Name = "Jim Butcher" };
+            var book = new Book
+            {
+                Author = author,
+                SeriesName = "Dresden Files",
+                SeriesPosition = position
+            };
+            var edition = new Edition { Title = "Grave Peril", Book = book };
+            var bookFile = new BookFile
+            {
+                Path = "/books/Grave Peril.m4b",
+                Quality = new QualityModel(Quality.Unknown)
+            };
+
+            var namingConfig = NamingConfig.Default;
+            namingConfig.RenameBooks = true;
+            namingConfig.StandardBookFormat = format;
+
+            var result = builder.BuildBookFileName(author, edition, bookFile, namingConfig, customFormats: new List<CustomFormat>());
+
+            Assert.That(result, Is.EqualTo(expected));
+        }
+
         [Test]
         public void should_drop_connector_only_series_path_segments_when_series_is_missing()
         {

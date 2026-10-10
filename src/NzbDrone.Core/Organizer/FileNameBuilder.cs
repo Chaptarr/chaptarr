@@ -39,6 +39,9 @@ namespace NzbDrone.Core.Organizer
         public static readonly Regex PartRegex = new Regex(@"\{(?<prefix>[^{]*?)(?<token1>PartNumber|PartCount)(?::(?<customFormat1>[a-z0-9]+))?(?<separator>.*(?=PartNumber|PartCount))?((?<token2>PartNumber|PartCount)(?::(?<customFormat2>[a-z0-9]+))?)?(?<suffix>[^}]*)\}",
                                                             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        private static readonly Regex LeadingIntegerRegex = new Regex(@"^\s*(?<number>\d+)(?<rest>.*)$",
+                                                                      RegexOptions.Compiled | RegexOptions.Singleline);
+
         public static readonly Regex SeasonEpisodePatternRegex = new Regex(@"(?<separator>(?<=})[- ._]+?)?(?<seasonEpisode>s?{season(?:\:0+)?}(?<episodeSeparator>[- ._]?[ex])(?<episode>{episode(?:\:0+)?}))(?<separator>[- ._]+?(?={))?",
                                                                             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -446,9 +449,9 @@ namespace NzbDrone.Core.Organizer
             tokenHandlers["{Book Series}"] = m => 
                 seriesName ?? m.DefaultValue("");
             
-            // Series position only (e.g., "3" or "2.5")
-            tokenHandlers["{Book SeriesPosition}"] = m => 
-                seriesPosition ?? m.DefaultValue("");
+            // Series position only (e.g., "3" or "2.5"); {Book SeriesPosition:00} pads the leading integer
+            tokenHandlers["{Book SeriesPosition}"] = m =>
+                FormatSeriesPositionToken(seriesPosition, m.CustomFormat) ?? m.DefaultValue("");
             
             // Combined series with position (e.g., "Dresden Files #3")
             tokenHandlers["{Book SeriesTitle}"] = m => 
@@ -683,6 +686,32 @@ namespace NzbDrone.Core.Organizer
             var paddedFormat = new string('0', width);
 
             return value.ToString(paddedFormat);
+        }
+
+        // SeriesPosition is free text ("3", "2.5", "2, Part 1", "1-3"), so only the leading integer
+        // is formatted and the remainder is kept as-is: with ":00", "2.5" -> "02.5", "1-3" -> "01-3".
+        private static string FormatSeriesPositionToken(string position, string customFormat)
+        {
+            if (position.IsNullOrWhiteSpace() || customFormat.IsNullOrWhiteSpace())
+            {
+                return position;
+            }
+
+            var match = LeadingIntegerRegex.Match(position);
+
+            if (!match.Success || !long.TryParse(match.Groups["number"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
+            {
+                return position;
+            }
+
+            try
+            {
+                return number.ToString(customFormat, CultureInfo.InvariantCulture) + match.Groups["rest"].Value;
+            }
+            catch (FormatException)
+            {
+                return position;
+            }
         }
 
         private void AddQualityTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, Author author, BookFile bookFile)
