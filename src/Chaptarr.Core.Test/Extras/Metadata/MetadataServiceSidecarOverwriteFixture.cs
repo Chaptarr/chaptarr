@@ -299,7 +299,33 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             });
         }
 
-        private static MetadataService CreateSubject(TestDisk disk)
+        [Test]
+        public void should_track_metadata_already_carried_by_an_audiobook_folder_move()
+        {
+            var disk = new TestDisk();
+            disk.TextFiles["/library/A Author/A Book/metadata.json"] = "moved with the folder";
+            var consumer = new TestMetadataConsumer();
+            disk.TrackedMetadata.Add(new MetadataFile
+            {
+                Id = 70,
+                AuthorId = 10,
+                BookId = 20,
+                Consumer = consumer.GetType().Name,
+                Type = MetadataType.BookMetadata,
+                RelativePath = "Old Book/metadata.json"
+            });
+            var subject = CreateSubject(disk, consumer);
+
+            subject.MoveFilesAfterRename(BuildAuthor(), new List<BookFile> { BuildBookFile() });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(disk.MovedFiles, Is.Empty);
+                Assert.That(disk.UpsertedMetadata.Single().RelativePath, Is.EqualTo("A Book/metadata.json"));
+            });
+        }
+
+        private static MetadataService CreateSubject(TestDisk disk, IMetadata consumer = null)
         {
             return new MetadataService(
                 configService: null,
@@ -307,7 +333,7 @@ namespace Chaptarr.Core.Test.Extras.Metadata
                 diskTransferService: null,
                 recycleBinProvider: null,
                 otherExtraFileRenamer: NoOp<IOtherExtraFileRenamer>(),
-                metadataFactory: null,
+                metadataFactory: consumer == null ? null : MetadataFactoryProxy.Create(consumer),
                 cleanMetadataService: null,
                 httpClient: Throwing<IHttpClient>(),
                 mediaFileAttributeService: NoOp<IMediaFileAttributeService>(),
@@ -398,6 +424,8 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             public Dictionary<string, byte[]> BinaryFiles { get; } = new();
             public List<int> DeletedMetadataIds { get; } = new();
             public List<MetadataFile> UpsertedMetadata { get; } = new();
+            public List<MetadataFile> TrackedMetadata { get; } = new();
+            public List<string> MovedFiles { get; } = new();
 
             public IDiskProvider DiskProvider
             {
@@ -460,6 +488,12 @@ namespace Chaptarr.Core.Test.Extras.Metadata
                     return File.OpenRead(tempPath);
                 }
 
+                if (targetMethod?.Name == nameof(IDiskProvider.MoveFile))
+                {
+                    Disk.MovedFiles.Add(TestDisk.NormalizePath((string)args[0]));
+                    return null;
+                }
+
                 if (targetMethod?.Name == nameof(IDiskProvider.CopyFile))
                 {
                     var source = TestDisk.NormalizePath((string)args[0]);
@@ -484,6 +518,11 @@ namespace Chaptarr.Core.Test.Extras.Metadata
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IMetadataFileService.GetFilesByAuthor))
+                {
+                    return Disk.TrackedMetadata;
+                }
+
                 if (targetMethod?.Name == nameof(IMetadataFileService.Delete))
                 {
                     Disk.DeletedMetadataIds.Add((int)args[0]);
@@ -505,6 +544,28 @@ namespace Chaptarr.Core.Test.Extras.Metadata
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IMetadataFileService.{targetMethod?.Name}");
+            }
+        }
+
+        private class MetadataFactoryProxy : DispatchProxy
+        {
+            private IMetadata _consumer;
+
+            public static IMetadataFactory Create(IMetadata consumer)
+            {
+                var proxy = DispatchProxy.Create<IMetadataFactory, MetadataFactoryProxy>();
+                ((MetadataFactoryProxy)(object)proxy)._consumer = consumer;
+                return proxy;
+            }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IMetadataFactory.GetAvailableProviders))
+                {
+                    return new List<IMetadata> { _consumer };
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IMetadataFactory.{targetMethod?.Name}");
             }
         }
 
@@ -556,7 +617,7 @@ namespace Chaptarr.Core.Test.Extras.Metadata
 
             public string GetFilenameAfterMove(Author author, string bookPath, MetadataFile metadataFile)
             {
-                throw new NotImplementedException();
+                return Path.Combine(bookPath, Path.GetFileName(metadataFile.RelativePath));
             }
 
             public MetadataFile FindMetadataFile(Author author, string path)

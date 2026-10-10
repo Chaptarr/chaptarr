@@ -160,7 +160,7 @@ namespace NzbDrone.Core.Extras.Metadata
                         {
                             try
                             {
-                                _diskProvider.MoveFile(existingFileName, newFileName);
+                                MoveFileAfterRename(existingFileName, newFileName);
 
                                 if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))
                                 {
@@ -192,7 +192,7 @@ namespace NzbDrone.Core.Extras.Metadata
                         {
                             try
                             {
-                                _diskProvider.MoveFile(existingFileName, newFileName);
+                                MoveFileAfterRename(existingFileName, newFileName);
 
                                 if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))
                                 {
@@ -219,6 +219,30 @@ namespace NzbDrone.Core.Extras.Metadata
         public override ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly)
         {
             return null;
+        }
+
+        // When the whole audiobook folder was moved during the rename, the file already sits in the new folder
+        // under its old name: only rename it there if its name changes.
+        private void MoveFileAfterRename(string existingFileName, string newFileName)
+        {
+            var source = ResolveCarriedFile(existingFileName, newFileName);
+
+            if (source.PathNotEquals(newFileName))
+            {
+                _diskProvider.MoveFile(source, newFileName);
+            }
+        }
+
+        private string ResolveCarriedFile(string existingFileName, string newFileName)
+        {
+            if (_diskProvider.FileExists(existingFileName))
+            {
+                return existingFileName;
+            }
+
+            var carried = Path.Combine(Path.GetDirectoryName(newFileName), Path.GetFileName(existingFileName));
+
+            return _diskProvider.FileExists(carried) ? carried : existingFileName;
         }
 
         private List<MetadataFile> GetMetadataFilesForConsumer(IMetadata consumer, List<MetadataFile> authorMetadata)
