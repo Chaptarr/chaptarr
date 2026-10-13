@@ -26,10 +26,17 @@ namespace Chaptarr.Core.Test.ImportLists
         private sealed class StubFetchAndParseImportList : IFetchAndParseImportList
         {
             public List<ImportListItemInfo> Items { get; set; } = new();
+            public IImportList LastFetchedImportList { get; private set; }
 
             public List<ImportListItemInfo> Fetch() => Items;
 
             public List<ImportListItemInfo> FetchSingleList(ImportListDefinition definition) => Items;
+
+            public List<ImportListItemInfo> FetchSingleList(ImportListDefinition definition, IImportList importList)
+            {
+                LastFetchedImportList = importList;
+                return importList?.Fetch().ToList() ?? Items;
+            }
         }
 
         private sealed class StubImportListExclusionService : IImportListExclusionService
@@ -137,6 +144,7 @@ namespace Chaptarr.Core.Test.ImportLists
         private class ImportListFactoryProxy : DispatchProxy
         {
             public ImportListDefinition Definition { get; set; }
+            public IImportList Instance { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -147,6 +155,16 @@ namespace Chaptarr.Core.Test.ImportLists
                     id == Definition.Id)
                 {
                     return Definition;
+                }
+
+                if (targetMethod?.Name == nameof(IImportListFactory.GetInstance))
+                {
+                    return Instance;
+                }
+
+                if (targetMethod?.Name == nameof(IImportListFactory.AutomaticAddEnabled))
+                {
+                    return new List<IImportList>();
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IImportListFactory.{targetMethod?.Name}");
@@ -356,10 +374,15 @@ namespace Chaptarr.Core.Test.ImportLists
             Author author,
             List<Book> books,
             List<ImportListItemInfo> items,
-            StubCommandQueueManager commandQueue = null)
+            StubCommandQueueManager commandQueue = null,
+            StubFetchAndParseImportList fetcher = null,
+            IImportList importList = null,
+            IAuthorService authorServiceOverride = null)
         {
             var importListFactory = DispatchProxy.Create<IImportListFactory, ImportListFactoryProxy>();
-            ((ImportListFactoryProxy)(object)importListFactory).Definition = definition;
+            var importListFactoryProxy = (ImportListFactoryProxy)(object)importListFactory;
+            importListFactoryProxy.Definition = definition;
+            importListFactoryProxy.Instance = importList;
 
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             ((AuthorServiceProxy)(object)authorService).Author = author;
@@ -370,9 +393,9 @@ namespace Chaptarr.Core.Test.ImportLists
             return new ImportListSyncService(
                 importListFactory: importListFactory,
                 importListExclusionService: new StubImportListExclusionService(),
-                listFetcherAndParser: new StubFetchAndParseImportList { Items = items ?? new List<ImportListItemInfo>() },
+                listFetcherAndParser: fetcher ?? new StubFetchAndParseImportList { Items = items ?? new List<ImportListItemInfo>() },
                 bookInfoProxy: DispatchProxy.Create<NzbDrone.Core.MetadataSource.IProvideBookInfo, ThrowingProxy<NzbDrone.Core.MetadataSource.IProvideBookInfo>>(),
-                authorService: authorService,
+                authorService: authorServiceOverride ?? authorService,
                 bookService: bookService,
                 bookRepository: DispatchProxy.Create<IBookRepository, ThrowingProxy<IBookRepository>>(),
                 editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
@@ -386,6 +409,73 @@ namespace Chaptarr.Core.Test.ImportLists
                 commandQueueManager: commandQueue ?? new StubCommandQueueManager(),
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
+        }
+
+        private class StatefulImportListProxy : DispatchProxy
+        {
+            public ImportListDefinition Definition { get; set; }
+            public IList<ImportListItemInfo> Items { get; set; } = new List<ImportListItemInfo>();
+            public int FetchCount { get; private set; }
+            public int CommitCount { get; private set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IImportList.Fetch))
+                {
+                    FetchCount++;
+                    return Items;
+                }
+
+                if (targetMethod?.Name == nameof(IImportList.CommitState))
+                {
+                    CommitCount++;
+                    return null;
+                }
+
+                if (targetMethod?.Name == "get_Definition") return Definition;
+                if (targetMethod?.Name == "get_Name") return Definition?.Name;
+
+                throw new NotImplementedException($"Test proxy does not implement IImportList.{targetMethod?.Name}");
+            }
+        }
+
+        [Test]
+        public void should_fetch_and_commit_state_on_the_same_import_list_after_processing()
+        {
+            var definition = new ImportListDefinition { Id = 47, Name = "Stateful list", EnableAutomaticAdd = true };
+            var importList = DispatchProxy.Create<IImportList, StatefulImportListProxy>();
+            ((StatefulImportListProxy)(object)importList).Definition = definition;
+            var fetcher = new StubFetchAndParseImportList();
+            var service = BuildExistingAuthorService(definition, null, null, null, fetcher: fetcher, importList: importList);
+
+            service.Execute(new ImportListSyncCommand(definition.Id));
+
+            Assert.That(fetcher.LastFetchedImportList, Is.SameAs(importList));
+            Assert.That(((StatefulImportListProxy)(object)importList).FetchCount, Is.EqualTo(1));
+            Assert.That(((StatefulImportListProxy)(object)importList).CommitCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void should_not_commit_import_list_state_when_item_processing_fails()
+        {
+            var definition = new ImportListDefinition { Id = 48, Name = "Stateful list", EnableAutomaticAdd = true };
+            var importList = DispatchProxy.Create<IImportList, StatefulImportListProxy>();
+            var importListProxy = (StatefulImportListProxy)(object)importList;
+            importListProxy.Definition = definition;
+            importListProxy.Items = new List<ImportListItemInfo>
+            {
+                new() { ImportListId = definition.Id, AuthorProviderId = "gr:123", BookProviderId = "gr:456" }
+            };
+            var fetcher = new StubFetchAndParseImportList();
+            var authorService = DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>();
+            var service = BuildExistingAuthorService(definition, null, null, null, fetcher: fetcher,
+                importList: importList, authorServiceOverride: authorService);
+
+            Assert.Throws<NotImplementedException>(() => service.Execute(new ImportListSyncCommand(definition.Id)));
+
+            Assert.That(fetcher.LastFetchedImportList, Is.SameAs(importList));
+            Assert.That(importListProxy.FetchCount, Is.EqualTo(1));
+            Assert.That(importListProxy.CommitCount, Is.Zero);
         }
 
         [Test]

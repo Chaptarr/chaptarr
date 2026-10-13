@@ -10,5 +10,6 @@ namespace NzbDrone.Core.ImportLists
         ImportListType ListType { get; }
         TimeSpan MinRefreshInterval { get; }
         IList<ImportListItemInfo> Fetch();
+        void CommitState();
     }
 }
