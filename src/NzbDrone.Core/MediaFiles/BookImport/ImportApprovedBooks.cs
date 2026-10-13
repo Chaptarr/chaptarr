@@ -17,6 +17,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
+using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
@@ -90,6 +91,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             private readonly IContainmentValidator _containmentValidator;
             private readonly IMapCoversToLocal _coverMapper;
             private readonly ICustomFormatCalculationService _customFormatCalculationService;
+            private readonly IRootFolderService _rootFolderService;
+            private readonly ICalibreProxy _calibre;
             private readonly Logger _logger;
 
         public ImportApprovedBooks(
@@ -117,7 +120,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 IContainmentValidator containmentValidator = null,
                 IMapCoversToLocal coverMapper = null,
                 ICustomFormatCalculationService customFormatCalculationService = null,
-                IConversionJobService conversionJobService = null)
+                IConversionJobService conversionJobService = null,
+                IRootFolderService rootFolderService = null,
+                ICalibreProxy calibre = null)
             {
             _mediaFileService = mediaFileService;
             _metadataTagService = metadataTagService;
@@ -143,6 +148,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 _containmentValidator = containmentValidator;
                 _coverMapper = coverMapper;
                 _customFormatCalculationService = customFormatCalculationService;
+                _rootFolderService = rootFolderService;
+                _calibre = calibre;
                 _logger = logger;
             }
 
@@ -1315,10 +1322,37 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         _logger.Debug("[PERFORMANCE] Old file staging took {0}ms", stageStopwatch.ElapsedMilliseconds);
                     }
 
+                    var calibreSettings = relocateExistingFile == null
+                        ? GetCalibreDestinationSettings(bookFile, localBook)
+                        : null;
+
                     try
                     {
                         var transferStopwatch = Stopwatch.StartNew();
-                        if (copyOnly)
+                        if (calibreSettings != null)
+                        {
+                            // A Calibre library root is owned by Calibre: add the book through the
+                            // content server so it lands in metadata.db and Calibre picks the folder.
+                            // AddAndConvert reads the source and sets Path to Calibre's copy.
+                            var source = localBook.Path;
+                            bookFile.Path = source;
+                            bookFile = _calibre.AddAndConvert(bookFile, calibreSettings);
+
+                            if (!copyOnly)
+                            {
+                                // Calibre now holds the book. Failing the import here would leave it
+                                // untracked and a retry would add it to Calibre a second time.
+                                try
+                                {
+                                    _diskProvider.DeleteFile(source);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.Warn(ex, "[CALIBRE-IMPORT] Added to Calibre but could not remove source file: {0}", source);
+                                }
+                            }
+                        }
+                        else if (copyOnly)
                         {
                             bookFile = _bookFileMover.CopyBookFile(bookFile, localBook);
                         }
@@ -1365,17 +1399,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         {
                             writeTagsForRelocatedFileAfterPersistence = true;
                         }
-                        else
+                        else if (calibreSettings == null)
                         {
+                            // Calibre already wrote metadata into its own copy.
                             TryWriteTags(bookFile, true, "TRANSFER");
                         }
                     }
 
-                    // Import extras (best-effort; do not fail the core import if extras post-processing fails)
+                    // Import extras (best-effort; do not fail the core import if extras post-processing fails).
+                    // Calibre manages its own folders, so release extras are not copied into them.
                     var extrasStopwatch = Stopwatch.StartNew();
                     try
                     {
-                        _extraService.ImportTrack(localBook, bookFile, copyOnly);
+                        if (calibreSettings == null)
+                        {
+                            _extraService.ImportTrack(localBook, bookFile, copyOnly);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -3388,6 +3427,31 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         }
 
         // Transfer logic is handled by IMoveBookFiles (BookFileMovingService)
+
+        // Returns the Calibre settings when this ebook's import destination is inside a root folder
+        // marked as a Calibre library; null means the normal move/copy path applies.
+        private CalibreSettings GetCalibreDestinationSettings(BookFile bookFile, LocalBook localBook)
+        {
+            if (_rootFolderService == null || _calibre == null || !string.Equals(bookFile.MediaType, "ebook", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var destination = _bookFileMover.GetImportDestinationPath(bookFile, localBook);
+            if (destination.IsNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            var rootFolder = _rootFolderService.GetBestRootFolder(destination);
+            if (rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null)
+            {
+                _logger.Debug("[CALIBRE-IMPORT] Destination {0} is in Calibre library root {1}; adding through Calibre", destination, rootFolder.Path);
+                return rootFolder.CalibreSettings;
+            }
+
+            return null;
+        }
 
         private bool ShouldMoveFile(LocalBook localBook, Author author)
         {

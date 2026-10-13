@@ -213,7 +213,10 @@ namespace NzbDrone.Core.Books.Calibre
         {
             var edition = file.Edition;
             var book = edition.Book;
-            var serieslink = book.SeriesLinks.OrderBy(x => x.SeriesPosition).FirstOrDefault(x => x.Series.Value.Title.IsNotNullOrWhiteSpace());
+            // Provider metadata can leave series links, images, genres and ratings unset; none of
+            // them may abort the push, because the book is already in Calibre by the time this runs.
+            var seriesLinks = book.SeriesLinks ?? new List<SeriesBookLink>();
+            var serieslink = seriesLinks.OrderBy(x => x.SeriesPosition).FirstOrDefault(x => x.Series?.Value?.Title.IsNotNullOrWhiteSpace() == true);
 
             var series = serieslink?.Series.Value;
             double? seriesIndex = null;
@@ -225,7 +228,7 @@ namespace NzbDrone.Core.Books.Calibre
 
             _logger.Trace("Book: {0} Series: {1}, Position: {2}", book, series?.Title, seriesIndex);
 
-            var cover = edition.Images.FirstOrDefault(x => x.CoverType == MediaCoverTypes.Cover);
+            var cover = (edition.Images ?? new List<NzbDrone.Core.MediaCover.MediaCover>()).FirstOrDefault(x => x.CoverType == MediaCoverTypes.Cover);
             string image = null;
             if (cover != null)
             {
@@ -242,7 +245,7 @@ namespace NzbDrone.Core.Books.Calibre
             }
 
             var textInfo = CultureInfo.InvariantCulture.TextInfo;
-            var genres = book.Genres.Select(x => textInfo.ToTitleCase(x.Replace('-', ' '))).ToList();
+            var genres = (book.Genres ?? new List<string>()).Where(x => x.IsNotNullOrWhiteSpace()).Select(x => textInfo.ToTitleCase(x.Replace('-', ' '))).ToList();
 
             var payload = new CalibreChangesPayload
             {
@@ -257,7 +260,7 @@ namespace NzbDrone.Core.Books.Calibre
                     Languages = edition.Language.CanonicalizeLanguage(),
                     Tags = genres,
                     Comments = edition.Overview,
-                    Rating = (int)(edition.Ratings.Value * 2),
+                    Rating = (int)((edition.Ratings?.Value ?? 0) * 2),
                     Identifiers = new Dictionary<string, string>
                     {
                         { "isbn", edition.Isbn13 },
