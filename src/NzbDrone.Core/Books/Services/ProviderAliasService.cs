@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using NzbDrone.Core.MetadataSource;
 
@@ -8,8 +9,12 @@ namespace NzbDrone.Core.Books
     public interface IProviderAliasService
     {
         void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds);
+        void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds, IDbConnection connection, IDbTransaction transaction);
         void DeleteAliases(string entityType, int entityId);
         List<int> FindBookIds(string scope, IEnumerable<string> providerIds);
+        List<ProviderAlias> FindBookAliases(string scope, IEnumerable<string> providerIds) => throw new NotImplementedException();
+        List<ProviderAlias> GetAliases(string entityType, int entityId, string scope);
+        List<ProviderAlias> GetAliases(string entityType, IEnumerable<int> entityIds, string scope);
         List<int> FindAuthorIds(IEnumerable<string> providerIds);
         List<(string Provider, string NormalizedProviderId)> NormalizeProviderIds(IEnumerable<string> providerIds);
     }
@@ -23,7 +28,10 @@ namespace NzbDrone.Core.Books
             _repository = repository;
         }
 
-        public void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds)
+        public void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds) =>
+            ReplaceAliases(entityType, entityId, scope, providerIds, null, null);
+
+        public void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds, IDbConnection connection, IDbTransaction transaction)
         {
             if (entityId <= 0 || string.IsNullOrWhiteSpace(entityType) || string.IsNullOrWhiteSpace(scope))
             {
@@ -44,7 +52,8 @@ namespace NzbDrone.Core.Books
                 })
                 .ToList();
 
-            _repository.ReplaceAliases(entityType, entityId, scope, aliases);
+            if (connection == null) _repository.ReplaceAliases(entityType, entityId, scope, aliases);
+            else _repository.ReplaceAliases(entityType, entityId, scope, aliases, connection, transaction);
         }
 
         public void DeleteAliases(string entityType, int entityId)
@@ -63,13 +72,30 @@ namespace NzbDrone.Core.Books
             return _repository.FindEntityIds("Book", scope, aliases);
         }
 
+        public List<ProviderAlias> FindBookAliases(string scope, IEnumerable<string> providerIds)
+        {
+            return _repository.FindAliases("Book", scope, NormalizeProviderIds(providerIds));
+        }
+
+        public List<ProviderAlias> GetAliases(string entityType, int entityId, string scope)
+        {
+            return _repository.GetAliases(entityType, entityId, scope);
+        }
+
+        public List<ProviderAlias> GetAliases(string entityType, IEnumerable<int> entityIds, string scope)
+        {
+            return _repository.GetAliases(entityType, entityIds, scope);
+        }
+
         public List<int> FindAuthorIds(IEnumerable<string> providerIds)
         {
             var aliases = NormalizeProviderIds(providerIds);
             return _repository.FindEntityIds("Author", "author", aliases);
         }
 
-        public List<(string Provider, string NormalizedProviderId)> NormalizeProviderIds(IEnumerable<string> providerIds)
+        public List<(string Provider, string NormalizedProviderId)> NormalizeProviderIds(IEnumerable<string> providerIds) => NormalizeAliases(providerIds);
+
+        internal static List<(string Provider, string NormalizedProviderId)> NormalizeAliases(IEnumerable<string> providerIds)
         {
             return providerIds?
                 .Select(TryNormalize)
@@ -119,7 +145,7 @@ namespace NzbDrone.Core.Books
             return (provider, normalized);
         }
 
-        private static string NormalizeProviderKey(string provider)
+        internal static string NormalizeProviderKey(string provider)
         {
             switch ((provider ?? string.Empty).Trim().ToLowerInvariant())
             {
