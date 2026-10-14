@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 using Chaptarr.Http.Frontend.Mappers;
@@ -42,6 +43,12 @@ namespace Chaptarr.Core.Test.MediaCover
             public byte[] ResponseData { get; set; }
             public HttpStatusCode? FailureStatusCode { get; set; }
             public WebExceptionStatus? NetworkFailureStatus { get; set; }
+            public HashSet<string> FailureUrls { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, Exception> ExceptionsByUrl { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> OversizedUrls { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, byte[]> Responses { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string> ContentTypes { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public List<string> RequestedUrls { get; } = new();
             public NzbDrone.Common.Http.HttpRequest LastRequest { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -52,10 +59,17 @@ namespace Chaptarr.Core.Test.MediaCover
                 }
 
                 LastRequest = request;
+                RequestedUrls.Add(request.Url.ToString());
 
-                if (FailureStatusCode.HasValue)
+                if (ExceptionsByUrl.TryGetValue(request.Url.ToString(), out var exception))
                 {
-                    throw new HttpException(request, new NzbDrone.Common.Http.HttpResponse(request, new HttpHeader(), Array.Empty<byte>(), FailureStatusCode.Value));
+                    throw exception;
+                }
+
+                if (FailureStatusCode.HasValue || FailureUrls.Contains(request.Url.ToString()))
+                {
+                    var statusCode = FailureStatusCode ?? HttpStatusCode.ServiceUnavailable;
+                    throw new HttpException(request, new NzbDrone.Common.Http.HttpResponse(request, new HttpHeader(), Array.Empty<byte>(), statusCode));
                 }
 
                 if (NetworkFailureStatus.HasValue)
@@ -63,21 +77,37 @@ namespace Chaptarr.Core.Test.MediaCover
                     throw new WebException("Network failure", NetworkFailureStatus.Value);
                 }
 
-                if (ResponseData != null)
+                try
                 {
-                    request.ResponseStream.Write(ResponseData, 0, ResponseData.Length);
-                }
-                else
-                {
-                    var block = new byte[1024 * 1024];
-                    var blocks = WriteOversizedResponse ? 21 : 1;
-                    for (var i = 0; i < blocks; i++)
+                    var responseData = Responses.TryGetValue(request.Url.ToString(), out var configuredResponse)
+                        ? configuredResponse
+                        : ResponseData;
+                    if (responseData != null)
                     {
-                        request.ResponseStream.Write(block, 0, block.Length);
+                        request.ResponseStream.Write(responseData, 0, responseData.Length);
+                    }
+                    else
+                    {
+                        var block = new byte[1024 * 1024];
+                        var blocks = WriteOversizedResponse || OversizedUrls.Contains(request.Url.ToString()) ? 21 : 1;
+                        for (var i = 0; i < blocks; i++)
+                        {
+                            request.ResponseStream.Write(block, 0, block.Length);
+                        }
                     }
                 }
+                catch (Exception e)
+                {
+                    throw new WebException("Failed to read complete http response", e, WebExceptionStatus.ReceiveFailure, null);
+                }
 
-                return new NzbDrone.Common.Http.HttpResponse(request, new HttpHeader(), Array.Empty<byte>());
+                var headers = new HttpHeader();
+                if (ContentTypes.TryGetValue(request.Url.ToString(), out var contentType))
+                {
+                    headers.ContentType = contentType;
+                }
+
+                return new NzbDrone.Common.Http.HttpResponse(request, headers, Array.Empty<byte>());
             }
         }
 
@@ -148,6 +178,201 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(result, Is.Not.Null);
             Assert.That(((HttpClientProxy)(object)httpClient).LastRequest.Url.ToString(), Is.EqualTo("https://1.1.1.1/monitored.jpg"));
             Assert.That(((BookServiceProxy)(object)books).Calls, Is.EqualTo(1));
+        }
+
+        [TestCase("connection")]
+        [TestCase("unexpected")]
+        [TestCase("unavailable")]
+        [TestCase("oversized")]
+        [TestCase("placeholder")]
+        [TestCase("empty")]
+        [TestCase("html")]
+        [TestCase("json")]
+        public void saved_book_proxy_should_try_the_next_cover_after_a_download_failure(string failure)
+        {
+            var firstUrl = $"https://1.1.1.1/{failure}-first.jpg";
+            const string secondUrl = "https://1.1.1.1/second.jpg";
+            var books = BookServiceWithCover();
+            var monitoredEdition = ((BookServiceProxy)(object)books).Book.Editions[1];
+            monitoredEdition.Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+            {
+                new(MediaCoverTypes.Cover, firstUrl),
+                new(MediaCoverTypes.Cover, secondUrl)
+            };
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var client = (HttpClientProxy)(object)httpClient;
+            switch (failure)
+            {
+                case "connection":
+                    client.ExceptionsByUrl[firstUrl] = new HttpRequestException("Connection failed");
+                    break;
+                case "unexpected":
+                    client.ExceptionsByUrl[firstUrl] = new InvalidOperationException("Fetch failed");
+                    break;
+                case "oversized":
+                    client.OversizedUrls.Add(firstUrl);
+                    break;
+                case "empty":
+                    client.Responses[firstUrl] = Array.Empty<byte>();
+                    break;
+                case "html":
+                case "json":
+                    client.Responses[firstUrl] = System.Text.Encoding.UTF8.GetBytes(failure == "html" ? "<html>Error</html>" : "{\"error\":true}");
+                    client.ContentTypes[firstUrl] = failure == "html" ? "text/html" : "application/json";
+                    break;
+                case "placeholder":
+                    client.Responses[firstUrl] = Convert.FromBase64String(MediaCoverRenditionFixture.MascotWebpBase64);
+                    break;
+                default:
+                    client.FailureUrls.Add(firstUrl);
+                    break;
+            }
+
+            var expectedImage = new byte[] { 1, 2, 3 };
+            client.Responses[secondUrl] = expectedImage;
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, books, Logger);
+
+            var result = mapper.GetResponse("/MediaCoverProxy/book/31/cover.jpg") as FileContentResult;
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.FileContents, Is.EqualTo(expectedImage));
+            Assert.That(client.RequestedUrls, Is.EqualTo(new[] { firstUrl, secondUrl }));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void oversized_cover_without_an_alternative_should_return_not_found(bool bookRoute)
+        {
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            ((HttpClientProxy)(object)httpClient).WriteOversizedResponse = true;
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, BookServiceWithCover(), Logger);
+            var path = bookRoute
+                ? "/MediaCoverProxy/book/31/cover.jpg"
+                : proxy.RegisterUrl("https://1.1.1.1/oversized.jpg").Substring(config.UrlBase.Length);
+
+            var result = mapper.GetResponse(path) as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void connection_failures_without_an_alternative_should_return_not_found(bool bookRoute)
+        {
+            const string firstUrl = "https://1.1.1.1/first.jpg";
+            const string secondUrl = "https://1.1.1.1/second.jpg";
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var client = (HttpClientProxy)(object)httpClient;
+            client.ExceptionsByUrl[firstUrl] = new HttpRequestException("Connection failed");
+            client.ExceptionsByUrl[secondUrl] = new HttpRequestException("Connection failed");
+            var books = BookServiceWithCover();
+            ((BookServiceProxy)(object)books).Book.Editions[1].Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+            {
+                new(MediaCoverTypes.Cover, firstUrl),
+                new(MediaCoverTypes.Cover, secondUrl)
+            };
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, books, Logger);
+            var path = bookRoute
+                ? "/MediaCoverProxy/book/31/cover.jpg"
+                : proxy.RegisterUrl(firstUrl).Substring(config.UrlBase.Length);
+
+            var result = mapper.GetResponse(path) as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+            Assert.That(client.RequestedUrls, Is.EqualTo(bookRoute ? new[] { firstUrl, secondUrl } : new[] { firstUrl }));
+        }
+
+        [TestCase("text/html", false)]
+        [TestCase("application/json", false)]
+        [TestCase(null, true)]
+        public void remote_proxy_should_return_not_found_for_empty_or_error_responses(string contentType, bool empty)
+        {
+            const string url = "https://1.1.1.1/error.jpg";
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var client = (HttpClientProxy)(object)httpClient;
+            client.ResponseData = empty ? Array.Empty<byte>() : System.Text.Encoding.UTF8.GetBytes("Error");
+            client.ContentTypes[url] = contentType;
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, null, Logger);
+
+            var result = mapper.GetResponse(proxy.RegisterUrl(url).Substring(config.UrlBase.Length)) as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+            Assert.That(client.RequestedUrls, Is.EqualTo(new[] { url }));
+        }
+
+        [Test]
+        public void saved_book_proxy_should_skip_unsafe_candidate_and_try_the_next_cover()
+        {
+            var books = BookServiceWithCover();
+            var monitoredEdition = ((BookServiceProxy)(object)books).Book.Editions[1];
+            monitoredEdition.Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+            {
+                new(MediaCoverTypes.Cover, "http://127.0.0.1/unsafe.jpg"),
+                new(MediaCoverTypes.Cover, "https://1.1.1.1/safe.jpg")
+            };
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, books, Logger);
+
+            var result = mapper.GetResponse("/MediaCoverProxy/book/31/cover.jpg") as FileContentResult;
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(((HttpClientProxy)(object)httpClient).RequestedUrls,
+                Is.EqualTo(new[] { "https://1.1.1.1/safe.jpg" }));
+        }
+
+        [Test]
+        public void saved_book_proxy_should_return_not_found_when_all_monitored_covers_are_unavailable()
+        {
+            var books = BookServiceWithCover();
+            var monitoredEdition = ((BookServiceProxy)(object)books).Book.Editions[1];
+            monitoredEdition.Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+            {
+                new(MediaCoverTypes.Cover, "https://1.1.1.1/first.jpg"),
+                new(MediaCoverTypes.Cover, "https://1.1.1.1/second.jpg")
+            };
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            ((HttpClientProxy)(object)httpClient).FailureUrls.UnionWith(new[]
+            {
+                "https://1.1.1.1/first.jpg",
+                "https://1.1.1.1/second.jpg"
+            });
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, books, Logger);
+
+            var result = mapper.GetResponse("/MediaCoverProxy/book/31/cover.jpg") as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+            Assert.That(((HttpClientProxy)(object)httpClient).RequestedUrls,
+                Is.EqualTo(new[] { "https://1.1.1.1/first.jpg", "https://1.1.1.1/second.jpg" }));
+        }
+
+        [Test]
+        public void saved_book_proxy_should_not_fall_back_to_an_unmonitored_edition()
+        {
+            var books = BookServiceWithCover();
+            var book = ((BookServiceProxy)(object)books).Book;
+            book.Editions[0].Images[0].Url = "https://1.1.1.1/unmonitored.jpg";
+            book.Editions[1].Images.Clear();
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var mapper = new MediaCoverProxyMapper(proxy, books, Logger);
+
+            var result = mapper.GetResponse("/MediaCoverProxy/book/31/cover.jpg") as StatusCodeResult;
+
+            Assert.That(result?.StatusCode, Is.EqualTo(StatusCodes.Status404NotFound));
+            Assert.That(((HttpClientProxy)(object)httpClient).RequestedUrls, Is.Empty);
         }
 
         [TestCase(false)]
@@ -229,7 +454,9 @@ namespace Chaptarr.Core.Test.MediaCover
             var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/cover.jpg");
             var hash = proxyUrl.Split('/')[3];
 
-            Assert.Throws<InvalidDataException>(() => proxy.GetImageFromUrl(proxy.GetUrl(hash)));
+            var exception = Assert.Throws<WebException>(() => proxy.GetImageFromUrl(proxy.GetUrl(hash)));
+            Assert.That(exception.Status, Is.EqualTo(WebExceptionStatus.ReceiveFailure));
+            Assert.That(exception.InnerException, Is.TypeOf<InvalidDataException>());
         }
 
         [Test]

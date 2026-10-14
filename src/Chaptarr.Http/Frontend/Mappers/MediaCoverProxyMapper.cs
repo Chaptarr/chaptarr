@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -54,7 +53,6 @@ namespace Chaptarr.Http.Frontend.Mappers
 
             var hash = match.Groups["hash"].Value;
             var bookIdText = match.Groups["bookId"].Value;
-            string imageUrl = null;
             var filename = match.Groups["filename"].Value;
 
             byte[] imageData;
@@ -68,19 +66,25 @@ namespace Chaptarr.Http.Frontend.Mappers
                     }
 
                     var book = _bookService.GetBook(bookId);
-                    imageUrl = MediaCoverRendition.SelectMonitoredBookCovers(book).FirstOrDefault()?.Cover.Url;
+                    var candidates = MediaCoverRendition.SelectMonitoredBookCovers(book);
+                    if (candidates.Count == 0)
+                    {
+                        return new StatusCodeResult((int)HttpStatusCode.NotFound);
+                    }
+
+                    imageData = GetFirstAvailableBookCover(candidates);
                 }
                 else
                 {
-                    imageUrl = _mediaCoverProxy.GetUrl(hash);
-                }
+                    var imageUrl = _mediaCoverProxy.GetUrl(hash);
 
-                if (string.IsNullOrWhiteSpace(imageUrl))
-                {
-                    return new StatusCodeResult((int)HttpStatusCode.NotFound);
-                }
+                    if (string.IsNullOrWhiteSpace(imageUrl))
+                    {
+                        return new StatusCodeResult((int)HttpStatusCode.NotFound);
+                    }
 
-                imageData = _mediaCoverProxy.GetImageFromUrl(imageUrl);
+                    imageData = GetAvailableImage(imageUrl);
+                }
             }
             catch (ModelNotFoundException)
             {
@@ -90,27 +94,9 @@ namespace Chaptarr.Http.Frontend.Mappers
             {
                 return new StatusCodeResult((int)HttpStatusCode.NotFound);
             }
-            catch (PlaceholderImageException)
-            {
-                // Provider placeholder bytes are deliberately indistinguishable by URL.
-                // Treat a content-policy rejection as a missing image so the UI uses its
-                // normal author placeholder and never receives the mascot bytes.
-                return new StatusCodeResult((int)HttpStatusCode.NotFound);
-            }
-            catch (HttpException e)
-            {
-                LogUnavailableImage(e.Request?.Method?.ToString() ?? "GET",
-                    e.Request?.Url?.ToString() ?? imageUrl,
-                    e.Response?.StatusCode);
 
-                return new StatusCodeResult((int)HttpStatusCode.NotFound);
-            }
-            catch (WebException e)
+            if (imageData == null)
             {
-                LogUnavailableImage("GET",
-                    imageUrl,
-                    (e.Response as HttpWebResponse)?.StatusCode);
-
                 return new StatusCodeResult((int)HttpStatusCode.NotFound);
             }
 
@@ -120,6 +106,42 @@ namespace Chaptarr.Http.Frontend.Mappers
             }
 
             return new PrivateCacheFileContentResult(imageData, contentType);
+        }
+
+        private byte[] GetFirstAvailableBookCover(IReadOnlyList<BookCoverSelection> candidates)
+        {
+            foreach (var candidate in candidates)
+            {
+                var imageData = GetAvailableImage(candidate.Cover.Url);
+                if (imageData != null)
+                {
+                    return imageData;
+                }
+            }
+
+            return null;
+        }
+
+        private byte[] GetAvailableImage(string imageUrl)
+        {
+            try
+            {
+                return _mediaCoverProxy.GetImageFromUrl(imageUrl);
+            }
+            catch (PlaceholderImageException)
+            {
+                // Rejected provider bytes use the same missing-image outcome as unavailable covers.
+                return null;
+            }
+            catch (Exception e)
+            {
+                // Each fetch failure leaves later candidates eligible and preserves the UI placeholder outcome.
+                var httpException = e as HttpException;
+                LogUnavailableImage(httpException?.Request?.Method?.ToString() ?? "GET",
+                    httpException?.Request?.Url?.ToString() ?? imageUrl,
+                    httpException?.Response?.StatusCode ?? ((e as WebException)?.Response as HttpWebResponse)?.StatusCode);
+                return null;
+            }
         }
 
         private void LogUnavailableImage(string method, string url, HttpStatusCode? statusCode)

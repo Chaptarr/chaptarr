@@ -1531,7 +1531,8 @@ namespace Chaptarr.Core.Test.MediaCover
         [TestCase(".png", "PNG")]
         [TestCase(".jpeg", "JPEG")]
         [TestCase(".jfif", "JPEG")]
-        [TestCase(".webp", "Webp")]
+        [TestCase(".webp", "WEBP")]
+        [TestCase(".gif", "GIF")]
         public void image_resizer_should_preserve_the_destination_file_format(string extension, string expectedFormat)
         {
             var folder = Path.Combine(Path.GetTempPath(), "chaptarr-image-resizer-" + Guid.NewGuid().ToString("N"));

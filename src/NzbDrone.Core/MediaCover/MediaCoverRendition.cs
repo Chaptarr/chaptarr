@@ -13,6 +13,20 @@ namespace NzbDrone.Core.MediaCover
 {
     public static class MediaCoverRendition
     {
+        public static void ValidateImageResponse(byte[] data, string contentType)
+        {
+            if (data == null || data.Length == 0)
+            {
+                throw new InvalidDataException("Cover response was empty");
+            }
+
+            if (contentType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true ||
+                contentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                throw new InvalidDataException($"Cover response had non-image content type '{contentType}'");
+            }
+        }
+
         private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
             ".jpg", ".jpeg", ".jfif", ".png", ".gif", ".webp", ".avif"

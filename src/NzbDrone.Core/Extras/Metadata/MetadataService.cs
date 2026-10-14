@@ -14,6 +14,7 @@ using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.Extras.Others;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
 
 namespace NzbDrone.Core.Extras.Metadata
 {
@@ -26,6 +27,7 @@ namespace NzbDrone.Core.Extras.Metadata
         private readonly IDiskTransferService _diskTransferService;
         private readonly IDiskProvider _diskProvider;
         private readonly IHttpClient _httpClient;
+        private readonly IConfigService _configService;
         private readonly IMediaFileAttributeService _mediaFileAttributeService;
         private readonly IMetadataFileService _metadataFileService;
         private readonly IBookService _bookService;
@@ -52,6 +54,7 @@ namespace NzbDrone.Core.Extras.Metadata
             _diskTransferService = diskTransferService;
             _diskProvider = diskProvider;
             _httpClient = httpClient;
+            _configService = configService;
             _mediaFileAttributeService = mediaFileAttributeService;
             _metadataFileService = metadataFileService;
             _bookService = bookService;
@@ -459,7 +462,13 @@ namespace NzbDrone.Core.Extras.Metadata
             {
                 if (image.Url.StartsWith("http"))
                 {
-                    _httpClient.DownloadFile(image.Url, fullPath);
+                    if (!MediaCoverUrlSafetyPolicy.TryGetSafeImageUrl(image.Url, _configService, out var safeUrl, out var reason))
+                    {
+                        _logger.Warn("Skipping unsafe metadata image for {0}: {1}", author, reason);
+                        return false;
+                    }
+
+                    _httpClient.DownloadFile(safeUrl, fullPath);
                 }
                 else if (_diskProvider.FileExists(image.Url))
                 {
