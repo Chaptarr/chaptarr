@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Abstractions;
 using System.Reflection;
+using System.Threading;
+using Microsoft.Extensions.Hosting;
+using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common;
@@ -25,7 +28,7 @@ namespace Chaptarr.Core.Test.Backup
             {
             }
 
-            public override long? GetAvailableSpace(string path) => throw new NotImplementedException();
+            public override long? GetAvailableSpace(string path) => new DriveInfo(Path.GetPathRoot(path)).AvailableFreeSpace;
             public override void InheritFolderPermissions(string filename) => throw new NotImplementedException();
             public override void SetEveryonePermissions(string filename) => throw new NotImplementedException();
             public override void SetFilePermissions(string path, string mask, string group) => throw new NotImplementedException();
@@ -51,6 +54,8 @@ namespace Chaptarr.Core.Test.Backup
 
         private sealed class TestArchiveService : IArchiveService
         {
+            public void ExtractZip(string compressedFile, string destination, long maximumBytes) => Extract(compressedFile, destination);
+
             public void Extract(string compressedFile, string destination)
             {
                 File.WriteAllText(Path.Combine(destination, "Config.xml"), "replacement");
@@ -62,6 +67,7 @@ namespace Chaptarr.Core.Test.Backup
 
         private sealed class RejectingRestoreDatabase : IRestoreDatabase
         {
+            public bool RecoveryCompleted => false;
             public List<string> ValidatedPaths { get; } = new();
 
             public void Validate(string path)
@@ -70,7 +76,8 @@ namespace Chaptarr.Core.Test.Backup
                 throw new InvalidDataException("invalid restore");
             }
 
-            public bool Restore() => throw new NotImplementedException();
+            public bool Restore(DatabaseType databaseType = DatabaseType.SQLite, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+            public void Stage(string folder) => throw new NotImplementedException();
             public void Commit() => throw new NotImplementedException();
             public void Rollback() => throw new NotImplementedException();
         }
@@ -96,6 +103,7 @@ namespace Chaptarr.Core.Test.Backup
             _appFolderInfo = new TestAppFolderInfo(_tempFolder);
             _restoreDatabase = new RejectingRestoreDatabase();
             _subject = new BackupService(
+                InterfaceProxy.Proxy<IHostApplicationLifetime>((_, _) => CancellationToken.None),
                 new MainDatabase(null),
                 DispatchProxy.Create<IMakeDatabaseBackup, ThrowingProxy<IMakeDatabaseBackup>>(),
                 DispatchProxy.Create<IDiskTransferService, ThrowingProxy<IDiskTransferService>>(),

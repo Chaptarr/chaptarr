@@ -612,6 +612,8 @@ namespace NzbDrone.Core.Configuration
 
         public int BackupRetention => GetValueInt("BackupRetention", 28);
 
+        public bool BackupIncludeLogsAndCache => GetValueBoolean("BackupIncludeLogsAndCache", false);
+
         public CertificateValidationType CertificateValidation =>
             GetValueEnum("CertificateValidation", CertificateValidationType.Enabled);
 

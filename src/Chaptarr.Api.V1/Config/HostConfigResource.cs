@@ -45,6 +45,7 @@ namespace Chaptarr.Api.V1.Config
         public string BackupFolder { get; set; }
         public int BackupInterval { get; set; }
         public int BackupRetention { get; set; }
+        public bool BackupIncludeLogsAndCache { get; set; }
         public bool TrustCgnatIpAddresses { get; set; }
         public string OidcAuthority { get; set; }
         public string OidcClientId { get; set; }
@@ -97,6 +98,7 @@ namespace Chaptarr.Api.V1.Config
                 BackupFolder = configService.BackupFolder,
                 BackupInterval = configService.BackupInterval,
                 BackupRetention = configService.BackupRetention,
+                BackupIncludeLogsAndCache = configService.BackupIncludeLogsAndCache,
                 ApplicationUrl = configService.ApplicationUrl,
                 OidcAuthority = model.OidcAuthority,
                 OidcClientId = model.OidcClientId,
