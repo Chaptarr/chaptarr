@@ -106,6 +106,8 @@ function getTokenLabel(node) {
     BookSubtitle: 'Subtitle',
     ReleaseYear: 'Published Year',
     PartNumber: 'Part Number',
+    ReleasePart: 'Release Part',
+    ReleasePartCount: 'Release Part Count',
     BookSeriesTitle: 'Series title - book position',
     BookSeries: 'Series name',
     BookSeriesPosition: 'Series Position',
@@ -151,7 +153,7 @@ function getNodeColor(node) {
   }
 
   const authorTokens = ['AuthorName', 'AuthorSortName', 'AuthorCleanName', 'AuthorNameFirstCharacter', 'AuthorNameThe', 'AuthorDisambiguation'];
-  const bookTokens = ['BookTitle', 'BookTitleNoSub', 'BookSubtitle', 'BookCleanTitle', 'ReleaseYear', 'PartNumber'];
+  const bookTokens = ['BookTitle', 'BookTitleNoSub', 'BookSubtitle', 'BookCleanTitle', 'ReleaseYear', 'PartNumber', 'ReleasePart', 'ReleasePartCount'];
   const seriesTokens = ['BookSeries', 'BookSeriesPosition', 'BookSeriesTitle'];
   const narratorTokens = ['NarratorName', 'NarratorNameMultiple'];
 

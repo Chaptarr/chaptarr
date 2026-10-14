@@ -801,6 +801,7 @@ namespace NzbDrone.MatchBench
             var strictnessValues = ParseStrictnessValues(GetArg(startupContext, "strictness") ?? "current");
             var pathFallbackValues = ParsePathFallbackValues(GetArg(startupContext, "pathfallback") ?? "current");
             var targetBookIds = ParseTargetBookIds(GetArg(startupContext, "targetbookids"));
+            var releaseSplitPart = ReleasePackDetector.DetectSplitPart(GetArg(startupContext, "releasetitle"));
 
             if (live && !allowMutations && flows.Any(IsPotentiallyMutatingAuditFlow))
             {
@@ -915,7 +916,7 @@ namespace NzbDrone.MatchBench
                         var trace = traceEnabled
                             ? new TraceCollector(traceLimit, expectedProviderBookByPath, providerBookByLocalBookId)
                             : null;
-                        var context = BuildAuditMatchingContext(flow, targetBookIds, pathFallback ?? configService.UsePathAsTagsFallback, trace);
+                        var context = BuildAuditMatchingContext(flow, targetBookIds, pathFallback ?? configService.UsePathAsTagsFallback, trace, releaseSplitPart);
                         var sw = Stopwatch.StartNew();
                         var matchResult = matcher.MatchFilesToLibraryAsync(discovered.ToArray(), restrictToAuthorId, context)
                             .GetAwaiter()
@@ -1149,7 +1150,7 @@ namespace NzbDrone.MatchBench
                 .ToList();
         }
 
-        private static MatchingContext BuildAuditMatchingContext(string flow, IReadOnlyList<int> targetBookIds, bool pathFallback, TraceCollector? trace)
+        private static MatchingContext BuildAuditMatchingContext(string flow, IReadOnlyList<int> targetBookIds, bool pathFallback, TraceCollector? trace, ReleaseSplitPart? releaseSplitPart = null)
         {
             var ctx = flow.ToLowerInvariant() switch
             {
@@ -1168,6 +1169,7 @@ namespace NzbDrone.MatchBench
             }
 
             ctx.TraceSink = trace;
+            ctx.ReleaseSplitPart = releaseSplitPart;
             return ctx;
         }
 
@@ -4735,6 +4737,7 @@ ORDER BY e.BookId, e.Monitored DESC, e.Id;";
             System.Console.WriteLine("  Optional: /data=<appdata>, /prefix=<path>, /source=bookfiles|staging|disk, /limit=250");
             System.Console.WriteLine("  Optional: /flow=scan-local|scan-v5|scan-scoped-rematch|downloaded|manual-download|author-ready|direct-default|all");
             System.Console.WriteLine("  Optional: /strictness=current|strict|balanced|loose|all, /pathfallback=current|true|false|all");
+            System.Console.WriteLine("  Optional: /releasetitle=<grabbed release title> (split-release part, e.g. 'Book (2 of 2)', as a tracked download passes it)");
             System.Console.WriteLine("  Optional: /authorid=<id>, /targetbookids=1,2, /mappedonly=true, /unmappedonly=true, /requiretags=true|false, /includemissing=true|false");
             System.Console.WriteLine("  Answer keys: bulk audits exclude user-selected mappings by default; /includeuserselected=true includes them. Exact /bookfileid or /bookid audits include them by default.");
             System.Console.WriteLine("  Exact-row audit: /source=bookfiles /bookfileid=<local BookFiles.Id> or /bookid=<local Books.Id>; /ftstop=25 controls Markdown/console rows (JSON keeps the full captured trace).");

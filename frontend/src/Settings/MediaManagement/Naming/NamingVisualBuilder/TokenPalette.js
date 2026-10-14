@@ -51,7 +51,13 @@ const tokenCategories = [
       }, example: '2024' },
       { tokenKey: 'PartNumber', get label() {
         return translate('NamingTokenPartNumber');
-      }, example: '1', args: { format: '0' } }
+      }, example: '1', args: { format: '0' } },
+      { tokenKey: 'ReleasePart', get label() {
+        return translate('NamingTokenReleasePart');
+      }, example: '1', args: { format: '0' } },
+      { tokenKey: 'ReleasePartCount', get label() {
+        return translate('NamingTokenReleasePartCount');
+      }, example: '2', args: { format: '0' } }
     ]
   },
   {

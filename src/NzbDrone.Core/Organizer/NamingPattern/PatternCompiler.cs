@@ -43,6 +43,8 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             // Part tokens
             { "PartNumber", "{PartNumber}" },
             { "PartCount", "{PartCount}" },
+            { "ReleasePart", "{ReleasePart}" },
+            { "ReleasePartCount", "{ReleasePartCount}" },
 
             // Quality tokens
             { "QualityFull", "{Quality Full}" },
@@ -128,8 +130,9 @@ namespace NzbDrone.Core.Organizer.NamingPattern
                 return $"{{{token.TokenKey}}}"; // Fallback
             }
 
-            // Handle custom formatting for PartNumber and PartCount
-            if ((token.TokenKey == "PartNumber" || token.TokenKey == "PartCount") && 
+            // Handle custom formatting for PartNumber/PartCount and ReleasePart/ReleasePartCount
+            if ((token.TokenKey == "PartNumber" || token.TokenKey == "PartCount" ||
+                 token.TokenKey == "ReleasePart" || token.TokenKey == "ReleasePartCount") && 
                 token.Args.TryGetValue("format", out var formatObj))
             {
                 var format = formatObj.ToString();
@@ -251,7 +254,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             }
 
             // Check for formatted tokens like {PartNumber:00}
-            var formatMatch = Regex.Match(token, @"^\{(PartNumber|PartCount):([^}]+)\}$");
+            var formatMatch = Regex.Match(token, @"^\{(PartNumber|PartCount|ReleasePart|ReleasePartCount):([^}]+)\}$");
             if (formatMatch.Success)
             {
                 return (new TokenNode 

@@ -6,7 +6,7 @@ export function createId() {
 
 export function getTokenColor(tokenKey) {
   const authorTokens = ['AuthorName', 'AuthorSortName', 'AuthorCleanName', 'AuthorNameFirstCharacter', 'AuthorNameThe', 'AuthorDisambiguation'];
-  const bookTokens = ['BookTitle', 'BookTitleNoSub', 'BookSubtitle', 'BookCleanTitle', 'ReleaseYear', 'PartNumber', 'BookCleanTitleNoSub', 'BookTitleThe', 'BookTitleTheNoSub', 'BookSubtitleThe', 'BookCleanSubtitle', 'BookDisambiguation', 'EditionYear', 'ReleaseYearFirst'];
+  const bookTokens = ['BookTitle', 'BookTitleNoSub', 'BookSubtitle', 'BookCleanTitle', 'ReleaseYear', 'PartNumber', 'ReleasePart', 'ReleasePartCount', 'BookCleanTitleNoSub', 'BookTitleThe', 'BookTitleTheNoSub', 'BookSubtitleThe', 'BookCleanSubtitle', 'BookDisambiguation', 'EditionYear', 'ReleaseYearFirst'];
   const seriesTokens = ['BookSeries', 'BookSeriesPosition', 'BookSeriesTitle'];
   const narratorTokens = ['NarratorName', 'NarratorNameMultiple'];
 
@@ -43,6 +43,8 @@ export function getTokenDisplayLabel(tokenKey) {
     BookCleanTitle: 'Clean Title',
     ReleaseYear: 'Published Year',
     PartNumber: 'Part Number',
+    ReleasePart: 'Release Part',
+    ReleasePartCount: 'Release Part Count',
     BookSeries: 'Series',
     BookSeriesPosition: 'Series Position',
     BookSeriesTitle: 'Series Title #1',

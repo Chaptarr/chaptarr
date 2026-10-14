@@ -1265,6 +1265,8 @@
   "NamingTokenNarrators": "All narrators (list)",
   "NamingTokenNarratorsExample": "Alice Reader, Bob Voice",
   "NamingTokenPartNumber": "Part Number",
+  "NamingTokenReleasePart": "Release Part (Part 1 of 2)",
+  "NamingTokenReleasePartCount": "Release Part Count (Part 1 of 2)",
   "NamingTokenReleaseYear": "Published Year",
   "NamingTokenSpace": "Space",
   "NarratedBy": "Narrated by {narrator}",

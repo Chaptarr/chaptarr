@@ -12,6 +12,12 @@ namespace NzbDrone.Core.Parser.Model
         public int CalibreId { get; set; }
         public int Part { get; set; }
         public int PartCount { get; set; }
+
+        // Split-release part ("Part 2 of 2"): which separately-released part of the book this
+        // download is. 0 when the release is the whole book. Part/PartCount number the files
+        // within one release; these number the releases.
+        public int ReleasePart { get; set; }
+        public int ReleasePartCount { get; set; }
         public long Size { get; set; }
         public DateTime Modified { get; set; }
         public int? DurationSeconds { get; set; }

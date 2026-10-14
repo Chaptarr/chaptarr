@@ -1208,6 +1208,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     associatedDownload.DownloadItem.DownloadId,
                     associationReason);
                 var importMode = _downloadImportModeResolver.Resolve(message.ImportMode, associatedDownload.DownloadItem);
+
+                ReleaseSplitPartPolicy.ApplySplitPartOfGrab(
+                    decisions.Select(d => d.Item),
+                    associatedDownload.RemoteBook,
+                    associatedDownload.RemoteBook?.Release?.Title ?? associatedDownload.DownloadItem.Title);
+
                 var importResults = _importApprovedBooks.Import(decisions, message.ReplaceExistingFiles, associatedDownload.DownloadItem, importMode);
 
                 imported.AddRange(importResults);

@@ -28,6 +28,11 @@ namespace NzbDrone.Core.MediaFiles
         public int CalibreId { get; set; }
         public int Part { get; set; }
 
+        // Split-release part ("Part 2 of 2"), 0 when the file came from a whole-book release.
+        // Files of a different part of the same split are siblings, never upgrade targets.
+        public int ReleasePart { get; set; }
+        public int ReleasePartCount { get; set; }
+
         // GraphicAudio classification fields
         public bool IsGraphicAudio { get; set; }
         public string AudioProductionType { get; set; }

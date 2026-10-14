@@ -57,6 +57,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         private readonly AsyncLocal<RejectionCaptureContext> _rejectionCapture = new AsyncLocal<RejectionCaptureContext>();
         private readonly AsyncLocal<IMatchingTraceSink> _matchingTraceSink = new AsyncLocal<IMatchingTraceSink>();
+        private readonly AsyncLocal<ReleaseSplitPart> _releaseSplitPart = new AsyncLocal<ReleaseSplitPart>();
 
         private sealed class RejectionCaptureContext
         {
@@ -593,6 +594,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var cancellationToken = context.CancellationToken;
             cancellationToken.ThrowIfCancellationRequested();
             _matchingTraceSink.Value = context.TraceSink;
+            _releaseSplitPart.Value = context.ReleaseSplitPart;
 
             var allowV5Identification = context.AllowV5Identification;
             var allowAuthorImport = context.AllowAuthorImport;
@@ -633,6 +635,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 forDownloads, filesWithMetadata.Length, restrictToAuthorId.HasValue,
                 allowV5Identification, allowAuthorImport, deferUnmatchedToAuthorReady, allowUnscopedFallback);
             _logger.Debug("[MATCH-SETTINGS] disablePathFallback={0}", disablePathFallback);
+            if (context.ReleaseSplitPart != null)
+            {
+                _logger.Debug("[MATCH-SETTINGS] releaseSplitPart={0}", context.ReleaseSplitPart);
+            }
+
             _logger.Debug("[MATCH-SETTINGS] strictness={0}, usePathAsTagsFallback={1}", matchingStrictness, usePathAsTagsFallback);
             if (IsMatchingTraceEnabled())
             {
@@ -6235,7 +6242,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 bool LooksLikeMultipartAudiobookTrack()
                 {
-                    if (mediaType != BookMediaType.Audiobook || allTags == null || allTags.Count == 0)
+                    if (mediaType != BookMediaType.Audiobook)
+                    {
+                        return false;
+                    }
+
+                    // One part of a split release ("Part 2 of 3") is, like a single track, only a
+                    // share of the book: its duration cannot distinguish full-book editions.
+                    if (_releaseSplitPart.Value != null)
+                    {
+                        return true;
+                    }
+
+                    if (allTags == null || allTags.Count == 0)
                     {
                         return false;
                     }
@@ -9680,7 +9699,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     foreach (var raw in kv.Value)
                     {
-                        var value = raw?.Trim();
+                        var value = RemoveReleaseSplitPartPhrase(raw?.Trim(), _releaseSplitPart.Value);
                         if (string.IsNullOrWhiteSpace(value) || value.Length >= 5000)
                         {
                             continue;
@@ -9755,6 +9774,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 return detected;
+            }
+
+            /// <summary>
+            /// A known split-release part ("... 2 of 2", "Part 2 of 2") numbers the release, not the
+            /// book's place in its series, so like "Disc 1" it is not read as a series position.
+            /// Only the exact part the grab named is removed; "Book 2 of 3" is left alone.
+            /// </summary>
+            internal static string RemoveReleaseSplitPartPhrase(string value, ReleaseSplitPart splitPart)
+            {
+                if (splitPart == null || string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+
+                var pattern = splitPart.Count > 0
+                    ? $@"(?<!\b(?:book|bk|vol|volume)\.?\s*#?\s*)\b(?:(?:part|pt)\.?\s*#?\s*)?{splitPart.Part}\s*(?:of|/)\s*{splitPart.Count}\b"
+                    : $@"\b(?:part|pt)\.?\s*#?\s*{splitPart.Part}\b";
+
+                return Regex.Replace(value, pattern, " ", RegexOptions.IgnoreCase).Trim();
             }
 
             private bool HasSeriesPositionContextForNumber(

@@ -383,16 +383,21 @@ namespace NzbDrone.Core.Books
 	            return Query(s => s.TitleSlug == titleSlug).SingleOrDefault();
 	        }
 
-        //x.Id == null is converted to SQL, so warning incorrect
-#pragma warning disable CS0472
+        // An edition is missing when it has no files, or when it only has some parts of a split
+        // release ("Part 1 of 3" on disk, parts 2 and 3 not yet): no whole-book file, and fewer
+        // distinct parts than the split's total. With no files that is 0 of 1, so plain missing
+        // books are unchanged; files without a recorded part (ReleasePart = 0) count as whole.
+        private const string EditionMissingOrIncompleteSplitClause = @"(
+            NOT EXISTS (SELECT 1 FROM ""BookFiles"" WHERE ""BookFiles"".""EditionId"" = ""Editions"".""Id"" AND ""BookFiles"".""ReleasePart"" = 0)
+            AND (SELECT COUNT(DISTINCT ""BookFiles"".""ReleasePart"") FROM ""BookFiles"" WHERE ""BookFiles"".""EditionId"" = ""Editions"".""Id"")
+                < COALESCE((SELECT MAX(""BookFiles"".""ReleasePartCount"") FROM ""BookFiles"" WHERE ""BookFiles"".""EditionId"" = ""Editions"".""Id""), 1))";
+
         private SqlBuilder BooksWithoutFilesBuilder(DateTime currentTime) => Builder()
             .Join<Book, Author>((l, r) => l.AuthorId == r.Id)
             .Join<Book, Edition>((b, e) => b.Id == e.BookId)
-            .LeftJoin<Edition, BookFile>((t, f) => t.Id == f.EditionId)
-            .Where<BookFile>(f => f.Id == null)
+            .Where(EditionMissingOrIncompleteSplitClause)
             .Where<Edition>(e => e.Monitored == true)
             .Where<Book>(a => a.ReleaseDate <= currentTime);
-#pragma warning restore CS0472
 
         public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec)
         {

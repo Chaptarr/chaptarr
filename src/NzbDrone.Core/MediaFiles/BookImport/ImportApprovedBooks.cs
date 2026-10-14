@@ -340,8 +340,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 // CRITICAL BUG FIX: Only consider it a replacement if there are ACTUAL files to replace
-                // If the book is "Missing" (no files), we should import to it, not create a duplicate
-                var filesToReplace = existingFiles.Any() && replaceExisting;
+                // If the book is "Missing" (no files), we should import to it, not create a duplicate.
+                // Files from another part of the same split release ("Part 1 of 2" when importing
+                // "Part 2 of 2") are siblings that complete the book, not files to replace.
+                var replaceableExistingFiles = ReleaseSplitPartPolicy.ExcludeSiblingParts(existingFiles, bookDecisions.Select(d => d.Item));
+                if (replaceableExistingFiles.Count != existingFiles.Count)
+                {
+                    _logger.Debug("[SPLIT-RELEASE] Keeping {0} file(s) from other parts of the split release for book {1}",
+                        existingFiles.Count - replaceableExistingFiles.Count, book.Id);
+                }
+
+                var filesToReplace = replaceableExistingFiles.Any() && replaceExisting;
                 var manualReplaceExisting = replaceExisting && (downloadForced || bookDecisions.Any(d => d.Item?.IsManualImport == true));
 
                 _logger.Debug("[UPGRADE-CHECK] replaceExisting={0}, existingFiles.Any()={1}, filesToReplace={2}, UpgradeAllowed={3}",
@@ -1070,7 +1079,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     var manualReplaceExisting = replaceExisting && (localBook.IsManualImport || downloadForced);
                     var filesToReplace = existingFiles.Where(f =>
                         !f.Path.Equals(localBook.Path, StringComparison.OrdinalIgnoreCase) &&
-                        (f.EditionId == edition.Id || manualReplaceExisting)).ToList();
+                        (f.EditionId == edition.Id || manualReplaceExisting) &&
+                        !ReleaseSplitPartPolicy.IsSiblingPart(f, localBook)).ToList();
 
                     // Relocation is not an "upgrade/replacement"; do not block or stage/delete other files.
                     if (relocateExistingFile != null)
@@ -1149,6 +1159,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                         bookFile.Part = localBook.Part > 0 ? localBook.Part : 1;
                         bookFile.PartCount = localBook.PartCount;
+                        if (localBook.ReleasePart > 0)
+                        {
+                            bookFile.ReleasePart = localBook.ReleasePart;
+                            bookFile.ReleasePartCount = localBook.ReleasePartCount;
+                        }
+
                         bookFile.Size = localBook.Size;
                         bookFile.Modified = localBook.Modified;
                         bookFile.Quality = localBook.Quality;
@@ -1184,6 +1200,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             CalibreId = localBook.CalibreId,
                             Part = localBook.Part > 0 ? localBook.Part : 1,
                             PartCount = localBook.PartCount,
+                            ReleasePart = localBook.ReleasePart,
+                            ReleasePartCount = localBook.ReleasePartCount,
                             Size = localBook.Size,
                             Modified = localBook.Modified,
                             DateAdded = DateTime.UtcNow,
@@ -2356,6 +2374,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     IsGraphicAudio = first.IsGraphicAudio,
                     AudioProductionType = first.AudioProductionType,
                     SceneName = first.SceneName,
+                    ReleasePart = first.ReleasePart,
+                    ReleasePartCount = first.ReleasePartCount,
                     Narrator = first.Narrator,
                     IsInitialImport = first.IsInitialImport,
                     IsManualImport = first.IsManualImport,
@@ -2386,7 +2406,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     Edition = source.Edition,
                     Quality = convertedQuality,
                     Part = source.Part > 0 ? source.Part : 1,
-                    PartCount = source.PartCount
+                    PartCount = source.PartCount,
+                    ReleasePart = source.ReleasePart,
+                    ReleasePartCount = source.ReleasePartCount
                 };
 
                 var previewBookFile = new BookFile
@@ -2398,6 +2420,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     Author = author,
                     Part = previewLocalBook.Part,
                     PartCount = previewLocalBook.PartCount,
+                    ReleasePart = previewLocalBook.ReleasePart,
+                    ReleasePartCount = previewLocalBook.ReleasePartCount,
                     MediaType = BookFile.DetermineMediaType(convertedQuality)
                 };
 
@@ -3678,6 +3702,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     Author = author,
                     Part = localBook.Part,
                     PartCount = localBook.PartCount,
+                    ReleasePart = localBook.ReleasePart,
+                    ReleasePartCount = localBook.ReleasePartCount,
                     MediaType = BookFile.DetermineMediaType(localBook.Quality)
                 };
 

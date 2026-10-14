@@ -2,6 +2,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
@@ -39,7 +40,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
             }
 
-            foreach (var file in subject.Books.SelectMany(b => b.BookFiles))
+            foreach (var file in ReleaseSplitPartPolicy.ExcludeSiblingParts(subject.Books.SelectMany(b => b.BookFiles), subject))
             {
                 if (file == null)
                 {

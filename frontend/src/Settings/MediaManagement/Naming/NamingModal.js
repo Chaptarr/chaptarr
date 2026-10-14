@@ -43,6 +43,10 @@ const fileNameTokens = [
   {
     token: '{Author Name} - {Book Title}{ (PartNumber/PartCount)}',
     example: 'Author Name - Book Title (2/10)'
+  },
+  {
+    token: '{Book Title}{ (Part ReleasePart of ReleasePartCount)}{ (PartNumber:smart)}',
+    example: 'Book Title (Part 1 of 2) (03)'
   }
 ];
 
@@ -88,7 +92,10 @@ const bookTokens = [
   { token: '{PartNumber:smart}', example: '02' },
   { token: '{PartCount:0}', example: '9' },
   { token: '{PartCount:00}', example: '09' },
-  { token: '{PartCount:smart}', example: '10' }
+  { token: '{PartCount:smart}', example: '10' },
+
+  { token: '{ - Part ReleasePart}', example: ' - Part 1' },
+  { token: '{ (Part ReleasePart of ReleasePartCount)}', example: ' (Part 1 of 2)' }
 ];
 
 const releaseDateTokens = [

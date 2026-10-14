@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-
+using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.MediaFiles.BookImport
 {
@@ -60,6 +60,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         /// identity; unlike <see cref="TargetBookIds"/>, matching never widens beyond this set.
         /// </summary>
         public List<int> HardAllowedBookIds { get; set; }
+
+        /// <summary>
+        /// Optional: the files are one part of a split release ("Part 2 of 3"), as known from the grab.
+        /// Like a single track of a multipart audiobook, such a file holds only a share of the book, so
+        /// its duration is not compared with the full-book edition duration.
+        /// </summary>
+        public ReleaseSplitPart ReleaseSplitPart { get; set; }
 
         /// <summary>
         /// Optional harness/debug sink. Production callers leave this null so detailed candidate tracing has no allocation cost.

@@ -261,7 +261,71 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
-        private static void WithRepository(Action<BookRepository> action)
+        [Test]
+        public void missing_search_targets_should_keep_a_split_release_wanted_until_every_part_is_present()
+        {
+            WithRepository(
+                sut =>
+                {
+                    var targets = sut.GetMissingBookSearchTargets(BookMediaType.Audiobook, authorId: 40);
+
+                    Assert.That(targets.Select(target => target.BookId), Is.EqualTo(new[] { 9 }));
+                },
+                SeedSplitReleaseBooks);
+        }
+
+        [Test]
+        public void wanted_missing_should_list_an_incomplete_split_release_once()
+        {
+            WithRepository(
+                sut =>
+                {
+                    var page = sut.BooksWithoutFiles(new PagingSpec<Book> { Page = 1, PageSize = 50, SortKey = "Books.Id", SortDirection = SortDirection.Ascending });
+
+                    Assert.That(page.Records.Where(book => book.AuthorId == 40).Select(book => book.Id), Is.EqualTo(new[] { 9 }));
+                },
+                SeedSplitReleaseBooks);
+        }
+
+        private static void SeedSplitReleaseBooks(SqliteConnection connection)
+        {
+            var past = DateTime.UtcNow.AddDays(-1);
+
+            connection.Execute(@"
+                INSERT INTO ""Authors"" (""Id"", ""AudiobookMonitored"", ""AudiobookMonitorNewItems"", ""EbookMonitored"", ""EbookMonitorNewItems"", ""AudiobookQualityProfileId"", ""EbookQualityProfileId"")
+                VALUES (40, 1, 1, 0, 1, 601, 501);
+            ");
+
+            connection.Execute(@"
+                INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""Title"", ""CleanTitle"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"", ""ReleaseDate"")
+                VALUES
+                    (9, 40, 'One Of Three Parts', 'one of three parts', @audiobook, 1, 0, @past),
+                    (10, 40, 'Both Parts', 'both parts', @audiobook, 1, 0, @past),
+                    (11, 40, 'Part Plus Whole Book', 'part plus whole book', @audiobook, 1, 0, @past),
+                    (12, 40, 'Part Without Total', 'part without total', @audiobook, 1, 0, @past);
+            ", new { audiobook = (int)BookMediaType.Audiobook, past });
+
+            connection.Execute(@"
+                INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"")
+                VALUES (90, 9, 1), (100, 10, 1), (110, 11, 1), (120, 12, 1);
+            ");
+
+            // Book 9: parts 1 of 3 (two tracks) on disk. Book 10: both parts of 2. Book 11: part 1 of 2
+            // beside a whole-book file. Book 12: a part whose total is unknown.
+            connection.Execute(@"
+                INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""MediaType"", ""Size"", ""Quality"", ""ReleasePart"", ""ReleasePartCount"")
+                VALUES
+                    (900, 90, 'audiobook', 1, NULL, 1, 3),
+                    (901, 90, 'audiobook', 1, NULL, 1, 3),
+                    (1000, 100, 'audiobook', 1, NULL, 1, 2),
+                    (1001, 100, 'audiobook', 1, NULL, 2, 2),
+                    (1100, 110, 'audiobook', 1, NULL, 1, 2),
+                    (1101, 110, 'audiobook', 1, NULL, 0, 0),
+                    (1200, 120, 'audiobook', 1, NULL, 2, 0);
+            ");
+        }
+
+        private static void WithRepository(Action<BookRepository> action, Action<SqliteConnection> seed = null)
         {
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"book_index_filter_{Guid.NewGuid():N}.db");
             var connectionString = new SqliteConnectionStringBuilder
@@ -279,6 +343,7 @@ namespace Chaptarr.Core.Test.Books
                     connection.Execute("PRAGMA synchronous = OFF;");
                     CreateSchema(connection);
                     SeedBooks(connection);
+                    seed?.Invoke(connection);
                 }
 
                 var database = new Database("main", () =>
@@ -346,7 +411,9 @@ namespace Chaptarr.Core.Test.Books
                     ""EditionId"" INTEGER NOT NULL,
                     ""MediaType"" TEXT NULL,
                     ""Size"" INTEGER NOT NULL,
-                    ""Quality"" TEXT NULL
+                    ""Quality"" TEXT NULL,
+                    ""ReleasePart"" INTEGER NOT NULL DEFAULT 0,
+                    ""ReleasePartCount"" INTEGER NOT NULL DEFAULT 0
                 );
             ");
         }

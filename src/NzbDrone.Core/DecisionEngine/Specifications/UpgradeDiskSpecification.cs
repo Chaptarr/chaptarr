@@ -3,6 +3,7 @@ using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
@@ -53,7 +54,9 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Accept();
             }
 
-            foreach (var file in subject.Books.Where(b => b.BookFiles != null).SelectMany(c => c.BookFiles))
+            var existingFiles = subject.Books.Where(b => b.BookFiles != null).SelectMany(c => c.BookFiles);
+
+            foreach (var file in ReleaseSplitPartPolicy.ExcludeSiblingParts(existingFiles, subject))
             {
                 if (file == null)
                 {
