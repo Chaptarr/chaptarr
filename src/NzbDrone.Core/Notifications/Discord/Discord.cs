@@ -290,7 +290,6 @@ namespace NzbDrone.Core.Notifications.Discord
 
             var payload = new DiscordPayload
             {
-                Username = Settings.Username,
                 Content = message,
                 Embeds = embeds
             };
