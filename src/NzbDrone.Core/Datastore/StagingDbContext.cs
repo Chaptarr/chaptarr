@@ -2,7 +2,6 @@ using System;
 using System.Data;
 using System.Linq;
 using Microsoft.Data.Sqlite;
-using System.IO;
 using Dapper;
 using NLog;
 using NzbDrone.Common.Disk;
@@ -16,6 +15,7 @@ namespace NzbDrone.Core.Datastore
     {
         IDbConnection OpenConnection();
         void InitializeDatabase();
+        Exception InitializationError { get; }
     }
 
     public class StagingDbContext : IStagingDbContext
@@ -29,7 +29,7 @@ namespace NzbDrone.Core.Datastore
             _appFolderInfo = appFolderInfo;
             _logger = logger;
             
-            var dbPath = Path.Combine(_appFolderInfo.AppDataFolder, "staging.db");
+            var dbPath = _appFolderInfo.GetStagingDatabase();
             var csb = new SqliteConnectionStringBuilder
             {
                 DataSource = dbPath,
@@ -39,30 +39,59 @@ namespace NzbDrone.Core.Datastore
             _connectionString = csb.ConnectionString;
         }
 
+        public Exception InitializationError { get; private set; }
+
         public IDbConnection OpenConnection()
         {
-            var connection = new SqliteConnection(_connectionString);
-            connection.Open();
-            
-            // Set PRAGMAs for every connection
-            using (var command = connection.CreateCommand())
+            if (InitializationError != null)
             {
+                throw new InvalidOperationException("The import queue could not be initialized. Imports are unavailable until the staging database is repaired and Chaptarr is restarted.", InitializationError);
+            }
+
+            return OpenConnection(true);
+        }
+
+        private SqliteConnection OpenConnection(bool pooling)
+        {
+            var connection = new SqliteConnection(new SqliteConnectionStringBuilder(_connectionString) { Pooling = pooling }.ToString());
+            try
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
                 command.CommandText = @"
                     PRAGMA journal_mode=WAL;
                     PRAGMA synchronous=NORMAL;
                     PRAGMA busy_timeout=3000;
                 ";
                 command.ExecuteNonQuery();
+                return connection;
             }
-            
-            return connection;
+            catch
+            {
+                connection.Dispose();
+                throw;
+            }
         }
 
         public void InitializeDatabase()
         {
+            try
+            {
+                InitializeDatabaseCore();
+                InitializationError = null;
+            }
+            catch (Exception ex)
+            {
+                InitializationError = ex;
+                throw;
+            }
+        }
+
+        private void InitializeDatabaseCore()
+        {
             _logger.Info("Initializing staging database");
             
-            using (var conn = OpenConnection())
+            using (var conn = OpenConnection(false))
             {
                 // Check SQLite version
                 var version = conn.ExecuteScalar<string>("SELECT sqlite_version()");
@@ -101,9 +130,9 @@ namespace NzbDrone.Core.Datastore
                     CREATE INDEX IF NOT EXISTS ix_ingest_status_created ON ingest_queue(status, created_at);
                     CREATE INDEX IF NOT EXISTS ix_ingest_updated ON ingest_queue(updated_at);
                     
-                    -- Create import results table (append-only for durability)
+                    -- Keep outcomes until the scan has consumed them and verified the main-database handoff.
                     CREATE TABLE IF NOT EXISTS import_results(
-                        id INTEGER PRIMARY KEY,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
                         queue_item_id INTEGER NOT NULL,
                         path TEXT NOT NULL,
                         outcome TEXT NOT NULL CHECK(outcome IN ('imported', 'unmapped', 'failed', 'ignored', 'alreadylinked')),
@@ -119,27 +148,8 @@ namespace NzbDrone.Core.Datastore
                     CREATE INDEX IF NOT EXISTS ix_results_outcome ON import_results(outcome);
                     CREATE INDEX IF NOT EXISTS ix_results_created ON import_results(created_at);
                     
-                    -- Durable cache for tag extraction on transient files (downloads/manual import).
-                    -- BookFiles persists tags after import; this table covers files that have not
-                    -- become managed library rows yet.
-                    CREATE TABLE IF NOT EXISTS file_tag_cache(
-                        path TEXT PRIMARY KEY,
-                        mtime_ns INTEGER NOT NULL,
-                        size_bytes INTEGER NOT NULL,
-                        tags_json TEXT NOT NULL,
-                        duration_seconds INTEGER,
-                        extraction_status TEXT CHECK(extraction_status IN ('evidence', 'noisy_only', 'tagless')),
-                        updated_at INTEGER NOT NULL
-                    );
-
-                    CREATE INDEX IF NOT EXISTS ix_file_tag_cache_updated ON file_tag_cache(updated_at);
-
-                    -- Create staging metadata table for future use
-                    CREATE TABLE IF NOT EXISTS staging_metadata(
-                        key TEXT PRIMARY KEY,
-                        value TEXT,
-                        updated_at INTEGER NOT NULL
-                    );
+                    -- Command summaries are now consumed in memory before verified queue cleanup.
+                    DROP TABLE IF EXISTS staging_metadata;
                 ");
 
                 // Backfill/upgrade: ensure new columns exist for older staging.db files.
@@ -155,24 +165,11 @@ namespace NzbDrone.Core.Datastore
                 }
                 catch (Exception ex)
                 {
-                    _logger.Debug(ex, "[STAGING-DB] Failed to ensure ingest_queue.duration_seconds column exists");
+                    _logger.Error(ex, "[STAGING-DB] Failed to ensure ingest_queue.duration_seconds column exists");
+                    throw;
                 }
 
-                try
-                {
-                    var fileTagCacheColumns = conn.Query<string>("SELECT name FROM pragma_table_info('file_tag_cache')").ToList();
-                    if (!fileTagCacheColumns.Any(column => column.Equals("extraction_status", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        conn.Execute("ALTER TABLE file_tag_cache ADD COLUMN extraction_status TEXT;");
-                        _logger.Info("[STAGING-DB] Added file_tag_cache.extraction_status column");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "[STAGING-DB] Failed to ensure file_tag_cache.extraction_status column exists");
-                }
-
-                RepairImportResultsOutcomeConstraint(conn);
+                RepairImportResultsSchema(conn);
 
                 // Safety: if the app crashed/restarted mid-import, queue items can be left in status='in_progress'.
                 // On startup (when no handlers are actively processing), re-queue them so future scans can continue.
@@ -194,26 +191,28 @@ namespace NzbDrone.Core.Datastore
                 }
                 catch (Exception ex)
                 {
-                    _logger.Debug(ex, "[STAGING-DB] Failed to recover in_progress items on startup");
+                    _logger.Error(ex, "[STAGING-DB] Failed to recover in_progress items on startup");
+                    throw;
                 }
                 
                 _logger.Info("Staging database initialized successfully");
             }
         }
 
-        private void RepairImportResultsOutcomeConstraint(IDbConnection conn)
+        private void RepairImportResultsSchema(IDbConnection conn)
         {
             try
             {
                 var tableSql = conn.ExecuteScalar<string>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'import_results';");
                 if (string.IsNullOrWhiteSpace(tableSql) ||
                     (tableSql.IndexOf("'ignored'", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                     tableSql.IndexOf("'alreadylinked'", StringComparison.OrdinalIgnoreCase) >= 0))
+                     tableSql.IndexOf("'alreadylinked'", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                     tableSql.IndexOf("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase) >= 0))
                 {
                     return;
                 }
 
-                _logger.Info("[STAGING-DB] Rebuilding import_results table to allow ignored and already-linked outcomes");
+                _logger.Info("[STAGING-DB] Upgrading import results for supported outcomes and non-reusable result IDs");
 
                 using (var transaction = conn.BeginTransaction())
                 {
@@ -221,7 +220,7 @@ namespace NzbDrone.Core.Datastore
 
                     conn.Execute(@"
                         CREATE TABLE import_results(
-                            id INTEGER PRIMARY KEY,
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
                             queue_item_id INTEGER NOT NULL,
                             path TEXT NOT NULL,
                             outcome TEXT NOT NULL CHECK(outcome IN ('imported', 'unmapped', 'failed', 'ignored', 'alreadylinked')),
@@ -252,7 +251,8 @@ namespace NzbDrone.Core.Datastore
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "[STAGING-DB] Failed to repair import_results outcome constraint");
+                _logger.Error(ex, "[STAGING-DB] Failed to upgrade import_results schema");
+                throw;
             }
         }
     }
