@@ -321,6 +321,12 @@ namespace Chaptarr.Core.Test.DecisionEngine
             public MetadataProfile Get(int id) => _profiles.TryGetValue(id, out var profile) ? profile : null;
             public bool Exists(int id) => _profiles.ContainsKey(id);
             public List<Book> FilterBooks(Author input, int profileId) => throw new NotImplementedException();
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                FilterBooks(input, profileId, requestedNarrationIds, null);
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                FilterBooks(input, profileId);
         }
     }
 }

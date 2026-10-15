@@ -26,6 +26,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public List<string> Errors { get; set; } = new List<string>();
         public List<string> ScannedFilePaths { get; set; } = new List<string>();
         public bool CleanupSafe { get; set; }
+        public List<Datastore.ImportResult> StagingResults { get; set; } = new List<Datastore.ImportResult>();
     }
 
     /// <summary>

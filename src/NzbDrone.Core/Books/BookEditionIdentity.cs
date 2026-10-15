@@ -8,6 +8,48 @@ namespace NzbDrone.Core.Books
 {
     public static class BookEditionIdentity
     {
+        public static List<string> GetNarratorNames(Edition edition)
+        {
+            var names = edition?.NarratorNames?.Where(name => !string.IsNullOrWhiteSpace(name)).ToList();
+            if (names?.Count > 0)
+            {
+                return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            }
+
+            names = edition?.NarratorCredits?.Select(credit => credit.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            return names?.Count > 0 ? names : string.IsNullOrWhiteSpace(edition?.Narrator)
+                ? new List<string>() : new List<string> { edition.Narrator };
+        }
+
+        public static bool HasNarration(Edition edition) => GetNarratorNames(edition).Count > 0;
+
+        public static bool IsNarratedAudiobookEdition(Edition edition) => edition?.ReadingFormatId == 2 && HasNarration(edition);
+
+        public static bool HasSameNarration(Edition left, Edition right)
+        {
+            return HasSameNarrators(GetNarratorNames(left), GetNarratorNames(right));
+        }
+
+        public static bool MatchesRequestedNarration(Edition edition, string editionProviderId, List<string> narratorNames)
+        {
+            return EditionMatchesProviderId(edition, editionProviderId) ||
+                (IsNarratedAudiobookEdition(edition) && narratorNames?.Count > 0 &&
+                    HasSameNarrators(GetNarratorNames(edition), narratorNames));
+        }
+
+        public static IOrderedEnumerable<Edition> OrderRequestedNarrationEditions(IEnumerable<Edition> editions) =>
+            editions.OrderByDescending(edition => edition.Monitored && EditionPinPolicy.IsManuallyPinned(edition))
+                .ThenByDescending(edition => edition.Monitored).ThenBy(edition => edition.Id);
+
+        private static bool HasSameNarrators(List<string> a, List<string> b)
+        {
+            // A shared cast member does not make two recordings the same narration.
+            return a.Count > 0 && a.Count == b.Count &&
+                a.All(name => b.Count(other => CustomFormats.NarratorNameMatcher.IsSamePersonWithinBook(name, other)) == 1) &&
+                b.All(name => a.Count(other => CustomFormats.NarratorNameMatcher.IsSamePersonWithinBook(name, other)) == 1);
+        }
+
         public static void ClearBookLevelEditionIdentity(Book book)
         {
             if (book == null)
@@ -246,6 +288,11 @@ namespace NzbDrone.Core.Books
                 return ids.ToList();
             }
 
+            foreach (var providerId in edition.RemoteProviderIds ?? Enumerable.Empty<string>())
+            {
+                AddEditionProviderIdVariants(ids, providerId);
+            }
+
             AddEditionProviderIdVariants(ids, edition.ForeignEditionId);
             AddHardcoverEditionProviderIdVariants(ids, edition.HardcoverEditionId);
             AddEditionProviderIdVariants(ids, NormalizeGoodreadsEditionId(edition.GoodreadsEditionId));
@@ -413,20 +460,47 @@ namespace NzbDrone.Core.Books
             }
 
             var foreignEditionId = StripKnownEditionMediaSuffix(edition.ForeignEditionId);
-            if (string.IsNullOrWhiteSpace(foreignEditionId) ||
-                !foreignEditionId.StartsWith("gr:", StringComparison.OrdinalIgnoreCase))
+            var canonicalForeignId = foreignEditionId?.StartsWith("gr:", StringComparison.OrdinalIgnoreCase) == true
+                ? NormalizeProviderIdOrNull(foreignEditionId, "gr") : null;
+            if (!string.IsNullOrWhiteSpace(canonicalForeignId))
             {
-                return null;
+                return ProviderIdHelper.StripPrefix(canonicalForeignId);
             }
 
-            try
+            // A facade transport alias must not invent or replace the edition's stored primary identity.
+            return GetEditionProviderIds(edition)
+                .Where(id => id.StartsWith("gr:", StringComparison.OrdinalIgnoreCase))
+                .Select(id => NormalizeProviderIdOrNull(StripKnownEditionMediaSuffix(id), "gr"))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .OrderBy(id => id, StringComparer.Ordinal)
+                .Select(ProviderIdHelper.StripPrefix)
+                .FirstOrDefault();
+        }
+
+        public static bool IsExplicitEditionProviderId(string providerId) =>
+            providerId?.StartsWith("hc-ed:", StringComparison.OrdinalIgnoreCase) == true ||
+            providerId?.StartsWith("gr-ed:", StringComparison.OrdinalIgnoreCase) == true ||
+            providerId?.StartsWith("hc:edition:", StringComparison.OrdinalIgnoreCase) == true;
+
+        public static string NormalizeRequestedEditionProviderId(string providerId)
+        {
+            var value = providerId?.Trim();
+            foreach (var prefix in new[] { "hc", "gr" })
             {
-                return ProviderIdHelper.StripPrefix(ProviderIdHelper.Canonicalize(foreignEditionId, "gr"));
+                if (value?.StartsWith(prefix + "-ed:", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    return prefix + ":" + value.Substring(prefix.Length + 4);
+                }
             }
-            catch (InvalidOperationException)
-            {
-                return null;
-            }
+
+            return value;
+        }
+
+        public static string NormalizeEditionLookupId(string providerId)
+        {
+            var normalized = NormalizeRequestedEditionProviderId(providerId);
+            return normalized?.StartsWith("hc:edition:", StringComparison.OrdinalIgnoreCase) == true
+                ? "hc:" + NormalizeHardcoverEditionIdValue(normalized) : normalized;
         }
 
         public static bool EditionMatchesProviderId(Edition edition, string providerId)
@@ -442,6 +516,7 @@ namespace NzbDrone.Core.Books
                 return false;
             }
 
+            providerId = NormalizeRequestedEditionProviderId(providerId);
             var requestedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             AddEditionProviderIdVariants(requestedIds, providerId);
             AddHardcoverEditionProviderIdVariants(requestedIds, providerId);
@@ -721,9 +796,13 @@ namespace NzbDrone.Core.Books
             }
 
             var trimmed = value.Trim();
-            AddProviderId(ids, trimmed);
-
             var withoutMediaSuffix = StripKnownEditionMediaSuffix(trimmed);
+            if (string.IsNullOrWhiteSpace(withoutMediaSuffix))
+            {
+                return;
+            }
+
+            AddProviderId(ids, trimmed);
             AddProviderId(ids, withoutMediaSuffix);
 
             if (withoutMediaSuffix.StartsWith("hc:edition:", StringComparison.OrdinalIgnoreCase) ||
@@ -745,6 +824,16 @@ namespace NzbDrone.Core.Books
             }
         }
 
+        private static readonly string[] EditionMediaSuffixes = { "-audiobook", "-ebook" };
+
+        public static List<string> GetStoredEditionProviderIdVariants(string providerId)
+        {
+            var normalized = NormalizeRequestedEditionProviderId(providerId);
+            var ids = GetEditionProviderIds(new Edition { ForeignEditionId = normalized });
+            return ids.SelectMany(id => new[] { id }.Concat(EditionMediaSuffixes.Select(suffix => id + suffix)))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
         private static string StripKnownEditionMediaSuffix(string value)
         {
             if (string.IsNullOrWhiteSpace(value) ||
@@ -754,11 +843,8 @@ namespace NzbDrone.Core.Books
             }
 
             var trimmed = value.Trim();
-            return trimmed.EndsWith("-audiobook", StringComparison.OrdinalIgnoreCase)
-                ? trimmed.Substring(0, trimmed.Length - "-audiobook".Length)
-                : trimmed.EndsWith("-ebook", StringComparison.OrdinalIgnoreCase)
-                    ? trimmed.Substring(0, trimmed.Length - "-ebook".Length)
-                    : trimmed;
+            var suffix = EditionMediaSuffixes.FirstOrDefault(value => trimmed.EndsWith(value, StringComparison.OrdinalIgnoreCase));
+            return suffix == null ? trimmed : trimmed.Substring(0, trimmed.Length - suffix.Length);
         }
 
         private static string NormalizeHardcoverEditionIdValue(string value)

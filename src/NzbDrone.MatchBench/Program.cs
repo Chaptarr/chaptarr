@@ -8,6 +8,8 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
+using FluentMigrator;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Dapper;
@@ -35,6 +37,9 @@ using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Extensions;
+using NzbDrone.Core.Datastore.Migration.Framework;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Http;
@@ -601,7 +606,9 @@ namespace NzbDrone.MatchBench
             public IReadOnlyList<string> BlockedRequests { get; init; } = Array.Empty<string>();
             public bool UsedSyntheticInput { get; init; }
             public bool HasCompleteSourceData { get; init; } = true;
-            public bool Complete => BlockedExternalRequestCount == 0 && !UsedSyntheticInput && HasCompleteSourceData;
+            public int UnaccountedReportCount { get; init; }
+            public ProcessedDecisions? Processed { get; init; }
+            public bool Complete => BlockedExternalRequestCount == 0 && !UsedSyntheticInput && HasCompleteSourceData && UnaccountedReportCount == 0;
         }
 
         internal sealed class ProductionSearchInput
@@ -679,9 +686,87 @@ namespace NzbDrone.MatchBench
             bool usedSyntheticInput = false,
             bool hasCompleteSourceData = true)
         {
+            return RunProductionDecision(
+                () => searchService.EvaluateSearchReports(reports?.ToList() ?? new List<ReleaseInfo>(), criteria),
+                prioritizer, networkGuard, usedSyntheticInput, hasCompleteSourceData);
+        }
+
+        private sealed class RssReplayInputs : IFetchAndParseRss, IMakeDownloadDecision
+        {
+            private readonly List<ReleaseInfo> _freshReports;
+            private readonly IMakeDownloadDecision _decisionMaker;
+            public List<ReleaseInfo> Reports { get; private set; } = new();
+            public List<DownloadDecision> Decisions { get; private set; } = new();
+
+            public RssReplayInputs(IReadOnlyCollection<ReleaseInfo> reports, IMakeDownloadDecision decisionMaker)
+            {
+                _freshReports = reports.ToList();
+                _decisionMaker = decisionMaker;
+            }
+
+            public Task<List<ReleaseInfo>> Fetch() => Task.FromResult(_freshReports);
+
+            public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease = false)
+                => GetRssDecision(reports, pushedRelease, null!);
+
+            public List<DownloadDecision> GetRssDecision(List<ReleaseInfo> reports, bool pushedRelease,
+                IReadOnlyDictionary<(int AuthorId, int BookId), DateTime> oldestPublishDates)
+            {
+                Reports = reports;
+                Decisions = _decisionMaker.GetRssDecision(reports, pushedRelease, oldestPublishDates);
+                return Decisions;
+            }
+
+            public List<DownloadDecision> GetSearchDecision(List<ReleaseInfo> reports, SearchCriteriaBase criteria)
+                => _decisionMaker.GetSearchDecision(reports, criteria);
+        }
+
+        internal sealed class ReplayDownloadService : IDownloadService
+        {
+            public List<RemoteBook> Planned { get; } = new();
+
+            public Task DownloadReport(RemoteBook remoteBook, int? downloadClientId)
+            {
+                Planned.Add(remoteBook);
+                return Task.CompletedTask;
+            }
+        }
+
+        internal static ProductionSearchDecisionReplay RunProductionRssDecision(
+            IMakeDownloadDecision decisionMaker,
+            IPrioritizeDownloadDecision prioritizer,
+            OfflineReplayHttpDispatcher networkGuard,
+            IReadOnlyCollection<ReleaseInfo> reports,
+            IPendingReleaseService pendingReleaseService,
+            IProcessDownloadDecisions processor,
+            bool hasCompleteSourceData = true)
+        {
             var previousAttempts = networkGuard.BlockedRequestCount;
-            var decisions = searchService.EvaluateSearchReports(reports?.ToList() ?? new List<ReleaseInfo>(), criteria);
-            var prioritized = prioritizer.PrioritizeDecisions(decisions);
+            var inputs = new RssReplayInputs(reports, decisionMaker);
+            var rss = new RssSyncService(null!, null!, inputs, inputs, processor, pendingReleaseService, null!, Logger);
+            var processed = rss.Sync().GetAwaiter().GetResult();
+            var represented = inputs.Decisions.Select(decision => decision.RemoteBook?.Release).ToHashSet();
+            var blocked = networkGuard.BlockedRequests.Skip(previousAttempts).ToList();
+            return new ProductionSearchDecisionReplay
+            {
+                Decisions = prioritizer.PrioritizeDecisions(inputs.Decisions),
+                Processed = processed,
+                BlockedExternalRequestCount = blocked.Count,
+                BlockedRequests = blocked,
+                HasCompleteSourceData = hasCompleteSourceData,
+                UnaccountedReportCount = inputs.Reports.Count(report => !represented.Contains(report))
+            };
+        }
+
+        private static ProductionSearchDecisionReplay RunProductionDecision(
+            Func<List<DownloadDecision>> evaluate,
+            IPrioritizeDownloadDecision prioritizer,
+            OfflineReplayHttpDispatcher networkGuard,
+            bool usedSyntheticInput,
+            bool hasCompleteSourceData)
+        {
+            var previousAttempts = networkGuard.BlockedRequestCount;
+            var prioritized = prioritizer.PrioritizeDecisions(evaluate());
             var blockedRequests = networkGuard.BlockedRequests.Skip(previousAttempts).ToList();
 
             return new ProductionSearchDecisionReplay
@@ -950,6 +1035,24 @@ namespace NzbDrone.MatchBench
                 return 2;
             }
 
+            if (RejectPostgresForSqliteSnapshot(startupContext, "libraryaudit"))
+            {
+                return 2;
+            }
+
+            if (live)
+            {
+                try
+                {
+                    ValidateLiveAuditSchema(Path.Combine(sourceAppData, "chaptarr.db"));
+                }
+                catch (Exception ex)
+                {
+                    System.Console.Error.WriteLine($"[libraryaudit] Live schema check failed: {ex.Message}. Use the isolated snapshot (omit /live).");
+                    return 2;
+                }
+            }
+
             using var workspace = PrepareAuditWorkspace(startupContext, sourceAppData, live);
             var dbPath = Path.Combine(workspace.AppData, "chaptarr.db");
 
@@ -1102,6 +1205,26 @@ namespace NzbDrone.MatchBench
 
             WriteAuditReport(report, outputPath);
             return 0;
+        }
+
+        internal static void ValidateLiveAuditSchema(string databasePath)
+        {
+            var expected = typeof(NzbDroneMigrationBase).Assembly.GetTypes()
+                .Where(type => type.Namespace == "NzbDrone.Core.Datastore.Migration")
+                .Select(type => type.GetCustomAttribute<MigrationAttribute>()?.Version)
+                .Where(version => version.HasValue).Select(version => version!.Value).ToHashSet();
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString());
+            connection.Open();
+            var actual = connection.Query<long>("SELECT \"Version\" FROM \"VersionInfo\"").ToHashSet();
+            if (actual.Count == 0 || actual.Max() != expected.Max() || expected.Except(actual).Any())
+            {
+                throw new InvalidOperationException($"database schema is {actual.DefaultIfEmpty().Max()}, executable requires {expected.Max()} with every migration applied");
+            }
         }
 
         private static AuditWorkspace PrepareAuditWorkspace(StartupContext originalContext, string sourceAppData, bool live, string? sourceDatabasePath = null)
@@ -3729,10 +3852,17 @@ FROM Books;")
             var releasePath = GetArg(startupContext, "releases");
             var bookIds = ParseTargetBookIds(GetArg(startupContext, "bookids"));
             var interactiveSearch = GetBoolArg(startupContext, "interactive", true);
+            var rss = GetBoolArg(startupContext, "rss", false);
 
-            if (string.IsNullOrWhiteSpace(releasePath) || bookIds.Count == 0)
+            if (string.IsNullOrWhiteSpace(releasePath) || (!rss && bookIds.Count == 0))
             {
-                System.Console.Error.WriteLine("[releasereplay] Provide /releases=<serialized-release-array.json> and /bookids=1,2,... from the SQLite snapshot.");
+                System.Console.Error.WriteLine("[releasereplay] Provide /releases=<serialized-release-array.json> and either /bookids=1,2,... from the SQLite snapshot or /rss=true for an unscoped RSS batch.");
+                return 2;
+            }
+
+            if (rss && bookIds.Count > 0)
+            {
+                System.Console.Error.WriteLine("[releasereplay] RSS is unscoped; omit /bookids when using /rss=true.");
                 return 2;
             }
 
@@ -3764,7 +3894,7 @@ FROM Books;")
 
             using var workspace = PrepareAuditWorkspace(startupContext, sourceAppData, live: false, sourceDatabasePath: dbPath);
             var snapshotDbPath = Path.Combine(workspace.AppData, "chaptarr.db");
-            var sampleBooks = LoadBooksByIds(snapshotDbPath, bookIds);
+            var sampleBooks = rss ? new List<LibraryBookRow>() : LoadBooksByIds(snapshotDbPath, bookIds);
             if (sampleBooks.Count != bookIds.Count)
             {
                 var loadedIds = sampleBooks.Select(row => row.BookId).ToHashSet();
@@ -3773,7 +3903,7 @@ FROM Books;")
                 return 1;
             }
 
-            using var host = BuildHost(workspace.StartupContext, blockOutboundHttp: true);
+            using var host = BuildHost(workspace.StartupContext, blockOutboundHttp: true, recordDownloads: rss);
             using var scope = host.Services.CreateScope();
             var services = scope.ServiceProvider;
             var inputLoader = new ProductionSearchInputLoader(services);
@@ -3782,13 +3912,28 @@ FROM Books;")
             var networkGuard = (OfflineReplayHttpDispatcher)services.GetRequiredService<IHttpDispatcher>();
             var incompleteBookCount = 0;
 
-            System.Console.WriteLine($"[releasereplay] db snapshot='{snapshotDbPath}', books={sampleBooks.Count}, typedReports={reports.Count}, interactive={interactiveSearch}");
+            System.Console.WriteLine(rss
+                ? $"[releasereplay] db snapshot='{snapshotDbPath}', mode=RSS, typedReports={reports.Count}, unscoped=true"
+                : $"[releasereplay] db snapshot='{snapshotDbPath}', books={sampleBooks.Count}, typedReports={reports.Count}, interactive={interactiveSearch}");
             System.Console.WriteLine("[releasereplay] replay uses the production decision maker and prioritizer; outbound HTTP from decision processing is blocked");
             System.Console.WriteLine("[releasereplay] SQLite snapshot replay cannot restore transient live queue, cache, or wall-clock state");
 
             foreach (var item in missingByReport.Where(item => item.Missing.Count > 0))
             {
                 System.Console.WriteLine($"[releasereplay] report #{item.Index} '{item.Release.Title ?? "<untitled>"}' is incomplete: missing {string.Join(", ", item.Missing)}");
+            }
+
+            if (rss)
+            {
+                var replay = RunProductionRssDecision(
+                    services.GetRequiredService<IMakeDownloadDecision>(), prioritizer, networkGuard, reports,
+                    services.GetRequiredService<IPendingReleaseService>(), services.GetRequiredService<IProcessDownloadDecisions>(), completeSourceData);
+                System.Console.WriteLine();
+                System.Console.WriteLine("[releasereplay] RSS batch");
+                WriteReleaseReplayResult(replay, includeTargets: true);
+                System.Console.WriteLine();
+                System.Console.WriteLine($"[releasereplay] completed RSS batches={(replay.Complete ? 1 : 0)}, incomplete RSS batches={(replay.Complete ? 0 : 1)}, typedReports={reports.Count}, decisions={replay.Decisions.Count}, plannedGrabs={replay.Processed?.Grabbed.Count}, pending={replay.Processed?.Pending.Count}, downloads=0");
+                return replay.Complete ? 0 : 1;
             }
 
             foreach (var row in sampleBooks)
@@ -3809,51 +3954,63 @@ FROM Books;")
 
                 System.Console.WriteLine();
                 System.Console.WriteLine($"[releasereplay] {input.Author.Name} — {input.Criteria.BookTitle} (book='{input.TargetBook.Title}', localBookId={input.TargetBook.Id}, media={input.TargetBook.MediaType})");
-                System.Console.WriteLine($"  {DescribeReplayOutcome(replay)}");
-                if (replay.BlockedExternalRequestCount > 0)
-                {
-                    System.Console.WriteLine($"  offline guard blocked {replay.BlockedExternalRequestCount} decision-time HTTP request(s): {string.Join(", ", replay.BlockedRequests.Distinct())}");
-                }
-                if (!replay.HasCompleteSourceData)
-                {
-                    System.Console.WriteLine("  source reports are incomplete; per-release outcomes are diagnostic only and accepted verdicts are withheld");
-                }
-
-                var rank = 0;
-                foreach (var decision in replay.Decisions)
-                {
-                    var remoteBook = decision.RemoteBook;
-                    var release = remoteBook?.Release;
-                    if (release == null)
-                    {
-                        continue;
-                    }
-
-                    var match = remoteBook?.SearchCriteriaMatch;
-                    var leftovers = match?.MeaningfulLeftovers?.Count > 0 ? $" leftovers=[{string.Join(", ", match.MeaningfulLeftovers)}]" : string.Empty;
-                    var reasons = string.Join("; ", decision.Rejections.Select(rejection => $"{rejection.Category}: {rejection.Reason}"));
-                    if (!replay.Complete)
-                    {
-                        System.Console.WriteLine($"    INCOMPLETE - {release.Title}{leftovers} recordedRejections=[{reasons}]");
-                        continue;
-                    }
-
-                    var status = decision.Approved ? "APPROVED" : "REJECTED";
-                    if (decision.Approved)
-                    {
-                        rank++;
-                        System.Console.WriteLine($"    #{rank} {status} - {release.Title}{leftovers} (indexer='{release.Indexer}', seeders={TorrentInfo.GetSeeders(release) ?? 0}, size={release.Size})");
-                    }
-                    else
-                    {
-                        System.Console.WriteLine($"    {status} - {release.Title}{leftovers} rejections=[{reasons}]");
-                    }
-                }
+                WriteReleaseReplayResult(replay);
             }
 
             System.Console.WriteLine();
             System.Console.WriteLine($"[releasereplay] completed books={sampleBooks.Count - incompleteBookCount}, incomplete books={incompleteBookCount}, downloads=0");
             return incompleteBookCount == 0 ? 0 : 1;
+        }
+
+        private static void WriteReleaseReplayResult(ProductionSearchDecisionReplay replay, bool includeTargets = false)
+        {
+            System.Console.WriteLine($"  {DescribeReplayOutcome(replay)}");
+            if (replay.BlockedExternalRequestCount > 0)
+            {
+                System.Console.WriteLine($"  offline guard blocked {replay.BlockedExternalRequestCount} decision-time HTTP request(s): {string.Join(", ", replay.BlockedRequests.Distinct())}");
+            }
+            if (replay.UnaccountedReportCount > 0)
+            {
+                System.Console.WriteLine($"  {replay.UnaccountedReportCount} input report(s) have no recorded decision; RSS completeness is not established");
+            }
+            if (!replay.HasCompleteSourceData)
+            {
+                System.Console.WriteLine("  source reports are incomplete; per-release outcomes are diagnostic only and accepted verdicts are withheld");
+            }
+
+            var rank = 0;
+            foreach (var decision in replay.Decisions)
+            {
+                var remoteBook = decision.RemoteBook;
+                var release = remoteBook?.Release;
+                if (release == null)
+                {
+                    continue;
+                }
+
+                var match = remoteBook?.SearchCriteriaMatch;
+                var leftovers = match?.MeaningfulLeftovers?.Count > 0 ? $" leftovers=[{string.Join(", ", match.MeaningfulLeftovers)}]" : string.Empty;
+                var targets = includeTargets
+                    ? $" targets=[{string.Join(", ", (remoteBook?.Books ?? new List<Book>()).Select(book => $"{remoteBook?.Author?.Name} — {book.Title} (localBookId={book.Id}, media={book.MediaType})"))}]"
+                    : string.Empty;
+                var reasons = string.Join("; ", decision.Rejections.Select(rejection => $"{rejection.Category}: {rejection.Reason}"));
+                if (!replay.Complete)
+                {
+                    System.Console.WriteLine($"    INCOMPLETE - {release.Title}{leftovers}{targets} recordedRejections=[{reasons}]");
+                    continue;
+                }
+
+                var status = decision.Approved ? "APPROVED" : "REJECTED";
+                if (decision.Approved)
+                {
+                    rank++;
+                    System.Console.WriteLine($"    #{rank} {status} - {release.Title}{leftovers}{targets} (indexer='{release.Indexer}', seeders={TorrentInfo.GetSeeders(release) ?? 0}, size={release.Size})");
+                }
+                else
+                {
+                    System.Console.WriteLine($"    {status} - {release.Title}{leftovers}{targets} rejections=[{reasons}]");
+                }
+            }
         }
 
         private static List<ReleaseInfo> DeserializeTypedReleaseReports(string json)
@@ -4752,7 +4909,7 @@ WHERE b.Id IN @bookIds
             }
         }
 
-        private static IHost BuildHost(StartupContext startupContext, bool blockOutboundHttp = false)
+        private static IHost BuildHost(StartupContext startupContext, bool blockOutboundHttp = false, bool recordDownloads = false)
         {
             var config = BuildConfiguration(startupContext);
 
@@ -4778,6 +4935,10 @@ WHERE b.Id IN @bookIds
                         .AddStartupContext(startupContext);
 
                     c.Register<IBroadcastSignalRMessage, NoOpSignalRBroadcaster>(Reuse.Singleton);
+                    if (recordDownloads)
+                    {
+                        c.Register<IDownloadService, ReplayDownloadService>(Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+                    }
                     if (blockOutboundHttp)
                     {
                         c.Register<IHttpDispatcher, OfflineReplayHttpDispatcher>(Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
@@ -5010,7 +5171,8 @@ WHERE b.Id IN @bookIds
             System.Console.WriteLine("  Safety: refuses direct MAM traffic, uses native 2-second request spacing, and never calls a download URL.");
             System.Console.WriteLine();
             System.Console.WriteLine("5) Offline production release-decision replay:");
-            System.Console.WriteLine("  Required: /releasereplay /data=<appdata> /db=<chaptarr.db> /bookids=<local-book-ids> /releases=<reports.json>");
+            System.Console.WriteLine("  Required: /releasereplay /data=<appdata> /db=<chaptarr.db> /releases=<reports.json>");
+            System.Console.WriteLine("  Mode: /bookids=<local-book-ids> for targeted search (default), or /rss=true for one unscoped automatic RSS batch.");
             System.Console.WriteLine("  Input: JSON array of serialized ReleaseInfo/TorrentInfo reports, including downloadProtocol and source metadata; optional /interactive=true|false.");
             System.Console.WriteLine("  Safety: SQLite snapshot only; no outbound decision-time HTTP or grabs. Missing source fields or blocked enrichment make the replay incomplete.");
         }

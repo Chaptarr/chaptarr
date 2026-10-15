@@ -189,6 +189,7 @@ namespace NzbDrone.Core.Datastore
                           b => b.Id > 0);
 
             Mapper.Entity<Edition>("Editions").RegisterModel()
+                .Ignore(e => e.RemoteProviderIds)
                 .Ignore(e => e.NarratorCredits)
                 .HasOne(e => e.LazyBook, e => e.BookId);
 

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Books;
 using Chaptarr.Http;
@@ -16,6 +15,8 @@ using NzbDrone.Core.MediaCover;
 using CoverImage = NzbDrone.Core.MediaCover.MediaCover;
 using NzbDrone.Core.Validation;
 using NzbDrone.SignalR;
+
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Api
 {
@@ -32,23 +33,6 @@ namespace Chaptarr.Core.Test.Api
                 Messages.Add(message);
                 return Task.CompletedTask;
             }
-        }
-
-        private class InterfaceProxy<T> : DispatchProxy where T : class
-        {
-            public Func<MethodInfo, object[], object> Handler { get; set; }
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                return Handler(targetMethod, args);
-            }
-        }
-
-        private static T Proxy<T>(Func<MethodInfo, object[], object> handler) where T : class
-        {
-            var proxy = DispatchProxy.Create<T, InterfaceProxy<T>>();
-            ((InterfaceProxy<T>)(object)proxy).Handler = handler;
-            return proxy;
         }
 
         private sealed class TestableBookController : BookController

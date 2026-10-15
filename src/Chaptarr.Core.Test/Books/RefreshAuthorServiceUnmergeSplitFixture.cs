@@ -156,6 +156,9 @@ namespace Chaptarr.Core.Test.Books
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private sealed class StubMetadataProfileService : IMetadataProfileService
@@ -172,13 +175,21 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => throw new NotImplementedException();
             public List<MetadataProfile> All() => throw new NotImplementedException();
             public MetadataProfile Get(int id) => throw new NotImplementedException();
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                FilterBooks(input, profileId, requestedNarrationIds, null);
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                FilterBooks(input, profileId);
         }
 
         private sealed class StubImportListExclusionService : IImportListExclusionService
         {
+            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => new();
 
             public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => throw new NotImplementedException();
@@ -233,6 +244,9 @@ namespace Chaptarr.Core.Test.Books
         {
             public bool RefreshBookInfo(Book book, List<Book> remoteBooks, Author remoteData, bool forceUpdateFileTags) => false;
             public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, BookTitleSlugIndex titleSlugs = null) => false;
+
+            public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, BookTitleSlugIndex titleSlugs, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                RefreshBookInfo(books, remoteBooks, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate, titleSlugs);
         }
 
         private sealed class TestableRefreshAuthorService : RefreshAuthorService

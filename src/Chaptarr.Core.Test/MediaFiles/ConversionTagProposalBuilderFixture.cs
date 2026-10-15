@@ -199,12 +199,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return Values(allTags).Any(value => Contains(value, authorName));
             }
 
-            public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags)
+            public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags, IEnumerable<string> knownTitles)
+            {
+                return ValidateAuthorInTags(authorName, allTags);
+            }
+
+            public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags, IEnumerable<string> knownNarrators = null)
             {
                 return GetEditionTitleEvidence(editionTitle, allTags).Count > 0;
             }
 
-            public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false)
+            public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false, IEnumerable<string> knownNarrators = null)
             {
                 return (allTags ?? new Dictionary<string, List<string>>())
                     .Where(kv => kv.Value != null)

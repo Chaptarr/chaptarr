@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using Dapper;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -11,12 +13,12 @@ namespace NzbDrone.Core.History
     public interface IHistoryRepository : IBasicRepository<EntityHistory>
     {
         PagingSpec<EntityHistory> GetPaged(PagingSpec<EntityHistory> pagingSpec, BookMediaType mediaType);
-        EntityHistory MostRecentForBook(int bookId);
         EntityHistory MostRecentForDownloadId(string downloadId);
         List<EntityHistory> FindByDownloadId(string downloadId);
         List<EntityHistory> FindByDownloadIds(List<string> downloadIds, EntityHistoryEventType? eventType);
         List<EntityHistory> GetByAuthor(int authorId, EntityHistoryEventType? eventType);
         List<EntityHistory> GetByBook(int bookId, EntityHistoryEventType? eventType);
+        List<EntityHistory> GetAcquisitionHistory(IEnumerable<int> bookIds);
         List<EntityHistory> FindDownloadHistory(int idAuthorId, QualityModel quality);
         void DeleteForAuthor(int authorId);
         List<EntityHistory> Since(DateTime date, EntityHistoryEventType? eventType);
@@ -24,14 +26,41 @@ namespace NzbDrone.Core.History
 
     public class HistoryRepository : BasicRepository<EntityHistory>, IHistoryRepository
     {
+        private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
+
         public HistoryRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
         }
 
-        public EntityHistory MostRecentForBook(int bookId)
+        public List<EntityHistory> GetAcquisitionHistory(IEnumerable<int> bookIds)
         {
-            return Query(h => h.BookId == bookId).MaxBy(h => h.Date);
+            var ids = (bookIds ?? Enumerable.Empty<int>()).Where(id => id > 0).Distinct().ToArray();
+            if (ids.Length == 0)
+            {
+                return new List<EntityHistory>();
+            }
+
+            var postgres = _database.DatabaseType == DatabaseType.PostgreSQL;
+            var idPredicate = postgres ? "= ANY(@ids)" : "IN @ids";
+            var incompatible = postgres
+                ? "EXISTS (SELECT 1 FROM jsonb_each_text(\"Data\"::jsonb) WHERE LOWER(key) = 'alternativecopyincompatible' AND LOWER(TRIM(value)) = 'true') AND EXISTS (SELECT 1 FROM jsonb_each_text(\"Data\"::jsonb) WHERE LOWER(key) = 'alternativecopies' AND LOWER(TRIM(value)) = 'true')"
+                : "EXISTS (SELECT 1 FROM json_each(\"Data\") WHERE LOWER(key) = 'alternativecopyincompatible' AND LOWER(TRIM(value)) = 'true') AND EXISTS (SELECT 1 FROM json_each(\"Data\") WHERE LOWER(key) = 'alternativecopies' AND LOWER(TRIM(value)) = 'true')";
+            var sql = $@"SELECT ""History"".* FROM ""History"" WHERE ""Id"" IN (
+                WITH scoped AS (SELECT ""Id"", ""BookId"", ""Date"", ""EventType"", ""Data"" FROM ""History"" WHERE ""BookId"" {idPredicate}),
+                marked AS (SELECT ""Id"" FROM scoped WHERE ""EventType"" = @grabbed AND {incompatible}),
+                latest AS (SELECT ""Id"", ROW_NUMBER() OVER (PARTITION BY ""BookId"" ORDER BY ""Date"" DESC, ""Id"" ASC) AS rank
+                    FROM scoped WHERE ""Id"" NOT IN (SELECT ""Id"" FROM marked))
+                SELECT ""Id"" FROM latest WHERE rank = 1 UNION SELECT ""Id"" FROM marked) ORDER BY ""Id""";
+            // Keep marked evidence for the existing proof validator; only ordinary history is reduced to the latest row.
+            var stopwatch = Stopwatch.StartNew();
+            using var connection = _database.OpenConnection();
+            var chunkSize = postgres ? ids.Length : SqliteVariableLimit.MaxParameters - 1;
+            var history = ids.Chunk(chunkSize).SelectMany(chunk => connection.Query<EntityHistory>(sql,
+                new { ids = chunk, grabbed = (int)EntityHistoryEventType.Grabbed })).ToList();
+            Logger.Debug("[ACQUISITION-HISTORY] {0}: {1} requested books, {2} batches, {3} returned rows in {4} ms",
+                _database.DatabaseType, ids.Length, (ids.Length + chunkSize - 1) / chunkSize, history.Count, stopwatch.ElapsedMilliseconds);
+            return history;
         }
 
         public EntityHistory MostRecentForDownloadId(string downloadId)

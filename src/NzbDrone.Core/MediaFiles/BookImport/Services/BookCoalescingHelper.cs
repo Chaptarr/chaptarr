@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Utilities;
 using NzbDrone.Core.Datastore;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
@@ -268,9 +269,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 // This is safe because it's exact containment, not reverse
                 if (!string.IsNullOrWhiteSpace(editionTitle))
                 {
-                    var normTitle = NormalizeTokensForCompare(editionTitle);
-                    var unitName = NormalizeTokensForCompare(unitNameRaw);
-                    var parentName = NormalizeTokensForCompare(UnitName(parent));
+                    var normTitle = UnicodeComparisonNormalizer.NormalizeWords(editionTitle);
+                    var unitName = UnicodeComparisonNormalizer.NormalizeWords(unitNameRaw);
+                    var parentName = UnicodeComparisonNormalizer.NormalizeWords(UnitName(parent));
 
                     if (!string.IsNullOrWhiteSpace(unitName) && !string.IsNullOrWhiteSpace(normTitle)
                         && unitName.Contains(normTitle, StringComparison.Ordinal))
@@ -355,23 +356,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return Regex.IsMatch(v, "^(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))$");
         }
 
-        private static string NormalizeTokensForCompare(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-            s = s.ToLowerInvariant();
-            var arr = s.ToCharArray();
-            for (int i = 0; i < arr.Length; i++)
-            {
-                var ch = arr[i];
-                if (!(char.IsLetterOrDigit(ch) || char.IsWhiteSpace(ch))) arr[i] = ' ';
-            }
-            var norm = Regex.Replace(new string(arr), "\\s+", " ").Trim();
-            return norm;
-        }
-
         private static List<string> TokenizeName(string s)
         {
-            var norm = NormalizeTokensForCompare(s);
+            var norm = UnicodeComparisonNormalizer.NormalizeWords(s);
             norm = Regex.Replace(norm, "([a-z]+)([0-9]+)", "$1 $2");
             norm = Regex.Replace(norm, "([0-9]+)([a-z]+)", "$1 $2");
             return norm.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();

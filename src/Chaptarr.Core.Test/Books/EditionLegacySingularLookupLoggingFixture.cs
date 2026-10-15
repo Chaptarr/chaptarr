@@ -44,6 +44,9 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> FindAllByAsin(string asin, BookMediaType? mediaType) => AsinMatches;
             public List<Edition> FindAllByIsbn(string isbn) => IsbnMatches;
             public List<Edition> FindAllByHardcoverEditionId(string hardcoverEditionId) => HardcoverMatches;
+            public List<Edition> FindAllByHardcoverEditionId(IEnumerable<string> ids) => HardcoverMatches;
+            public Dictionary<string, List<Edition>> FindAllByProviderIds(string provider, IEnumerable<string> ids) =>
+                ids.ToDictionary(id => id, id => HardcoverMatches.OrderBy(edition => edition.Id).ToList(), StringComparer.OrdinalIgnoreCase);
 
             public Edition FindByIsbn(string isbn) => FindAllByIsbn(isbn).OrderBy(e => e.Id).FirstOrDefault();
             public Edition FindByHardcoverEditionId(string hardcoverEditionId) => FindAllByHardcoverEditionId(hardcoverEditionId).OrderBy(e => e.Id).FirstOrDefault();
@@ -52,6 +55,7 @@ namespace Chaptarr.Core.Test.Books
             public int Count() => throw new NotImplementedException();
             public Edition Find(int id) => throw new NotImplementedException();
             public Edition Get(int id) => throw new NotImplementedException();
+            public void RefreshProviderAliases(IList<Edition> editions) { }
             public Edition Insert(Edition model) => throw new NotImplementedException();
             public Edition Update(Edition model) => throw new NotImplementedException();
             public Edition Upsert(Edition model) => throw new NotImplementedException();
@@ -72,7 +76,8 @@ namespace Chaptarr.Core.Test.Books
             public PagingSpec<Edition> GetPaged(PagingSpec<Edition> pagingSpec) => throw new NotImplementedException();
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public Edition FindByForeignEditionId(string foreignEditionId) => throw new NotImplementedException();
-            public List<Edition> FindAllByForeignEditionId(string foreignEditionId) => throw new NotImplementedException();
+            public List<Edition> FindAllByForeignEditionId(string foreignEditionId) => new();
+            public List<Edition> FindAllByForeignEditionId(IEnumerable<string> ids) => new();
             public Edition FindByGoodreadsEditionId(long goodreadsEditionId) => throw new NotImplementedException();
             public List<Edition> FindAllByGoodreadsEditionId(long goodreadsEditionId) => throw new NotImplementedException();
             public Edition FindByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
@@ -85,8 +90,6 @@ namespace Chaptarr.Core.Test.Books
                 return new List<Edition>();
             }
             public List<Edition> FindByAuthor(int id, bool onlyMonitored = false) => throw new NotImplementedException();
-            public List<Edition> FindByAuthorId(int id, bool onlyMonitored) => throw new NotImplementedException();
-            public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
             public HashSet<string> FindExistingTitleSlugsForUniqueness(IEnumerable<string> baseTitleSlugs) => throw new NotImplementedException();
@@ -141,7 +144,7 @@ namespace Chaptarr.Core.Test.Books
             var logs = ConfigureLogging();
             var repo = new StubEditionRepository
             {
-                HardcoverMatches = new List<Edition> { new() { Id = 2 }, new() { Id = 1 } }
+                HardcoverMatches = new List<Edition> { new() { Id = 2, HardcoverEditionId = "hc:123" }, new() { Id = 1, HardcoverEditionId = "hc:123" } }
             };
             var service = new EditionService(repo, eventAggregator: null, LogManager.GetLogger("NzbDrone.Core.Books.EditionService"));
 
@@ -220,9 +223,11 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(hydrated.Single().Book?.Author?.Id, Is.EqualTo(1));
             }, postgres, (_, commandText) => sql.Add(commandText));
 
-            Assert.That(sql, Has.Count.EqualTo(2));
-            Assert.That(sql[0], Does.Not.Contain("JOIN").IgnoreCase);
-            Assert.That(sql[1], Does.Contain("JOIN").IgnoreCase);
+            var editionQueries = sql.Where(command => command.Contains("Editions", StringComparison.OrdinalIgnoreCase)).ToList();
+            Assert.That(editionQueries, Has.Count.EqualTo(2));
+            Assert.That(sql.Count(command => command.Contains("ProviderAliasIndex", StringComparison.OrdinalIgnoreCase)), Is.EqualTo(2));
+            Assert.That(editionQueries[0], Does.Not.Contain("JOIN").IgnoreCase);
+            Assert.That(editionQueries[1], Does.Contain("JOIN").IgnoreCase);
         }
 
         [Test]
@@ -390,6 +395,7 @@ namespace Chaptarr.Core.Test.Books
                     CreateSchema<Author>(connection);
                     CreateSchema<Book>(connection);
                     CreateSchema<Edition>(connection);
+                    CreateSchema<ProviderAlias>(connection);
 
                     connection.Execute(@"
 CREATE INDEX ""IX_Books_AuthorId_Id"" ON ""Books"" (""AuthorId"", ""Id"");

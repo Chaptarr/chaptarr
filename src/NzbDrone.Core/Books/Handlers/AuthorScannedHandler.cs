@@ -64,7 +64,7 @@ namespace NzbDrone.Core.Books
                     });
                 }
 
-                if (!hasMediaSpecificMode)
+                if (!hasMediaSpecificMode && author.AddOptions.Monitor.HasValue)
                 {
                     _bookMonitoredService.SetBookMonitoredStatus(author, author.AddOptions);
                 }

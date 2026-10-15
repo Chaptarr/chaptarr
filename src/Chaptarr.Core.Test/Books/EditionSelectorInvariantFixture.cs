@@ -14,6 +14,25 @@ namespace Chaptarr.Core.Test.Books
             return new EditionSelector(LogManager.GetCurrentClassLogger());
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_select_only_one_unsaved_edition(bool existingEdition)
+        {
+            var selected = new Edition { ReadingFormatId = 2, Ratings = new Ratings { Votes = 100 } };
+            var editions = new List<Edition>
+            {
+                new Edition { Id = existingEdition ? 12 : 0, ReadingFormatId = 2, Ratings = new Ratings { Votes = 10 } },
+                selected,
+                new Edition { ReadingFormatId = 3, Ratings = new Ratings { Votes = 1000 } }
+            };
+
+            var sut = CreateSut();
+            Assert.That(sut.EnsureSingleMonitoredEdition(editions, mediaType: BookMediaType.Audiobook), Is.True);
+            Assert.That(editions.Count(e => e.Monitored), Is.EqualTo(1));
+            Assert.That(editions.Single(e => e.Monitored), Is.SameAs(selected));
+            Assert.That(sut.EnsureSingleMonitoredEdition(editions, mediaType: BookMediaType.Audiobook), Is.False);
+        }
+
         [Test]
         public void should_keep_single_monitored_even_when_manual_add_exists()
         {

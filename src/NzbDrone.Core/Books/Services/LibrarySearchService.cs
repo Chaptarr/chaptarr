@@ -157,6 +157,12 @@ namespace NzbDrone.Core.Books.Services
         private List<LibrarySearchAuthor> SearchAuthorsSqlite(IDbConnection conn, string term, int limit)
         {
             var ftsQuery = BuildFtsPrefixQuery(term);
+            var foldedQuery = BuildFtsPrefixQuery(StringSuperNormalizer.NormalizeForFts(term));
+            if (!string.IsNullOrWhiteSpace(foldedQuery) && !string.Equals(ftsQuery, foldedQuery, StringComparison.Ordinal))
+            {
+                ftsQuery = $"({ftsQuery}) OR ({foldedQuery})";
+            }
+
             if (string.IsNullOrWhiteSpace(ftsQuery))
             {
                 return new List<LibrarySearchAuthor>();
@@ -174,7 +180,10 @@ WHERE author_fts MATCH @ftsQuery
 ORDER BY bm25(author_fts)
 LIMIT @limit";
 
-            return conn.Query<LibrarySearchAuthor>(sql, new { ftsQuery, limit }).ToList();
+            var stopwatch = Stopwatch.StartNew();
+            var authors = conn.Query<LibrarySearchAuthor>(sql, new { ftsQuery, limit }).ToList();
+            _logger.Debug("[LIBRARY-SEARCH] {0}: {1} returned authors in {2} ms", _database.DatabaseType, authors.Count, stopwatch.ElapsedMilliseconds);
+            return authors;
         }
 
         private List<LibrarySearchBook> SearchBooks(IDbConnection conn, string term, int limit)
@@ -286,6 +295,8 @@ LIMIT @rowLimit";
             using (var conn = _database.OpenConnection())
             {
                 var pattern = $"%{EscapeLikePattern(term)}%";
+                var folded = StringSuperNormalizer.NormalizeForFts(term);
+                var foldedPattern = folded.Length == 0 ? null : $"%{EscapeLikePattern(folded)}%";
                 const string authorsSql = @"
 SELECT
     ""Id"" AS Id,
@@ -296,12 +307,17 @@ FROM ""Authors""
 WHERE ""Name"" ILIKE @pattern ESCAPE '\'
    OR ""SortName"" ILIKE @pattern ESCAPE '\'
    OR ""TitleSlug"" ILIKE @pattern ESCAPE '\'
+   OR ""SearchName"" ILIKE @foldedPattern ESCAPE '\'
 ORDER BY ""Name""
 LIMIT @limit";
 
+                var stopwatch = Stopwatch.StartNew();
+                var authors = conn.Query<LibrarySearchAuthor>(authorsSql, new { pattern, foldedPattern, limit }).ToList();
+                _logger.Debug("[LIBRARY-SEARCH] {0}: {1} returned authors in {2} ms", _database.DatabaseType, authors.Count, stopwatch.ElapsedMilliseconds);
+
                 return new LibrarySearchResult
                 {
-                    Authors = conn.Query<LibrarySearchAuthor>(authorsSql, new { pattern, limit }).ToList(),
+                    Authors = authors,
                     Books = SearchBooks(conn, term, limit)
                 };
             }

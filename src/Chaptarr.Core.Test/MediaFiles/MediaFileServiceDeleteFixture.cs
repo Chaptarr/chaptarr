@@ -32,14 +32,13 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             public readonly List<string> PurgedPrefixes = new List<string>();
 
-            public void BeginSession(int commandId) => throw new NotImplementedException();
             public void InsertBatch(List<IngestQueueItem> items) => throw new NotImplementedException();
             public List<IngestQueueItem> GetQueuedItems(int limit = 100) => throw new NotImplementedException();
             public List<IngestQueueItem> GetQueuedItemsUnderPath(string pathPrefix, int limit = 100, int afterId = 0) => throw new NotImplementedException();
             public int GetActiveCountUnderPath(string pathPrefix) => throw new NotImplementedException();
             public List<IngestQueueStatusCount> GetActiveStatusCountsUnderPath(string pathPrefix) => throw new NotImplementedException();
             public List<IngestQueueItem> GetActiveItemsUnderPath(string pathPrefix, int limit = 20) => throw new NotImplementedException();
-            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0) => throw new NotImplementedException();
+            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0, bool includeCompleted = false) => throw new NotImplementedException();
             public List<IngestQueueItem> GetActiveItemsForSweepUnderPath(string pathPrefix, int limit = 1000, int afterId = 0) => throw new NotImplementedException();
 
             public int RecoverStaleInProgress(string pathPrefix, int staleMinutes = 10) => throw new NotImplementedException();
@@ -52,8 +51,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void UpdateBatchStatus(List<int> ids, string status) => throw new NotImplementedException();
             public void RequeueInProgress(List<int> ids, string error = null) => throw new NotImplementedException();
             public int GetQueueCount() => throw new NotImplementedException();
-            public int RequeueFailedOrUnmappedUnderPath(string pathPrefix) => throw new NotImplementedException();
-            public int RequeueFailedPaths(IEnumerable<string> paths) => throw new NotImplementedException();
+            public int PurgeCompletedResults(IEnumerable<int> resultIds) => 0;
             public int PurgeUnderPath(string pathPrefix)
             {
                 PurgedPrefixes.Add(pathPrefix);
@@ -61,10 +59,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
 
             public int PurgePaths(IEnumerable<string> paths) => throw new NotImplementedException();
-            public void PurgeOldCompleted(int daysToKeep = 14) => throw new NotImplementedException();
             public void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null) => throw new NotImplementedException();
             public void CompleteItemWithResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null, string statusError = null) => throw new NotImplementedException();
-            public List<ImportResult> GetImportResults(int? commandId = null) => throw new NotImplementedException();
+            public List<ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null) => throw new NotImplementedException();
         }
 
         private class MediaFileRepositoryProxy : DispatchProxy

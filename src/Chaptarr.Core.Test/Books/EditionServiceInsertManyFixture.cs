@@ -1,0 +1,127 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Diagnostics;
+using System.Linq;
+using Chaptarr.Core.Test.Common;
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+using NUnit.Framework;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Datastore;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.Messaging.Events;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
+
+namespace Chaptarr.Core.Test.Books
+{
+    [TestFixture]
+    [NonParallelizable]
+    public class EditionServiceInsertManyFixture
+    {
+        [Test]
+        public void debug_logging_preserves_inserted_images_without_reloading_editions(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool foreignIdPresent,
+            [Values(1, 8)] int editionCount)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var logFactory = new LogFactory();
+                var memory = new MemoryTarget();
+                var logging = new LoggingConfiguration();
+                logging.AddRule(LogLevel.Debug, LogLevel.Fatal, memory);
+                logFactory.Configuration = logging;
+                var logger = logFactory.GetLogger("EditionInsertion");
+                Assert.That(logger.IsDebugEnabled, Is.True);
+
+                var events = Proxy<IEventAggregator>((_, _) => null);
+                var author = new AuthorRepository(database, events, logger).Insert(new Author
+                {
+                    Name = "Insertion fixture author", CleanName = "insertionfixtureauthor", SortName = "insertionfixtureauthor",
+                    TitleSlug = "insertion-fixture-author", HardcoverAuthorId = "hc:8100",
+                    Path = @"C:\Books\Insertion fixture author".AsOsAgnostic(), Added = DateTime.UtcNow
+                });
+                var book = new BookRepository(database, events).Insert(new Book
+                {
+                    Title = "Insertion fixture book", CleanTitle = "insertionfixturebook", TitleSlug = "insertion-fixture-book",
+                    HardcoverBookId = "hc:8101", MediaType = BookMediaType.Audiobook,
+                    AuthorId = author.Id, Added = DateTime.UtcNow
+                });
+
+                var statements = new List<string>();
+                var observed = Proxy<IMainDatabase>((method, args) =>
+                {
+                    if (method.Name != nameof(IMainDatabase.OpenConnection)) return method.Invoke(database, args);
+                    var connection = database.OpenConnection();
+                    return Proxy<IDbConnection>((connectionMethod, connectionArgs) =>
+                    {
+                        var result = connectionMethod.Invoke(connection, connectionArgs);
+                        if (result is not IDbCommand command) return result;
+                        return Proxy<IDbCommand>((commandMethod, commandArgs) =>
+                        {
+                            if (commandMethod.Name is nameof(IDbCommand.ExecuteReader) or nameof(IDbCommand.ExecuteNonQuery) or nameof(IDbCommand.ExecuteScalar))
+                            {
+                                statements.Add(command.CommandText);
+                            }
+
+                            return commandMethod.Invoke(command, commandArgs);
+                        });
+                    });
+                });
+                var repository = new EditionRepository(observed, events);
+                List<Edition> Batch(int start) => Enumerable.Range(start, editionCount).Select(id => new Edition
+                {
+                    BookId = book.Id, Title = book.Title, TitleSlug = $"insertion-edition-{id}",
+                    ForeignEditionId = foreignIdPresent ? $"gr:{id}" : null, HardcoverEditionId = $"hc:edition:{id}",
+                    ReadingFormatId = 2, Language = "eng", Monitored = true,
+                    Images = new List<NzbDrone.Core.MediaCover.MediaCover>
+                    {
+                        new(MediaCoverTypes.Cover, $"https://covers.example.invalid/{id}.jpg"),
+                        new(MediaCoverTypes.Banner, $"https://covers.example.invalid/{id}-banner.png")
+                    }
+                }).ToList();
+
+                repository.InsertMany(Batch(8200));
+                var writerStatementCount = statements.Count;
+                statements.Clear();
+                var editions = Batch(8300);
+                Exception failure = null;
+                var timer = Stopwatch.StartNew();
+                try
+                {
+                    new EditionService(repository, events, logger).InsertMany(editions);
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+
+                timer.Stop();
+                var insertStatements = statements.ToList();
+                var stored = new EditionRepository(database, events).Get(editions.Select(edition => edition.Id)).ToList();
+                TestContext.WriteLine($"{(postgres ? "PostgreSQL" : "SQLite")}: {editionCount} editions, foreign ID present={foreignIdPresent}, " +
+                    $"repository={writerStatementCount} SQL commands, Debug service={insertStatements.Count} SQL commands, {timer.Elapsed.TotalMilliseconds:F1} ms, " +
+                    $"persisted={stored.Count}, images={stored.Sum(edition => edition.Images.Count)}, failure={failure}");
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(failure, Is.Null);
+                    Assert.That(insertStatements, Has.Count.EqualTo(writerStatementCount));
+                    Assert.That(insertStatements.Any(sql => sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) &&
+                        sql.Contains("Editions", StringComparison.OrdinalIgnoreCase)), Is.False);
+                    Assert.That(stored, Has.Count.EqualTo(editionCount));
+                    foreach (var edition in editions)
+                    {
+                        var saved = stored.Single(row => row.Id == edition.Id);
+                        Assert.That(saved.ForeignEditionId, Is.EqualTo(edition.ForeignEditionId));
+                        Assert.That(saved.HardcoverEditionId, Is.EqualTo(edition.HardcoverEditionId));
+                        Assert.That(saved.Images.Select(image => (image.CoverType, image.Url, image.Extension)),
+                            Is.EqualTo(edition.Images.Select(image => (image.CoverType, image.Url, image.Extension))));
+                    }
+                });
+            });
+        }
+    }
+}

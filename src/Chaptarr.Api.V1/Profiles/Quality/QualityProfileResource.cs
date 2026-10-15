@@ -236,22 +236,8 @@ namespace Chaptarr.Api.V1.Profiles.Quality
             };
         }
 
-        public static bool IsQualityAllowedForProfileType(int? qualityId, ProfileType profileType)
-        {
-            if (!qualityId.HasValue ||
-                qualityId.Value < 0 ||
-                qualityId.Value >= NzbDrone.Core.Qualities.Quality.AllLookup.Length ||
-                NzbDrone.Core.Qualities.Quality.AllLookup[qualityId.Value] == null)
-            {
-                return false;
-            }
-
-            var quality = NzbDrone.Core.Qualities.Quality.FindById(qualityId.Value);
-
-            return profileType == ProfileType.Audiobook
-                ? QualityMediaTypeHelper.IsAudiobookQuality(quality)
-                : QualityMediaTypeHelper.IsEbookFileQuality(quality);
-        }
+        public static bool IsQualityAllowedForProfileType(int? qualityId, ProfileType profileType) =>
+            QualityProfileValidator.IsQualityAllowedForProfileType(qualityId, profileType);
 
         private static bool IsCutoffAllowedForProfileType(int cutoff, ProfileType profileType, List<QualityProfileQualityItem> filteredItems)
         {

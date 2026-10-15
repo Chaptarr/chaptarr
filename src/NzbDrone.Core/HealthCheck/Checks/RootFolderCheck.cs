@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
@@ -42,8 +41,8 @@ namespace NzbDrone.Core.HealthCheck.Checks
                 .ToList();
 
             missingRootFolders.AddRange(_importListFactory.All()
-                .Where(l => l.Enable)
-                .SelectMany(GetImportListRootFolders)
+                .SelectMany(l => l.GetCreationRootFolderPaths())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Distinct()
                 .Where(s => !s.IsPathValid(PathValidationType.CurrentOs) || !SafeFolderExists(s))
                 .ToList());
@@ -78,32 +77,6 @@ namespace NzbDrone.Core.HealthCheck.Checks
             catch
             {
                 return false;
-            }
-        }
-
-        private static IEnumerable<string> GetImportListRootFolders(ImportListDefinition importList)
-        {
-            if (importList == null)
-            {
-                yield break;
-            }
-
-            if (!string.IsNullOrWhiteSpace(importList.RootFolderPath))
-            {
-                yield return importList.RootFolderPath;
-            }
-
-            if (importList.Settings is IMediaTypeRootFolderSettings mediaSettings)
-            {
-                if (!string.IsNullOrWhiteSpace(mediaSettings.AudiobookRootFolderPath))
-                {
-                    yield return mediaSettings.AudiobookRootFolderPath;
-                }
-
-                if (!string.IsNullOrWhiteSpace(mediaSettings.EbookRootFolderPath))
-                {
-                    yield return mediaSettings.EbookRootFolderPath;
-                }
             }
         }
     }

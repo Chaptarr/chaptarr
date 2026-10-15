@@ -21,7 +21,11 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Messaging.Events;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 using NzbDrone.Core.Datastore.Migration.Framework;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
 using NzbDrone.MatchBench;
@@ -109,6 +113,91 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
+        public async Task rss_should_replay_one_unscoped_batch_and_resolve_each_real_catalog_book()
+        {
+            WriteReleaseReports(includeSiblingPublishDate: true);
+
+            var result = await RunMatchBench("/releasereplay", CancellationToken.None, "/rss=true", $"/releases={_releasePath}");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.ExitCode, Is.Zero, result.Output + Environment.NewLine + result.Error);
+                Assert.That(result.Output, Does.Contain("mode=RSS, typedReports=2, unscoped=true"));
+                Assert.That(result.Output.Split("[releasereplay] RSS batch").Length, Is.EqualTo(2));
+                Assert.That(result.Output, Does.Contain("APPROVED - James Hunt - Powerless (epub)"));
+                Assert.That(result.Output, Does.Contain("APPROVED - James Hunt - The Final Homestead - EMP Survival in a Powerless World (epub)"));
+                Assert.That(result.Output, Does.Contain($"James Hunt — Powerless (localBookId={TargetBookLocalId}, media=Ebook)"));
+                Assert.That(result.Output, Does.Contain($"James Hunt — The Final Homestead (localBookId={SiblingBookLocalId}, media=Ebook)"));
+                Assert.That(result.Output, Does.Contain("completed RSS batches=1, incomplete RSS batches=0, typedReports=2, decisions=2, plannedGrabs=2, pending=0, downloads=0"));
+                Assert.That(result.Output, Does.Not.Contain("Release appears to match a different book by this author"));
+            });
+        }
+
+        [Test]
+        public async Task rss_should_respect_an_unmonitored_author_side_without_claiming_a_complete_audit()
+        {
+            WriteReleaseReports(includeSiblingPublishDate: true);
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _databasePath, Pooling = false }.ConnectionString);
+            connection.Open();
+            connection.Execute("UPDATE Authors SET EbookMonitored=0 WHERE Id=@id", new { id = AuthorLocalId });
+            try
+            {
+                var rss = await RunMatchBench("/releasereplay", CancellationToken.None, "/rss=true", $"/releases={_releasePath}");
+                var search = await RunReleaseReplay();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(rss.ExitCode, Is.EqualTo(1), rss.Output + Environment.NewLine + rss.Error);
+                    Assert.That(rss.Output, Does.Contain("incomplete RSS batches=1, typedReports=2, decisions=0, plannedGrabs=0, pending=0, downloads=0"));
+                    Assert.That(rss.Output, Does.Contain("2 input report(s) have no recorded decision"));
+                    Assert.That(rss.Output, Does.Not.Contain("APPROVED"));
+                    Assert.That(search.ExitCode, Is.Zero, search.Output + Environment.NewLine + search.Error);
+                    Assert.That(GetTargetBookSection(search.Output), Does.Contain("APPROVED - James Hunt - Powerless (epub)"));
+                });
+            }
+            finally
+            {
+                connection.Execute("UPDATE Authors SET EbookMonitored=1 WHERE Id=@id", new { id = AuthorLocalId });
+            }
+        }
+
+        [Test]
+        public async Task rss_missing_publish_date_should_withhold_the_whole_batch_verdict()
+        {
+            WriteReleaseReports(includeSiblingPublishDate: false);
+
+            var result = await RunMatchBench("/releasereplay", CancellationToken.None, "/rss=true", $"/releases={_releasePath}");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.ExitCode, Is.EqualTo(1), result.Output + Environment.NewLine + result.Error);
+                Assert.That(result.Output, Does.Contain("missing publishDate"));
+                Assert.That(result.Output, Does.Contain("decisions=2 verdicts=withheld audit=INCOMPLETE"));
+                Assert.That(result.Output, Does.Contain("INCOMPLETE - James Hunt - Powerless (epub)"));
+                Assert.That(result.Output, Does.Contain("INCOMPLETE - James Hunt - The Final Homestead - EMP Survival in a Powerless World (epub)"));
+                Assert.That(result.Output, Does.Contain("completed RSS batches=0, incomplete RSS batches=1"));
+                Assert.That(result.Output, Does.Not.Contain("APPROVED"));
+                Assert.That(result.Output, Does.Not.Contain("REJECTED"));
+            });
+        }
+
+        [Test]
+        public async Task rss_should_refuse_search_target_arguments_instead_of_silently_scoping_the_batch()
+        {
+            WriteReleaseReports(includeSiblingPublishDate: true);
+
+            var result = await RunMatchBench("/releasereplay", CancellationToken.None,
+                "/rss=true", $"/bookids={TargetBookLocalId}", $"/releases={_releasePath}");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.ExitCode, Is.EqualTo(2));
+                Assert.That(result.Error, Does.Contain("RSS is unscoped; omit /bookids"));
+                Assert.That(result.Output, Does.Not.Contain("APPROVED"));
+            });
+        }
+
+        [Test]
         public async Task mambench_should_use_local_native_mam_transport_and_production_decisions()
         {
             await using var responder = await LoopbackMamResponder.StartAsync(CreateMamResponse());
@@ -153,6 +242,30 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Assert.That(payload.RootElement.GetProperty("tor").GetProperty("text").GetString(), Does.Contain("James Hunt"));
                 Assert.That(payload.RootElement.GetProperty("tor").GetProperty("main_cat")[0].GetString(), Is.EqualTo("14"));
             });
+        }
+
+        [Test]
+        public async Task live_audit_should_refuse_an_older_schema_before_the_host_can_migrate_it()
+        {
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _databasePath, Pooling = false }.ToString());
+            connection.Open();
+            var latest = connection.ExecuteScalar<long>("SELECT MAX(\"Version\") FROM \"VersionInfo\"");
+            var original = connection.Query("SELECT * FROM \"VersionInfo\" WHERE \"Version\" = @latest", new { latest }).Single();
+            connection.Execute("DELETE FROM \"VersionInfo\" WHERE \"Version\" = @latest", new { latest });
+            try
+            {
+                var result = await RunMatchBench("/libraryaudit", CancellationToken.None, "/live=true");
+                Assert.Multiple(() =>
+                {
+                    Assert.That(result.ExitCode, Is.EqualTo(2), result.Output + result.Error);
+                    Assert.That(result.Error, Does.Contain("Live schema check failed"));
+                    Assert.That(connection.ExecuteScalar<long>("SELECT COUNT(*) FROM \"VersionInfo\" WHERE \"Version\" = @latest", new { latest }), Is.Zero);
+                });
+            }
+            finally
+            {
+                connection.Execute("INSERT INTO \"VersionInfo\" (\"Version\", \"AppliedOn\", \"Description\") VALUES (@Version, @AppliedOn, @Description)", (object)original);
+            }
         }
 
         private void CreateProductionSchemaAndCatalog(string databasePath)
@@ -212,6 +325,29 @@ namespace Chaptarr.Core.Test.DecisionEngine
                     siblingBookId = SiblingBookLocalId,
                     releaseDate = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc)
                 });
+
+            if (TableMapping.Mapper.TableMap.Count == 0)
+            {
+                TableMapping.Map();
+            }
+
+            var database = new Database("matchbench-rss-catalog", () =>
+            {
+                var opened = new SqliteConnection(connectionString);
+                opened.Open();
+                return opened;
+            });
+            var events = Proxy<IEventAggregator>((method, args) => null);
+            new BasicRepository<Author>(database, events)
+                .SetFields(new Author { Id = AuthorLocalId, Name = authorName, EbookMonitored = true }, row => row.Name, row => row.EbookMonitored);
+            var books = new BasicRepository<Book>(database, events);
+            books.SetFields(new Book { Id = TargetBookLocalId, SeriesName = "A Tale Of Survival in a Powerless World" }, row => row.SeriesName);
+            books.SetFields(new Book { Id = SiblingBookLocalId, SeriesName = "EMP Survival in a Powerless World" }, row => row.SeriesName);
+            new BasicRepository<Edition>(database, events).SetFields(new List<Edition>
+            {
+                new() { Id = TargetBookLocalId, MatchingTitle = StringSuperNormalizer.ComputeMatchingTitle("Powerless") },
+                new() { Id = SiblingBookLocalId, MatchingTitle = StringSuperNormalizer.ComputeMatchingTitle("The Final Homestead") }
+            }, row => row.MatchingTitle);
         }
 
         private static void InsertBook(SqliteConnection connection, int id, string title, string seriesName, string seriesPosition, string hardcoverBookId, string goodreadsWorkId, DateTime added)

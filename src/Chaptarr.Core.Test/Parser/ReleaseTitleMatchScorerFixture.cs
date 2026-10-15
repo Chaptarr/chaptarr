@@ -81,6 +81,11 @@ namespace Chaptarr.Core.Test.Parser
         }
 
         [TestCase("(Narrated by Stephen Fry)", true)]
+        [TestCase("(Gelesen von Stephen Fry)", true)]
+        [TestCase("[Lu par Stephen Fry]", true)]
+        [TestCase("（Stephen Fry, Unabridged）", true)]
+        [TestCase("［Stephen Fry, arbitrary extra words］", true)]
+        [TestCase("(Narrated by Jim Dale)", false)]
         [TestCase("(Reprint)", false)]
         [TestCase("(réédition)", false)]
         [TestCase("(Neuauflage)", false)]
@@ -1242,11 +1247,11 @@ namespace Chaptarr.Core.Test.Parser
         [TestCase("(Narrated by Stephen Fry)", "Jim Dale", true)]
         [TestCase("(Narrated by Stephen Fry)", null, true)]
         [TestCase("(Narrated by Jim Dale)", "Stephen Fry", false)]
-        [TestCase("(Narrated by Stephen Fry, Part 2 of 2)", "Stephen Fry", false)]
+        [TestCase("(Narrated by Stephen Fry, Part 2 of 2)", "Stephen Fry", true)]
         [TestCase("(Narrated by Stephen Fry) (Part 2 of 2)", "Stephen Fry", false)]
 
         [TestCase("(Narrated by Stephen Fry): Part 2 of 2", "Stephen Fry", false)]
-        [TestCase("(Stephen Fry and the Prisoner of Azkaban)", "Stephen Fry", false)]
+        [TestCase("(Stephen Fry and the Prisoner of Azkaban)", "Stephen Fry", true)]
         public void known_narrator_credits_may_be_omitted_but_other_title_content_remains_required(string qualifier, string selectedNarrator, bool expectedMatch)
         {
             var author = new Author { Name = "J.K. Rowling", GoodreadsAuthorId = "gr:1077326" };
@@ -1282,8 +1287,10 @@ namespace Chaptarr.Core.Test.Parser
 
         [TestCase("J K Rowling - Harry Potter and the Chamber of Secrets (2000) MP3", true)]
         [TestCase("J K Rowling read by Jim Dale - Harry Potter and the Chamber of Secrets (2000) MP3", true)]
+        [TestCase("J K Rowling - Harry Potter and the Chamber of Secrets (Narrated by Stephen Fry) (2000) MP3", true)]
+        [TestCase("J K Rowling read by Jim Dale - Harry Potter and the Chamber of Secrets (Narrated by Stephen Fry) (2000) MP3", true)]
         [TestCase("J K Rowling read by Stephen Fry - Harry Potter and the Prisoner of Azkaban (2000) MP3", false)]
-        public void should_require_the_title_but_not_an_automatic_narrator_credit(string release, bool expected)
+        public void known_narrator_annotation_may_be_omitted_without_an_automatic_narrator_gate(string release, bool expected)
         {
             var author = new Author { Name = "J.K. Rowling" };
             var book = new Book

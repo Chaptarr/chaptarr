@@ -45,6 +45,8 @@ namespace NzbDrone.Core.Parser.Model
         // Narrator metadata from indexers (used for Interactive Search display and Custom Format scoring)
         public string Duration { get; set; }
         public string Narrator { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<string> NarratorEvidenceFields { get; set; }
         public bool IsGraphicAudio { get; set; }
 
         // Indexer-provided extended metadata hints (used to avoid extra API calls when unavailable)
@@ -57,6 +59,9 @@ namespace NzbDrone.Core.Parser.Model
         // Used to track pending releases that are being reprocessed
         [JsonIgnore]
         public PendingReleaseReason? PendingReleaseReason { get; set; }
+
+        [JsonIgnore]
+        internal PendingRelease PendingContext { get; set; }
 
         public int Age
         {

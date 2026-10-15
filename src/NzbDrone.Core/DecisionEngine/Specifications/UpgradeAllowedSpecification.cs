@@ -1,6 +1,7 @@
 using System.Linq;
 using NLog;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
@@ -33,13 +34,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Accept();
             }
 
-            var qualityProfile = subject.Author.GetQualityProfileForQuality(subject.ParsedBookInfo.Quality.Quality);
+            var qualityProfile = subject.GetQualityProfile();
             if (qualityProfile == null)
             {
                 return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
             }
 
-            foreach (var file in subject.Books.SelectMany(b => b.BookFiles))
+            foreach (var file in subject.GetBooksMatchingReleaseMediaType().SelectMany(b => b.BookFiles))
             {
                 if (file == null)
                 {

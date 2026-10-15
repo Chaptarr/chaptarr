@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using Dapper;
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
@@ -35,7 +37,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void missing_filter_should_return_only_monitored_books_without_selected_media_files()
+        public void missing_filter_should_return_only_monitored_books_without_owned_row_files()
         {
             WithRepository(sut =>
             {
@@ -46,7 +48,7 @@ namespace Chaptarr.Core.Test.Books
                     monitored: null,
                     missing: true);
 
-                Assert.That(ids.OrderBy(id => id), Is.EqualTo(new[] { 1, 4, 5 }));
+                Assert.That(ids.OrderBy(id => id), Is.EqualTo(new[] { 1, 5 }));
 
                 var buckets = sut.GetBookBuckets(
                     sortKey: "title",
@@ -57,7 +59,7 @@ namespace Chaptarr.Core.Test.Books
                     monitored: null,
                     missing: true);
 
-                Assert.That(buckets.TotalCount, Is.EqualTo(3));
+                Assert.That(buckets.TotalCount, Is.EqualTo(2));
             });
         }
 
@@ -127,7 +129,7 @@ namespace Chaptarr.Core.Test.Books
                     monitored: null,
                     wanted: true);
 
-                Assert.That(ids.OrderBy(id => id), Is.EqualTo(new[] { 1, 4 }));
+                Assert.That(ids.OrderBy(id => id), Is.EqualTo(new[] { 1 }));
 
                 var buckets = sut.GetBookBuckets(
                     sortKey: "title",
@@ -138,7 +140,7 @@ namespace Chaptarr.Core.Test.Books
                     monitored: null,
                     wanted: true);
 
-                Assert.That(buckets.TotalCount, Is.EqualTo(2));
+                Assert.That(buckets.TotalCount, Is.EqualTo(1));
             });
         }
 
@@ -190,7 +192,7 @@ namespace Chaptarr.Core.Test.Books
                     sortDirection: "DESC",
                     includeUnmonitored: true);
 
-                // Sizes: book 8 = 789 + 790, book 4 = 456, book 3 = 123, the rest have no files.
+                // Every file attached through an edition contributes to its owning book's size.
                 Assert.That(descending.Records.Select(book => book.Id),
                     Is.EqualTo(new[] { 8, 4, 3, 7, 6, 5, 2, 1 }));
 
@@ -245,8 +247,111 @@ namespace Chaptarr.Core.Test.Books
                     downloaded: true);
 
                 Assert.That(downloadedEbooks.Records.Select(book => book.Id),
-                    Is.EqualTo(new[] { 8, 3 }));
+                    Is.EqualTo(new[] { 8, 4, 3 }));
             });
+        }
+
+        [TestCase(DatabaseType.SQLite)]
+        [TestCase(DatabaseType.PostgreSQL)]
+        public void library_filter_should_scope_books_and_full_footer_statistics(DatabaseType databaseType)
+        {
+            WithRepository(databaseType, sut =>
+            {
+                var ids = sut.GetBookIds(includeUnmonitored: false, library: true);
+                Assert.That(ids.OrderBy(id => id), Is.EqualTo(new[] { 1, 3, 4, 5, 6, 7, 8, 9, 10 }));
+
+                var page = sut.GetBooksPaged(0, 100, "id", "ASC", includeUnmonitored: false, mediaType: null,
+                    downloaded: null, monitored: null, library: true);
+                Assert.That(page.Records.Select(book => book.Id), Is.EqualTo(ids.OrderBy(id => id)));
+                Assert.That(page.TotalCount, Is.EqualTo(9));
+
+                var smallPage = sut.GetBooksPaged(0, 2, "id", "ASC", includeUnmonitored: false, mediaType: null,
+                    downloaded: null, monitored: null, library: true);
+                Assert.That(smallPage.Records.Select(book => book.Id), Is.EqualTo(new[] { 1, 3 }));
+                Assert.That(smallPage.TotalCount, Is.EqualTo(9), "the count should cover the complete filtered population");
+
+                var buckets = sut.GetBookBuckets("title", "ASC", includeUnmonitored: false, mediaType: null,
+                    downloaded: null, monitored: null, library: true);
+                Assert.That(buckets.TotalCount, Is.EqualTo(9));
+                AssertFooter(buckets.FooterStatistics, 9, 4, 7, 6, 4058);
+
+                AssertMediaSide(sut, "ebook", new[] { 1, 3, 4, 5, 8, 10 }, 6, 3, 5, 5, 3158);
+                AssertMediaSide(sut, "audiobook", new[] { 6, 7, 9 }, 3, 3, 2, 1, 900);
+
+                var allIds = sut.GetBookIds(includeUnmonitored: true);
+                Assert.That(allIds.OrderBy(id => id), Is.EqualTo(Enumerable.Range(1, 14)));
+                Assert.That(sut.GetBookIds(includeUnmonitored: true, library: false).OrderBy(id => id), Is.EqualTo(allIds.OrderBy(id => id)));
+                Assert.That(sut.GetBookIds(includeUnmonitored: true, library: null).OrderBy(id => id), Is.EqualTo(allIds.OrderBy(id => id)));
+
+                var allPage = sut.GetBooksPaged(0, 100, "id", "ASC", includeUnmonitored: true);
+                var falseLibraryPage = sut.GetBooksPaged(0, 100, "id", "ASC", includeUnmonitored: true,
+                    mediaType: null, downloaded: null, monitored: null, library: false);
+                var unspecifiedLibraryPage = sut.GetBooksPaged(0, 100, "id", "ASC", includeUnmonitored: true,
+                    mediaType: null, downloaded: null, monitored: null, library: null);
+                Assert.That(falseLibraryPage.Records.Select(book => book.Id), Is.EqualTo(allPage.Records.Select(book => book.Id)));
+                Assert.That(falseLibraryPage.TotalCount, Is.EqualTo(allPage.TotalCount));
+                Assert.That(unspecifiedLibraryPage.Records.Select(book => book.Id), Is.EqualTo(allPage.Records.Select(book => book.Id)));
+                Assert.That(unspecifiedLibraryPage.TotalCount, Is.EqualTo(allPage.TotalCount));
+
+                var allBuckets = sut.GetBookBuckets("title", "ASC", includeUnmonitored: true);
+                var falseLibraryBuckets = sut.GetBookBuckets("title", "ASC", includeUnmonitored: true, mediaType: null, downloaded: null, monitored: null, library: false);
+                var unspecifiedLibraryBuckets = sut.GetBookBuckets("title", "ASC", includeUnmonitored: true, mediaType: null, downloaded: null, monitored: null, library: null);
+                Assert.That(falseLibraryBuckets.TotalCount, Is.EqualTo(allBuckets.TotalCount));
+                Assert.That(unspecifiedLibraryBuckets.TotalCount, Is.EqualTo(allBuckets.TotalCount));
+                AssertFooter(falseLibraryBuckets.FooterStatistics,
+                    allBuckets.FooterStatistics.TotalBooks, allBuckets.FooterStatistics.AuthorCount,
+                    allBuckets.FooterStatistics.MonitoredBooks, allBuckets.FooterStatistics.FileCount,
+                    allBuckets.FooterStatistics.TotalFileSize);
+                AssertFooter(unspecifiedLibraryBuckets.FooterStatistics,
+                    allBuckets.FooterStatistics.TotalBooks, allBuckets.FooterStatistics.AuthorCount,
+                    allBuckets.FooterStatistics.MonitoredBooks, allBuckets.FooterStatistics.FileCount,
+                    allBuckets.FooterStatistics.TotalFileSize);
+            }, includeLibraryRows: true);
+        }
+
+        [TestCase(DatabaseType.SQLite)]
+        [TestCase(DatabaseType.PostgreSQL)]
+        public void downloaded_and_missing_filters_should_use_files_owned_by_the_book_row(DatabaseType databaseType)
+        {
+            WithRepository(databaseType, sut =>
+            {
+                var downloaded = sut.GetBookIds(includeUnmonitored: true, mediaType: "ebook", downloaded: true);
+                Assert.That(downloaded, Is.EquivalentTo(new[] { 3, 4, 8, 10 }));
+                var page = sut.GetBooksPaged(0, 100, "id", "ASC", true, "ebook", true);
+                Assert.That(page.Records.Select(book => book.Id), Is.EquivalentTo(downloaded));
+                var buckets = sut.GetBookBuckets("title", "ASC", true, "ebook", true);
+                Assert.That(buckets.TotalCount, Is.EqualTo(downloaded.Count));
+                Assert.That(buckets.FooterStatistics.FileCount, Is.EqualTo(5));
+                Assert.That(sut.GetBookIds(true, "audiobook", true), Is.EquivalentTo(new[] { 9 }));
+                Assert.That(sut.GetBookIds(true, "ebook", missing: true), Is.EquivalentTo(new[] { 1, 5 }));
+            }, includeLibraryRows: true);
+        }
+
+        private static void AssertMediaSide(BookRepository repository, string mediaType, int[] expectedIds,
+            int totalBooks, int authors, int monitoredBooks, int files, long totalFileSize)
+        {
+            var ids = repository.GetBookIds(includeUnmonitored: false, mediaType: mediaType, library: true);
+            Assert.That(ids.OrderBy(id => id), Is.EqualTo(expectedIds), $"{mediaType} results should follow the book media enum");
+
+            var page = repository.GetBooksPaged(0, 100, "id", "ASC", includeUnmonitored: false, mediaType: mediaType,
+                downloaded: null, monitored: null, library: true);
+            Assert.That(page.Records.Select(book => book.Id), Is.EqualTo(expectedIds));
+            Assert.That(page.TotalCount, Is.EqualTo(totalBooks));
+
+            var buckets = repository.GetBookBuckets("title", "ASC", includeUnmonitored: false, mediaType: mediaType,
+                downloaded: null, monitored: null, library: true);
+            Assert.That(buckets.TotalCount, Is.EqualTo(totalBooks));
+            AssertFooter(buckets.FooterStatistics, totalBooks, authors, monitoredBooks, files, totalFileSize);
+        }
+
+        private static void AssertFooter(BookFooterStatistics footer, int totalBooks, int authors,
+            int monitoredBooks, int files, long totalFileSize)
+        {
+            Assert.That(footer.TotalBooks, Is.EqualTo(totalBooks));
+            Assert.That(footer.AuthorCount, Is.EqualTo(authors));
+            Assert.That(footer.MonitoredBooks, Is.EqualTo(monitoredBooks));
+            Assert.That(footer.FileCount, Is.EqualTo(files));
+            Assert.That(footer.TotalFileSize, Is.EqualTo(totalFileSize));
         }
 
         [Test]
@@ -263,11 +368,23 @@ namespace Chaptarr.Core.Test.Books
 
         private static void WithRepository(Action<BookRepository> action)
         {
+            WithRepository(DatabaseType.SQLite, action);
+        }
+
+        private static void WithRepository(DatabaseType databaseType, Action<BookRepository> action, bool includeLibraryRows = false)
+        {
+            if (databaseType == DatabaseType.PostgreSQL)
+            {
+                WithPostgresRepository(action, includeLibraryRows);
+                return;
+            }
+
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"book_index_filter_{Guid.NewGuid():N}.db");
             var connectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false
             }.ToString();
 
             try
@@ -277,8 +394,12 @@ namespace Chaptarr.Core.Test.Books
                     connection.Open();
                     connection.Execute("PRAGMA journal_mode = MEMORY;");
                     connection.Execute("PRAGMA synchronous = OFF;");
-                    CreateSchema(connection);
-                    SeedBooks(connection);
+                    CreateSchema(connection, databaseType);
+                    SeedBooks(connection, databaseType);
+                    if (includeLibraryRows)
+                    {
+                        SeedLibraryFilterBooks(connection, databaseType);
+                    }
                 }
 
                 var database = new Database("main", () =>
@@ -292,43 +413,89 @@ namespace Chaptarr.Core.Test.Books
             }
             finally
             {
-                try
+                if (File.Exists(databasePath))
                 {
-                    if (File.Exists(databasePath))
-                    {
-                        File.Delete(databasePath);
-                    }
-                }
-                catch
-                {
+                    File.Delete(databasePath);
                 }
             }
         }
 
-        private static void CreateSchema(SqliteConnection connection)
+        private static void WithPostgresRepository(Action<BookRepository> action, bool includeLibraryRows)
         {
-            connection.Execute(@"
+            var adminConnectionString = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
+            if (string.IsNullOrWhiteSpace(adminConnectionString))
+            {
+                Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING to exercise PostgreSQL book library filtering");
+            }
+
+            var schema = "book_index_filter_" + Guid.NewGuid().ToString("N");
+            using (var admin = new NpgsqlConnection(adminConnectionString))
+            {
+                admin.Open();
+                admin.Execute($"CREATE SCHEMA \"{schema}\"");
+            }
+
+            try
+            {
+                var connectionString = new NpgsqlConnectionStringBuilder(adminConnectionString)
+                {
+                    SearchPath = schema,
+                    Pooling = false
+                }.ConnectionString;
+
+                using (var connection = new NpgsqlConnection(connectionString))
+                {
+                    connection.Open();
+                    CreateSchema(connection, DatabaseType.PostgreSQL);
+                    SeedBooks(connection, DatabaseType.PostgreSQL);
+                    if (includeLibraryRows)
+                    {
+                        SeedLibraryFilterBooks(connection, DatabaseType.PostgreSQL);
+                    }
+                }
+
+                var database = new Database("book_index_filter_postgres", () =>
+                {
+                    var connection = new NpgsqlConnection(connectionString);
+                    connection.Open();
+                    return connection;
+                });
+                action(new BookRepository(new MainDatabase(database), new StubEventAggregator()));
+            }
+            finally
+            {
+                using var admin = new NpgsqlConnection(adminConnectionString);
+                admin.Open();
+                admin.Execute($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+            }
+        }
+
+        private static void CreateSchema(IDbConnection connection, DatabaseType databaseType)
+        {
+            var booleanType = databaseType == DatabaseType.PostgreSQL ? "BOOLEAN" : "INTEGER";
+            var dateTimeType = databaseType == DatabaseType.PostgreSQL ? "TIMESTAMP" : "TEXT";
+            connection.Execute($@"
                 CREATE TABLE ""Authors"" (
                     ""Id"" INTEGER PRIMARY KEY,
-                    ""AudiobookMonitored"" INTEGER NULL,
+                    ""AudiobookMonitored"" {booleanType} NULL,
                     ""AudiobookMonitorNewItems"" INTEGER NULL,
-                    ""EbookMonitored"" INTEGER NULL,
+                    ""EbookMonitored"" {booleanType} NULL,
                     ""EbookMonitorNewItems"" INTEGER NULL,
                     ""AudiobookQualityProfileId"" INTEGER NULL,
                     ""EbookQualityProfileId"" INTEGER NULL
                 );
             ");
 
-            connection.Execute(@"
+            connection.Execute($@"
                 CREATE TABLE ""Books"" (
                     ""Id"" INTEGER PRIMARY KEY,
                     ""AuthorId"" INTEGER NOT NULL,
                     ""Title"" TEXT NULL,
                     ""CleanTitle"" TEXT NULL,
                     ""MediaType"" INTEGER NOT NULL,
-                    ""AudiobookMonitored"" INTEGER NOT NULL,
-                    ""EbookMonitored"" INTEGER NOT NULL,
-                    ""ReleaseDate"" TEXT NULL
+                    ""AudiobookMonitored"" {booleanType} NOT NULL,
+                    ""EbookMonitored"" {booleanType} NOT NULL,
+                    ""ReleaseDate"" {dateTimeType} NULL
                 );
             ");
 
@@ -351,31 +518,33 @@ namespace Chaptarr.Core.Test.Books
             ");
         }
 
-        private static void SeedBooks(SqliteConnection connection)
+        private static void SeedBooks(IDbConnection connection, DatabaseType databaseType)
         {
             var past = DateTime.UtcNow.AddDays(-1);
             var future = DateTime.UtcNow.AddDays(7);
             var oldRelease = DateTime.UtcNow.AddDays(-100);
+            var trueValue = databaseType == DatabaseType.PostgreSQL ? "TRUE" : "1";
+            var falseValue = databaseType == DatabaseType.PostgreSQL ? "FALSE" : "0";
 
-            connection.Execute(@"
+            connection.Execute($@"
                 INSERT INTO ""Authors"" (""Id"", ""AudiobookMonitored"", ""AudiobookMonitorNewItems"", ""EbookMonitored"", ""EbookMonitorNewItems"", ""AudiobookQualityProfileId"", ""EbookQualityProfileId"")
                 VALUES
-                    (10, 0, 1, 1, 1, 601, 501),
-                    (20, 1, 2, 0, 1, 601, 501),
-                    (30, 0, 1, 1, 1, 602, 502);
+                    (10, {falseValue}, 1, {trueValue}, 1, 601, 501),
+                    (20, {trueValue}, 2, {falseValue}, 1, 601, 501),
+                    (30, {falseValue}, 1, {trueValue}, 1, 602, 502);
             ");
 
-            connection.Execute(@"
+            connection.Execute($@"
                 INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""Title"", ""CleanTitle"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"", ""ReleaseDate"")
                 VALUES
-                    (1, 10, 'Missing Now', 'missing now', @ebook, 0, 1, @past),
-                    (2, 10, 'Unmonitored Missing', 'unmonitored missing', @ebook, 0, 0, @past),
-                    (3, 10, 'Existing Ebook', 'existing ebook', @ebook, 0, 1, @past),
-                    (4, 10, 'Audio Only File', 'audio only file', @ebook, 0, 1, @past),
-                    (5, 10, 'Future Missing', 'future missing', @ebook, 0, 1, @future),
-                    (6, 10, 'Paused Audiobook', 'paused audiobook', @audiobook, 1, 0, @past),
-                    (7, 20, 'Future-Monitored Audiobook', 'future monitored audiobook', @audiobook, 1, 0, @past),
-                    (8, 30, 'Different Profile Ebook', 'different profile ebook', @ebook, 0, 1, @oldRelease);
+                    (1, 10, 'Missing Now', 'missing now', @ebook, {falseValue}, {trueValue}, @past),
+                    (2, 10, 'Unmonitored Missing', 'unmonitored missing', @ebook, {falseValue}, {falseValue}, @past),
+                    (3, 10, 'Existing Ebook', 'existing ebook', @ebook, {falseValue}, {trueValue}, @past),
+                    (4, 10, 'Audio Only File', 'audio only file', @ebook, {falseValue}, {trueValue}, @past),
+                    (5, 10, 'Future Missing', 'future missing', @ebook, {falseValue}, {trueValue}, @future),
+                    (6, 10, 'Paused Audiobook', 'paused audiobook', @audiobook, {trueValue}, {falseValue}, @past),
+                    (7, 20, 'Future-Monitored Audiobook', 'future monitored audiobook', @audiobook, {trueValue}, {falseValue}, @past),
+                    (8, 30, 'Different Profile Ebook', 'different profile ebook', @ebook, {falseValue}, {trueValue}, @oldRelease);
             ", new
             {
                 audiobook = (int)BookMediaType.Audiobook,
@@ -407,6 +576,30 @@ namespace Chaptarr.Core.Test.Books
                     (400, 40, 'audiobook', 456, '{""quality"": 2, ""revision"": {}}'),
                     (800, 80, 'ebook', 789, '{""quality"": 3, ""revision"": {}}'),
                     (801, 81, 'ebook', 790, '{""quality"": 3, ""revision"": {}}');
+            ");
+        }
+
+        private static void SeedLibraryFilterBooks(IDbConnection connection, DatabaseType databaseType)
+        {
+            var trueValue = databaseType == DatabaseType.PostgreSQL ? "TRUE" : "1";
+            var falseValue = databaseType == DatabaseType.PostgreSQL ? "FALSE" : "0";
+
+            connection.Execute($@"
+                INSERT INTO ""Authors"" (""Id"", ""AudiobookMonitored"", ""AudiobookMonitorNewItems"", ""EbookMonitored"", ""EbookMonitorNewItems"", ""AudiobookQualityProfileId"", ""EbookQualityProfileId"")
+                VALUES (40, {falseValue}, 1, {falseValue}, 1, 601, 501);
+                INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""Title"", ""CleanTitle"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"", ""ReleaseDate"")
+                VALUES
+                    (9, 40, 'Unmonitored Audio File', 'unmonitored audio file', {(int)BookMediaType.Audiobook}, {falseValue}, {falseValue}, NULL),
+                    (10, 40, 'Unmonitored Ebook File', 'unmonitored ebook file', {(int)BookMediaType.Ebook}, {falseValue}, {falseValue}, NULL),
+                    (11, 40, 'Unmonitored Audio Empty', 'unmonitored audio empty', {(int)BookMediaType.Audiobook}, {falseValue}, {falseValue}, NULL),
+                    (12, 40, 'Unmonitored Ebook Empty', 'unmonitored ebook empty', {(int)BookMediaType.Ebook}, {falseValue}, {falseValue}, NULL),
+                    (13, 40, 'Wrong Side Audio Flag', 'wrong side audio flag', {(int)BookMediaType.Audiobook}, {falseValue}, {trueValue}, NULL),
+                    (14, 40, 'Wrong Side Ebook Flag', 'wrong side ebook flag', {(int)BookMediaType.Ebook}, {trueValue}, {falseValue}, NULL);
+                INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"") VALUES (90, 9, 1), (100, 10, 1), (110, 11, 1), (120, 12, 1);
+                INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""MediaType"", ""Size"", ""Quality"")
+                VALUES
+                    (900, 90, 'ebook', 900, NULL),
+                    (1000, 100, 'audiobook', 1000, NULL);
             ");
         }
     }

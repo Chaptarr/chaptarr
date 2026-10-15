@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,7 +18,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class LogicalWorkGroupingFixture
     {
-        private sealed class StubEditionFtsRepository : IEditionFtsRepository
+        private sealed class StubEditionFtsRepository : StagedEditionFtsStub
         {
             private readonly List<EditionFtsMatch> _results;
 
@@ -26,9 +27,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 _results = results ?? new List<EditionFtsMatch>();
             }
 
-            public bool FtsTableExists() => true;
-            public void RebuildIndex() { }
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20) => _results.Take(limit).ToList();
+            public override bool FtsTableExists() => true;
+            public override void RebuildIndex() { }
+            protected override List<EditionFtsMatch> SelectEditions(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit) => _results.Take(limit).ToList();
         }
 
         private sealed class NullMatchingUploadLogger : IMatchingUploadLogger
@@ -52,12 +53,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
 
             public Author GetAuthor(int authorId) => _author;
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -65,6 +66,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
@@ -88,8 +90,22 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 _booksById = (books ?? Array.Empty<Book>()).ToDictionary(b => b.Id);
             }
 
-            public Book GetBook(int bookId) => _booksById.TryGetValue(bookId, out var book) ? book : null;
-            public List<Book> GetBooks(IEnumerable<int> bookIds) => (bookIds ?? Array.Empty<int>()).Select(GetBook).Where(book => book != null).ToList();
+            public int SingleReadCalls { get; private set; }
+            public int BulkReadCalls { get; private set; }
+            public List<int> LastBulkReadIds { get; private set; }
+
+            public Book GetBook(int bookId)
+            {
+                SingleReadCalls++;
+                return _booksById.TryGetValue(bookId, out var book) ? book : null;
+            }
+
+            public List<Book> GetBooks(IEnumerable<int> bookIds)
+            {
+                BulkReadCalls++;
+                LastBulkReadIds = (bookIds ?? Array.Empty<int>()).ToList();
+                return LastBulkReadIds.Where(_booksById.ContainsKey).Select(id => _booksById[id]).ToList();
+            }
             public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
@@ -171,13 +187,17 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private static FileMatchingService CreateSut(
             List<EditionFtsMatch> candidates,
             List<Book> books,
             List<Edition> editions = null,
-            BookMatchingStrictness strictness = BookMatchingStrictness.Balanced)
+            BookMatchingStrictness strictness = BookMatchingStrictness.Balanced,
+            StubBookService bookService = null)
         {
             var logger = LogManager.GetCurrentClassLogger();
 
@@ -194,7 +214,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 eventAggregator: null,
                 authorLibraryService: null,
                 editionFtsRepository: new StubEditionFtsRepository(candidates),
-                bookService: new StubBookService(books),
+                bookService: bookService ?? new StubBookService(books),
                 editionService: editions != null ? new StubEditionService(editions) : null,
                 editionRepository: null,
                 mediaInfoExtractor: null,
@@ -405,6 +425,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match, Is.Not.Null);
             Assert.That(match.EditionId, Is.EqualTo(1301), "one chapter duration must remain neutral while the existing title scorer selects the representative");
             Assert.That(match.MatchedVia, Is.EqualTo("undistinguished_audiobook_edition"));
+            Assert.That(match.Provenance.MatchedVia, Is.EqualTo("undistinguished_audiobook_edition"));
             Assert.That(match.Provenance.NeutralSignals.Any(signal => signal.Type == "duration"), Is.True);
             Assert.That(match.Provenance.ConflictingSignals.Any(signal => signal.Type == "duration"), Is.False);
         }
@@ -1200,8 +1221,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match, Is.Null);
         }
 
-        [Test]
-        public void should_accept_self_narrated_evidence_when_author_name_appears_in_two_distinct_fields()
+        [TestCase("Jim Collins", "Jim Collins", true)]
+        [TestCase("Jim Louis Collins", "Jim Collins", true)]
+        [TestCase("Jim L Collins", "Jim Q Collins", false)]
+        public void should_accept_self_narrated_evidence_when_author_name_appears_in_two_distinct_fields(
+            string author, string secondField, bool expected)
         {
             var books = new List<Book>
             {
@@ -1232,8 +1256,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     EditionTitle = "Great by Choice",
                     BookTitle = "Great by Choice",
                     AuthorId = 25,
-                    AuthorName = "Jim Collins",
-                    NarratorNames = "Jim Collins",
+                    AuthorName = author,
+                    NarratorNames = author,
                     MatchScore = 10.0,
                     DurationSeconds = 31500,
                     ReadingFormatId = 2
@@ -1245,7 +1269,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     EditionTitle = "Great by Choice",
                     BookTitle = "Great by Choice",
                     AuthorId = 25,
-                    AuthorName = "Jim Collins",
+                    AuthorName = author,
                     NarratorNames = "Michael Beck",
                     MatchScore = 9.5,
                     DurationSeconds = 31500,
@@ -1261,16 +1285,19 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
                 {
                     { "ALBUM", new List<string> { "Great by Choice" } },
-                    { "ALBUMARTIST", new List<string> { "Jim Collins" } },
-                    { "ARTIST", new List<string> { "Jim Collins" } }
+                    { "ALBUMARTIST", new List<string> { author } },
+                    { "ARTIST", new List<string> { secondField } }
                 }
             };
 
             var match = sut.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 25);
 
-            Assert.That(match, Is.Not.Null);
-            Assert.That(match.BookId, Is.EqualTo(174));
-            Assert.That(match.EditionId, Is.EqualTo(1741));
+            Assert.That(match != null, Is.EqualTo(expected));
+            if (expected)
+            {
+                Assert.That(match.BookId, Is.EqualTo(174));
+                Assert.That(match.EditionId, Is.EqualTo(1741));
+            }
         }
 
         [Test]
@@ -1474,7 +1501,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match, Is.Not.Null);
             Assert.That(match.BookId, Is.EqualTo(190));
             Assert.That(match.EditionId, Is.EqualTo(1901));
-            Assert.That(match.MatchedVia, Is.Null);
+            Assert.That(match.MatchedVia, Is.EqualTo("staged_field_representation"));
         }
 
         [Test]
@@ -1541,6 +1568,67 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match, Is.Not.Null);
             Assert.That(match.EditionId, Is.EqualTo(1911));
             Assert.That(match.MatchedVia, Is.EqualTo("undistinguished_audiobook_edition"));
+            Assert.That(match.Provenance.MatchedVia, Is.EqualTo("undistinguished_audiobook_edition"));
+        }
+
+        [TestCase("Little Women: Deluxe Painted Edition", true)]
+        [TestCase("Little Women: Deluxe Painted Edition (Illustrated)", true)]
+        [TestCase("Little Women: Deluxe Edition", false)]
+        [TestCase("Little Women", false)]
+        public void representative_fallback_requires_the_complete_stored_book_title(string observedTitle, bool expectedDeluxe)
+        {
+            const string bookTitle = "Little Women: Deluxe Painted Edition";
+            var books = new List<Book>
+            {
+                new Book
+                {
+                    Id = 54951, AuthorId = 25, Title = bookTitle, BaseBookId = "gr:222508923",
+                    MediaType = BookMediaType.Audiobook, AnyEditionOk = true
+                },
+                new Book
+                {
+                    Id = 26654, AuthorId = 25, Title = "Little Women, or, Meg, Jo, Beth and Amy",
+                    BaseBookId = "hc:51956", MediaType = BookMediaType.Audiobook, AnyEditionOk = true
+                }
+            };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new EditionFtsMatch
+                {
+                    EditionId = 67258, BookId = 26654, EditionTitle = "Little Women",
+                    BookTitle = books[1].Title, AuthorId = 25, AuthorName = "Louisa May Alcott",
+                    NarratorNames = "Liza Ross", ReadingFormatId = 2, MatchScore = 100
+                },
+                new EditionFtsMatch
+                {
+                    EditionId = 151782, BookId = 54951, EditionTitle = bookTitle + " (Illustrated)",
+                    BookTitle = bookTitle, AuthorId = 25, AuthorName = "Louisa May Alcott",
+                    ReadingFormatId = 3, MatchScore = 10
+                }
+            };
+            var sut = CreateSut(candidates, books);
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/audiobooks/Library/Book.m4b",
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "TITLE", new List<string> { observedTitle } },
+                    { "AUTHOR", new List<string> { "Louisa May Alcott" } }
+                }
+            };
+
+            var match = sut.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 25);
+
+            if (expectedDeluxe)
+            {
+                Assert.That(match, Is.Not.Null);
+                Assert.That(match.BookId, Is.EqualTo(54951));
+                Assert.That(match.EditionId, Is.EqualTo(151782));
+            }
+            else
+            {
+                Assert.That(match?.BookId, Is.Not.EqualTo(54951));
+            }
         }
 
         [Test]
@@ -1606,6 +1694,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match.BookId, Is.EqualTo(192));
             Assert.That(match.EditionId, Is.EqualTo(1922));
             Assert.That(match.MatchedVia, Is.EqualTo("escape_hatch"));
+            Assert.That(match.Provenance.MatchedVia, Is.EqualTo("escape_hatch"));
         }
 
         [Test]
@@ -1669,7 +1758,97 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match, Is.Not.Null);
             Assert.That(match.BookId, Is.EqualTo(193));
             Assert.That(match.EditionId, Is.EqualTo(1931));
-            Assert.That(match.MatchedVia, Is.Null);
+            Assert.That(match.MatchedVia, Is.EqualTo("staged_field_representation"));
+        }
+
+        [TestCase("Zusatz", "same-book", true)]
+        [TestCase("追加資料", "same-book", true)]
+        [TestCase("Дополнение", "same-book", true)]
+        [TestCase("Zusatz", "other-book", false)]
+        [TestCase("Zusatz", "other-author", false)]
+        [TestCase("Zusatz", "other-media", false)]
+        [TestCase("Zusatz", "other-owner", false)]
+        [TestCase("Zusatz", "missing-owned-row", false)]
+        [TestCase("Zusatz", "unproved-duration", false)]
+        [TestCase("Zusatz", "partial-title", false)]
+        [TestCase("Zusatz", "extra-title-word", false)]
+        public void proven_audio_context_requires_the_complete_stored_title_of_the_same_owned_book(string suffix, string scope, bool expectedNativeEdition)
+        {
+            const string bookTitle = "Rules of Engagement";
+            var representativeTitle = $"{bookTitle}: {suffix}";
+            var observedTitle = representativeTitle;
+            var nativeBook = new Book
+            {
+                Id = 193,
+                Title = bookTitle,
+                BaseBookId = "same-work",
+                AuthorId = scope == "other-owner" ? 26 : 25,
+                MediaType = scope == "other-media" ? BookMediaType.Ebook : BookMediaType.Audiobook
+            };
+            var books = scope == "missing-owned-row" ? new List<Book>() : new List<Book> { nativeBook };
+            var representativeBookId = 193;
+            if (scope == "other-book")
+            {
+                representativeBookId = 194;
+                books.Add(new Book { Id = 194, Title = bookTitle, BaseBookId = "same-work", AuthorId = 25, MediaType = BookMediaType.Audiobook });
+            }
+
+            if (scope == "partial-title")
+            {
+                representativeTitle += " Further";
+            }
+            else if (scope == "extra-title-word")
+            {
+                observedTitle += " Unexplained";
+            }
+
+            var candidates = new List<EditionFtsMatch>
+            {
+                new EditionFtsMatch
+                {
+                    EditionId = 1931, BookId = 193, EditionTitle = bookTitle, BookTitle = bookTitle,
+                    AuthorId = 25, AuthorName = "David Bruns", NarratorNames = "Jamie Renell",
+                    DurationSeconds = 31680, ReadingFormatId = 2, MatchScore = 10
+                },
+                new EditionFtsMatch
+                {
+                    EditionId = 1932, BookId = representativeBookId, EditionTitle = representativeTitle, BookTitle = bookTitle,
+                    AuthorId = scope == "other-author" ? 26 : 25,
+                    AuthorName = scope == "other-author" ? "Other Author" : "David Bruns",
+                    ReadingFormatId = 3, MatchScore = 9
+                },
+                new EditionFtsMatch
+                {
+                    EditionId = 1933, BookId = 193, EditionTitle = bookTitle, BookTitle = bookTitle,
+                    AuthorId = 25, AuthorName = "David Bruns", NarratorNames = "Different Narrator",
+                    DurationSeconds = 20000, ReadingFormatId = 2, MatchScore = 8
+                }
+            };
+            var bookService = new StubBookService(books);
+            var sut = CreateSut(candidates, books, strictness: BookMatchingStrictness.Strict, bookService: bookService);
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/audiobooks/Library/Track.m4b",
+                DurationSeconds = scope == "unproved-duration" ? 40000 : 31680,
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "ALBUM", new List<string> { observedTitle } },
+                    { "TITLE", new List<string> { observedTitle } },
+                    { "ARTIST", new List<string> { "David Bruns" } }
+                }
+            };
+
+            var match = sut.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 25);
+
+            Assert.That(match?.EditionId == 1931, Is.EqualTo(expectedNativeEdition));
+            if (expectedNativeEdition)
+            {
+                Assert.That(match.BookId, Is.EqualTo(193));
+                Assert.That(match.MatchedVia, Is.EqualTo("staged_field_representation"));
+                Assert.That(bookService.BulkReadCalls, Is.EqualTo(1));
+                Assert.That(bookService.SingleReadCalls, Is.Zero);
+                Assert.That(bookService.LastBulkReadIds, Is.EqualTo(new[] { 193 }));
+            }
         }
 
         [Test]
@@ -1748,6 +1927,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match.BookId, Is.EqualTo(194));
             Assert.That(match.EditionId, Is.EqualTo(1943));
             Assert.That(match.MatchedVia, Is.EqualTo("escape_hatch"));
+            Assert.That(match.Provenance.MatchedVia, Is.EqualTo("escape_hatch"));
         }
 
         [Test]
@@ -1813,6 +1993,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match.BookId, Is.EqualTo(195));
             Assert.That(match.EditionId, Is.EqualTo(1952));
             Assert.That(match.MatchedVia, Is.EqualTo("escape_hatch"));
+            Assert.That(match.Provenance.MatchedVia, Is.EqualTo("escape_hatch"));
         }
 
     }

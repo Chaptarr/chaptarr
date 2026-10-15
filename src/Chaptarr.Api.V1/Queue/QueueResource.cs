@@ -7,6 +7,7 @@ using Chaptarr.Api.V1.CustomFormats;
 using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Qualities;
@@ -64,7 +65,9 @@ namespace Chaptarr.Api.V1.Queue
             }
 
             var customFormats = model.RemoteBook?.CustomFormats;
-            var qualityProfile = model.RemoteBook?.Author?.GetQualityProfileForQuality(model.Quality.Quality);
+            var qualityProfile = model.Book != null
+                ? model.RemoteBook?.Author?.GetQualityProfileForMediaType(model.Book.MediaType)
+                : model.RemoteBook?.GetQualityProfile();
             var customFormatScore = qualityProfile?.CalculateCustomFormatScore(customFormats) ?? 0;
 
             return new QueueResource

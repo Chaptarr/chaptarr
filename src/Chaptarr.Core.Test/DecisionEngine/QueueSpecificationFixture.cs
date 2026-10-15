@@ -11,6 +11,7 @@ using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Profiles;
 using NzbDrone.Core.Qualities;
 using QueueItem = NzbDrone.Core.Queue.Queue;
 using IQueueService = NzbDrone.Core.Queue.IQueueService;
@@ -129,6 +130,39 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decision = BuildSubject(queueItem).IsSatisfiedBy(subject, null);
 
             Assert.That(decision.Accepted, Is.True);
+        }
+
+        [Test]
+        public void unknown_quality_audiobook_target_should_use_audio_custom_format_upgrade_preferences()
+        {
+            var author = BuildAuthor(includeEbookProfile: true);
+            var format = new CustomFormat { Id = 10, Name = "Selected narrator" };
+            author.AudiobookQualityProfile.Value.PreferCustomFormatsOverQuality = true;
+            author.AudiobookQualityProfile.Value.FormatItems = new List<ProfileFormatItem>
+            {
+                new() { Format = format, Score = 50 }
+            };
+            var book = BuildBook(author, 100, BookMediaType.Audiobook);
+            var subject = BuildRemoteBook(author, book, Quality.Unknown);
+            subject.CustomFormats = new List<CustomFormat> { format };
+            subject.CustomFormatScore = 50;
+            var queueItem = BuildQueueItem(author, book, Quality.MP3, TrackedDownloadState.Downloading);
+
+            Assert.That(BuildSubject(queueItem).IsSatisfiedBy(subject, null).Accepted, Is.True);
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void unknown_quality_target_should_not_compete_with_opposite_media_queue(BookMediaType mediaType)
+        {
+            var author = BuildAuthor(includeEbookProfile: true);
+            var audiobook = BuildBook(author, 100, BookMediaType.Audiobook);
+            var ebook = BuildBook(author, 200, BookMediaType.Ebook);
+            var subject = BuildRemoteBook(author, mediaType == BookMediaType.Audiobook ? audiobook : ebook, Quality.Unknown);
+            var queuedBook = mediaType == BookMediaType.Audiobook ? ebook : audiobook;
+            var queueItem = BuildQueueItem(author, queuedBook, Quality.Unknown, TrackedDownloadState.Downloading);
+
+            Assert.That(BuildSubject(queueItem).IsSatisfiedBy(subject, null).Accepted, Is.True);
         }
 
         private static QueueSpecification BuildSubject(params QueueItem[] queue)

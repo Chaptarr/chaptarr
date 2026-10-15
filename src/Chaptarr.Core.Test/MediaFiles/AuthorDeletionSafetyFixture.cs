@@ -220,7 +220,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 });
                 Service = new AuthorService(repository, Events, null, roots, null, new CacheManager(), bookRepository, media,
                     LogManager.GetCurrentClassLogger(), exclusions, deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => deletion),
-                    bookService: new Lazy<IBookService>(() => books));
+                    bookService: new Lazy<IBookService>(() => books), mainDatabase: Proxy<NzbDrone.Core.Datastore.IMainDatabase>((_, _) => throw new NotImplementedException()));
             }
 
             public RootFolder Root(string relative, bool calibre = false)

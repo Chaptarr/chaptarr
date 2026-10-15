@@ -74,7 +74,7 @@ namespace Chaptarr.Api.V1
         [Produces("application/json")]
         public ActionResult<TProviderResource> CreateProvider([FromBody] TProviderResource providerResource, [FromQuery] bool forceSave = false)
         {
-            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false);
+            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false, true);
 
             // Set provider characteristics (e.g., SupportsRss, SupportsSearch) before creation
             _providerFactory.SetProviderCharacteristics(providerDefinition);
@@ -94,7 +94,7 @@ namespace Chaptarr.Api.V1
         [Produces("application/json")]
         public ActionResult<TProviderResource> UpdateProvider([FromBody] TProviderResource providerResource, [FromQuery] bool forceSave = false)
         {
-            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false);
+            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false, !forceSave);
 
             // Only test existing definitions if it is enabled and forceSave isn't set.
             if (providerDefinition.Enable && !forceSave)
@@ -148,13 +148,14 @@ namespace Chaptarr.Api.V1
             return Accepted(_providerFactory.Update(definitionsToUpdate).Select(x => _resourceMapper.ToResource(x)));
         }
 
-        private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate)
+        private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate, bool willRunProviderTest)
         {
             var definition = _resourceMapper.ToModel(providerResource);
+            TProviderDefinition existing = null;
 
             if (providerResource.Id != 0)
             {
-                var existing = _providerFactory.Get(providerResource.Id);
+                existing = _providerFactory.Get(providerResource.Id);
                 var configContract = ProviderConfigTypeCache.Find(definition.ConfigContract) ??
                                      ProviderConfigTypeCache.Find(existing.ConfigContract);
 
@@ -175,7 +176,7 @@ namespace Chaptarr.Api.V1
 
             if (validate && (definition.Enable || forceValidate))
             {
-                Validate(definition, includeWarnings);
+                Validate(definition, includeWarnings, existing, willRunProviderTest);
             }
 
             return definition;
@@ -226,7 +227,7 @@ namespace Chaptarr.Api.V1
         [Consumes("application/json")]
         public object Test([FromBody] TProviderResource providerResource, [FromQuery] bool forceTest = false)
         {
-            var providerDefinition = GetDefinition(providerResource, true, !forceTest, true);
+            var providerDefinition = GetDefinition(providerResource, true, !forceTest, true, true);
 
             // Run the provider test and throw on real errors (including warnings, per existing behavior)
             Test(providerDefinition, true);
@@ -278,7 +279,7 @@ namespace Chaptarr.Api.V1
         [Produces("application/json")]
         public IActionResult RequestAction(string name, [FromBody] TProviderResource resource)
         {
-            var providerDefinition = GetDefinition(resource, false, false, false);
+            var providerDefinition = GetDefinition(resource, false, false, false, false);
 
             var query = Request.Query.ToDictionary(x => x.Key, x => x.Value.ToString());
 
@@ -287,7 +288,7 @@ namespace Chaptarr.Api.V1
             return Content(data.ToJson(), "application/json");
         }
 
-        private void Validate(TProviderDefinition definition, bool includeWarnings)
+        protected virtual void Validate(TProviderDefinition definition, bool includeWarnings, TProviderDefinition existing, bool willRunProviderTest)
         {
             var validationResult = definition.Settings.Validate();
 

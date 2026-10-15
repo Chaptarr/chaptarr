@@ -20,11 +20,12 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(EditionPinPolicy.FindConflictingProtectedEdition(book, new List<Edition> { pinned, matched }, pinned.Id), Is.Null);
         }
 
-        [Test]
-        public void manual_add_remains_protected_when_any_edition_is_otherwise_allowed()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void manual_add_remains_protected_when_any_edition_is_otherwise_allowed(bool selected)
         {
             var book = new Book { Id = 1, AnyEditionOk = true };
-            var preserved = new Edition { Id = 10, BookId = book.Id, Monitored = true, ManualAdd = true };
+            var preserved = new Edition { Id = 10, BookId = book.Id, Monitored = selected, ManualAdd = true };
             var matched = new Edition { Id = 11, BookId = book.Id };
 
             var conflict = EditionPinPolicy.FindConflictingProtectedEdition(book, new List<Edition> { preserved, matched }, matched.Id);

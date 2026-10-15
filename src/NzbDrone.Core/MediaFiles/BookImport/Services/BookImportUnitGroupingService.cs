@@ -31,24 +31,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
     /// </summary>
     public static class BookImportUnitGroupingService
     {
-        internal static readonly IReadOnlySet<string> HardNoiseTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            // English stopwords (minimal)
-            "a", "an", "and", "or", "the", "of", "in", "on", "at", "by", "for", "with", "to", "from", "as",
-
-            // Common audiobook/ebook/file noise
-            "audiobook", "audio", "ebook", "e-book", "unabridged", "abridged",
-            "narrated", "narrator", "narration", "read", "performed",
-            "disc", "cd", "track", "trk",
-
-            // Common edition descriptors
-            "complete", "special", "deluxe", "expanded", "illustrated", "anniversary",
-            "collector", "collectors", "collection",
-
-            // Common subtitle boilerplate
-            "novel"
-        };
-
         internal static readonly IReadOnlySet<string> StructuralTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "part", "pt",
@@ -402,7 +384,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return tokens.All(token =>
                 token.All(char.IsDigit) ||
                 UnicodeComparisonNormalizer.TryParseRomanNumeral(token, out _) ||
-                HardNoiseTokens.Contains(token) ||
                 StructuralTokens.Contains(token));
         }
 

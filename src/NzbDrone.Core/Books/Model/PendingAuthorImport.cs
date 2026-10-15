@@ -20,6 +20,16 @@ namespace NzbDrone.Core.Books
         Failed
     }
 
+    public class RequestedNarration
+    {
+        public BookMediaType MediaType { get; set; } = BookMediaType.Audiobook;
+        public string WorkProviderId { get; set; }
+        public string EditionProviderId { get; set; }
+        public List<string> NarratorNames { get; set; }
+        public bool RequiresEdition { get; set; }
+        public bool Search { get; set; }
+    }
+
     public class PendingAuthorImport : ModelBase
     {
         // Core identification
@@ -47,6 +57,7 @@ namespace NzbDrone.Core.Books
         public string AudiobookRootFolderPath { get; set; }
         public string AudiobookBooksToMonitor { get; set; } // JSON serialized List<string>
         public string AudiobookBooksToSearch { get; set; } // JSON serialized List<string>
+        public string AudiobookNarrations { get; set; } // JSON serialized List<RequestedNarration>
         public string AudiobookTags { get; set; } // JSON serialized HashSet<int>
 
         // Ebook configuration
@@ -106,7 +117,8 @@ namespace NzbDrone.Core.Books
 
         public bool IsComplete()
         {
-            return OverallStatus == PendingImportStatus.Succeeded ||
+            return OverallStatus == PendingImportStatus.PartialSuccess ||
+                   OverallStatus == PendingImportStatus.Succeeded ||
                    OverallStatus == PendingImportStatus.Failed;
         }
 
@@ -114,10 +126,12 @@ namespace NzbDrone.Core.Books
         {
             var audiobookDone = AudiobookStatus == PendingImportStatus.NotRequested ||
                                AudiobookStatus == PendingImportStatus.Succeeded ||
+                               AudiobookStatus == PendingImportStatus.PartialSuccess ||
                                AudiobookStatus == PendingImportStatus.Failed;
 
             var ebookDone = EbookStatus == PendingImportStatus.NotRequested ||
                            EbookStatus == PendingImportStatus.Succeeded ||
+                           EbookStatus == PendingImportStatus.PartialSuccess ||
                            EbookStatus == PendingImportStatus.Failed;
 
             var audiobookSuccess = AudiobookStatus == PendingImportStatus.NotRequested ||
@@ -128,7 +142,11 @@ namespace NzbDrone.Core.Books
 
             if (audiobookDone && ebookDone)
             {
-                if (audiobookSuccess && ebookSuccess)
+                if (AudiobookStatus == PendingImportStatus.PartialSuccess || EbookStatus == PendingImportStatus.PartialSuccess)
+                {
+                    OverallStatus = PendingImportStatus.PartialSuccess;
+                }
+                else if (audiobookSuccess && ebookSuccess)
                 {
                     OverallStatus = PendingImportStatus.Succeeded;
                 }

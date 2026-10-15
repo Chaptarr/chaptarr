@@ -18,4 +18,8 @@
     <ProjectReference Include="..\NzbDrone.Mono\Chaptarr.Mono.csproj" />
     <ProjectReference Include="..\NzbDrone.Windows\Chaptarr.Windows.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\Chaptarr.Api.V1\openapi.json" Link="Fixtures\openapi.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\ProviderSearch\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

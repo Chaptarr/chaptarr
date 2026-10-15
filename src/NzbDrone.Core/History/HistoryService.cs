@@ -23,11 +23,11 @@ namespace NzbDrone.Core.History
     {
         PagingSpec<EntityHistory> Paged(PagingSpec<EntityHistory> pagingSpec);
         PagingSpec<EntityHistory> Paged(PagingSpec<EntityHistory> pagingSpec, BookMediaType? mediaType);
-        EntityHistory MostRecentForBook(int bookId);
         EntityHistory MostRecentForDownloadId(string downloadId);
         EntityHistory Get(int historyId);
         List<EntityHistory> GetByAuthor(int authorId, EntityHistoryEventType? eventType);
         List<EntityHistory> GetByBook(int bookId, EntityHistoryEventType? eventType);
+        List<EntityHistory> GetAcquisitionHistory(IEnumerable<int> bookIds);
         List<EntityHistory> Find(string downloadId, EntityHistoryEventType eventType);
         List<EntityHistory> FindByDownloadId(string downloadId);
         List<EntityHistory> FindByDownloadIds(IEnumerable<string> downloadIds, EntityHistoryEventType eventType);
@@ -88,11 +88,6 @@ namespace NzbDrone.Core.History
                 : _historyRepository.GetPaged(pagingSpec);
         }
 
-        public EntityHistory MostRecentForBook(int bookId)
-        {
-            return _historyRepository.MostRecentForBook(bookId);
-        }
-
         public EntityHistory MostRecentForDownloadId(string downloadId)
         {
             downloadId = NormalizeDownloadId(downloadId);
@@ -107,6 +102,11 @@ namespace NzbDrone.Core.History
         public List<EntityHistory> GetByAuthor(int authorId, EntityHistoryEventType? eventType)
         {
             return _historyRepository.GetByAuthor(authorId, eventType);
+        }
+
+        public List<EntityHistory> GetAcquisitionHistory(IEnumerable<int> bookIds)
+        {
+            return _historyRepository.GetAcquisitionHistory(bookIds);
         }
 
         public List<EntityHistory> GetByBook(int bookId, EntityHistoryEventType? eventType)
@@ -193,6 +193,9 @@ namespace NzbDrone.Core.History
         public void Handle(BookGrabbedEvent message)
         {
             var historyToAdd = new List<EntityHistory>();
+            var grabbedAt = DateTime.UtcNow;
+            var narratorEvidence = message.Book.Release?.NarratorEvidenceFields?.Count > 0
+                ? message.Book.Release.NarratorEvidenceFields.ToJson() : null;
             foreach (var book in message.Book.GetBooksMatchingReleaseMediaType())
             {
                 var grabQuality = ResolveGrabbedQuality(message.Book.ParsedBookInfo?.Quality, message.Book.Release);
@@ -206,10 +209,15 @@ namespace NzbDrone.Core.History
                     }
                 }
 
+                if (message.Book.AlternativeCopies && message.Book.TargetEditionIds.TryGetValue(book.Id, out var capturedEditionId))
+                {
+                    editionId = capturedEditionId;
+                }
+
                 var history = new EntityHistory
                 {
                     EventType = EntityHistoryEventType.Grabbed,
-                    Date = DateTime.UtcNow,
+                    Date = grabbedAt,
                     Quality = ResolveHistoryQuality(grabQuality, book, message.Book.Release),
                     SourceTitle = message.Book.Release.Title,
                     AuthorId = book.AuthorId,
@@ -230,12 +238,19 @@ namespace NzbDrone.Core.History
                 history.Data.Add("Size", message.Book.Release.Size.ToString());
                 history.Data.Add("DownloadUrl", message.Book.Release.DownloadUrl);
                 history.Data.Add("Guid", message.Book.Release.Guid);
+                history.Data.Add(EntityHistory.INDEXER_ID, message.Book.Release.IndexerId.ToString());
+                history.Data.Add(EntityHistory.ALTERNATIVE_COPIES, message.Book.AlternativeCopies.ToString());
                 history.Data.Add("Protocol", ((int)message.Book.Release.DownloadProtocol).ToString());
                 var explicitInteractiveGrab = message.Book.ReleaseSource == ReleaseSourceType.InteractiveSearch;
                 history.Data.Add("DownloadForced", (explicitInteractiveGrab || !message.Book.DownloadAllowed).ToString());
-                history.Data.Add("CustomFormatScore", message.Book.CustomFormatScore.ToString());
+                history.Data.Add("CustomFormatScore", message.Book.TargetCustomFormatScores.TryGetValue(book.Id, out var targetScore)
+                    ? targetScore.ToString() : message.Book.CustomFormatScore.ToString());
                 history.Data.Add("ReleaseSource", message.Book.ReleaseSource.ToString());
                 history.Data.Add("IndexerFlags", message.Book.Release.IndexerFlags.ToString());
+                if (narratorEvidence != null)
+                {
+                    history.Data[nameof(ReleaseInfo.NarratorEvidenceFields)] = narratorEvidence;
+                }
 
                 if (!message.Book.ParsedBookInfo.ReleaseHash.IsNullOrWhiteSpace())
                 {
@@ -318,8 +333,15 @@ namespace NzbDrone.Core.History
 
             var statusMessages = message.TrackedDownload.StatusMessages.ToJson();
             var downloadId = NormalizeDownloadId(message.TrackedDownload.DownloadItem.DownloadId);
+            var previousHistory = message.PreviousHistory ?? FindByDownloadId(downloadId);
+            var persistedHistory = message.PersistedHistory;
+            var books = message.TrackedDownload.RemoteBook.GetBooksMatchingReleaseMediaType();
+            if (persistedHistory?.AuthorId > 0)
+            {
+                books = books.Where(book => book.AuthorId == persistedHistory.AuthorId).ToList();
+            }
 
-            foreach (var book in message.TrackedDownload.RemoteBook.GetBooksMatchingReleaseMediaType())
+            foreach (var book in books)
             {
                 var editionId = 0;
                 if (book.Editions != null)
@@ -334,12 +356,12 @@ namespace NzbDrone.Core.History
                 var history = new EntityHistory
                 {
                     EventType = EntityHistoryEventType.BookImportIncomplete,
-                    Date = DateTime.UtcNow,
-                    Quality = ResolveImportIncompleteQuality(message, book, downloadId),
+                    Date = message.Date,
+                    Quality = ResolveImportIncompleteQuality(message, book, previousHistory),
                     SourceTitle = message.TrackedDownload.DownloadItem.Title,
                     AuthorId = book.AuthorId,
                     BookId = book.Id,
-                    EditionId = editionId,
+                    EditionId = message.PersistedHistory == null ? editionId : 0,
                     DownloadId = downloadId
                 };
 
@@ -347,7 +369,18 @@ namespace NzbDrone.Core.History
                 history.Data.Add("ReleaseGroup", message.TrackedDownload?.RemoteBook?.ParsedBookInfo?.ReleaseGroup);
                 history.Data.Add("IndexerFlags", message.TrackedDownload?.RemoteBook?.Release?.IndexerFlags.ToString());
 
-                if (IsDuplicateImportIncomplete(history, statusMessages))
+                if (message.PersistedHistory != null)
+                {
+                    history.Data = new Dictionary<string, string>(message.PersistedHistory.Data);
+                    if (previousHistory.Any(existing => existing.BookId == book.Id &&
+                        existing.EventType == EntityHistoryEventType.BookImportIncomplete &&
+                        existing.Date == history.Date))
+                    {
+                        continue;
+                    }
+                }
+
+                else if (IsDuplicateImportIncomplete(history, statusMessages, previousHistory))
                 {
                     _logger.Debug("Skipping duplicate import incomplete history for download {0}, book {1}", downloadId, book.Id);
                     continue;
@@ -355,32 +388,26 @@ namespace NzbDrone.Core.History
 
                 _historyRepository.Insert(history);
             }
+
+            // Keep unresolved recovery pending until every target has durable history.
+            var targetBook = books.FirstOrDefault();
+            if (persistedHistory?.BookId == 0 && targetBook?.Id > 0)
+            {
+                persistedHistory.AuthorId = targetBook.AuthorId;
+                persistedHistory.BookId = targetBook.Id;
+                _downloadHistoryRepository.Update(persistedHistory);
+            }
         }
 
-        private QualityModel ResolveImportIncompleteQuality(BookImportIncompleteEvent message, Book book, string downloadId)
+        private static QualityModel ResolveImportIncompleteQuality(BookImportIncompleteEvent message, Book book, List<EntityHistory> previousHistory)
         {
             var parsedQuality = message.TrackedDownload.RemoteBook.ParsedBookInfo?.Quality;
-            if (IsKnownQuality(parsedQuality))
-            {
-                return parsedQuality;
-            }
-
-            if (!downloadId.IsNullOrWhiteSpace())
-            {
-                var grabbedQuality = _historyRepository.FindByDownloadId(downloadId)
-                    .Where(h => h.EventType == EntityHistoryEventType.Grabbed)
-                    .Where(h => book == null || h.BookId == book.Id || h.AuthorId == book.AuthorId)
-                    .OrderByDescending(h => h.Date)
-                    .Select(h => h.Quality)
-                    .FirstOrDefault(IsKnownQuality);
-
-                if (grabbedQuality != null)
-                {
-                    return grabbedQuality;
-                }
-            }
-
-            return ResolveHistoryQuality(parsedQuality, book, message.TrackedDownload.RemoteBook?.Release);
+            return IsKnownQuality(parsedQuality)
+                ? parsedQuality
+                : previousHistory.Where(h => h.EventType == EntityHistoryEventType.Grabbed &&
+                    (h.BookId == book.Id || h.AuthorId == book.AuthorId))
+                    .OrderByDescending(h => h.Date).Select(h => h.Quality).FirstOrDefault(IsKnownQuality)
+                    ?? ResolveHistoryQuality(parsedQuality, book, message.TrackedDownload.RemoteBook.Release);
         }
 
         private static bool IsKnownQuality(QualityModel quality)
@@ -409,14 +436,9 @@ namespace NzbDrone.Core.History
             return quality ?? new QualityModel();
         }
 
-        private bool IsDuplicateImportIncomplete(EntityHistory history, string statusMessages)
+        private static bool IsDuplicateImportIncomplete(EntityHistory history, string statusMessages, List<EntityHistory> previousHistory)
         {
-            if (history.DownloadId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            var latestMatchingHistory = FindByDownloadId(history.DownloadId)
+            var latestMatchingHistory = previousHistory
                 .Where(existing =>
                     existing.BookId == history.BookId &&
                     existing.EditionId == history.EditionId)
@@ -448,6 +470,9 @@ namespace NzbDrone.Core.History
                 downloadId = FindDownloadId(message);
             }
 
+            downloadId = NormalizeDownloadId(downloadId);
+            var grabbedHistory = downloadId == null ? new List<EntityHistory>() : _historyRepository.FindByDownloadId(downloadId);
+
             var history = new EntityHistory
             {
                 EventType = EntityHistoryEventType.BookFileImported,
@@ -459,7 +484,7 @@ namespace NzbDrone.Core.History
                 AuthorId = ResolveImportedAuthorId(message),
                 BookId = ResolveImportedBookId(message),
                 EditionId = message.ImportedBook?.EditionId ?? 0,
-                DownloadId = NormalizeDownloadId(downloadId)
+                DownloadId = downloadId
             };
 
             history.Data.Add("FileId", (message.ImportedBook?.Id ?? 0).ToString());
@@ -468,11 +493,39 @@ namespace NzbDrone.Core.History
             history.Data.Add("DownloadClient", message.DownloadClientInfo?.Type);
             history.Data.Add("DownloadClientName", message.DownloadClientInfo?.Name);
             history.Data.Add("ReleaseGroup", message.BookInfo?.ReleaseGroup);
-            history.Data.Add("CustomFormatScore", FindGrabbedCustomFormatScore(downloadId, history.BookId, history.AuthorId));
+            history.Data.Add("CustomFormatScore", FindGrabbedCustomFormatScore(grabbedHistory, history.BookId, history.AuthorId, message.BookInfo?.AlternativeCopyGrabDate));
             history.Data.Add("Size", (message.BookInfo?.Size ?? message.ImportedBook?.Size ?? 0).ToString());
             history.Data.Add("IndexerFlags", message.BookInfo?.IndexerFlags.ToString());
+            if (message.BookInfo?.GeneratedConversionSourcePaths?.Count > 0)
+            {
+                history.Data.Add("SourcePaths", message.BookInfo.GeneratedConversionSourcePaths.ToJson());
+            }
 
             _historyRepository.Insert(history);
+
+            var incompatible = message.BookInfo?.AlternativeCopyIncompatibleEditionIds;
+            var capturedDate = message.BookInfo?.AlternativeCopyGrabDate;
+            if (incompatible?.Count > 0 && capturedDate.HasValue)
+            {
+                var captured = grabbedHistory.Where(row => row.EventType == EntityHistoryEventType.Grabbed &&
+                    row.Date == capturedDate.Value && row.AuthorId == history.AuthorId &&
+                    bool.TryParse(row.GetDataValue(EntityHistory.ALTERNATIVE_COPIES), out var alternatives) && alternatives).ToList();
+                if (captured.Any(row => row.BookId == history.BookId && row.EditionId == history.EditionId))
+                {
+                    var changed = captured.Where(row => row.BookId != history.BookId &&
+                        incompatible.TryGetValue(row.BookId, out var editionId) && editionId > 0 && row.EditionId == editionId &&
+                        !(bool.TryParse(row.GetDataValue(EntityHistory.ALTERNATIVE_COPY_INCOMPATIBLE), out var proved) && proved)).ToList();
+                    foreach (var row in changed)
+                    {
+                        row.Data[EntityHistory.ALTERNATIVE_COPY_INCOMPATIBLE] = bool.TrueString;
+                    }
+
+                    if (changed.Count > 0)
+                    {
+                        _historyRepository.UpdateMany(changed);
+                    }
+                }
+            }
         }
 
         private static int ResolveImportedAuthorId(TrackImportedEvent message)
@@ -492,18 +545,13 @@ namespace NzbDrone.Core.History
                    ?? 0;
         }
 
-        private string FindGrabbedCustomFormatScore(string downloadId, int bookId, int authorId)
+        private static string FindGrabbedCustomFormatScore(List<EntityHistory> history, int bookId, int authorId, DateTime? capturedDate)
         {
-            if (downloadId.IsNullOrWhiteSpace())
-            {
-                return null;
-            }
-
-            return _historyRepository.FindByDownloadId(NormalizeDownloadId(downloadId))
+            return history
                 .Where(h => h.EventType == EntityHistoryEventType.Grabbed)
-                .Where(h => h.BookId == bookId || h.AuthorId == authorId)
+                .Where(h => capturedDate.HasValue ? h.Date == capturedDate.Value && h.BookId == bookId : h.BookId == bookId || h.AuthorId == authorId)
                 .OrderByDescending(h => h.Date)
-                .Select(h => h.Data.GetValueOrDefault("CustomFormatScore") ?? h.Data.GetValueOrDefault("customFormatScore"))
+                .Select(h => h.GetDataValue("CustomFormatScore"))
                 .FirstOrDefault(score => score.IsNotNullOrWhiteSpace());
         }
 
@@ -936,22 +984,7 @@ namespace NzbDrone.Core.History
 
         private static bool TryGetDataValue(IDictionary<string, string> data, string key, out string value)
         {
-            value = null;
-            if (data == null)
-            {
-                return false;
-            }
-
-            foreach (var pair in data)
-            {
-                if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
-                {
-                    value = pair.Value;
-                    return true;
-                }
-            }
-
-            return false;
+            return EntityHistory.TryGetDataValue(data, key, out value);
         }
 
         private static void RemoveDataKey(IDictionary<string, string> data, string key)

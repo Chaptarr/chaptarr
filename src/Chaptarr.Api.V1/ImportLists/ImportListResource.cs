@@ -15,6 +15,7 @@ namespace Chaptarr.Api.V1.ImportLists
         public NewItemMonitorTypes MonitorNewItems { get; set; }
         public int QualityProfileId { get; set; }
         public int MetadataProfileId { get; set; }
+        public ImportListMonitoringOptions MonitoringOptions { get; set; }
         public ImportListType ListType { get; set; }
         public TimeSpan MinRefreshInterval { get; set; }
 
@@ -41,6 +42,7 @@ namespace Chaptarr.Api.V1.ImportLists
             resource.MonitorNewItems = definition.MonitorNewItems;
             resource.QualityProfileId = definition.QualityProfileId;
             resource.MetadataProfileId = definition.MetadataProfileId;
+            resource.MonitoringOptions = definition.GetMonitoringOptions();
             resource.ListType = definition.ListType;
             resource.MinRefreshInterval = definition.MinRefreshInterval;
 
@@ -74,6 +76,7 @@ namespace Chaptarr.Api.V1.ImportLists
             definition.MonitorNewItems = resource.MonitorNewItems;
             definition.QualityProfileId = resource.QualityProfileId;
             definition.MetadataProfileId = resource.MetadataProfileId;
+            definition.MonitoringOptions = resource.MonitoringOptions;
             definition.ListType = resource.ListType;
             definition.MinRefreshInterval = resource.MinRefreshInterval;
 

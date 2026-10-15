@@ -33,7 +33,9 @@ namespace NzbDrone.Core.Books
 {
     public interface IRefreshAuthorService
     {
-        bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor) => false;
+        bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor);
+        bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds);
+        bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds);
     }
 
     public class RefreshAuthorService : RefreshEntityServiceBase<Author, Book>,
@@ -65,6 +67,8 @@ namespace NzbDrone.Core.Books
         private readonly Logger _logger;
         private BookRefreshMatchingIndex _bookRefreshMatchingIndex;
         private List<Book> _authorRefreshRehomeBlueprint;
+        private IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> _requestedNarrationIds;
+        private IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> _requestedNarrationWorkIds;
 
         private static readonly SemaphoreSlim AuthorMetadataRefreshGate = new SemaphoreSlim(1, 1);
         // SMS /authors/diff hard-rejects requests above 10,000 items and caps the body at 1MB;
@@ -316,7 +320,10 @@ namespace NzbDrone.Core.Books
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                return RefreshEntityInfo(author, null, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+                lock (BookService.GetWantedEditionLock(author.Id))
+                {
+                    return RefreshEntityInfo(author, null, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+                }
             }
             finally
             {
@@ -325,7 +332,12 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor)
+        public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor) => ReconcileAuthorBlob(localAuthor, authoritativeRemoteAuthor, null);
+
+        public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds)
+            => ReconcileAuthorBlob(localAuthor, authoritativeRemoteAuthor, requestedNarrationIds, null);
+
+        public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds)
         {
             if (localAuthor?.Id <= 0 || authoritativeRemoteAuthor == null)
             {
@@ -336,12 +348,22 @@ namespace NzbDrone.Core.Books
             using var refreshGate = EnterAuthorMetadataRefreshGate(
                 $"direct reconciliation for author '{localAuthor.Name}'", CancellationToken.None);
 
-            return RefreshEntityInfoIfRemoteDataAvailable(
-                localAuthor,
-                authoritativeRemoteAuthor,
-                forceChildRefresh: true,
-                forceUpdateFileTags: false,
-                lastUpdate: null);
+            _requestedNarrationIds = requestedNarrationIds;
+            _requestedNarrationWorkIds = requestedNarrationWorkIds;
+            try
+            {
+                return RefreshEntityInfoIfRemoteDataAvailable(
+                    localAuthor,
+                    authoritativeRemoteAuthor,
+                    forceChildRefresh: true,
+                    forceUpdateFileTags: false,
+                    lastUpdate: null);
+            }
+            finally
+            {
+                _requestedNarrationIds = null;
+                _requestedNarrationWorkIds = null;
+            }
         }
 
         protected override RemoteData GetRemoteData(Author local, List<Author> remote, Author data)
@@ -503,7 +525,9 @@ namespace NzbDrone.Core.Books
                         ebookMetadataProfileIdOverride: null,
                         editionSelector: null,
                         retainEditions: true,
-                        logContext: "GetRemoteChildren");
+                        logContext: "GetRemoteChildren",
+                        requestedNarrationIds: _requestedNarrationIds,
+                        requestedNarrationWorkIds: _requestedNarrationWorkIds);
                 }
 
                 internal static List<Book> NormalizeRemoteBooks(
@@ -517,7 +541,9 @@ namespace NzbDrone.Core.Books
                     int? ebookMetadataProfileIdOverride,
                     IEditionSelector editionSelector,
                     bool retainEditions,
-                    string logContext)
+                    string logContext,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds = null,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds = null)
                 {
                     var allBooks = (remoteBooks ?? Enumerable.Empty<Book>())
                         .Where(book => book != null)
@@ -539,7 +565,7 @@ namespace NzbDrone.Core.Books
                         metadataProfileService,
                         logger,
                         audiobookMetadataProfileIdOverride,
-                        ebookMetadataProfileIdOverride);
+                        ebookMetadataProfileIdOverride, requestedNarrationIds, requestedNarrationWorkIds);
 
                     var afterExclusions = ApplyImportListExclusions(profileFiltered, importListExclusionService);
 
@@ -577,7 +603,7 @@ namespace NzbDrone.Core.Books
                         }
 
                         skipped++;
-                        logger?.Error("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
+                        logger?.Debug("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
                             logContext,
                             book?.Title ?? "Unknown",
                             local?.Name ?? "Unknown",
@@ -620,7 +646,9 @@ namespace NzbDrone.Core.Books
                     IMetadataProfileService metadataProfileService,
                     Logger logger,
                     int? audiobookMetadataProfileIdOverride,
-                    int? ebookMetadataProfileIdOverride)
+                    int? ebookMetadataProfileIdOverride,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds)
                 {
                     var profileFiltered = new List<Book>();
                     var audiobookProfileId = audiobookMetadataProfileIdOverride ?? local?.AudiobookMetadataProfileId;
@@ -662,7 +690,9 @@ namespace NzbDrone.Core.Books
                             Series = seriesList.Where(series => series.MediaType == mediaType).ToList()
                         };
 
-                        profileFiltered.AddRange(metadataProfileService.FilterBooks(authorForFilter, profileId.Value));
+                        profileFiltered.AddRange((requestedNarrationIds?.Count > 0 || requestedNarrationWorkIds?.Count > 0)
+                            ? metadataProfileService.FilterBooks(authorForFilter, profileId.Value, requestedNarrationIds, requestedNarrationWorkIds)
+                            : metadataProfileService.FilterBooks(authorForFilter, profileId.Value));
                     }
 
                     FilterMediaType(BookMediaType.Audiobook, audiobookProfileId);
@@ -1994,7 +2024,9 @@ namespace NzbDrone.Core.Books
                 foreach (var group in booksToRefresh.GroupBy(book => _bookRefreshMatchingIndex?.GetMatchedRemotePocket(book), BookReferenceComparer.Instance))
                 {
                     var snapshot = group.Key == null ? remoteChildren : new List<Book> { group.Key };
-                    updated |= _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, titleSlugs);
+                    updated |= _requestedNarrationIds?.Count > 0
+                        ? _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, titleSlugs, _requestedNarrationIds)
+                        : _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, titleSlugs);
                 }
 
                 return updated;
@@ -2994,30 +3026,46 @@ namespace NzbDrone.Core.Books
             try
             {
                 MergeIntoSurvivor(target, source, canonicalId);
-                _authorService.UpdateAuthor(target);
+                _authorService.UpdateAuthor(target, (connection, transaction) =>
+                {
+                    // Persisted secondary aliases remain identity evidence after author consolidation.
+                    var storedAliases = connection.Query<ProviderAlias>(
+                        @"SELECT * FROM ""ProviderAliasIndex""
+                          WHERE ""EntityType"" = 'Author' AND ""Scope"" = 'author'
+                            AND (""EntityId"" = @SourceId OR ""EntityId"" = @TargetId)",
+                        new { SourceId = source.Id, TargetId = target.Id }, transaction);
+                    target.RemoteProviderIds.UnionWith(storedAliases.Select(alias => $"{alias.Provider}:{alias.NormalizedProviderId}"));
+                    source.RemoteProviderIds = AuthorIdentity.GetProviderIdentityTokens(source);
+                    source.RemoteProviderIds.UnionWith(storedAliases.Where(alias => alias.EntityId == source.Id).Select(alias => $"{alias.Provider}:{alias.NormalizedProviderId}"));
+                    MoveAuthorImportExclusions(source, target, connection, transaction);
 
-                using var connection = _mainDatabase.OpenConnection();
-                using var transaction = connection.BeginTransaction();
+                    ReassignAuthorId(connection, transaction, "Books", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "AuthorSeries", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "MetadataFiles", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "OtherFiles", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "DownloadHistory", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "ExtraFiles", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "Blacklist", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "History", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "PendingReleases", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "author_trigrams", source.Id, target.Id);
 
-                ReassignAuthorId(connection, transaction, "Books", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "AuthorSeries", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "MetadataFiles", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "OtherFiles", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "DownloadHistory", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "ExtraFiles", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "Blacklist", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "History", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "PendingReleases", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "author_trigrams", source.Id, target.Id);
+                    MergeSyncMetadata(connection, transaction, source.Id, target.Id, canonicalId);
 
-                MergeSyncMetadata(connection, transaction, source.Id, target.Id, canonicalId);
+                    connection.Execute(
+                        @"INSERT INTO ""ProviderAliasIndex"" (""EntityType"", ""EntityId"", ""Scope"", ""Provider"", ""NormalizedProviderId"", ""CreatedAt"", ""UpdatedAt"")
+                          SELECT ""EntityType"", @TargetId, ""Scope"", ""Provider"", ""NormalizedProviderId"", ""CreatedAt"", ""UpdatedAt""
+                          FROM ""ProviderAliasIndex"" WHERE ""EntityType"" = 'Author' AND ""EntityId"" = @SourceId
+                          ON CONFLICT (""EntityType"", ""EntityId"", ""Scope"", ""Provider"", ""NormalizedProviderId"") DO NOTHING;
+                          DELETE FROM ""ProviderAliasIndex"" WHERE ""EntityType"" = 'Author' AND ""EntityId"" = @SourceId;",
+                        new { SourceId = source.Id, TargetId = target.Id },
+                        transaction);
 
-                connection.Execute(
-                    @"DELETE FROM ""Authors"" WHERE ""Id"" = @Id;",
-                    new { source.Id },
-                    transaction);
-
-                transaction.Commit();
+                    connection.Execute(
+                        @"DELETE FROM ""Authors"" WHERE ""Id"" = @Id;",
+                        new { source.Id },
+                        transaction);
+                });
                 _authorService.ClearAuthorCache();
 
                 reason = null;
@@ -3066,22 +3114,28 @@ namespace NzbDrone.Core.Books
 
             survivor.LastSelectedMediaType ??= source.LastSelectedMediaType;
 
-            MoveAuthorImportExclusions(source, survivor);
         }
 
-        private void MoveAuthorImportExclusions(Author source, Author target)
+        private void MoveAuthorImportExclusions(Author source, Author target, IDbConnection connection = null, IDbTransaction transaction = null)
         {
-            foreach (var scope in _importListExclusionService.FindByForeignId(AuthorIdentity.GetProviderIdentityTokenList(source))
-                .Select(exclusion => exclusion.MediaType).Distinct())
+            var providerIds = AuthorIdentity.GetProviderIdentityTokenList(source);
+            var exclusions = connection == null
+                ? _importListExclusionService.FindByForeignId(providerIds)
+                : _importListExclusionService.FindByForeignId(providerIds, connection, transaction);
+            foreach (var scope in exclusions.Select(exclusion => exclusion.MediaType).Distinct())
             {
-                _importListExclusionService.AddAuthorExclusions(new[] { target }, scope);
+                if (connection == null) _importListExclusionService.AddAuthorExclusions(new[] { target }, scope);
+                else _importListExclusionService.AddAuthorExclusions(new[] { target }, scope, connection, transaction);
             }
         }
 
         private void MergeSyncMetadata(IDbConnection connection, IDbTransaction transaction, int sourceAuthorId, int targetAuthorId, string canonicalId)
         {
-            var sourceMetadata = _syncMetadataService.GetSyncMetadata(sourceAuthorId);
-            var targetMetadata = _syncMetadataService.GetSyncMetadata(targetAuthorId);
+            var metadata = connection.Query<AuthorSyncMetadata>(
+                @"SELECT * FROM ""AuthorSyncMetadata"" WHERE ""AuthorId"" = @SourceId OR ""AuthorId"" = @TargetId",
+                new { SourceId = sourceAuthorId, TargetId = targetAuthorId }, transaction);
+            var sourceMetadata = metadata.SingleOrDefault(row => row.AuthorId == sourceAuthorId);
+            var targetMetadata = metadata.SingleOrDefault(row => row.AuthorId == targetAuthorId);
 
             if (sourceMetadata == null && targetMetadata == null)
             {

@@ -8,6 +8,8 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -54,7 +56,7 @@ namespace Chaptarr.Core.Test.Books
             public Book Single() => throw new NotImplementedException();
             public Book SingleOrDefault() => throw new NotImplementedException();
             public PagingSpec<Book> GetPaged(PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
-            public List<Book> GetBooks(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooks(int authorId) => _booksByAuthor;
             public List<Book> GetLastBooks(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetNextBooks(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => _booksByAuthor;
@@ -88,12 +90,13 @@ namespace Chaptarr.Core.Test.Books
 
             public Author GetAuthor(int authorId) => _author;
 
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
+
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -101,6 +104,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
@@ -135,11 +139,14 @@ namespace Chaptarr.Core.Test.Books
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(int bookId) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => new List<Edition>();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private sealed class StubSeriesBookLinkRepository : ISeriesBookLinkRepository
@@ -191,6 +198,13 @@ namespace Chaptarr.Core.Test.Books
                 seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
+        }
+
+        private static Book ParseTitle(IBookService books, Author author, string title)
+        {
+            var parser = new ParsingService(null, books, null, null, LogManager.GetCurrentClassLogger());
+            var matches = parser.GetBooks(new ParsedBookInfo { BookTitle = title }, author);
+            return matches.Count == 1 ? matches[0] : null;
         }
 
         [Test]
@@ -248,7 +262,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void find_by_title_inexact_should_return_book_with_author_loaded()
+        public void parsing_title_lookup_should_return_book_with_author_loaded()
         {
             var bareBook = new Book
             {
@@ -267,7 +281,7 @@ namespace Chaptarr.Core.Test.Books
 
             var subject = CreateSubject(new StubBookRepository(bareBook, new List<Book> { bareBook }), new StubAuthorService(author));
 
-            var result = subject.FindByTitleInexact(1189, "Infinite Shores");
+            var result = ParseTitle(subject, author, "Infinite Shores");
 
             Assert.That(result, Is.Not.Null);
             Assert.That(result.Author, Is.SameAs(author));
@@ -275,7 +289,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void find_by_title_inexact_should_match_containment_titles()
+        public void parsing_title_lookup_should_reject_unattested_subtitle_omission()
         {
             var bareBook = new Book
             {
@@ -294,15 +308,13 @@ namespace Chaptarr.Core.Test.Books
 
             var subject = CreateSubject(new StubBookRepository(bareBook, new List<Book> { bareBook }), new StubAuthorService(author));
 
-            var result = subject.FindByTitleInexact(1189, "Mistborn");
+            var result = ParseTitle(subject, author, "Mistborn");
 
-            Assert.That(result, Is.Not.Null);
-            Assert.That(result.Title, Is.EqualTo("Mistborn: The Final Empire"));
-            Assert.That(result.Author, Is.SameAs(author));
+            Assert.That(result, Is.Null);
         }
 
         [Test]
-        public void find_by_title_inexact_should_match_main_title_without_series_suffix()
+        public void parsing_title_lookup_should_preserve_unattested_numeric_title_suffix()
         {
             var bareBook = new Book
             {
@@ -321,11 +333,9 @@ namespace Chaptarr.Core.Test.Books
 
             var subject = CreateSubject(new StubBookRepository(bareBook, new List<Book> { bareBook }), new StubAuthorService(author));
 
-            var result = subject.FindByTitleInexact(1189, "The Blade Itself");
+            var result = ParseTitle(subject, author, "The Blade Itself");
 
-            Assert.That(result, Is.Not.Null);
-            Assert.That(result.Title, Is.EqualTo("The Blade Itself Book 1"));
-            Assert.That(result.Author, Is.SameAs(author));
+            Assert.That(result, Is.Null);
         }
     }
 }

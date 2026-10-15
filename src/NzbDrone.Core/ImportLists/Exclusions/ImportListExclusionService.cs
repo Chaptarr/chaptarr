@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using FluentValidation;
 using FluentValidation.Results;
@@ -16,12 +17,14 @@ namespace NzbDrone.Core.ImportLists.Exclusions
         List<ImportListExclusion> All();
         void ValidateAuthorExclusions(IEnumerable<Author> authors);
         void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null);
+        void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, IDbConnection connection, IDbTransaction transaction);
         void Delete(int id);
         void Delete(List<int> ids);
         void Delete(string foreignId);
         ImportListExclusion Get(int id);
         ImportListExclusion FindByForeignId(string foreignId);
         List<ImportListExclusion> FindByForeignId(List<string> foreignIds);
+        List<ImportListExclusion> FindByForeignId(List<string> foreignIds, IDbConnection connection, IDbTransaction transaction);
         ImportListExclusion Update(ImportListExclusion importListExclusion);
     }
 
@@ -81,6 +84,9 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             return _repo.FindByForeignId(foreignIds);
         }
 
+        public List<ImportListExclusion> FindByForeignId(List<string> foreignIds, IDbConnection connection, IDbTransaction transaction) =>
+            _repo.FindByForeignId(foreignIds, connection, transaction);
+
         public List<ImportListExclusion> All()
         {
             return _repo.All().ToList();
@@ -100,7 +106,10 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             }
         }
 
-        public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null)
+        public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) =>
+            AddAuthorExclusions(authors, mediaType, null, null);
+
+        public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, IDbConnection connection, IDbTransaction transaction)
         {
             var selectedAuthors = (authors ?? Enumerable.Empty<Author>())
                 .Where(author => author != null)
@@ -112,7 +121,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                     ForeignId = providerId,
                     Name = author.Name,
                     MediaType = mediaType
-                })));
+                })), connection, transaction);
         }
 
         public void HandleAsync(BookDeletedEvent message)
@@ -145,9 +154,9 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             AddScopedExclusions(candidates);
         }
 
-        private void AddScopedExclusions(IEnumerable<ImportListExclusion> candidates)
+        private void AddScopedExclusions(IEnumerable<ImportListExclusion> candidates, IDbConnection connection = null, IDbTransaction transaction = null)
         {
-            var existing = _repo.All().ToList();
+            var existing = (connection == null ? _repo.All() : _repo.All(connection, transaction)).ToList();
             var additions = new List<ImportListExclusion>();
             var removals = new HashSet<int>();
             foreach (var candidate in candidates)
@@ -168,8 +177,16 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             }
 
             // Persist the broader replacement before discarding narrower exclusions.
-            if (additions.Any()) _repo.InsertMany(additions);
-            if (removals.Any()) _repo.DeleteMany(removals.ToList());
+            if (additions.Any())
+            {
+                if (connection == null) _repo.InsertMany(additions);
+                else _repo.InsertMany(additions, connection, transaction);
+            }
+            if (removals.Any())
+            {
+                if (connection == null) _repo.DeleteMany(removals.ToList());
+                else _repo.DeleteMany(removals, connection, transaction);
+            }
         }
     }
 }

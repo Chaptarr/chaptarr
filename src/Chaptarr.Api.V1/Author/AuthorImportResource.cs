@@ -10,6 +10,9 @@ namespace Chaptarr.Api.V1.Author
         [JsonPropertyName("foreignAuthorId")]
         public string ForeignAuthorId { get; set; }
 
+        [JsonPropertyName("authorName")]
+        public string AuthorName { get; set; }
+
         [JsonPropertyName("mediaType")]
         public string MediaType { get; set; }
 

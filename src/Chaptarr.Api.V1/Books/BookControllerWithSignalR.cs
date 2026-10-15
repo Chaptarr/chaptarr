@@ -111,7 +111,7 @@ namespace Chaptarr.Api.V1.Books
                 }
             }
 
-            var resolvedStatsByBookId = statsByBookId ?? BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics());
+            var resolvedStatsByBookId = statsByBookId ?? BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics(books.Select(book => book.AuthorId)));
 
             // Convert books to resources. Statistics are passed before mapping so narrator gating can
             // use file counts even when lean list endpoints intentionally skip BookFiles hydration.

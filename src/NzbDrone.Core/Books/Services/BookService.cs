@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Threading;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -74,6 +77,7 @@ namespace NzbDrone.Core.Books
         Book GetBook(int bookId);
         List<Book> GetBooks(IEnumerable<int> bookIds);
         List<Book> GetExistingBooks(IEnumerable<int> bookIds) => GetBooks(bookIds);
+        List<Book> GetBooksForLookup(IEnumerable<int> bookIds) => throw new NotImplementedException();
         List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false);
         List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds);
         List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds);
@@ -82,16 +86,14 @@ namespace NzbDrone.Core.Books
         List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
         Book AddBook(Book newBook, bool doRefresh = true);
         Book FindBySlug(string titleSlug);
-        Book FindByTitle(int authorId, string title);
-        Book FindByTitleInexact(int authorId, string title);
             Book FindByGoodreadsId(string goodreadsId);
             Book FindByProviderId(string provider, string providerId);
             Book FindByProviderId(string provider, string providerId, BookMediaType mediaType);
             List<Book> FindAllByProviderId(string provider, string providerId, BookMediaType mediaType);
+        Dictionary<(string Scope, string Provider, string Id), List<int>> FindBookIdsByProviderIds(IEnumerable<(string Scope, string Provider, string Id)> lookups, Action<(string Scope, string Provider, string Id)> onIncomplete = null) => throw new NotImplementedException();
             List<Book> FindAllByWorkProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             Book FindByISBN(string isbn);
             Book FindByASIN(string asin);
-        List<Book> GetCandidates(int authorId, string title);
         void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false);
         List<Book> GetAllBooks();
         Book UpdateBook(Book book);
@@ -126,12 +128,13 @@ namespace NzbDrone.Core.Books
             List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null);
             List<Book> GetBooksByBaseId(string baseBookId);
             Book AddWantedEdition(int bookId, int editionId);
+        Dictionary<int, Book> AddWantedEditions(List<Edition> requestedEditions, Action<Edition, Exception> onFailure = null) => throw new NotImplementedException();
             bool ShouldSearchForMediaType(Book book, string mediaType);
             BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
-            BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null) => GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
+            BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null) => GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
             PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null);
-            PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null) => GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
-            List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null) => throw new NotImplementedException();
+            PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null) => GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded);
+            List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null, bool? library = null) => throw new NotImplementedException();
             List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null) => throw new NotImplementedException();
         }
 
@@ -186,11 +189,6 @@ namespace NzbDrone.Core.Books
             _logger = logger;
             _editionSelector = editionSelector ?? new EditionSelector(logger);
             _providerAliasService = providerAliasService;
-        }
-
-        private static bool IsSameProviderBackedBook(Book a, Book b)
-        {
-            return a != null && b != null && WorkIdMatcher.WorkIdMatches(a, b);
         }
 
         private void EnsureBookDbFields(Book book)
@@ -256,19 +254,32 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            foreach (var book in books)
+            var batch = books.Where(book => book != null && book.Id > 0).ToList();
+            LoadBookWorkProviderAliases(batch);
+            foreach (var book in batch)
             {
-                RefreshBookProviderAliases(book);
+                WriteBookProviderAliases(book);
             }
         }
 
-        private void RefreshBookProviderAliases(Book book)
+        private void LoadBookWorkProviderAliases(IEnumerable<Book> books)
         {
-            if (_providerAliasService == null || book == null || book.Id <= 0)
+            if (_providerAliasService == null) return;
+            var missing = books.Where(book => book.Id > 0 && book.RemoteProviderIds == null).ToList();
+            if (missing.Count == 0) return;
+            var retained = _providerAliasService.GetAliases("Book", missing.Select(book => book.Id), "work")
+                .ToLookup(alias => alias.EntityId);
+            foreach (var book in missing)
             {
-                return;
+                book.RemoteProviderIds = retained[book.Id].Select(alias => $"{alias.Provider}:{alias.NormalizedProviderId}")
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
             }
+        }
 
+        private void RefreshBookProviderAliases(Book book) => RefreshBookProviderAliases(new[] { book });
+
+        private void WriteBookProviderAliases(Book book)
+        {
             var workIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var editionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -277,7 +288,7 @@ namespace NzbDrone.Core.Books
                 AddProviderId(workIds, id);
             }
 
-            foreach (var id in BookEditionIdentity.GetCanonicalEditionProviderIds(book, _logger, "BookService.RefreshBookProviderAliases"))
+            foreach (var id in (book.Editions ?? new List<Edition>()).SelectMany(BookEditionIdentity.GetEditionProviderIds))
             {
                 AddProviderId(editionIds, id);
             }
@@ -609,11 +620,6 @@ namespace NzbDrone.Core.Books
             return _bookRepository.FindBySlug(titleSlug);
         }
 
-        public Book FindByTitle(int authorId, string title)
-        {
-            return HydrateLookupBook(_bookRepository.FindByTitle(authorId, title));
-        }
-
         public Book FindByGoodreadsId(string goodreadsId)
         {
             return FindByProviderId("gr", goodreadsId);
@@ -787,6 +793,74 @@ namespace NzbDrone.Core.Books
                 return books;
             }
 
+        public Dictionary<(string Scope, string Provider, string Id), List<int>> FindBookIdsByProviderIds(IEnumerable<(string Scope, string Provider, string Id)> lookups, Action<(string Scope, string Provider, string Id)> onIncomplete = null)
+        {
+            var result = lookups.Distinct().ToDictionary(key => key, _ => new List<int>());
+            foreach (var group in result.Keys.GroupBy(key => (key.Scope, key.Provider)))
+            {
+                var keys = group.ToList();
+                var ids = keys.Select(key => key.Id).ToArray();
+                try
+                {
+                    if (group.Key.Scope == "work")
+                    {
+                        var workIds = ids.Select(id => group.Key.Provider == "az" ? ProviderIdHelper.StripPrefix(id) : id).ToArray();
+                        var matches = _bookRepository.FindIdsByProviderIds(group.Key.Provider, workIds);
+                        foreach (var key in keys)
+                        {
+                            var workKey = key.Provider == "az" ? ProviderIdHelper.StripPrefix(key.Id) : key.Id;
+                            result[key].AddRange(matches.GetValueOrDefault(workKey) ?? new List<int>());
+                        }
+                    }
+                    else if (group.Key.Scope == "edition")
+                    {
+                        var matches = _editionService.GetEditionsByProviderIds(group.Key.Provider, ids.Select(ProviderIdHelper.StripPrefix));
+                        foreach (var key in keys)
+                        {
+                            result[key].AddRange((matches.GetValueOrDefault(ProviderIdHelper.StripPrefix(key.Id)) ?? new List<Edition>()).Select(edition => edition.BookId));
+                        }
+                    }
+                }
+                catch (Exception exception)
+                {
+                    foreach (var key in keys) onIncomplete?.Invoke(key);
+                    _logger.Warn(exception, "Local {0} lookup failed for provider {1}; other provider identities will still be checked", group.Key.Scope, group.Key.Provider);
+                }
+
+            }
+
+            if (_providerAliasService != null)
+            {
+                foreach (var group in result.Keys.Where(key => key.Scope is "work" or "edition").GroupBy(key => key.Scope))
+                {
+                    try
+                    {
+                        var aliases = _providerAliasService.FindBookAliases(group.Key, group.Select(key => key.Id))
+                            .ToLookup(alias => (alias.Provider.ToLowerInvariant(), alias.NormalizedProviderId.ToLowerInvariant()));
+                        foreach (var key in group)
+                        {
+                            foreach (var alias in _providerAliasService.NormalizeProviderIds(new[] { key.Id }))
+                            {
+                                result[key].AddRange(aliases[(alias.Provider.ToLowerInvariant(), alias.NormalizedProviderId.ToLowerInvariant())].Select(match => match.EntityId));
+                            }
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        foreach (var key in group) onIncomplete?.Invoke(key);
+                        _logger.Warn(exception, "Local {0} aliases failed; column matches remain available", group.Key);
+                    }
+                }
+            }
+
+            foreach (var key in result.Keys.ToList())
+            {
+                result[key] = result[key].Where(id => id > 0).Distinct().ToList();
+            }
+
+            return result;
+        }
+
             public List<Book> FindAllByWorkProviderId(string provider, string providerId, BookMediaType mediaType)
             {
                 if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(providerId))
@@ -801,32 +875,16 @@ namespace NzbDrone.Core.Books
                 }
 
                 var normalizedProviderId = ProviderIdHelper.Canonicalize(providerId.Trim(), provider);
-                var books = provider is "hc" or "gr" or "ol"
-                    ? HydrateLookupBooks(
-                        _bookRepository.FindAllByProviderIdAndMediaType(provider, normalizedProviderId, mediaType) ??
-                        new List<Book>())
-                    : new List<Book>();
-
+                var ids = provider is "hc" or "gr" or "ol"
+                    ? _bookRepository.FindIdsByProviderIds(provider, new[] { normalizedProviderId })[normalizedProviderId]
+                    : new List<int>();
                 if (_providerAliasService != null)
                 {
-                    var aliasBookIds = _providerAliasService.FindBookIds("work", new[] { normalizedProviderId })
-                        .Distinct()
-                        .ToList();
-                    if (aliasBookIds.Count > 0)
-                    {
-                        foreach (var aliasMatch in HydrateLookupBooks(_bookRepository.Get(aliasBookIds)
-                                     .Where(book => book != null && book.MediaType == mediaType)
-                                     .ToList()))
-                        {
-                            if (books.All(book => book.Id != aliasMatch.Id))
-                            {
-                                books.Add(aliasMatch);
-                            }
-                        }
-                    }
+                    ids.AddRange(_providerAliasService.FindBookIds("work", new[] { normalizedProviderId }));
                 }
 
-                return books.OrderBy(book => book.Id).ToList();
+                return HydrateLookupBooks(_bookRepository.FindExisting(ids.Distinct().ToList())
+                    .Where(book => book.MediaType == mediaType).OrderBy(book => book.Id).ToList());
             }
 
             private static string NormalizeIsbnProviderId(string providerId)
@@ -887,83 +945,6 @@ namespace NzbDrone.Core.Books
 
                 return HydrateLookupBook(_bookRepository.FindByAsin(normalizedAsin));
             }
-
-        private List<Tuple<Func<Book, string, double>, string>> BookScoringFunctions(string title, string cleanTitle)
-        {
-            Func<Func<Book, string, double>, string, Tuple<Func<Book, string, double>, string>> tc = Tuple.Create;
-            var scoringFunctions = new List<Tuple<Func<Book, string, double>, string>>
-            {
-                // Deterministic match functions
-                tc((a, t) => a.CleanTitle.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, cleanTitle),
-                tc((a, t) => a.Title.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title),
-                tc((a, t) => a.CleanTitle.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title.RemoveBracketsAndContents().CleanAuthorName()),
-                tc((a, t) => a.CleanTitle.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title.RemoveAfterDash().CleanAuthorName()),
-                tc((a, t) => a.CleanTitle.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title.RemoveBracketsAndContents().RemoveAfterDash().CleanAuthorName()),
-                tc((a, t) => t.Contains(a.CleanTitle) || a.CleanTitle.Contains(t) ? 0.8 : 0.0, cleanTitle),
-                tc((a, t) => t.Contains(a.Title) || a.Title.Contains(t) ? 0.8 : 0.0, title),
-                tc((a, t) => a.Author != null && a.Title.SplitBookTitle(a.Author.Name).Item1.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title),
-
-                // Enhanced series-aware scoring functions
-                tc((a, t) => SeriesAwareTitleMatch(a.Title, t), title),
-                tc((a, t) => SeriesAwareTitleMatch(a.Title, t), cleanTitle),
-                tc((a, t) => SeriesAwareTitleMatch(a.CleanTitle, t), title),
-
-                // Try matching main title without series info
-                tc((a, t) => ExtractMainTitle(a.Title).Equals(ExtractMainTitle(t), StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title),
-                tc((a, t) => ExtractMainTitle(a.CleanTitle).Equals(ExtractMainTitle(t), StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, cleanTitle)
-            };
-
-            return scoringFunctions;
-        }
-
-        public Book FindByTitleInexact(int authorId, string title)
-        {
-            var books = GetBooksByAuthorId(authorId);
-
-            foreach (var func in BookScoringFunctions(title, title.CleanAuthorName()))
-            {
-                var results = FindByStringInexact(books, func.Item1, func.Item2);
-                if (results.Count == 1)
-                {
-                    return HydrateLookupBook(results[0]);
-                }
-            }
-
-            return null;
-        }
-
-        public List<Book> GetCandidates(int authorId, string title)
-        {
-            var books = GetBooksByAuthorId(authorId);
-            var output = new List<Book>();
-
-            foreach (var func in BookScoringFunctions(title, title.CleanAuthorName()))
-            {
-                output.AddRange(FindByStringInexact(books, func.Item1, func.Item2));
-            }
-
-            return output.DistinctBy(x => x.Id).ToList();
-        }
-
-        private List<Book> FindByStringInexact(List<Book> books, Func<Book, string, double> scoreFunction, string title)
-        {
-            const double fuzzThreshold = 0.7;
-            const double fuzzGap = 0.4;
-
-            var sortedBooks = books.Select(s => new
-            {
-                MatchProb = scoreFunction(s, title),
-                Book = s
-            })
-                .ToList()
-                .OrderByDescending(s => s.MatchProb)
-                .ToList();
-
-            return sortedBooks.TakeWhile((x, i) => i == 0 || sortedBooks[i - 1].MatchProb - x.MatchProb < fuzzGap)
-                .TakeWhile((x, i) => x.MatchProb > fuzzThreshold || (i > 0 && sortedBooks[i - 1].MatchProb > fuzzThreshold))
-                .Select(x => x.Book)
-                .ToList();
-        }
 
         public List<Book> GetAllBooks()
         {
@@ -1046,8 +1027,30 @@ namespace NzbDrone.Core.Books
             return books;
         }
 
+        public List<Book> GetBooksForLookup(IEnumerable<int> bookIds)
+        {
+            var books = _bookRepository.FindExisting(bookIds).ToList();
+            if (books.Count == 0)
+            {
+                return books;
+            }
+
+            LoadBookWorkProviderAliases(books);
+            var ids = books.Select(book => book.Id).ToList();
+            var editions = _editionService.GetEditionRowsByBook(ids).ToLookup(edition => edition.BookId);
+            var files = _mediaFileService.GetFilesByBooks(ids).ToLookup(file => file.Edition.BookId);
+            foreach (var book in books)
+            {
+                book.Editions = editions[book.Id].ToList();
+                book.BookFiles = files[book.Id].ToList();
+            }
+
+            return books;
+        }
+
         private void HydrateBooks(List<Book> books)
         {
+            LoadBookWorkProviderAliases(books);
             LoadAuthorRelationships(books);
             LoadSeriesLinks(books);
 
@@ -1331,7 +1334,8 @@ namespace NzbDrone.Core.Books
             }
 
             return book.TitleSlug.IsNotNullOrWhiteSpace() &&
-                   book.TitleSlug.IndexOf("_copy_", StringComparison.OrdinalIgnoreCase) >= 0;
+                   (book.TitleSlug.IndexOf("_copy_", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    book.TitleSlug.IndexOf("_wanted_", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private static List<Book> GetSyncParticipants(List<Book> workGroup)
@@ -1633,7 +1637,7 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private List<BookMonitoringSyncUpdate> GetSyncUpdatesForMutations(List<Book> changedBooks, Dictionary<int, Book> storedById)
+        private List<BookMonitoringSyncUpdate> GetSyncUpdatesForMutations(List<Book> changedBooks, Dictionary<int, Book> storedById, Dictionary<int, Author> authorsById = null)
         {
             var syncUpdates = new List<BookMonitoringSyncUpdate>();
             if (_authorService == null || changedBooks == null || changedBooks.Count == 0 ||
@@ -1647,7 +1651,7 @@ namespace NzbDrone.Core.Books
 
             foreach (var authorBooks in changedBooks.Where(book => book?.AuthorId > 0).GroupBy(book => book.AuthorId))
             {
-                var author = _authorService.GetAuthor(authorBooks.Key);
+                var author = authorsById == null ? _authorService.GetAuthor(authorBooks.Key) : authorsById.GetValueOrDefault(authorBooks.Key);
                 if (author?.SyncMonitoredAcrossFormats != true)
                 {
                     continue;
@@ -2363,6 +2367,9 @@ namespace NzbDrone.Core.Books
             var books = _bookRepository.Get(ids).ToList();
             var rootFolders = monitored ? _rootFolderService?.All() : null;
             var storedById = books.ToDictionary(book => book.Id, CloneStoredBook);
+            var authorIds = books.Where(book => book.AuthorId > 0 && (!synchronizeRequest || book.MediaType == requestedMediaType))
+                .Select(book => book.AuthorId).Distinct().ToList();
+            var authorsById = authorIds.Any() ? _authorService.GetAuthors(authorIds).ToDictionary(author => author.Id) : new Dictionary<int, Author>();
             var booksToMutate = new List<Book>();
 
             foreach (var book in books)
@@ -2372,10 +2379,9 @@ namespace NzbDrone.Core.Books
                     continue;
                 }
 
-                Author author = null;
-                if (book.AuthorId > 0)
+                var author = authorsById.GetValueOrDefault(book.AuthorId);
+                if (author != null)
                 {
-                    author = _authorService.GetAuthor(book.AuthorId);
                     book.Author = author;
                 }
 
@@ -2406,7 +2412,7 @@ namespace NzbDrone.Core.Books
                     baseline.EbookMonitored = false;
                     return baseline;
                 });
-                syncUpdates = GetSyncUpdatesForMutations(booksToMutate, requestBaselineById);
+                syncUpdates = GetSyncUpdatesForMutations(booksToMutate, requestBaselineById, authorsById);
             }
 
             var booksToUpdate = booksToMutate
@@ -2557,7 +2563,7 @@ namespace NzbDrone.Core.Books
 
         public Book AddWantedEdition(int bookId, int editionId)
         {
-            var baseBook = GetBook(bookId);
+            var baseBook = _bookRepository.Get(bookId);
             if (baseBook == null)
             {
                 throw new ArgumentException($"Book with ID {bookId} not found");
@@ -2579,138 +2585,270 @@ namespace NzbDrone.Core.Books
                 throw new InvalidOperationException($"Edition {editionId} does not belong to book {bookId}");
             }
 
-            // If this book has no files, it is already a "missing" instance; just pin the selected edition here.
-            var existingFiles = _mediaFileService.GetFilesByBook(baseBook.Id);
-            if (!existingFiles.Any())
+            return AddWantedEditions(new List<Edition> { selectedEdition })[selectedEdition.Id];
+        }
+
+        private static readonly ConcurrentDictionary<int, object> WantedEditionLocks = new();
+
+        internal static object GetWantedEditionLock(int authorId) => WantedEditionLocks.GetOrAdd(authorId, _ => new object());
+
+        public Dictionary<int, Book> AddWantedEditions(List<Edition> requestedEditions, Action<Edition, Exception> onFailure = null)
+        {
+            var result = new Dictionary<int, Book>();
+            if (requestedEditions.Count == 0)
             {
-                var editions = _editionService.GetEditionsByBook(baseBook.Id);
-
-                foreach (var e in editions)
-                {
-                    var isSelected = e.Id == editionId;
-                    e.Monitored = isSelected;
-                    if (isSelected)
-                    {
-                        e.ManualAdd = true;
-                    }
-                    else
-                    {
-                        e.ManualAdd = false;
-                    }
-                }
-
-                baseBook.AnyEditionOk = false;
-                baseBook.AudiobookMonitored = true;
-                baseBook.EbookMonitored = false;
-                baseBook.Monitored = true;
-
-                UpdateBook(baseBook);
-                _editionService.UpdateMany(editions);
-
-                return GetBook(baseBook.Id);
+                return result;
             }
 
-            static string GetEditionKey(Edition e)
+            var failures = new List<Exception>();
+            void Failed(Edition edition, Exception exception)
             {
-                if (e == null)
-                {
-                    return null;
-                }
-
-                if (!string.IsNullOrWhiteSpace(e.HardcoverEditionId))
-                {
-                    return $"hc:{e.HardcoverEditionId}".Trim();
-                }
-
-                if (e.GoodreadsEditionId.HasValue && e.GoodreadsEditionId.Value > 0)
-                {
-                    return $"gr:{e.GoodreadsEditionId.Value}";
-                }
-
-                if (!string.IsNullOrWhiteSpace(e.OpenLibraryEditionId))
-                {
-                    return $"ol:{e.OpenLibraryEditionId}".Trim();
-                }
-
-                if (!string.IsNullOrWhiteSpace(e.AudibleASIN))
-                {
-                    return $"az:{e.AudibleASIN}".Trim().ToUpperInvariant();
-                }
-
-                    if (!string.IsNullOrWhiteSpace(e.Asin))
-                    {
-                        return $"az:{e.Asin}".Trim().ToUpperInvariant();
-                    }
-
-                if (!string.IsNullOrWhiteSpace(e.Isbn13))
-                {
-                    return $"isbn13:{e.Isbn13}".Trim();
-                }
-
-                if (!string.IsNullOrWhiteSpace(e.Isbn10))
-                {
-                    return $"isbn10:{e.Isbn10}".Trim();
-                }
-
-                if (!string.IsNullOrWhiteSpace(e.ForeignEditionId))
-                {
-                    return $"foreign:{e.ForeignEditionId}".Trim();
-                }
-
-                return null;
+                failures.Add(exception);
+                _logger.Warn(exception, "Wanted edition request failed for local book {0}, edition {1}", edition.BookId, edition.Id);
+                onFailure?.Invoke(edition, exception);
             }
 
-            // If a matching wanted instance already exists, return it (don’t create duplicates).
-            var selectedEditionKey = GetEditionKey(selectedEdition);
-            if (baseBook.AuthorId > 0 && !string.IsNullOrWhiteSpace(selectedEditionKey))
+            var owners = _bookRepository.FindExisting(requestedEditions.Select(edition => edition.BookId).Distinct().ToList()).ToDictionary(book => book.Id);
+            foreach (var missing in requestedEditions.Where(edition => !owners.ContainsKey(edition.BookId)))
             {
-                var authorBooks = _bookRepository.GetBooksByAuthorId(baseBook.AuthorId);
-                var wantedCandidates = authorBooks
-                    .Where(b => b.MediaType == BookMediaType.Audiobook)
-                    .Where(b => b.AddOptions?.AddType == BookAddType.Manual)
-                    .Where(b => IsSameProviderBackedBook(baseBook, b))
-                    .ToList();
+                Failed(missing, RequestedEditionRefusal("The requested edition owner is no longer in the authoritative catalog."));
+            }
 
-                if (wantedCandidates.Any())
+            foreach (var group in requestedEditions.Where(edition => owners.ContainsKey(edition.BookId)).GroupBy(edition => owners[edition.BookId].AuthorId))
+            {
+                var requests = group.ToList();
+                var mediaTypes = requests.Select(request => owners[request.BookId].MediaType).ToHashSet();
+                var stopwatch = Stopwatch.StartNew();
+                var writerLock = GetWantedEditionLock(group.Key);
+                var contended = !Monitor.TryEnter(writerLock);
+                if (contended)
                 {
-                    var candidateIds = wantedCandidates.Select(b => b.Id).ToList();
-                    var candidateEditions = _editionService.GetEditionsByBook(candidateIds);
+                    Monitor.Enter(writerLock);
+                }
 
-                    foreach (var candidate in wantedCandidates)
+                var waited = stopwatch.ElapsedMilliseconds;
+                try
+                {
+                    // Reload at the existing writer boundary so concurrent requests see persisted copies.
+                    var author = _authorService.GetAuthor(group.Key);
+                    var candidates = _bookRepository.GetBooksByAuthorId(group.Key)
+                        .Where(book => mediaTypes.Contains(book.MediaType)).ToList();
+                    LoadBookWorkProviderAliases(candidates);
+                    var editions = _editionService.GetEditionRowsByBook(candidates.Select(book => book.Id)).ToLookup(edition => edition.BookId);
+                    candidates.ForEach(book => { book.Editions = editions[book.Id].ToList(); book.Author = author; });
+                    foreach (var selection in SelectWantedEditions(requests, candidates, Failed))
                     {
-                        var candidateManual = candidateEditions.FirstOrDefault(e => e.BookId == candidate.Id && e.ManualAdd)
-                                           ?? candidateEditions.FirstOrDefault(e => e.BookId == candidate.Id && e.Monitored);
-
-                        if (candidateManual == null)
-                        {
-                            continue;
-                        }
-
-                        var candidateKey = GetEditionKey(candidateManual);
-                        if (candidateKey == null)
-                        {
-                            continue;
-                        }
-
-                        if (string.Equals(candidateKey, selectedEditionKey, StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (!candidate.AudiobookMonitored)
-                            {
-                                candidate.AudiobookMonitored = true;
-                                candidate.EbookMonitored = false;
-                                candidate.Monitored = true;
-                                candidate.AnyEditionOk = false;
-                                candidate.AddOptions ??= new AddBookOptions();
-                                candidate.AddOptions.AddType = BookAddType.Manual;
-                                UpdateBook(candidate);
-                            }
-
-                            return GetBook(candidate.Id);
-                        }
+                        result[selection.Key] = selection.Value;
                     }
+                }
+                catch (Exception exception)
+                {
+                    foreach (var request in requests)
+                    {
+                        Failed(request, exception);
+                    }
+                }
+                finally
+                {
+                    var held = stopwatch.ElapsedMilliseconds - waited;
+                    Monitor.Exit(writerLock);
+                    _logger.Log(contended ? LogLevel.Info : LogLevel.Debug,
+                        "Wanted edition writer for author {0}: waited {1}ms, held {2}ms, {3} requests",
+                        group.Key, waited, held, requests.Count);
                 }
             }
 
+            if (failures.Count > 0)
+            {
+                _logger.Warn("Wanted edition batch completed with {0} failed requests out of {1}", failures.Count, requestedEditions.Count);
+                if (onFailure == null)
+                {
+                    throw failures.Count == 1 ? failures[0] : new AggregateException("Wanted edition requests failed", failures);
+                }
+            }
+
+            return result;
+        }
+
+        private Dictionary<int, Book> SelectWantedEditions(List<Edition> requestedEditions, List<Book> candidates, Action<Edition, Exception> onFailure)
+        {
+            var result = new Dictionary<int, Book>();
+            if (requestedEditions.Count == 0)
+            {
+                return result;
+            }
+
+            var byId = candidates.ToDictionary(book => book.Id);
+            var workIndex = new Dictionary<(int, BookMediaType, string), List<Book>>();
+            var editionIndex = new Dictionary<(int, BookMediaType, string), List<Book>>();
+            void Index(Book book)
+            {
+                void Add(Dictionary<(int, BookMediaType, string), List<Book>> index, IEnumerable<string> identities)
+                {
+                    foreach (var id in identities.Distinct(StringComparer.OrdinalIgnoreCase))
+                    {
+                        var key = (book.AuthorId, book.MediaType, id.ToLowerInvariant());
+                        if (!index.TryGetValue(key, out var books))
+                        {
+                            books = new List<Book>();
+                            index[key] = books;
+                        }
+
+                        books.Add(book);
+                    }
+                }
+
+                Add(workIndex, BookIdentity.GetStableWorkProviderIdentityTokens(book));
+                Add(editionIndex, book.Editions.SelectMany(BookEditionIdentity.GetEditionRehomeTokens));
+            }
+
+            foreach (var book in byId.Values)
+            {
+                book.Editions ??= new List<Edition>();
+                Index(book);
+            }
+
+            var booksWithFiles = _mediaFileService.GetFilesByBooks(byId.Keys.ToList())
+                .Select(file => file.Edition.BookId).ToHashSet();
+            var rootFolders = _rootFolderService?.All();
+            var changed = new Dictionary<int, Book>();
+            var oldBooks = new Dictionary<int, Book>();
+            foreach (var requested in requestedEditions)
+            {
+                try
+                {
+                    if (!byId.TryGetValue(requested.BookId, out var source))
+                    {
+                        throw RequestedEditionRefusal("The requested edition is not in the authoritative catalog.");
+                    }
+
+                    var authoritative = source.Editions.Where(edition => BookEditionIdentity.EditionsMatch(edition, requested)).ToList();
+                    var currentRequest = authoritative.SingleOrDefault(edition => edition.Id == requested.Id)
+                        ?? (authoritative.Count == 1 ? authoritative[0] : null);
+                    if (currentRequest == null)
+                    {
+                        throw RequestedEditionRefusal("The requested edition is missing or ambiguous in the authoritative catalog.");
+                    }
+
+                    var requestedIds = BookEditionIdentity.GetEditionRehomeTokens(currentRequest).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var sourceWorkIds = BookIdentity.GetStableWorkProviderIdentityTokens(source);
+                    bool MatchesRequested(Edition edition) => BookEditionIdentity.GetEditionRehomeTokens(edition).Any(requestedIds.Contains);
+                    var matching = BookIdentity.GetStableWorkProviderIdentityTokens(source)
+                        .SelectMany(id => workIndex.GetValueOrDefault((source.AuthorId, source.MediaType, id.ToLowerInvariant())) ?? new List<Book>())
+                        .Concat(requestedIds
+                            .SelectMany(id => editionIndex.GetValueOrDefault((source.AuthorId, source.MediaType, id.ToLowerInvariant())) ?? new List<Book>()))
+                        .Append(source).DistinctBy(book => book.Id)
+                        .Where(book => source.MediaType == BookMediaType.Audiobook || book.Id == source.Id ||
+                            BookIdentity.MatchesByStableWorkProviderId(book, source))
+                        .Where(book => !requestedIds.All(id => id.StartsWith("az:", StringComparison.OrdinalIgnoreCase)) ||
+                            sourceWorkIds.Count == 0 || BookIdentity.GetStableWorkProviderIdentityTokens(book).Count == 0 ||
+                            BookIdentity.MatchesByStableWorkProviderId(book, source))
+                        .OrderBy(book => book.AnyEditionOk).ThenByDescending(book => book.IsMonitored()).ThenBy(book => book.Id).ToList();
+                    var selected = matching.Select(book => (Book: book, Edition: BookEditionIdentity.GetMonitoredEdition(book)))
+                        .FirstOrDefault(candidate => candidate.Edition != null &&
+                            (MatchesRequested(candidate.Edition) || source.MediaType == BookMediaType.Audiobook &&
+                                BookEditionIdentity.HasSameNarration(candidate.Edition, currentRequest)) &&
+                            (source.MediaType == BookMediaType.Audiobook ||
+                             EditionPinPolicy.FindConflictingProtectedEdition(candidate.Book, candidate.Book.Editions, candidate.Edition.Id) == null));
+                    if (selected.Book == null)
+                    {
+                        selected = matching.Where(book => !booksWithFiles.Contains(book.Id) && book.AnyEditionOk &&
+                                EditionPinPolicy.CanAutomationSelectEdition(book, book.Editions))
+                            .Select(book => (Book: book, Edition: book.Editions.FirstOrDefault(MatchesRequested)))
+                            .FirstOrDefault(candidate => candidate.Edition != null);
+                    }
+
+                    if (selected.Book == null)
+                    {
+                        if (source.MediaType == BookMediaType.Ebook)
+                        {
+                            throw RequestedEditionRefusal("The requested Ebook edition cannot be selected without changing a protected selection or existing files; the edition request was not fulfilled.");
+                        }
+
+                        if (!CanEnableMonitoringForMediaType(source.Author, source.MediaType, rootFolders))
+                        {
+                            throw RequestedEditionRefusal("The requested edition cannot be monitored because its author has no compatible root folder for its media type.");
+                        }
+
+                        var copy = CreateWantedEdition(source, currentRequest);
+                        byId[copy.Id] = copy;
+                        candidates.Add(copy);
+                        Index(copy);
+                        result[requested.Id] = copy;
+                        continue;
+                    }
+
+                    var target = selected.Book;
+                    if (!target.IsMonitored() && !CanEnableMonitoringForMediaType(target.Author, target.MediaType, rootFolders))
+                    {
+                        throw RequestedEditionRefusal("The requested edition cannot be monitored because its author has no compatible root folder for its media type.");
+                    }
+
+                    if (target.AnyEditionOk || !selected.Edition.ManualAdd || target.Editions.Count(edition => edition.Monitored) != 1)
+                    {
+                        oldBooks.TryAdd(target.Id, CloneStoredBook(target));
+                        foreach (var edition in target.Editions)
+                        {
+                            edition.Monitored = edition.Id == selected.Edition.Id;
+                            edition.ManualAdd = edition.Monitored;
+                        }
+
+                        target.AnyEditionOk = false;
+                        target.ForeignEditionId = selected.Edition.ForeignEditionId;
+                        changed[target.Id] = target;
+                    }
+
+                    result[requested.Id] = target;
+                }
+                catch (Exception ex) when (onFailure != null)
+                {
+                    onFailure(requested, ex);
+                }
+            }
+
+            var unmonitored = result.Values.Where(book => !book.IsMonitored()).DistinctBy(book => book.Id).ToList();
+            var unmonitoredIds = unmonitored.Select(book => book.Id).ToList();
+            if (unmonitoredIds.Count > 0)
+            {
+                foreach (var side in unmonitored.GroupBy(book => book.MediaType))
+                {
+                    MonitorRequestedBooks(side.Select(book => book.Id).ToList(), side.Key == BookMediaType.Audiobook ? "audiobook" : "ebook");
+                }
+                var monitored = _bookRepository.FindExisting(unmonitoredIds).Where(book => book.IsMonitored()).Select(book => book.Id).ToHashSet();
+                foreach (var request in requestedEditions.Where(request => result.TryGetValue(request.Id, out var book) &&
+                    unmonitoredIds.Contains(book.Id) && !monitored.Contains(book.Id)))
+                {
+                    var target = result[request.Id];
+                    changed.Remove(target.Id);
+                    result.Remove(request.Id);
+                    onFailure(request, new InvalidOperationException("The requested edition remained unmonitored after applying monitoring."));
+                }
+            }
+
+            if (changed.Count > 0)
+            {
+                _editionService.UpdateSelection(changed.Values.SelectMany(book => book.Editions).ToList());
+                _bookRepository.SetFields(changed.Values.ToList(), book => book.AnyEditionOk);
+                PublishBookEditedEvents(changed.Values.Select(book => new BookMonitoringSyncUpdate { Book = book, Stored = oldBooks[book.Id] }));
+            }
+
+
+            foreach (var book in result.Values)
+            {
+                book.SetMonitored(true);
+            }
+
+            return result;
+        }
+
+        private static ValidationException RequestedEditionRefusal(string message)
+        {
+            return new ValidationException(new[] { new ValidationFailure("Edition", message) });
+        }
+
+        private Book CreateWantedEdition(Book baseBook, Edition selectedEdition)
+        {
+            var editionId = selectedEdition.Id;
             var author = baseBook.Author ?? (baseBook.AuthorId > 0 ? _authorService.GetAuthor(baseBook.AuthorId) : null);
             if (author != null)
             {
@@ -2723,101 +2861,37 @@ namespace NzbDrone.Core.Books
                 baseSlug = baseBook.Title?.ToLowerInvariant().Replace(" ", "-") ?? $"book-{DateTime.UtcNow.Ticks}";
             }
 
-            var wantedBook = new Book
-            {
-                // Copy metadata/provider IDs from base book so searches and matching stay grounded.
-                TitleSlug = $"{baseSlug}_wanted_{editionId}",
-                Title = baseBook.Title,
-                CleanTitle = baseBook.CleanTitle,
-                Overview = baseBook.Overview,
-                AuthorId = baseBook.AuthorId,
-                Author = author ?? baseBook.Author,
-                BaseBookId = baseBook.BaseBookId,
-                HardcoverBookId = baseBook.HardcoverBookId,
-                GoodreadsWorkId = baseBook.GoodreadsWorkId,
-                OpenLibraryWorkId = baseBook.OpenLibraryWorkId,
-
-                MediaType = BookMediaType.Audiobook,
-                AudiobookMonitored = true,
-                EbookMonitored = false,
-                Monitored = true,
-                AnyEditionOk = false,
-                Added = DateTime.UtcNow,
-                ReleaseDate = baseBook.ReleaseDate,
-                Links = new List<Links>(baseBook.Links ?? new List<Links>()),
-                Genres = new List<string>(baseBook.Genres ?? new List<string>()),
-                Ratings = baseBook.Ratings,
-                Images = baseBook.Images != null ? new List<MediaCover.MediaCover>(baseBook.Images) : new List<MediaCover.MediaCover>(),
-                ProviderUrls = baseBook.ProviderUrls != null ? new ProviderUrlMap(baseBook.ProviderUrls) : new ProviderUrlMap(),
-
-                // Mark as manual so refresh logic doesn't delete it; searching is handled by the caller.
-                AddOptions = new AddBookOptions { AddType = BookAddType.Manual, SearchForNewBook = false },
-                Editions = new List<Edition>()
-            };
+            var wantedBook = RefreshEntityCopy.CloneBook(baseBook, includeEditions: false, includeSeriesLinks: false);
+            wantedBook.TitleSlug = $"{baseSlug}_wanted_{editionId}";
+            wantedBook.AuthorId = baseBook.AuthorId;
+            wantedBook.Author = author;
+            wantedBook.MediaType = BookMediaType.Audiobook;
+            wantedBook.AudiobookMonitored = true;
+            wantedBook.EbookMonitored = false;
+            wantedBook.Monitored = true;
+            wantedBook.AnyEditionOk = false;
+            wantedBook.Added = DateTime.UtcNow;
+            wantedBook.LastSearchTime = null;
+            wantedBook.UnitKeyHash = null;
+            wantedBook.AddOptions = new AddBookOptions { AddType = BookAddType.Manual, SearchForNewBook = false };
 
             BookEditionIdentity.ClearBookLevelEditionIdentity(wantedBook);
 
-                // Clone audiobook editions so matching can still discriminate and manual edition protection can work.
-                // Audiobook is defined strictly as ReadingFormatId == 2 (no string heuristics).
-                bool IsAudiobookEdition(Edition e) => e?.ReadingFormatId == 2;
+            // Clone audiobook editions so matching can still discriminate and manual edition protection can work.
+            // Audiobook is defined strictly as ReadingFormatId == 2 (no string heuristics).
+            bool IsAudiobookEdition(Edition e) => e?.ReadingFormatId == 2;
 
             var sourceEditions = baseBook.Editions ?? _editionService.GetEditionsByBook(baseBook.Id);
             var clonedEditions = sourceEditions
                 .Where(e => e.Id == editionId || IsAudiobookEdition(e))
                 .Select(e =>
                 {
-                    var isSelected = e.Id == editionId;
-                    return new Edition
-                    {
-                        Id = 0,
-                        BookId = 0,
-                        ForeignEditionId = BookEditionIdentity.GetTrustedForeignEditionId(e),
-                        TitleSlug = e.TitleSlug,
-                        Isbn13 = e.Isbn13,
-                        Isbn10 = e.Isbn10,
-                        Asin = e.Asin,
-                        Title = e.Title,
-                        Subtitle = e.Subtitle,
-                        MatchingTitle = e.MatchingTitle,
-                        Language = e.Language,
-                        Overview = e.Overview,
-                        Format = e.Format,
-                        IsEbook = e.IsEbook,
-                        Disambiguation = e.Disambiguation,
-                        Publisher = e.Publisher,
-                        PageCount = e.PageCount,
-                        ReleaseDate = e.ReleaseDate,
-                        Images = e.Images != null ? new List<MediaCover.MediaCover>(e.Images) : new List<MediaCover.MediaCover>(),
-                        Links = e.Links != null ? new List<Links>(e.Links) : new List<Links>(),
-                        Ratings = e.Ratings,
-                        GoodreadsEditionId = e.GoodreadsEditionId,
-                        HardcoverEditionId = e.HardcoverEditionId,
-                        OpenLibraryEditionId = e.OpenLibraryEditionId,
-                        ReadingFormatId = e.ReadingFormatId,
-                        EditionFormat = e.EditionFormat,
-                        EditionInfo = e.EditionInfo,
-                        DurationSeconds = e.DurationSeconds,
-                        ChapterCount = e.ChapterCount,
-                        HasChapters = e.HasChapters,
-                        Chapters = e.Chapters != null ? e.Chapters.Select(c => new EditionChapter
-                        {
-                            Title = c?.Title,
-                            StartOffsetMs = c?.StartOffsetMs ?? 0,
-                            StartOffsetSec = c?.StartOffsetSec ?? 0,
-                            LengthMs = c?.LengthMs ?? 0
-                        }).ToList() : new List<EditionChapter>(),
-                        IsGraphicAudio = e.IsGraphicAudio,
-                        AudioProductionType = e.AudioProductionType,
-                        Narrator = e.Narrator,
-                        AudibleASIN = e.AudibleASIN,
-                        GoogleBooksEditionId = e.GoogleBooksEditionId,
-                        ReviewCount = e.ReviewCount,
-                        NarratorNames = e.NarratorNames != null ? new List<string>(e.NarratorNames) : new List<string>(),
-                        ProviderUrls = e.ProviderUrls != null ? new ProviderUrlMap(e.ProviderUrls) : new ProviderUrlMap(),
-                        LastUpdated = e.LastUpdated,
-                        Monitored = isSelected,
-                        ManualAdd = isSelected
-                    };
+                    // Copy the known edition verbatim; inferring identity can discard valid stored IDs.
+                    var copy = RefreshEntityCopy.CloneEdition(e);
+                    copy.BookId = 0;
+                    copy.Monitored = e.Id == editionId;
+                    copy.ManualAdd = copy.Monitored;
+                    return copy;
                 })
                 .ToList();
 
@@ -2829,30 +2903,27 @@ namespace NzbDrone.Core.Books
             wantedBook.Editions = clonedEditions;
 
             // Create the wanted book without triggering a full author refresh/rescan; callers can queue a targeted search.
-            AddBook(wantedBook, doRefresh: false);
-
-            // Ensure the selected edition is treated as a manual pin, so refresh/matching won't override it.
-            // AddBook sets a monitored edition automatically, but does not mark it as a manual selection.
             try
             {
-                var persistedEditions = wantedBook.Editions ?? _editionService.GetEditionsByBook(wantedBook.Id);
-                var persistedSelected = persistedEditions?.FirstOrDefault(e =>
-                    !string.IsNullOrWhiteSpace(e.ForeignEditionId) &&
-                    !string.IsNullOrWhiteSpace(selectedEdition.ForeignEditionId) &&
-                    string.Equals(e.ForeignEditionId, selectedEdition.ForeignEditionId, StringComparison.OrdinalIgnoreCase))
-                    ?? SelectMonitoredEditionOrNull(persistedEditions);
+                AddBook(wantedBook, doRefresh: false);
 
-                if (persistedSelected != null)
+                var persistedSelected = wantedBook.Editions.Single(edition => edition.Monitored);
+                if (!BookEditionIdentity.EditionsMatch(persistedSelected, selectedEdition) || !persistedSelected.ManualAdd)
                 {
-                    _editionService.SetMonitored(persistedSelected, isManualSelection: true);
+                    throw new InvalidOperationException("The wanted narration was not persisted as the sole pinned edition.");
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn(ex, "Failed to pin wanted edition for wanted book {0}", wantedBook.Id);
-            }
 
-            return GetBook(wantedBook.Id);
+                return wantedBook;
+            }
+            catch
+            {
+                if (wantedBook.Id > 0)
+                {
+                    DeleteBook(wantedBook.Id, deleteFiles: false);
+                }
+
+                throw;
+            }
         }
 
         private Edition SelectMonitoredEditionForInsert(IEnumerable<Edition> editions, BookMediaType mediaType)
@@ -2871,19 +2942,26 @@ namespace NzbDrone.Core.Books
 
         private void LoadAuthorRelationships(List<Book> books)
         {
-            // Group books by AuthorId to minimize database queries
-            var booksByAuthor = books.Where(b => b.AuthorId > 0)
-                                             .GroupBy(b => b.AuthorId);
-
-            foreach (var group in booksByAuthor)
+            var authorIds = books.Select(book => book.AuthorId).Where(id => id > 0).Distinct().ToList();
+            if (authorIds.Count == 0)
             {
-                var author = _authorService.GetAuthor(group.Key);
-                if (author != null)
+                return;
+            }
+
+            var authors = _authorService.GetExistingAuthors(authorIds).ToDictionary(author => author.Id);
+            foreach (var authorId in authorIds)
+            {
+                if (!authors.ContainsKey(authorId))
                 {
-                    foreach (var book in group)
-                    {
-                        book.Author = author;
-                    }
+                    throw new ModelNotFoundException(typeof(Author), authorId);
+                }
+            }
+
+            foreach (var book in books)
+            {
+                if (authors.TryGetValue(book.AuthorId, out var author))
+                {
+                    book.Author = author;
                 }
             }
         }
@@ -2905,6 +2983,9 @@ namespace NzbDrone.Core.Books
             {
                 return books ?? new List<Book>();
             }
+
+            LoadBookWorkProviderAliases(books);
+            LoadSeriesLinks(books);
 
             var editionsByBookId = _editionService.GetEditionsByBook(books.Select(b => b.Id))
                                                   .GroupBy(e => e.BookId)
@@ -3019,67 +3100,14 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private double SeriesAwareTitleMatch(string bookTitle, string searchTitle)
-        {
-            if (string.IsNullOrWhiteSpace(bookTitle) || string.IsNullOrWhiteSpace(searchTitle))
-            {
-                return 0.0;
-            }
-
-            var bookMain = ExtractMainTitle(bookTitle);
-            var searchMain = ExtractMainTitle(searchTitle);
-
-            if (bookMain.Equals(searchMain, StringComparison.OrdinalIgnoreCase))
-            {
-                return 1.0;
-            }
-
-            if (bookMain.Contains(searchMain, StringComparison.OrdinalIgnoreCase) ||
-                searchMain.Contains(bookMain, StringComparison.OrdinalIgnoreCase))
-            {
-                var lengthRatio = (double)Math.Min(bookMain.Length, searchMain.Length) / Math.Max(bookMain.Length, searchMain.Length);
-                return Math.Max(0.8, lengthRatio);
-            }
-
-            return 0.0;
-        }
-
-        private string ExtractMainTitle(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return string.Empty;
-            }
-
-            // Remove series patterns
-            var patterns = new[]
-            {
-                @"\s*[:\-]\s*(?:Book|Series|Part|Vol|Volume|#)\s*\d+.*$",
-                @"\s*\((?:Book|Series|Part|Vol|Volume|#)\s*\d+.*?\)",
-                @"\s*(?:Book|Series|Part|Vol|Volume|#)\s*\d+.*$",
-                @"\s*[:\-]\s*[^:\-]+(?:Series|Trilogy|Saga|Chronicles|Cycle)\s*.*$"
-            };
-
-            var result = title;
-            foreach (var pattern in patterns)
-            {
-                result = System.Text.RegularExpressions.Regex.Replace(result, pattern, "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            }
-
-            // Also remove common audiobook annotations
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"\((?:unabridged|abridged|audiobook|audio\s*book)\)", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            return result.Trim();
-        }
-
         public bool ShouldSearchForMediaType(Book book, string mediaType)
         {
             return book.IsMonitoredForMediaType(mediaType);
         }
 
-            public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null)
+            public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null)
             {
-                return _bookRepository.GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+                return _bookRepository.GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
             }
 
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null)
@@ -3087,9 +3115,9 @@ namespace NzbDrone.Core.Books
                 return GetBookBuckets(sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, null, null, null);
             }
 
-            public List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null)
+            public List<int> GetBookIds(bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null, bool? monitored = null, bool? missing = null, bool? wanted = null, bool? library = null)
             {
-                return _bookRepository.GetBookIds(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+                return _bookRepository.GetBookIds(includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
             }
 
             public List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null)
@@ -3097,9 +3125,9 @@ namespace NzbDrone.Core.Books
                 return _bookRepository.GetLibraryBookIds(bookIds);
             }
 
-                public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null)
+                public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored, string mediaType, bool? downloaded, bool? monitored, bool? missing = null, bool? wanted = null, bool? library = null)
                 {
-                    var books = _bookRepository.GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+                    var books = _bookRepository.GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
 
                     // Load author relationships for the returned books
                     if (books.Records != null && books.Records.Any())

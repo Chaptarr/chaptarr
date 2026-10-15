@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using NLog;
@@ -12,7 +13,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class EbookTieBreakFixture
     {
-        private sealed class StubEditionFtsRepository : IEditionFtsRepository
+        private sealed class StubEditionFtsRepository : StagedEditionFtsStub
         {
             private readonly List<EditionFtsMatch> _results;
 
@@ -21,10 +22,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 _results = results ?? new List<EditionFtsMatch>();
             }
 
-            public bool FtsTableExists() => true;
-            public void RebuildIndex() { }
+            public override bool FtsTableExists() => true;
+            public override void RebuildIndex() { }
 
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
+            protected override List<EditionFtsMatch> SelectEditions(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit)
             {
                 return _results;
             }
@@ -41,12 +42,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
 
             public Author GetAuthor(int authorId) => _author;
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -55,6 +56,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
             public void SetTags(Author author, HashSet<int> tags) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> author, bool useExistingRelativePath) => throw new NotImplementedException();

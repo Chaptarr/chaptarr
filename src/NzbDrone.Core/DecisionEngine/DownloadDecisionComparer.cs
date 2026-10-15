@@ -96,8 +96,7 @@ namespace NzbDrone.Core.DecisionEngine
                     return "Preferred indexer category";
 
                 case "Format Type":
-                    var quality = winner.RemoteBook.ParsedBookInfo.Quality.Quality;
-                    var isEbook = IsEbookFormat(quality);
+                    var isEbook = winner.RemoteBook.GetMediaType() == BookMediaType.Ebook;
                     return isEbook ? "Ebook format" : "Audiobook format preferred";
 
                 case "Profile Preference":
@@ -148,7 +147,7 @@ namespace NzbDrone.Core.DecisionEngine
         {
             try
             {
-                var qualityProfile = decision.RemoteBook.Author.GetQualityProfileForQuality(decision.RemoteBook.ParsedBookInfo.Quality.Quality);
+                var qualityProfile = decision.RemoteBook.GetQualityProfile();
                 return qualityProfile?.Name ?? "Unknown";
             }
             catch
@@ -179,36 +178,12 @@ namespace NzbDrone.Core.DecisionEngine
 
         private int CompareFormatType(DownloadDecision x, DownloadDecision y)
         {
-            var xQuality = x.RemoteBook.ParsedBookInfo.Quality.Quality;
-            var yQuality = y.RemoteBook.ParsedBookInfo.Quality.Quality;
-
-            var xIsEbook = IsEbookFormat(xQuality);
-            var yIsEbook = IsEbookFormat(yQuality);
-
-            // If both are the same format type, they're equal in this comparison
-            if (xIsEbook == yIsEbook)
+            return CompareBy(x.RemoteBook, y.RemoteBook, remoteBook => remoteBook.GetMediaType() switch
             {
-                return 0;
-            }
-
-            // Audiobooks come before ebooks in the results
-            if (!xIsEbook && yIsEbook)
-            {
-                _logger.Debug("Format Type - X is audiobook, Y is ebook. X wins.");
-                return 1; // x (audiobook) is better
-            }
-
-            _logger.Debug("Format Type - X is ebook, Y is audiobook. Y wins.");
-            return -1; // y (audiobook) is better
-        }
-
-        private bool IsEbookFormat(Quality quality)
-        {
-            return quality.Id == Quality.Unknown.Id ||
-                   quality.Id == Quality.PDF.Id ||
-                   quality.Id == Quality.MOBI.Id ||
-                   quality.Id == Quality.EPUB.Id ||
-                   quality.Id == Quality.AZW3.Id;
+                BookMediaType.Audiobook => 2,
+                BookMediaType.Ebook => 1,
+                _ => 0
+            });
         }
 
         // MAM-specific ranking is handled through quality profiles and custom formats.
@@ -232,7 +207,12 @@ namespace NzbDrone.Core.DecisionEngine
                 return 0;
             }
 
-            var mediaType = remoteBook.GetPreferredMediaType();
+            var mediaType = remoteBook.GetMediaType();
+            if (!mediaType.HasValue)
+            {
+                return 0;
+            }
+
             var normalized = categories.Select(NormalizeCategory).ToList();
 
             if (mediaType == BookMediaType.Ebook)
@@ -273,16 +253,10 @@ namespace NzbDrone.Core.DecisionEngine
                 return new QualityProfilePreferenceComparison(0, QualityProfilePreferenceFactor.None);
             }
 
-            var author = x.RemoteBook.Author ?? y.RemoteBook.Author;
-            if (author == null)
-            {
-                return new QualityProfilePreferenceComparison(0, QualityProfilePreferenceFactor.None);
-            }
-
-            // Use a single, stable profile for both sides to keep comparisons symmetric.
-            var qualityProfile = author.GetQualityProfileForQuality(xQuality.Quality);
-
-            if (qualityProfile == null)
+            // Per-author sorting uses the target's media profile for both sides of this comparison.
+            var qualityProfile = x.RemoteBook.GetQualityProfile();
+            var otherProfile = y.RemoteBook.GetQualityProfile();
+            if (qualityProfile == null || otherProfile == null || qualityProfile.Id != otherProfile.Id)
             {
                 return new QualityProfilePreferenceComparison(0, QualityProfilePreferenceFactor.None);
             }

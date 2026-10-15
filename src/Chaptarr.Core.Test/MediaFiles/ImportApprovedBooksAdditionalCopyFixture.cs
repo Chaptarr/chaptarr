@@ -5,8 +5,10 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
+using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Books;
@@ -14,6 +16,7 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaCover;
@@ -335,6 +338,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             public List<Edition> Editions { get; set; } = new();
             public List<Edition> InsertedEditions { get; } = new();
+            public bool ThrowOnInsert { get; set; }
             public List<int> MonitoredEditionIds { get; } = new();
             private int _nextId = 9000;
 
@@ -358,6 +362,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     args?.Length == 1 &&
                     args[0] is List<Edition> editions)
                 {
+                    if (ThrowOnInsert) { throw new InvalidOperationException("Edition insert failed"); }
                     foreach (var edition in editions)
                     {
                         if (edition.Id <= 0)
@@ -393,10 +398,20 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             public List<Book> ExistingBooks { get; set; } = new();
             public List<Book> InsertedBooks { get; } = new();
+            public List<int> DeletedBookIds { get; } = new();
             private int _nextId = 8000;
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IBookService.DeleteBook))
+                {
+                    var id = (int)args[0];
+                    Assert.That(args[1], Is.False);
+                    DeletedBookIds.Add(id);
+                    ExistingBooks.RemoveAll(book => book.Id == id);
+                    return null;
+                }
+
                 if (targetMethod?.Name == nameof(IBookService.GetBooksByAuthorId) &&
                     args?.Length == 1 &&
                     args[0] is int authorId)
@@ -985,8 +1000,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        [Test]
-        public void clone_creation_should_stamp_identity_and_preserve_book_monitoring_while_selecting_the_edition()
+        [TestCase("hc:edition:30425", false, false)]
+        [TestCase("hc:edition:30425", false, true)]
+        [TestCase("gr:30425-ebook", false, false)]
+        [TestCase("gr:30425-ebook", false, true)]
+        [TestCase("hc:edition:30425", true, false)]
+        public void clone_creation_should_stamp_identity_and_preserve_book_monitoring_while_selecting_the_edition(string foreignEditionId, bool failInsert, bool postgres)
         {
             var author = new Author
             {
@@ -1001,6 +1020,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Id = 5047,
                 Title = "Best Served Cold",
                 TitleSlug = "best-served-cold",
+                Subtitle = "Preserved subtitle", OriginalTitle = "Preserved original title", IsOmnibus = true,
+                RelatedBooks = new List<int> { 1, 2 },
+                LastSearchTime = DateTime.UtcNow,
+                AddOptions = new AddBookOptions { SearchForNewBook = true },
                 CleanTitle = "bestservedcold",
                 MediaType = BookMediaType.Ebook,
                 Author = author,
@@ -1021,11 +1044,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Title = "Best Served Cold",
                 IsEbook = true,
                 ReadingFormatId = 3,
-                ForeignEditionId = "hc:edition:30425"
+                ForeignEditionId = foreignEditionId,
+                Asins = new List<string> { "B000000001", "B000000002" }
             };
 
             var (bookService, bookProxy) = CreateBookService(new List<Book> { book });
             var editionService = CreateEditionService(new List<Edition> { edition });
+            ((EditionServiceProxy)(object)editionService).ThrowOnInsert = failInsert;
             var service = new ImportApprovedBooks(
                 new StubMediaFileService(),
                 new StubMetadataTagService(),
@@ -1058,7 +1083,14 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
 
             var method = typeof(ImportApprovedBooks).GetMethod("CreateNewBookInstanceForBatch", BindingFlags.Instance | BindingFlags.NonPublic);
-            method.Invoke(service, new object[] { new ImportDecision<LocalBook>(localBook), book, author, true });
+            var result = method.Invoke(service, new object[] { new ImportDecision<LocalBook>(localBook), book, author, true });
+            if (failInsert)
+            {
+                Assert.That(result, Is.Null);
+                Assert.That(bookProxy.DeletedBookIds, Is.EqualTo(bookProxy.InsertedBooks.Select(copy => copy.Id)));
+                Assert.That(bookProxy.ExistingBooks, Is.EqualTo(new[] { book }));
+                return;
+            }
 
             var insertedBook = bookProxy.InsertedBooks.Single();
             var insertedEdition = ((EditionServiceProxy)(object)editionService).InsertedEditions.Single();
@@ -1069,8 +1101,38 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(insertedBook.AudiobookMonitored, Is.False);
             Assert.That(insertedBook.EbookMonitored, Is.False);
             Assert.That(insertedEdition.Monitored, Is.True);
+            Assert.That(insertedEdition.ForeignEditionId, Is.EqualTo(foreignEditionId));
+            Assert.That(insertedEdition.Asins, Is.EqualTo(edition.Asins));
+            Assert.That(insertedEdition.Asins, Is.Not.SameAs(edition.Asins));
             Assert.That(insertedBook.RemoteProviderIds, Is.EquivalentTo(book.RemoteProviderIds));
             Assert.That(insertedBook.RemoteProviderIds, Is.Not.SameAs(book.RemoteProviderIds));
+            Assert.That(insertedBook.Subtitle, Is.EqualTo(book.Subtitle));
+            Assert.That(insertedBook.OriginalTitle, Is.EqualTo(book.OriginalTitle));
+            Assert.That(insertedBook.IsOmnibus, Is.True);
+            Assert.That(insertedBook.RelatedBooks, Is.EqualTo(book.RelatedBooks).And.Not.SameAs(book.RelatedBooks));
+            Assert.That(insertedBook.BaseBookId, Is.EqualTo(book.BaseBookId));
+            Assert.That(insertedBook.AddOptions, Is.Null);
+            Assert.That(insertedBook.LastSearchTime, Is.Null);
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = new NoOpEventAggregator();
+                var savedAuthor = new AuthorRepository(database, events, LogManager.GetCurrentClassLogger()).Insert(new Author
+                {
+                    Name = author.Name, CleanName = "joeabercrombie", TitleSlug = "joe-abercrombie",
+                    Path = @"C:\Ebooks\Joe Abercrombie".AsOsAgnostic(), Added = DateTime.UtcNow
+                });
+                var repository = new BookRepository(database, events);
+                insertedBook.Id = 0;
+                insertedBook.AuthorId = savedAuthor.Id;
+                repository.Insert(insertedBook);
+                var saved = repository.Get(insertedBook.Id);
+                Assert.That(saved.Subtitle, Is.EqualTo(book.Subtitle));
+                Assert.That(saved.OriginalTitle, Is.EqualTo(book.OriginalTitle));
+                Assert.That(saved.RelatedBooks, Is.EqualTo(book.RelatedBooks));
+                Assert.That(saved.IsOmnibus, Is.True);
+                Assert.That(saved.BaseBookId, Is.EqualTo(book.BaseBookId));
+            });
+
         }
 
         [TestCase(true, false, false, TestName = "manual_replace_should_commit_when_optional_tag_write_fails")]
@@ -3182,5 +3244,157 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
             }
         }
+        [TestCase(false, BookMediaType.Audiobook)] [TestCase(true, BookMediaType.Audiobook)]
+        [TestCase(false, BookMediaType.Ebook)] [TestCase(true, BookMediaType.Ebook)]
+        public void sent_grab_should_import_and_record_history_on_the_original_unmonitored_book(bool postgres, BookMediaType media) => RunCapturedSentImport(postgres, media, false);
+
+        [TestCase(false, BookMediaType.Audiobook)] [TestCase(true, BookMediaType.Audiobook)]
+        [TestCase(false, BookMediaType.Ebook)] [TestCase(true, BookMediaType.Ebook)]
+        public void alternative_sent_grab_should_preserve_original_row_edition_and_later_pin(bool postgres, BookMediaType media) => RunCapturedSentImport(postgres, media, true);
+
+        private static void RunCapturedSentImport(bool postgres, BookMediaType media, bool alternative)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var logger = LogManager.GetCurrentClassLogger();
+                var temp = Path.Combine(TestContext.CurrentContext.WorkDirectory, "sent-grab-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(temp);
+                try
+                {
+                    var extension = media == BookMediaType.Audiobook ? ".m4b" : ".epub";
+                    var source = Path.Combine(temp, "incoming" + extension);
+                    var destination = Path.Combine(temp, "library" + extension);
+                    File.WriteAllText(source, "controlled import contents");
+                    var noop = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) => null);
+                    var author = new AuthorRepository(database, noop, logger).Insert(new Author
+                    {
+                        Name = "Test Writer", CleanName = "testwriter", SortName = "testwriter", TitleSlug = "test-writer", Added = DateTime.UtcNow,
+                        Path = temp, AudiobookPath = temp, EbookPath = temp, AudiobookRootFolderPath = temp, EbookRootFolderPath = temp,
+                        AudiobookMonitored = true, EbookMonitored = true
+                    });
+                    var quality = media == BookMediaType.Audiobook ? Quality.M4B : Quality.EPUB;
+                    var profile = new QualityProfile { Id = 1, Name = "Controlled profile", ProfileType = media == BookMediaType.Audiobook ? ProfileType.Audiobook : ProfileType.Ebook,
+                        Items = new List<QualityProfileQualityItem> { new() { Quality = quality, Allowed = true } } };
+                    author.AudiobookQualityProfile = profile; author.EbookQualityProfile = profile;
+                    var books = new BookRepository(database, noop);
+                    Book InsertBook(string slug, BookMediaType type)
+                    {
+                        var book = new Book { AuthorId = author.Id, Author = author, Title = "Paper Lanterns", CleanTitle = "paperlanterns", TitleSlug = slug,
+                            Added = DateTime.UtcNow, MediaType = type, HardcoverBookId = "hc:shared-work", BaseBookId = "hc:shared-work" };
+                        book.SetMonitored(true); return books.Insert(book);
+                    }
+                    var x = InsertBook("grabbed-x", media); var y = InsertBook("independent-y", media);
+                    var other = InsertBook("opposite-side", media == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook);
+                    var editions = new EditionRepository(database, noop);
+                    var edition = editions.Insert(new Edition { BookId = x.Id, Book = x, Title = x.Title, ForeignEditionId = "hc:edition:controlled",
+                        Format = media == BookMediaType.Audiobook ? "audiobook" : "ebook", ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Monitored = true });
+                    x.Editions = new List<Edition> { edition };
+                    var yEdition = alternative ? editions.Insert(new Edition { BookId = y.Id, Book = y, Title = y.Title,
+                        ForeignEditionId = "hc:edition:alternative", ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Monitored = true }) : null;
+                    y.Editions = yEdition == null ? new List<Edition>() : new List<Edition> { yEdition };
+                    var histories = new HistoryRepository(database, noop);
+                    var history = new HistoryService(histories, logger);
+                    var remote = new RemoteBook { Author = author, Books = new List<Book> { x }, ReleaseSource = ReleaseSourceType.Rss,
+                        Release = new ReleaseInfo { Title = "Test Writer - Paper Lanterns", Indexer = "Controlled Indexer", PublishDate = DateTime.UtcNow,
+                            DownloadProtocol = DownloadProtocol.Usenet },
+                        ParsedBookInfo = new ParsedBookInfo { AuthorName = author.Name, BookTitle = x.Title, Quality = new QualityModel(quality) } };
+                    if (alternative) { remote.Books.Add(y); remote.AlternativeCopies = true; remote.TargetEditionIds = new Dictionary<int,int> { [x.Id]=edition.Id,[y.Id]=yEdition.Id }; }
+                    var client = new DownloadClientItem { DownloadId = "c20-sent-grab", Title = "renamed-client-file", Status = DownloadItemStatus.Completed,
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "Controlled Client", Type = "ControlledClient" }, CanMoveFiles = false };
+                    history.Handle(new BookGrabbedEvent(remote) { DownloadId = client.DownloadId, DownloadClient = "ControlledClient", DownloadClientName = "Controlled Client" });
+                    books.SetMonitored(new[] { x.Id }, false); x.SetMonitored(false);
+                    Edition laterPin = null;
+                    if (alternative)
+                    {
+                        edition.Monitored = false; editions.Update(edition);
+                        laterPin = editions.Insert(new Edition { BookId=x.Id,Book=x,Title=x.Title,ForeignEditionId="hc:edition:later-pin",ReadingFormatId=edition.ReadingFormatId,Monitored=true,ManualAdd=true });
+                        x.AnyEditionOk = false; books.Update(x); x.Editions.Add(laterPin);
+                    }
+                    var tracked = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadService(
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Parser.IParsingService>((method, args) =>
+                        {
+                            Assert.That(method.Name, Is.EqualTo(nameof(NzbDrone.Core.Parser.IParsingService.Map)));
+                            Assert.That(args.Length, Is.EqualTo(3));
+                            Assert.That(args[1], Is.EqualTo(author.Id));
+                            var ids = ((IEnumerable<int>)args[2]).ToList();
+                            Assert.That(ids, Is.EqualTo(alternative ? new[] { y.Id,x.Id } : new[] { x.Id }));
+                            return new RemoteBook { Author = author, Books = books.FindExisting(ids).ToList(), ParsedBookInfo = (ParsedBookInfo)args[0] };
+                        }),
+                        new NzbDrone.Common.Cache.CacheManager(), history, noop,
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>((method, args) => null),
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()), logger,
+                        new Chaptarr.Core.Test.Download.NoopDownloadClientFileSnapshotService()).TrackDownload(
+                            new DownloadClientDefinition { Id = 1, Protocol = DownloadProtocol.Usenet }, client);
+                    Assert.That(tracked.RemoteBook.Books.Select(book => book.Id), Is.EquivalentTo(alternative ? new[] { x.Id,y.Id } : new[] { x.Id }));
+                    Assert.That(tracked.RemoteBook.Books.First(book=>book.Id==x.Id).IsMonitored(), Is.False);
+                    var local = new LocalBook { Path = source, Book = x, Author = author, Edition = edition, Quality = new QualityModel(quality),
+                        Size = new FileInfo(source).Length, Modified = File.GetLastWriteTimeUtc(source), DownloadClientBookInfo = tracked.RemoteBook.ParsedBookInfo,
+                        SceneName = tracked.RemoteBook.Release.Title, Part = 1, PartCount = 1 };
+                    if (alternative) local.AlternativeCopyIncompatibleEditionIds = new Dictionary<int,int>();
+                    var decision = new ImportDecision<LocalBook>(local);
+                    var downloadImporter = typeof(DownloadedBooksImportService).GetConstructors().Single();
+                    var args = downloadImporter.GetParameters().Select(parameter => parameter.ParameterType == typeof(Logger) ? (object)logger : null).ToArray();
+                    var downloadService = (DownloadedBooksImportService)downloadImporter.Invoke(args);
+                    typeof(DownloadedBooksImportService).GetMethod("EnforceTrackedDownloadTargetBooks", BindingFlags.NonPublic | BindingFlags.Instance)
+                        .Invoke(downloadService, new object[] { new List<ImportDecision<LocalBook>> { decision }, tracked.RemoteBook, client });
+                    Assert.That(decision.Approved, Is.True);
+                    var files = new MediaFileRepository(database, noop);
+                    var mediaFiles = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaFileService>((method, args) =>
+                    {
+                        if (method.Name == nameof(IMediaFileService.ReplaceMany)) { files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1]); return null; }
+                        if (method.Name == nameof(IMediaFileService.GetFilesByBook)) return files.GetFilesByBook((int)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFilesByEdition)) return files.GetFilesByEdition((int)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFileWithPath)) return files.GetFileWithPath((string)args[0]);
+                        throw new InvalidOperationException("Unexpected media file operation " + method.Name);
+                    });
+                    var eventWriter = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) =>
+                    {
+                        if (args[0] is NzbDrone.Core.MediaFiles.Events.TrackImportedEvent message) history.Handle(message);
+                        return null;
+                    });
+                    var (bookService, bookProxy) = CreateBookService(new List<Book> { x, y, other });
+                    if (alternative)
+                    {
+                        var legacy = bookService;
+                        bookService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method,args) =>
+                        {
+                            if (method.Name == nameof(IBookService.InsertMany)) { books.InsertMany((List<Book>)args[0]); return null; }
+                            if (method.Name == nameof(IBookService.UpdateBook)) { books.Update((Book)args[0]); return args[0]; }
+                            if (method.Name == nameof(IBookService.DeleteBook)) { books.Delete((int)args[0]); return null; }
+                            if (method.Name == nameof(IBookService.GetBooksByAuthorId)) return books.All().Where(book=>book.AuthorId==(int)args[0]).ToList();
+                            if (method.Name == nameof(IBookService.GetBook)) return books.Get((int)args[0]);
+                            return method.Invoke(legacy,args);
+                        });
+                    }
+                    var importEditions = alternative ? (IEditionService)new EditionService(editions,noop,logger) : CreateEditionService(new List<Edition> { edition });
+                    var importer = new ImportApprovedBooks(mediaFiles, new StubMetadataTagService(), new StubMediaInfoExtractor(), Proxy<IAuthorService>(),
+                        bookService, importEditions, Proxy<IRecycleBinProvider>(), Proxy<IExtraService>(),
+                        new StubMoveBookFiles { DestinationPath = destination, TransferFilesOnDisk = true }, history,
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>((method, args) => null), eventWriter,
+                        Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
+                    var result = importer.Import(new List<ImportDecision<LocalBook>> { decision }, false, client, ImportMode.Copy);
+                    Assert.That(result.Single().Result, Is.EqualTo(ImportResultType.Imported));
+                    Assert.That(File.Exists(destination), Is.True);
+                    Assert.That(files.All().Single().EditionId, Is.EqualTo(edition.Id));
+                    Assert.That(files.GetFilesByBook(x.Id), Has.Count.EqualTo(1));
+                    Assert.That(files.GetFilesByBook(y.Id), Is.Empty); Assert.That(files.GetFilesByBook(other.Id), Is.Empty);
+                    Assert.That(bookProxy.InsertedBooks, Is.Empty);
+                    Assert.That(books.Get(x.Id).IsMonitored(), Is.False);
+                    var saved = history.FindByDownloadId(client.DownloadId);
+                    Assert.That(saved.Where(item=>item.EventType==EntityHistoryEventType.BookFileImported).Select(item => item.BookId), Is.EqualTo(new[] { x.Id }));
+                    Assert.That(saved.Where(item=>item.EventType==EntityHistoryEventType.Grabbed).Select(item=>item.BookId), Is.EquivalentTo(alternative?new[]{x.Id,y.Id}:new[]{x.Id}));
+                    if (alternative)
+                    {
+                        Assert.That(saved.Single(item=>item.EventType==EntityHistoryEventType.BookFileImported).EditionId, Is.EqualTo(edition.Id));
+                        Assert.That(editions.Get(edition.Id).Monitored, Is.False); Assert.That(editions.Get(laterPin.Id).Monitored, Is.True);
+                        Assert.That(editions.Get(laterPin.Id).ManualAdd, Is.True);
+                        Assert.That(books.All(), Has.Count.EqualTo(3));
+                    }
+                    TestContext.Progress.WriteLine($"C20_SENT database={database.DatabaseType} media={media} originalBook={x.Id} monitoredAfter={books.Get(x.Id).IsMonitored()} fileBook={files.All().Single().Edition.BookId} historyRows={saved.Count} targetBookIds={string.Join(',', saved.Select(item => item.BookId).Distinct())}");
+                }
+                finally { Directory.Delete(temp, true); }
+            });
+        }
+
     }
 }

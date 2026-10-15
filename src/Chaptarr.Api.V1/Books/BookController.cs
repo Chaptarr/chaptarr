@@ -219,7 +219,7 @@ namespace Chaptarr.Api.V1.Books
                 "adding book"));
         }
 
-        private ActionResult GetBookProviderAmbiguityResult(string provider, string providerId, BookMediaType mediaType, string field)
+        private ActionResult GetBookProviderAmbiguityResult(string provider, string providerId, BookMediaType mediaType, string field, string scope = "work")
         {
             return GetProviderAmbiguityResult(ProviderAmbiguityHelper.GetBookAmbiguity(
                 _bookService,
@@ -228,7 +228,8 @@ namespace Chaptarr.Api.V1.Books
                 mediaType,
                 field,
                 _logger,
-                "importing book"));
+                "importing book",
+                scope));
         }
 
         private bool IsImportActive()
@@ -401,7 +402,7 @@ namespace Chaptarr.Api.V1.Books
 
                 if (editionId != "0")
                 {
-                    var editionAmbiguity = GetBookProviderAmbiguityResult(editionProvider, editionId, bookMediaType, "foreignEditionId");
+                    var editionAmbiguity = GetBookProviderAmbiguityResult(editionProvider, editionId, bookMediaType, "foreignEditionId", "edition");
                     if (editionAmbiguity != null)
                     {
                         return editionAmbiguity;
@@ -445,6 +446,7 @@ namespace Chaptarr.Api.V1.Books
                     // This compatibility/import endpoint is automation-facing. A supplied Edition is an
                     // initial preference, not the explicit human preservation pin used by the id-route editor.
                     AnyEditionOk = true,
+                    AddOptions = new AddBookOptions { SearchForNewBook = authorMonitoring?.SearchForMissing == true },
                     Editions = new List<Edition>()
                 };
 
@@ -488,7 +490,7 @@ namespace Chaptarr.Api.V1.Books
 
                 var author = new NzbDrone.Core.Books.Author
                 {
-                    Name = "Pending Import",
+                    Name = importResource.AuthorName,
                     Monitored = authorMonitored == true,
                     AudiobookMonitored = bookMediaType == BookMediaType.Audiobook ? authorMonitored : null,
                     AudiobookMonitorNewItems = bookMediaType == BookMediaType.Audiobook ? monitorNewItems : null,
@@ -497,6 +499,8 @@ namespace Chaptarr.Api.V1.Books
                     AddOptions = new AddAuthorOptions
                     {
                         Monitor = monitorMode,
+                        AudiobookMonitor = bookMediaType == BookMediaType.Audiobook ? monitorMode : null,
+                        EbookMonitor = bookMediaType == BookMediaType.Ebook ? monitorMode : null,
                         Monitored = authorMonitored == true,
                         SearchForMissingBooks = authorMonitoring?.SearchForMissing == true
                     }
@@ -553,14 +557,6 @@ namespace Chaptarr.Api.V1.Books
 
                 var addedBook = await _addBookService.AddBook(bookToAdd);
                 EnsureBookCover(addedBook.Id, "import");
-
-                if (authorMonitoring?.SearchForMissing == true)
-                {
-                    _commandQueueManager.Push(new BookSearchCommand
-                    {
-                        BookIds = new List<int> { addedBook.Id }
-                    });
-                }
 
                 _logger.Info("[V1-BOOK-IMPORT] Successfully added book with ID: {0}", addedBook.Id);
 
@@ -634,18 +630,7 @@ namespace Chaptarr.Api.V1.Books
                 {
                     if (monitored.Value)
                     {
-                        if (parsedMediaType == BookMediaType.Audiobook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.AudiobookMonitored || HasFiles(b, statsByBookId)).ToList();
-                        }
-                        else if (parsedMediaType == BookMediaType.Ebook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.EbookMonitored || HasFiles(b, statsByBookId)).ToList();
-                        }
-                        else
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.IsMonitored() || HasFiles(b, statsByBookId)).ToList();
-                        }
+                        filteredBooks = filteredBooks.Where(b => b.IsMonitored() || HasFiles(b, statsByBookId)).ToList();
 
                         _logger.Debug("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
                     }
@@ -683,6 +668,9 @@ namespace Chaptarr.Api.V1.Books
                 }
 
                 var filteredBooks = displayBooks;
+                var statsByBookId = BuildBookStatisticsById(displayBooks.Count == 0
+                    ? Array.Empty<AuthorStatistics>()
+                    : new[] { _authorStatisticsService.AuthorStatistics(authorId.Value, normalizedMediaType) });
 
                 _logger.Debug("[API-DEBUG] GetBooksForDisplay returned {0} books", displayBooks.Count);
 
@@ -701,21 +689,7 @@ namespace Chaptarr.Api.V1.Books
                 {
                     if (monitored.Value)
                     {
-                        // Monitored toggle ON: Show monitored books OR books with files
-                        // Check media-type specific monitoring based on current context
-                        if (parsedMediaType == BookMediaType.Audiobook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.AudiobookMonitored || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
-                        else if (parsedMediaType == BookMediaType.Ebook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.EbookMonitored || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
-                        else
-                        {
-                            // No mediaType specified: check either media-type monitoring
-                            filteredBooks = filteredBooks.Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
+                        filteredBooks = filteredBooks.Where(b => b.IsMonitored() || HasFiles(b, statsByBookId)).ToList();
                         _logger.Debug("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
                     }
                     else
@@ -725,7 +699,7 @@ namespace Chaptarr.Api.V1.Books
                     }
                 }
 
-                var resources = MapToResource(filteredBooks, false);
+                var resources = MapToResource(filteredBooks, false, statsByBookId, includeOverview: true, includeLinks: true);
 
                 // Ensure narrator search can work client-side even when the book-level Narrator display is gated.
                 // Use the full edition set for each book, so unmonitored editions
@@ -787,14 +761,7 @@ namespace Chaptarr.Api.V1.Books
             {
                 var titleSlugBooks = ResolveTitleSlugQuery(titleSlug, mediaType);
 
-                if (monitored.HasValue && monitored.Value)
-                {
-                    titleSlugBooks = titleSlugBooks
-                        .Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true)
-                        .ToList();
-                }
-
-                return MapToResource(titleSlugBooks, false);
+                return MapFilteredBooksToResource(titleSlugBooks, monitored);
             }
 
             if (bookId.IsNotNullOrWhiteSpace())
@@ -810,52 +777,15 @@ namespace Chaptarr.Api.V1.Books
                 {
                     var authorBooks = _bookService.GetBooksByAuthor(book.AuthorId);
 
-                    // Apply monitored filter if requested
-                    if (monitored.HasValue)
-                    {
-                        if (monitored.Value)
-                        {
-                            // Monitored toggle ON: Show monitored books OR books with files
-                            // For monitored filter, check book files via editions
-                            authorBooks = authorBooks.Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
-                        // Note: if monitored is false, we show ALL books (no additional filtering)
-                    }
-
-                    return MapToResource(authorBooks, false);
+                    return MapFilteredBooksToResource(authorBooks, monitored);
                 }
-                else
-                {
-                    var singleBookList = new List<Book> { book };
 
-                    // Apply monitored filter if requested
-                    if (monitored.HasValue && monitored.Value)
-                    {
-                        // Monitored toggle ON: Show only if monitored OR has files
-                        // Check if book has files via editions
-                        if (!book.IsMonitored() && !(book.Editions?.Any(e => e.BookFiles?.Any() == true) == true))
-                        {
-                            singleBookList = new List<Book>(); // Empty list if book doesn't match filter
-                        }
-                    }
-                    // Note: if monitored is false, we show the book regardless
-
-                    return MapToResource(singleBookList, false);
-                }
+                return MapFilteredBooksToResource(new List<Book> { book }, monitored);
             }
 
             var bookList = _bookService.GetBooks(bookIds);
 
-            // Apply monitored filter if requested
-            if (monitored.HasValue && monitored.Value)
-            {
-                // Monitored toggle ON: Show monitored books OR books with files
-                // For monitored filter, check book files via editions
-                bookList = bookList.Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-            }
-            // Note: if monitored is false, we show ALL books (no additional filtering)
-
-            return MapToResource(bookList, false);
+            return MapFilteredBooksToResource(bookList, monitored);
         }
 
         private List<Book> ResolveTitleSlugQuery(string titleSlug, string mediaType)
@@ -868,21 +798,33 @@ namespace Chaptarr.Api.V1.Books
                 var provider = facadeContext.IsGoodreads ? "gr" : "hc";
                 var providerId = provider + ":" + titleSlug.Trim();
                 var matches = scopedMediaType.HasValue
-                    ? _bookService.FindAllByProviderId(provider, providerId, scopedMediaType.Value)
+                    ? _bookService.FindAllByWorkProviderId(provider, providerId, scopedMediaType.Value)
                     : new[] { BookMediaType.Audiobook, BookMediaType.Ebook }
-                        .SelectMany(type => _bookService.FindAllByProviderId(provider, providerId, type) ?? new List<Book>())
+                        .SelectMany(type => _bookService.FindAllByWorkProviderId(provider, providerId, type) ?? new List<Book>())
                         .ToList();
 
-                if (matches?.Any() == true)
+                var books = (matches ?? new List<Book>())
+                    .Where(book => book != null)
+                    .GroupBy(book => book.Id)
+                    .Select(group => group.First())
+                    .OrderBy(book => book.Id)
+                    .ToList();
+                if (books.Count > 0)
                 {
-                    return matches
-                        .Where(book => book != null)
-                        .GroupBy(book => book.Id)
-                        .Select(group => _bookService.GetBook(group.Key))
-                        .Where(book => book != null)
-                        .OrderBy(book => book.Id)
-                        .ToList();
+                    var filesByEdition = _mediaFileService.GetFilesByBooks(books.Select(book => book.Id).ToList())
+                        .ToLookup(file => file.EditionId);
+                    foreach (var book in books)
+                    {
+                        foreach (var edition in book.Editions)
+                        {
+                            edition.BookFiles = filesByEdition[edition.Id].ToList();
+                        }
+
+                        book.BookFiles = book.Editions.SelectMany(edition => edition.BookFiles).ToList();
+                    }
                 }
+
+                return books;
             }
 
             var routeMatch = ResolveBookRouteToken(titleSlug, mediaType);
@@ -1112,13 +1054,14 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? downloaded = null,
             [FromQuery] bool? monitored = null,
             [FromQuery] bool? missing = null,
-            [FromQuery] bool? wanted = null)
+            [FromQuery] bool? wanted = null,
+            [FromQuery] bool? library = null)
         {
-            _logger.Debug("[API-INFINITE-SCROLL] GetBookBuckets called: includeUnmonitored={0}, sortKey={1}, sortDirection={2}, mediaType={3}, downloaded={4}, monitored={5}, missing={6}, wanted={7}",
-                includeUnmonitored, sortKey, sortDirection, mediaType, downloaded, monitored, missing, wanted);
+            _logger.Debug("[API-INFINITE-SCROLL] GetBookBuckets called: includeUnmonitored={0}, sortKey={1}, sortDirection={2}, mediaType={3}, downloaded={4}, monitored={5}, missing={6}, wanted={7}, library={8}",
+                includeUnmonitored, sortKey, sortDirection, mediaType, downloaded, monitored, missing, wanted, library);
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
 
-            var buckets = _bookService.GetBookBuckets(sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted);
+            var buckets = _bookService.GetBookBuckets(sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted, library);
 
             _logger.Debug("[API-INFINITE-SCROLL] Buckets returned: {0} total books, {1} buckets",
                 buckets.TotalCount, buckets.Buckets?.Count ?? 0);
@@ -1133,10 +1076,11 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? downloaded = null,
             [FromQuery] bool? monitored = null,
             [FromQuery] bool? missing = null,
-            [FromQuery] bool? wanted = null)
+            [FromQuery] bool? wanted = null,
+            [FromQuery] bool? library = null)
         {
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
-            return Ok(_bookService.GetBookIds(includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted));
+            return Ok(_bookService.GetBookIds(includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted, library));
         }
 
         [HttpGet("paged")]
@@ -1151,10 +1095,11 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? monitored = null,
             [FromQuery] bool? missing = null,
             [FromQuery] bool? wanted = null,
-            [FromQuery] string include = null)
+            [FromQuery] string include = null,
+            [FromQuery] bool? library = null)
         {
-            _logger.Debug("[API-INFINITE-SCROLL] GetBooksPaged called: offset={0}, pageSize={1}, sortKey={2}, sortDirection={3}, includeUnmonitored={4}, mediaType={5}, downloaded={6}, monitored={7}, missing={8}, wanted={9}",
-                offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+            _logger.Debug("[API-INFINITE-SCROLL] GetBooksPaged called: offset={0}, pageSize={1}, sortKey={2}, sortDirection={3}, includeUnmonitored={4}, mediaType={5}, downloaded={6}, monitored={7}, missing={8}, wanted={9}, library={10}",
+                offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
 
             // Validate parameters
@@ -1168,7 +1113,7 @@ namespace Chaptarr.Api.V1.Books
                 return BadRequest("Offset must be non-negative");
             }
 
-            var pagedBooks = _bookService.GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted);
+            var pagedBooks = _bookService.GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted, library);
             var statsByBookId = BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics(normalizedMediaType));
 
             // Convert Book entities to BookResource
@@ -1222,6 +1167,7 @@ namespace Chaptarr.Api.V1.Books
 
 				        [RestPostById]
 				        [ProducesResponseType(typeof(ProviderAmbiguityResource), ProviderAmbiguityHelper.StatusCode)]
+				        [ProducesResponseType(typeof(ApiErrorResource), 422)]
 				        [ProducesResponseType(typeof(PendingBookRequestResource), StatusCodes.Status202Accepted)]
 			        public async Task<ActionResult<BookResource>> AddBook([FromQuery] string mediaType, [FromBody] BookResource bookResource)
 			        {
@@ -1630,17 +1576,27 @@ namespace Chaptarr.Api.V1.Books
 	                : author.EbookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.EbookRootFolderPath);
 	        }
 
+        private List<BookResource> MapFilteredBooksToResource(List<Book> books, bool? monitored)
+        {
+            if (monitored != true || books.Count == 0)
+            {
+                return MapToResource(books, false);
+            }
+
+            var statistics = books.All(book => book.AuthorId == books[0].AuthorId)
+                ? new[] { _authorStatisticsService.AuthorStatistics(books[0].AuthorId) }
+                : _authorStatisticsService.AuthorStatistics(books.Select(book => book.AuthorId)).ToArray();
+            var statsByBookId = BuildBookStatisticsById(statistics);
+            var libraryBooks = books.Where(book => book.IsMonitored() || HasFiles(book, statsByBookId)).ToList();
+            return MapToResource(libraryBooks, false, statsByBookId, includeOverview: true, includeLinks: true);
+        }
+
         private static bool HasFiles(Book book, IReadOnlyDictionary<int, BookStatistics> statsByBookId)
         {
-            if (book == null)
-            {
-                return false;
-	            }
-
-	            return book.HasFiles ||
-                   (statsByBookId != null &&
-                    statsByBookId.TryGetValue(book.Id, out var stats) &&
-                    stats?.BookFileCount > 0);
+            return book != null &&
+                   ((statsByBookId != null && statsByBookId.TryGetValue(book.Id, out var stats) && stats?.BookFileCount > 0) ||
+                    (book.LazyBookFiles?.IsLoaded == true && book.HasFiles) ||
+                    (book.LazyEditions?.IsLoaded == true && book.Editions?.Any(edition => edition.BookFiles?.Any() == true) == true));
         }
 
         private static bool IncludeRequested(string include, string token)
@@ -1990,11 +1946,8 @@ namespace Chaptarr.Api.V1.Books
                     model.MediaType,
                     bookResource.Monitored))
             {
-                // The author gate changes only on the requested side. Book-row siblings follow
-                // format sync when enabled; submitted edition selection is persisted below.
-                // Explicit requests resume later acquisition even when the book was already selected.
-                // Searches and lookups alone never change these saved monitoring settings.
-                _authorService.EnsureMediaTypeMonitoring(model.AuthorId, facadeContext.MediaType);
+                // A book-row request changes only book-row selections; the author-side gate is
+                // an independent setting. Matching sibling rows follow format sync when enabled.
                 model.AddOptions ??= new AddBookOptions();
                 model.AddOptions.AddType = BookAddType.Manual;
                 _bookService.SetAddOptions(new[] { model });
@@ -2143,6 +2096,10 @@ namespace Chaptarr.Api.V1.Books
 
 	                return MapToResource(_bookService.GetBook(wantedBook.Id), true);
 	            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(string.Join(Environment.NewLine, ex.Errors.Select(error => error.ErrorMessage)));
+            }
             catch (ArgumentException ex)
             {
                 return BadRequest(ex.Message);

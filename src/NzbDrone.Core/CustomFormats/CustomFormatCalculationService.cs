@@ -4,9 +4,11 @@ using System.IO;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.History;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
@@ -37,9 +39,24 @@ namespace NzbDrone.Core.CustomFormats
             _logger = logger;
         }
 
+        public static string GetKnownNarratorDisplay(RemoteBook remoteBook)
+        {
+            if (remoteBook?.Books?.Count != 1 || remoteBook.GetMediaType() != BookMediaType.Audiobook ||
+                remoteBook.Release?.NarratorEvidenceFields?.Count > 0 != true)
+            {
+                return null;
+            }
+
+            var known = Parser.ReleaseIdentityEvidence.GetKnownNarrators(remoteBook.Books[0]).Where(name =>
+                remoteBook.Release.NarratorEvidenceFields.Any(field =>
+                    ReleaseNarratorEvidenceExtractor.ContainsKnownNarratorName(new[] { name }, field)))
+                .Distinct(Parser.Parser.NarratorNameComparer).ToList();
+            return known.Count > 0 ? string.Join(", ", known) : null;
+        }
+
         public List<CustomFormat> ParseCustomFormat(RemoteBook remoteBook, long size)
         {
-            var mediaType = ResolveRemoteBookMediaType(remoteBook);
+            var mediaType = remoteBook.GetMediaType();
             var isAudiobook = mediaType == BookMediaType.Audiobook;
             var input = new CustomFormatInput
             {
@@ -55,6 +72,7 @@ namespace NzbDrone.Core.CustomFormats
                     remoteBook.Release?.Title,
                     remoteBook.Release?.Book,
                     remoteBook.Release?.Narrator,
+                    remoteBook.Release?.NarratorEvidenceFields,
                     remoteBook.ParsedBookInfo?.ReleaseTitle,
                     remoteBook.ParsedBookInfo?.BookTitle,
                     remoteBook.ParsedBookInfo?.Narrator,
@@ -94,7 +112,7 @@ namespace NzbDrone.Core.CustomFormats
                 Author = author,
                 Size = blocklist.Size ?? 0,
                 IndexerFlags = blocklist.IndexerFlags,
-                MediaType = QualityMediaTypeHelper.DetectMediaType(blocklist.Quality?.Quality ?? Quality.Unknown, blocklist.SourceTitle),
+                MediaType = QualityMediaTypeHelper.GetKnownMediaType(blocklist.Quality?.Quality),
                 AudioProductionFields = BuildAudioProductionFields(blocklist.SourceTitle)
             };
 
@@ -117,18 +135,21 @@ namespace NzbDrone.Core.CustomFormats
                 ReleaseGroup = parsed?.ReleaseGroup,
             };
 
+            var rawNarratorFields = history.GetDataValue(nameof(ReleaseInfo.NarratorEvidenceFields));
+            var narratorFields = rawNarratorFields.IsNotNullOrWhiteSpace() && Json.TryDeserialize<List<string>>(rawNarratorFields, out var fields) ? fields : null;
             var input = new CustomFormatInput
             {
                 BookInfo = bookInfo,
                 Author = author,
                 Size = size,
                 IndexerFlags = indexerFlags,
-                MediaType = QualityMediaTypeHelper.DetectMediaType(history.Quality?.Quality ?? Quality.Unknown, history.SourceTitle) ?? book?.MediaType,
+                MediaType = book?.MediaType ?? QualityMediaTypeHelper.GetKnownMediaType(history.Quality?.Quality),
                 IsGraphicAudio = bool.TryParse(history.Data.GetValueOrDefault("IsGraphicAudio"), out var isGraphicAudio) && isGraphicAudio,
                 Narrator = history.Data.GetValueOrDefault("Narrator"),
                 AudioProductionFields = BuildAudioProductionFields(
                     history.SourceTitle,
                     history.Data.GetValueOrDefault("Narrator"),
+                    narratorFields,
                     history.Data.GetValueOrDefault("IsGraphicAudio"))
             };
 
@@ -258,26 +279,6 @@ namespace NzbDrone.Core.CustomFormats
             PreferredNarratorMatcher.ApplyTarget(input, bookFile.Edition?.Book, bookFile.Edition);
 
             return ParseCustomFormat(input, allCustomFormats);
-        }
-
-        private static BookMediaType? ResolveRemoteBookMediaType(RemoteBook remoteBook)
-        {
-            var detected = QualityMediaTypeHelper.DetectMediaType(
-                remoteBook.ParsedBookInfo?.Quality?.Quality ?? Quality.Unknown,
-                remoteBook.Release);
-
-            if (detected.HasValue)
-            {
-                return detected;
-            }
-
-            var bookMediaTypes = (remoteBook.Books ?? new List<Book>())
-                .Where(book => book != null)
-                .Select(book => book.MediaType)
-                .Distinct()
-                .ToList();
-
-            return bookMediaTypes.Count == 1 ? bookMediaTypes[0] : null;
         }
 
         private static void ApplyPreferredNarratorTarget(CustomFormatInput input, IEnumerable<Book> books)

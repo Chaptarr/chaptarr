@@ -6,7 +6,6 @@ using NLog;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
-using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download.TrackedDownloads;
@@ -212,6 +211,21 @@ namespace NzbDrone.Core.Download
                     return;
                 }
 
+                // Matching can add library identities during import. Retain them for failure
+                // reporting after verification without changing the original grabbed targets.
+                if (trackedDownload.RemoteBook?.Books?.Any(book => book?.Id > 0) != true)
+                {
+                    var matchedBooks = importResults.Select(result => result.ImportDecision?.Item?.Book)
+                        .Where(book => book?.Id > 0).DistinctBy(book => book.Id).ToList();
+                    if (matchedBooks.Any())
+                    {
+                        trackedDownload.RemoteBook ??= new RemoteBook();
+                        trackedDownload.RemoteBook.Books = matchedBooks;
+                        trackedDownload.RemoteBook.Author ??= matchedBooks.First().Author;
+                        ApplyActualFileQuality(trackedDownload, importResults);
+                    }
+                }
+
                 if (importResults.Any(c => c.Result != ImportResultType.Imported))
                 {
                     // Nothing importable in the payload because every file is a format the profile
@@ -325,38 +339,8 @@ namespace NzbDrone.Core.Download
         private void BlockImportWithCurrentStatus(TrackedDownload trackedDownload)
         {
             trackedDownload.State = TrackedDownloadState.ImportBlocked;
-            PublishImportIncompleteIfChanged(trackedDownload);
-        }
-
-        private void PublishImportIncompleteIfChanged(TrackedDownload trackedDownload)
-        {
             PublishTrackedDownloadUpdated(trackedDownload);
-
-            var downloadId = trackedDownload?.DownloadItem?.DownloadId;
-            if (!downloadId.IsNullOrWhiteSpace())
-            {
-                var statusMessages = trackedDownload.StatusMessages.ToJson();
-                var latestIncomplete = _historyService.FindByDownloadId(downloadId)
-                    .Where(h => h.EventType == EntityHistoryEventType.BookImportIncomplete)
-                    .OrderByDescending(h => h.Date)
-                    .FirstOrDefault();
-
-                if (latestIncomplete != null &&
-                    string.Equals(latestIncomplete.SourceTitle, trackedDownload.DownloadItem.Title, StringComparison.Ordinal) &&
-                    string.Equals(GetStatusMessages(latestIncomplete), statusMessages, StringComparison.Ordinal))
-                {
-                    _logger.Debug("Skipping unchanged import incomplete event for download {0}: {1}", downloadId, trackedDownload.DownloadItem.Title);
-                    return;
-                }
-            }
-
             _eventAggregator.PublishEvent(new BookImportIncompleteEvent(trackedDownload));
-        }
-
-        private static string GetStatusMessages(EntityHistory history)
-        {
-            return history.Data.GetValueOrDefault("statusMessages") ??
-                   history.Data.GetValueOrDefault("StatusMessages");
         }
 
         internal static void ApplyActualFileQuality(TrackedDownload trackedDownload, List<ImportResult> importResults)
@@ -396,7 +380,9 @@ namespace NzbDrone.Core.Download
                                                .Distinct()
                                                .ToList();
 
-            var allItemsImported = strictExpectedBookIds.Count > 0
+            var allItemsImported = trackedDownload.RemoteBook?.AlternativeCopies == true
+                ? NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportService.AreAllTrackedDownloadItemsImported(trackedDownload, importResults)
+                : strictExpectedBookIds.Count > 0
                 ? strictExpectedBookIds.All(importedBookIds.Contains) && importedBookIds.All(strictExpectedBookIds.Contains)
                 : importedBookIds.Count >= Math.Max(1, expectedBooks.Count);
 
@@ -429,7 +415,11 @@ namespace NzbDrone.Core.Download
                                               .OrderByDescending(h => h.Date)
                                               .ToList();
 
-            var allEpisodesImportedInHistory = _trackedDownloadAlreadyImported.IsImported(trackedDownload, historyItems);
+            var allEpisodesImportedInHistory = (trackedDownload.RemoteBook?.AlternativeCopies != true ||
+                importResults.All(result => result.ImportDecision?.Item?.Book?.Id > 0 ||
+                    (!string.IsNullOrWhiteSpace(result.ImportDecision?.Item?.Path) &&
+                     QualityMediaTypeHelper.GetMediaTypeFromPath(result.ImportDecision.Item.Path) != trackedDownload.RemoteBook.GetMediaType()))) &&
+                _trackedDownloadAlreadyImported.IsImported(trackedDownload, historyItems);
 
             if (allEpisodesImportedInHistory)
             {
@@ -503,7 +493,9 @@ namespace NzbDrone.Core.Download
             var expectedBookIds = expectedBooks.Select(book => book.Id).OrderBy(id => id).ToList();
             var importedBookIds = importedBooks.Select(book => book.Id).Where(id => id > 0).Distinct().OrderBy(id => id).ToList();
 
-            if (expectedBookIds.SequenceEqual(importedBookIds))
+            if (trackedDownload.RemoteBook?.AlternativeCopies == true
+                    ? importedBookIds.Count > 0 && importedBookIds.All(expectedBookIds.Contains)
+                    : expectedBookIds.SequenceEqual(importedBookIds))
             {
                 return null;
             }

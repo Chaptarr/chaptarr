@@ -8,6 +8,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
@@ -76,10 +77,9 @@ namespace NzbDrone.Core.Parser
     {
         internal sealed class CatalogPreparation
         {
-            private readonly Dictionary<Book, IReadOnlyList<ContradictoryVariant>> _variants = new(BookReferenceComparer.Instance);
+            private readonly Dictionary<Book, (BookTitleMatchContext Context, IReadOnlyList<ContradictoryVariant> Variants)> _books = new(BookReferenceComparer.Instance);
 
             private readonly Dictionary<int, List<Book>> _authorCatalogs = new();
-
             internal List<Book> GetAuthorCatalog(int authorId, IBookService bookService)
             {
                 if (!_authorCatalogs.TryGetValue(authorId, out var books))
@@ -91,11 +91,19 @@ namespace NzbDrone.Core.Parser
                 return books;
             }
 
-            internal IReadOnlyList<ContradictoryVariant> GetVariants(Book book)
+            internal BookTitleMatchContext GetContext(Book book) => PrepareBook(book).Context;
+
+            internal IReadOnlyList<ContradictoryVariant> GetVariants(Book book) => PrepareBook(book).Variants;
+
+            private (BookTitleMatchContext Context, IReadOnlyList<ContradictoryVariant> Variants) PrepareBook(Book book)
             {
-                if (!_variants.TryGetValue(book, out var variants))
+                if (!_books.TryGetValue(book, out var prepared))
                 {
-                    variants = GetContradictoryTitleVariants(book)
+                    var context = GetBookTitleMatchContext(book);
+                    var titles = GetSelectedEdition(book) == null ? Enumerable.Empty<(string Title, bool IsFallback)>() :
+                        context.PrimaryVariants.Select(title => (Title: title, IsFallback: false))
+                            .Concat(context.FallbackTitles.Select(title => (Title: title, IsFallback: true)));
+                    var variants = titles
                         .Where(variant => !string.IsNullOrWhiteSpace(variant.Title))
                         .DistinctBy(variant => variant.Title, StringComparer.OrdinalIgnoreCase)
                         .Select(variant => new ContradictoryVariant
@@ -112,10 +120,11 @@ namespace NzbDrone.Core.Parser
                                 IsArticleVariant = true
                             }))
                         .ToList();
-                    _variants.Add(book, variants);
+                    prepared = (context, variants);
+                    _books.Add(book, prepared);
                 }
 
-                return variants;
+                return prepared;
             }
         }
 
@@ -151,12 +160,8 @@ namespace NzbDrone.Core.Parser
 
         private static readonly Logger Logger = LogManager.GetLogger(typeof(ReleaseTitleMatchScorer).FullName);
 
-        private static readonly IContainmentValidator AuthorContainmentValidator =
-            new ContainmentValidator(new TagNormalizer(), LogManager.GetLogger(typeof(ReleaseTitleMatchScorer).FullName));
-
         private static readonly HashSet<string> MetadataTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "a", "an", "and", "or", "the", "of", "in", "on", "at", "by", "for", "with", "to", "from", "as", "is",
             "audiobook", "audio", "ebook", "e", "book", "bk", "part", "pt", "chapter", "chapters", "chap", "vol", "volume", "series", "edition",
             "unabridged", "abridged", "audible", "retail", "graphic", "graphicaudio", "aka", "complete",
             "disc", "cd", "track", "trk",
@@ -315,18 +320,8 @@ namespace NzbDrone.Core.Parser
         internal static TitleMatchResult FindBestMatch(ReleaseInfo release, string authorName, IEnumerable<Book> candidateBooks, string authorHint, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation)
         {
             var evidenceTitle = GetBookTitleEvidence(release);
-            var selectedAuthorHint = authorHint;
             var usesStructuredBook = !string.IsNullOrWhiteSpace(release?.Book);
-            var authorHintFromRawTitle = false;
-
-            if (usesStructuredBook && string.IsNullOrWhiteSpace(selectedAuthorHint))
-            {
-                authorHintFromRawTitle = HasAuthorEvidence(authorName, release.Title, null);
-                if (authorHintFromRawTitle)
-                {
-                    selectedAuthorHint = authorName;
-                }
-            }
+            var selectedAuthorHint = GetReleaseAuthorHint(release, authorName, candidateBooks, authorHint, out var authorHintFromRawTitle);
 
             var match = FindBestMatch(evidenceTitle, authorName, candidateBooks, selectedAuthorHint, authorCatalogBooks, preparation);
 
@@ -344,6 +339,38 @@ namespace NzbDrone.Core.Parser
             return match;
         }
 
+        private static string GetReleaseAuthorHint(ReleaseInfo release, string authorName, IEnumerable<Book> candidateBooks, string authorHint, out bool authorHintFromRawTitle)
+        {
+            var evidenceTitle = GetBookTitleEvidence(release);
+            var selectedAuthorHint = authorHint;
+            var usesStructuredBook = !string.IsNullOrWhiteSpace(release?.Book);
+            authorHintFromRawTitle = false;
+
+            if (usesStructuredBook && string.IsNullOrWhiteSpace(selectedAuthorHint))
+            {
+                var rawTokens = TokenizeWithSpans(release.Title);
+                var rawTitleSpans = FindExactTitleSpans(rawTokens.Select(token => token.Value).ToList(), Tokenize(evidenceTitle)).ToList();
+                var authorSpans = ReleaseIdentityEvidence.FindAuthorNameSpans(release.Title, rawTokens, GetExpectedAuthor(authorName, candidateBooks)).ToList();
+                authorHintFromRawTitle = rawTitleSpans.Count == 0
+                    ? ReleaseIdentityEvidence.HasAuthorEvidence(release.Title, rawTokens, authorSpans)
+                    : rawTitleSpans.Any(span => ReleaseIdentityEvidence.HasAuthorEvidence(release.Title, rawTokens, authorSpans, span.Start, span.End));
+                if (authorHintFromRawTitle)
+                {
+                    selectedAuthorHint = authorName;
+                }
+            }
+
+            return selectedAuthorHint;
+        }
+
+        internal static List<TitleMatchResult> FindBestMatches(ReleaseInfo release, string authorName, IEnumerable<Book> candidateBooks, string authorHint, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation)
+        {
+            var candidates = candidateBooks.Where(book => book != null).ToList();
+            var selectedAuthorHint = GetReleaseAuthorHint(release, authorName, candidates, authorHint, out _);
+            var matches = ScoreBooks(GetBookTitleEvidence(release), authorName, candidates, selectedAuthorHint, authorCatalogBooks, preparation).ToList();
+            return GetEquivalentBestMatches(matches).ToList();
+        }
+
         private static string GetBookTitleEvidence(ReleaseInfo release)
         {
             return !string.IsNullOrWhiteSpace(release?.Book) ? release.Book : release?.Title;
@@ -351,15 +378,53 @@ namespace NzbDrone.Core.Parser
 
         internal static TitleMatchResult FindBestMatch(string releaseTitle, string authorName, IEnumerable<Book> candidateBooks, string releaseAuthorHint, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation)
         {
+            return ScoreBooks(releaseTitle, authorName, candidateBooks, releaseAuthorHint, authorCatalogBooks, preparation)
+                .Aggregate((TitleMatchResult)null, ChooseBetterResult);
+        }
+
+        internal static List<Book> FindBooksByTitle(string title, string authorName, IEnumerable<Book> candidateBooks, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation = null)
+        {
+            var candidates = (candidateBooks ?? Enumerable.Empty<Book>()).Where(book => book != null).ToList();
+            var catalog = (authorCatalogBooks ?? candidates).Where(book => book != null).ToList();
+            preparation ??= new CatalogPreparation();
+            var result = new List<Book>();
+            foreach (var group in candidates.GroupBy(book => (book.AuthorId, book.MediaType)))
+            {
+                var targets = group.ToList();
+                var scopedCatalog = catalog.Where(book => book.AuthorId == group.Key.AuthorId && book.MediaType == group.Key.MediaType).ToList();
+                var targetSet = targets.ToHashSet(BookReferenceComparer.Instance);
+                var competitors = scopedCatalog.Any(book => !targetSet.Contains(book))
+                    ? GetCompetingSiblings(new ReleaseInfo { Title = title }, targets, scopedCatalog, preparation)
+                    : new List<Book>();
+                var matches = ScoreBooks(title, authorName, targets.Concat(competitors), authorName, scopedCatalog, preparation)
+                    .Where(match => match.IsMatch).ToList();
+                // Equivalent evidence must retain every row; text matching cannot select an arbitrary copy.
+                result.AddRange(GetEquivalentBestMatches(matches).Where(match => targetSet.Contains(match.Book))
+                    .Select(match => match.Book));
+            }
+
+            return result.DistinctBy(book => book.Id).ToList();
+        }
+
+        private static IEnumerable<TitleMatchResult> GetEquivalentBestMatches(List<TitleMatchResult> matches)
+        {
+            var best = matches.Aggregate((TitleMatchResult)null, ChooseBetterResult);
+            return matches.Where(match =>
+                ReferenceEquals(ChooseBetterResult(best, match), best) &&
+                ReferenceEquals(ChooseBetterResult(match, best), match));
+        }
+
+        private static IEnumerable<TitleMatchResult> ScoreBooks(string releaseTitle, string authorName, IEnumerable<Book> candidateBooks, string releaseAuthorHint, IEnumerable<Book> authorCatalogBooks, CatalogPreparation preparation)
+        {
             if (string.IsNullOrWhiteSpace(releaseTitle) || candidateBooks == null)
             {
-                return null;
+                yield break;
             }
 
             var books = candidateBooks.Where(book => book != null).ToList();
             if (books.Count == 0)
             {
-                return null;
+                yield break;
             }
 
             var cleanedReleaseTitle = Parser.CleanReleaseTitleForParsing(releaseTitle);
@@ -367,40 +432,42 @@ namespace NzbDrone.Core.Parser
             var releaseTokens = releaseTokenSpans.Select(token => token.Value).ToList();
             if (releaseTokens.Count == 0)
             {
-                return null;
+                yield break;
             }
 
             var authorCatalog = (authorCatalogBooks ?? books)
                 .Where(book => book != null)
                 .ToList();
 
-            var hasAuthorEvidence = HasAuthorEvidence(authorName, cleanedReleaseTitle, releaseAuthorHint);
-
-            TitleMatchResult best = null;
+            var expectedAuthor = GetExpectedAuthor(authorName, books);
+            var hasAuthorHint = !string.IsNullOrWhiteSpace(releaseAuthorHint);
+            var hasAuthorEvidence = string.IsNullOrWhiteSpace(authorName) ||
+                                    (hasAuthorHint && ReleaseIdentityEvidence.StructuredAuthorMatches(expectedAuthor, releaseAuthorHint));
+            var authorSpans = hasAuthorHint || hasAuthorEvidence
+                ? new List<(int Start, int End, bool Inverted)>()
+                : ReleaseIdentityEvidence.FindAuthorNameSpans(cleanedReleaseTitle, releaseTokenSpans, expectedAuthor).ToList();
 
             foreach (var book in books)
             {
-                var candidate = ScoreAgainstBook(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, hasAuthorEvidence, book, authorCatalog, preparation);
-                best = ChooseBetterResult(best, candidate);
+                var candidate = ScoreAgainstBook(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, hasAuthorEvidence, authorSpans, book, authorCatalog, preparation);
+                if (candidate != null)
+                {
+                    candidate.EvidenceTitle = releaseTitle;
+                    yield return candidate;
+                }
             }
-
-            if (best != null)
-            {
-                best.EvidenceTitle = releaseTitle;
-            }
-
-            return best;
         }
 
         private static TitleMatchResult ScoreAgainstBook(IReadOnlyList<string> releaseTokens,
                                                          IReadOnlyList<TitleTokenSpan> releaseTokenSpans,
                                                          string cleanedReleaseTitle,
                                                          bool hasAuthorEvidence,
+                                                         IReadOnlyList<(int Start, int End, bool Inverted)> authorSpans,
                                                          Book book,
                                                          IEnumerable<Book> authorCatalogBooks,
                                                          CatalogPreparation preparation)
         {
-            var context = GetBookTitleMatchContext(book);
+            var context = preparation.GetContext(book);
             if (context.PrimaryVariants.Count == 0)
             {
                 return null;
@@ -448,11 +515,11 @@ namespace NzbDrone.Core.Parser
 
             if (titleSpans.Count > 0)
             {
-                var problems = GetProblems(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, titleSpans, book?.Author?.Name, context, contradictoryVariants, seriesSiblings);
+                var problems = GetProblems(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, titleSpans, book?.Author?.Name, context, contradictoryVariants, seriesSiblings, hasAuthorEvidence || titleSpans.Any(span => ReleaseIdentityEvidence.HasAuthorEvidence(cleanedReleaseTitle, releaseTokenSpans, authorSpans, span.Start, span.End)));
                 TitleMatchResult primaryBest = null;
                 foreach (var variant in scoringVariants)
                 {
-                    primaryBest = ChooseBetterResult(primaryBest, ScoreAgainstTitleVariant(releaseTokens, hasAuthorEvidence, book, variant, context, problems, useNumberEquivalence));
+                    primaryBest = ChooseBetterResult(primaryBest, ScoreAgainstTitleVariant(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, hasAuthorEvidence, authorSpans, book, variant, context, problems, useNumberEquivalence));
                 }
 
                 return primaryBest;
@@ -475,14 +542,14 @@ namespace NzbDrone.Core.Parser
                     continue;
                 }
 
-                var candidateProblems = GetProblems(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, candidateSpans, book?.Author?.Name, context, contradictoryVariants, seriesSiblings);
-                fallbackBest = ChooseBetterResult(fallbackBest, ScoreAgainstTitleVariant(releaseTokens, hasAuthorEvidence, book, candidateTitle, context, candidateProblems));
+                var candidateProblems = GetProblems(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, candidateSpans, book?.Author?.Name, context, contradictoryVariants, seriesSiblings, hasAuthorEvidence || candidateSpans.Any(span => ReleaseIdentityEvidence.HasAuthorEvidence(cleanedReleaseTitle, releaseTokenSpans, authorSpans, span.Start, span.End)));
+                fallbackBest = ChooseBetterResult(fallbackBest, ScoreAgainstTitleVariant(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, hasAuthorEvidence, authorSpans, book, candidateTitle, context, candidateProblems));
             }
 
             return fallbackBest;
         }
 
-        private static TitleMatchResult ScoreAgainstTitleVariant(IReadOnlyList<string> releaseTokens, bool hasAuthorEvidence, Book book, string bookTitleVariant, BookTitleMatchContext context, List<TitleMatchProblem> problems, bool useNumberEquivalence = false)
+        private static TitleMatchResult ScoreAgainstTitleVariant(IReadOnlyList<string> releaseTokens, IReadOnlyList<TitleTokenSpan> releaseTokenSpans, string source, bool hasAuthorEvidence, IReadOnlyList<(int Start, int End, bool Inverted)> authorSpans, Book book, string bookTitleVariant, BookTitleMatchContext context, List<TitleMatchProblem> problems, bool useNumberEquivalence = false)
         {
             var titleTokens = Tokenize(bookTitleVariant);
             if (titleTokens.Count == 0)
@@ -516,7 +583,7 @@ namespace NzbDrone.Core.Parser
                     MeaningfulLeftovers = leftovers,
                     ProblemCode = ChooseProblemCode(problems),
                     Problems = problems,
-                    IsMatch = hasAuthorEvidence && problems.Count == 0
+                    IsMatch = problems.Count == 0 && (hasAuthorEvidence || ReleaseIdentityEvidence.HasAuthorEvidence(source, releaseTokenSpans, authorSpans, span.Start, span.End))
                 };
 
                 best = ChooseBetterResult(best, candidate);
@@ -532,12 +599,13 @@ namespace NzbDrone.Core.Parser
                                                            string authorName,
                                                            BookTitleMatchContext context,
                                                            IEnumerable<ContradictoryVariant> contradictoryVariants,
-                                                           IReadOnlyList<Book> seriesSiblings)
+                                                           IReadOnlyList<Book> seriesSiblings,
+                                                           bool hasAuthorIdentityEvidence)
         {
             var problems = new List<TitleMatchProblem>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var problem in titleSpans.SelectMany(span => GetAdjacentSeriesNumberProblems(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, span.Start, span.End, context, seriesSiblings)))
+            foreach (var problem in titleSpans.SelectMany(span => GetAdjacentSeriesNumberProblems(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, span.Start, span.End, context, seriesSiblings, hasAuthorIdentityEvidence)))
             {
                 if (seen.Add(problem.Value))
                 {
@@ -645,8 +713,20 @@ namespace NzbDrone.Core.Parser
                                                                                        int matchedStart,
                                                                                        int matchedEnd,
                                                                                        BookTitleMatchContext context,
-                                                                                       IReadOnlyList<Book> seriesSiblings)
+                                                                                       IReadOnlyList<Book> seriesSiblings,
+                                                                                       bool hasAuthorIdentityEvidence)
         {
+            var previousIndex = matchedStart - 1;
+            if (!hasAuthorIdentityEvidence && releaseTokens != null && previousIndex >= 0)
+            {
+                var previousToken = releaseTokens[previousIndex];
+                var precedingProblem = GetAdjacentSeriesNumberProblem(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, matchedStart, matchedEnd, previousIndex, previousToken, previousToken, context, seriesSiblings, hasAuthorIdentityEvidence);
+                if (precedingProblem != null)
+                {
+                    yield return precedingProblem;
+                }
+            }
+
             var nextIndex = matchedEnd + 1;
             if (releaseTokens == null || nextIndex >= releaseTokens.Count)
             {
@@ -662,7 +742,7 @@ namespace NzbDrone.Core.Parser
             if (IsSeriesPositionMarker(nextToken) && nextIndex + 1 < releaseTokens.Count)
             {
                 var markedNumber = releaseTokens[nextIndex + 1];
-                var problem = GetAdjacentSeriesNumberProblem(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, matchedStart, matchedEnd, nextIndex + 1, $"{nextToken} {markedNumber}", markedNumber, context, seriesSiblings);
+                var problem = GetAdjacentSeriesNumberProblem(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, matchedStart, matchedEnd, nextIndex + 1, $"{nextToken} {markedNumber}", markedNumber, context, seriesSiblings, hasAuthorIdentityEvidence);
                 if (problem != null)
                 {
                     yield return problem;
@@ -671,7 +751,7 @@ namespace NzbDrone.Core.Parser
                 yield break;
             }
 
-            var adjacentProblem = GetAdjacentSeriesNumberProblem(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, matchedStart, matchedEnd, nextIndex, nextToken, nextToken, context, seriesSiblings);
+            var adjacentProblem = GetAdjacentSeriesNumberProblem(releaseTokens, releaseTokenSpans, cleanedReleaseTitle, matchedStart, matchedEnd, nextIndex, nextToken, nextToken, context, seriesSiblings, hasAuthorIdentityEvidence);
             if (adjacentProblem != null)
             {
                 yield return adjacentProblem;
@@ -687,7 +767,8 @@ namespace NzbDrone.Core.Parser
                                                                         string displayValue,
                                                                         string numberToken,
                                                                         BookTitleMatchContext context,
-                                                                        IReadOnlyList<Book> seriesSiblings)
+                                                                        IReadOnlyList<Book> seriesSiblings,
+                                                                        bool hasAuthorIdentityEvidence)
         {
             var isSeriesSlot = MatchedSpanIsTargetSeries(releaseTokens, matchedStart, matchedEnd, context);
 
@@ -722,7 +803,11 @@ namespace NzbDrone.Core.Parser
                 return null;
             }
 
-            if (SeriesPositionSetContains(context?.SeriesPosition, slotNumber))
+            if (SeriesPositionSetContains(context?.SeriesPosition, slotNumber) &&
+                (hasAuthorIdentityEvidence || isSeriesSlot ||
+                 (numberIndex > 0 && IsSeriesPositionMarker(releaseTokens[numberIndex - 1])) ||
+                 FindExactTitleSpans(releaseTokens, Tokenize(context?.SeriesName))
+                     .Any(span => span.End == numberIndex - 1)))
             {
                 return null;
             }
@@ -1079,13 +1164,6 @@ namespace NzbDrone.Core.Parser
             }
         }
 
-        private static IEnumerable<(string Title, bool IsFallback)> GetContradictoryTitleVariants(Book book)
-        {
-            var context = GetBookTitleMatchContext(book);
-            return GetSelectedEdition(book) == null ? Enumerable.Empty<(string, bool)>() :
-                context.PrimaryVariants.Select(title => (title, false)).Concat(context.FallbackTitles.Select(title => (title, true)));
-        }
-
         private static IEnumerable<string> GetFullTitleArticleVariants(Book book)
         {
             var edition = GetSelectedEdition(book);
@@ -1255,63 +1333,11 @@ namespace NzbDrone.Core.Parser
                    !targetTitle.SequenceEqual(Tokenize(GetSelectedEditionTitle(otherBook)), StringComparer.Ordinal);
         }
 
-        private static bool HasAuthorEvidence(string authorName, string releaseTitle, string releaseAuthorHint)
+        private static Author GetExpectedAuthor(string authorName, IEnumerable<Book> books)
         {
-            if (string.IsNullOrWhiteSpace(authorName))
-            {
-                return true;
-            }
-
-            if (!string.IsNullOrWhiteSpace(releaseAuthorHint))
-            {
-                return ReleaseIdentityEvidence.StructuredAuthorMatches(new Author { Name = authorName }, releaseAuthorHint);
-            }
-
-            var fields = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["RELEASE_TITLE"] = new List<string> { releaseTitle ?? string.Empty }
-            };
-
-            return AuthorContainmentValidator.ValidateAuthorInTags(authorName, fields) ||
-                   HasAuthorTokenSpan(authorName, releaseTitle) ||
-                   HasAuthorTokenSpan(authorName, releaseAuthorHint);
-        }
-
-        private static bool HasAuthorTokenSpan(string authorName, string value)
-        {
-            var authorTokens = Tokenize(authorName);
-            var valueTokens = Tokenize(value);
-
-            if (authorTokens.Count == 0 || valueTokens.Count < authorTokens.Count)
-            {
-                return false;
-            }
-
-            for (var start = 0; start <= valueTokens.Count - authorTokens.Count; start++)
-            {
-                var matches = true;
-
-                for (var offset = 0; offset < authorTokens.Count; offset++)
-                {
-                    var valueToken = valueTokens[start + offset];
-                    var authorToken = authorTokens[offset];
-
-                    if (!TokensMatch(valueToken, authorToken) &&
-                        !(offset == authorTokens.Count - 1 &&
-                          string.Equals(valueToken, authorToken + "s", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        matches = false;
-                        break;
-                    }
-                }
-
-                if (matches)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return books?.Select(book => book?.LazyAuthor)
+                .FirstOrDefault(author => author?.IsLoaded == true && string.Equals(author.Value?.Name, authorName, StringComparison.OrdinalIgnoreCase))?.Value
+                ?? new Author { Name = authorName };
         }
 
         public static IEnumerable<(int Start, int End)> FindExactTitleSpans(IReadOnlyList<string> releaseTokens, IReadOnlyList<string> titleTokens)
@@ -1488,28 +1514,39 @@ namespace NzbDrone.Core.Parser
 
             AddSeriesTailVariant(context, editionTitle);
 
-            if (string.IsNullOrWhiteSpace(context.SeriesName) || !TryGetSeriesPositionNumber(context.SeriesPosition, out var expected))
+            foreach (var baseTitle in GetSeriesMetadataBaseTitles(context.PrimaryVariants, context.SeriesName, context.SeriesPosition))
             {
-                return context;
+                AddVariant(context.PrimaryVariants, baseTitle);
             }
 
-            // A trailing "SeriesName, Book N" subtitle restates stored series metadata, so it is optional.
-            foreach (var variant in context.PrimaryVariants.ToList())
+            return context;
+        }
+
+        internal static IReadOnlyList<string> GetSeriesMetadataBaseTitles(IEnumerable<string> variants, string seriesName, string seriesPosition)
+        {
+            var baseTitles = new List<string>();
+            if (string.IsNullOrWhiteSpace(seriesName) || !TryGetSeriesPositionNumber(seriesPosition, out var expected))
+            {
+                return baseTitles;
+            }
+
+            // A complete trailing series and position restates the book's stored metadata.
+            foreach (var variant in variants)
             {
                 var tokens = TokenizeWithSpans(variant);
-                foreach (var span in FindExactTitleSpans(tokens.Select(token => token.Value).ToList(), Tokenize(context.SeriesName)))
+                foreach (var span in FindExactTitleSpans(tokens.Select(token => token.Value).ToList(), Tokenize(seriesName)))
                 {
                     var position = string.Join(" ", tokens.Skip(span.End + 1).Select(token => token.Value));
                     if (span.Start > 0 && TryGetSeriesPositionNumber(position, out var actual) &&
                         actual == expected &&
                         TryGetKnownSubtitleBaseTitle(variant, variant.Substring(tokens[span.Start].Start), out var baseTitle))
                     {
-                        AddVariant(context.PrimaryVariants, baseTitle);
+                        AddVariant(baseTitles, baseTitle);
                     }
                 }
             }
 
-            return context;
+            return baseTitles;
         }
 
         private static void AddSeriesTailVariant(BookTitleMatchContext context, string editionTitle)
@@ -1617,13 +1654,13 @@ namespace NzbDrone.Core.Parser
             var scandinavian = ApplyScandinavianTransliteration(title);
             if (!string.Equals(scandinavian, title, StringComparison.Ordinal))
             {
-                yield return scandinavian.RemoveAccent();
+                yield return scandinavian;
             }
 
             var germanic = ApplyGermanicTransliteration(title);
             if (!string.Equals(germanic, title, StringComparison.Ordinal))
             {
-                yield return germanic.RemoveAccent();
+                yield return germanic;
             }
         }
 
@@ -1742,11 +1779,12 @@ namespace NzbDrone.Core.Parser
             yield return title;
 
             // Brackets do not make title content optional. Only independently known metadata can be omitted.
-            var withoutQualifiers = OptionalQualifierSegmentRegex.Replace(title, match =>
+            var withoutNarratorNotes = ReleaseNarratorEvidenceExtractor.RemoveKnownNarratorNotes(
+                title, ReleaseIdentityEvidence.GetKnownNarrators(book));
+            var withoutQualifiers = OptionalQualifierSegmentRegex.Replace(withoutNarratorNotes, match =>
             {
                 var label = match.Groups["label"].Value;
-                return ReleaseIdentityEvidence.IsKnownNarratorCredit(book, label) ||
-                       TokenizedEquals(label, book?.SeriesName) ||
+                return TokenizedEquals(label, book?.SeriesName) ||
                        AudioProductionConstants.GraphicAudioIndicators.Concat(AudioProductionConstants.AudiobookIndicators)
                            .Any(indicator => TokenizedEquals(label, indicator))
                     ? " " : match.Value;
@@ -1928,7 +1966,7 @@ namespace NzbDrone.Core.Parser
             return (sourceStart, sourceEnd);
         }
 
-        private static bool IsMetadataToken(string token)
+        internal static bool IsMetadataToken(string token)
         {
             if (string.IsNullOrWhiteSpace(token))
             {

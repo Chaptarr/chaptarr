@@ -12,21 +12,13 @@ using NzbDrone.Core.MediaCover;
 using CoverImage = NzbDrone.Core.MediaCover.MediaCover;
 using NzbDrone.Core.MetadataSource;
 
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
+
 namespace Chaptarr.Core.Test.Api
 {
     [TestFixture]
     public class CoverMappingBatchControllerFixture
     {
-        private class InterfaceProxy<T> : DispatchProxy where T : class
-        {
-            public Func<MethodInfo, object[], object> Handler { get; set; }
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                return Handler(targetMethod, args);
-            }
-        }
-
         private class BatchCoverMapperProxy : DispatchProxy
         {
             public List<List<int>> BatchBookIds { get; } = new();
@@ -75,13 +67,6 @@ namespace Chaptarr.Core.Test.Api
             }
         }
 
-        private static T Proxy<T>(Func<MethodInfo, object[], object> handler) where T : class
-        {
-            var proxy = DispatchProxy.Create<T, InterfaceProxy<T>>();
-            ((InterfaceProxy<T>)(object)proxy).Handler = handler;
-            return proxy;
-        }
-
         private static IMapCoversToLocal CoverMapper(out BatchCoverMapperProxy mapper)
         {
             var proxy = DispatchProxy.Create<IMapCoversToLocal, BatchCoverMapperProxy>();
@@ -112,7 +97,7 @@ namespace Chaptarr.Core.Test.Api
         private static IEnumerable<BookResource> MapLookupBooks(BookLookupController controller, IEnumerable<Book> books)
         {
             var method = typeof(BookLookupController).GetMethod("MapToResource", BindingFlags.Instance | BindingFlags.NonPublic);
-            return (IEnumerable<BookResource>)method.Invoke(controller, new object[] { books, null });
+            return (IEnumerable<BookResource>)method.Invoke(controller, new object[] { books, null, null });
         }
 
         private static IEnumerable<SearchResource> MapSearchResults(SearchController controller, IEnumerable<object> results)

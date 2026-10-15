@@ -64,7 +64,9 @@ namespace NzbDrone.Core.Utilities
         public static string NormalizeWords(string text) => Normalize(text, true, false, false, null).Text;
 
         // Keep punctuation for callers whose parsers give it meaning, using the same character fold as stored keys.
-        public static string NormalizeText(string text) => Normalize(text, true, true, false, null).Text;
+        public static string NormalizeText(string text) => NormalizeText(text, false);
+
+        public static string NormalizeText(string text, bool preserveCase) => Normalize(text, true, true, false, null, preserveCase).Text;
 
         public static NormalizedMappedText NormalizeWordsWithSourceSpans(string text, IReadOnlyList<(int Start, int End)> sourceSpans)
             => Normalize(text, true, false, true, sourceSpans);
@@ -72,7 +74,7 @@ namespace NzbDrone.Core.Utilities
         internal static NormalizedMappedText NormalizeTextWithSourceSpans(string text)
             => Normalize(text, true, true, true, null);
 
-        private static NormalizedMappedText Normalize(string text, bool preserveWhitespace, bool preservePunctuation, bool mapSource, IReadOnlyList<(int Start, int End)> sourceSpans)
+        private static NormalizedMappedText Normalize(string text, bool preserveWhitespace, bool preservePunctuation, bool mapSource, IReadOnlyList<(int Start, int End)> sourceSpans, bool preserveCase = false)
         {
             var builder = new StringBuilder(text?.Length ?? 0);
             var spans = mapSource ? new List<(int Start, int End)>() : null;
@@ -118,7 +120,7 @@ namespace NzbDrone.Core.Utilities
 
                         for (; index < nextWordEnd; index++)
                         {
-                            builder.Append(char.ToLowerInvariant(text[index]));
+                            builder.Append(preserveCase ? text[index] : char.ToLowerInvariant(text[index]));
                             spans?.Add(suppliedSpans ? sourceSpans[index] : (index, index + 1));
                         }
 
@@ -154,24 +156,48 @@ namespace NzbDrone.Core.Utilities
                     }
                 }
 
-                if (folded == null && !rune.IsAscii)
+                if (folded == null && Rune.IsLetter(rune) &&
+                    (!rune.IsAscii || (index + length < text.Length &&
+                        Rune.TryGetRuneAt(text, index + length, out var following) && IsCombiningMark(following))))
                 {
-                    var decomposed = rune.ToString().Normalize(NormalizationForm.FormD);
-                    var clean = new StringBuilder(decomposed.Length);
-                    foreach (var part in decomposed.EnumerateRunes())
+                    // Compose the original character sequence before folding so canonical encodings retain the same evidence.
+                    length = StringInfo.GetNextTextElementLength(text, index);
+                    var canonical = text.Substring(index, length).Normalize(NormalizationForm.FormC);
+                    var replacement = new StringBuilder(canonical.Length);
+                    foreach (var part in canonical.EnumerateRunes())
                     {
-                        if (!IsCombiningMark(part) || (preservePunctuation && Rune.GetUnicodeCategory(part) != UnicodeCategory.NonSpacingMark))
+                        var comparisonPart = preserveCase || !Rune.IsLetter(part) ? part : Rune.ToUpperInvariant(part);
+                        if (UnicodeComparisonFoldData.Replacements.TryGetValue(comparisonPart.Value, out var mapped))
                         {
-                            clean.Append(part.ToString());
+                            if (preserveCase && Rune.IsUpper(part))
+                            {
+                                mapped = mapped.ToUpperInvariant();
+                            }
+                            else if (preserveCase && Rune.GetUnicodeCategory(part) == UnicodeCategory.TitlecaseLetter)
+                            {
+                                mapped = CultureInfo.InvariantCulture.TextInfo.ToTitleCase(mapped);
+                            }
+
+                            replacement.Append(mapped);
+                        }
+                        else
+                        {
+                            replacement.Append(comparisonPart.ToString());
                         }
                     }
 
-                    folded = clean.ToString().Normalize(NormalizationForm.FormC);
+                    folded = replacement.ToString();
+                }
+                else if (folded == null && !rune.IsAscii && !IsNonCharacter(rune))
+                {
+                    folded = rune.ToString().Normalize(NormalizationForm.FormD);
                 }
 
+                // The generated data defines disposable letter accents; unlisted script marks remain identity evidence.
+                var preserveMarks = IsWordCharacter(rune);
                 while (index + length < text.Length && Rune.TryGetRuneAt(text, index + length, out var mark) && IsCombiningMark(mark))
                 {
-                    if (preservePunctuation && Rune.GetUnicodeCategory(mark) != UnicodeCategory.NonSpacingMark)
+                    if (preserveMarks || (!IsWordCharacter(rune) && preservePunctuation && Rune.GetUnicodeCategory(mark) != UnicodeCategory.NonSpacingMark))
                     {
                         folded = (folded ?? rune.ToString()) + mark.ToString();
                     }
@@ -189,12 +215,19 @@ namespace NzbDrone.Core.Utilities
                 }
                 else
                 {
+                    var clean = new StringBuilder(folded.Length);
                     foreach (var part in folded.EnumerateRunes())
                     {
-                        if (!IsCombiningMark(part) || (preservePunctuation && Rune.GetUnicodeCategory(part) != UnicodeCategory.NonSpacingMark))
+                        if (!IsCombiningMark(part) || preserveMarks || (!IsWordCharacter(rune) && preservePunctuation && Rune.GetUnicodeCategory(part) != UnicodeCategory.NonSpacingMark))
                         {
-                            Append(part, sourceSpan, part.Value == '.');
+                            clean.Append(part.ToString());
                         }
+                    }
+
+                    var composed = IsNonCharacter(rune) ? clean.ToString() : clean.ToString().Normalize(NormalizationForm.FormC);
+                    foreach (var part in composed.EnumerateRunes())
+                    {
+                        Append(part, sourceSpan, part.Value == '.');
                     }
                 }
 
@@ -205,7 +238,7 @@ namespace NzbDrone.Core.Utilities
 
             void Append(Rune rune, (int Start, int End) sourceSpan, bool numericPoint)
             {
-                if (IsWordCharacter(rune) || preservePunctuation || (preserveWhitespace && numericPoint))
+                if (IsWordCharacter(rune) || IsCombiningMark(rune) || preservePunctuation || (preserveWhitespace && numericPoint))
                 {
                     if (separator.HasValue)
                     {
@@ -214,7 +247,8 @@ namespace NzbDrone.Core.Utilities
                         separator = null;
                     }
 
-                    var lower = Rune.ToLowerInvariant(rune);
+                    var lower = preserveCase ? rune : Rune.IsLetter(rune)
+                        ? Rune.ToLowerInvariant(Rune.ToUpperInvariant(rune)) : Rune.ToLowerInvariant(rune);
                     if (lower.IsBmp)
                     {
                         builder.Append(lower.Value == '\uFFFD' ? ' ' : (char)lower.Value);
@@ -311,6 +345,9 @@ namespace NzbDrone.Core.Utilities
         }
 
         private static bool IsWordCharacter(Rune rune) => Rune.IsLetter(rune) || Rune.IsNumber(rune);
+
+        // Noncharacters carry no canonical decomposition; retain the caller's existing boundary policy.
+        private static bool IsNonCharacter(Rune rune) => rune.Value is >= 0xFDD0 and <= 0xFDEF || (rune.Value & 0xFFFF) >= 0xFFFE;
 
         private static bool IsCombiningMark(Rune rune) => Rune.GetUnicodeCategory(rune) is
             UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark;

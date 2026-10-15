@@ -39,7 +39,7 @@ namespace Chaptarr.Core.Test.Datastore
 
                 ApplyMigration(connectionString, DatabaseType.SQLite);
 
-                Assert.That(connection.QuerySingle<int>("SELECT MAX(\"Version\") FROM \"VersionInfo\";"), Is.EqualTo(108));
+                Assert.That(connection.QuerySingle<int>("SELECT MAX(\"Version\") FROM \"VersionInfo\";"), Is.EqualTo(113));
                 AssertPersistedValues(connection);
                 AssertPreservedAndIdempotent(connection, connectionString, before, DatabaseType.SQLite);
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM KeyUpdates WHERE TableName='Books' AND RowId = 3;"), Is.Zero,
@@ -54,6 +54,8 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH 'dune' AND rowid = 4;"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH 'robot' AND rowid = 5;"), Is.EqualTo(1));
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH '\"23.5 lies\"' AND rowid IN (6, 7);"), Is.EqualTo(2));
+                Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH 'がとう' AND rowid IN (11, 12);"), Is.EqualTo(1));
+                Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM edition_fts WHERE edition_fts MATCH 'かとう' AND rowid IN (11, 12);"), Is.EqualTo(1));
             }
             finally
             {
@@ -101,7 +103,7 @@ namespace Chaptarr.Core.Test.Datastore
 
                 ApplyMigration(connectionString, DatabaseType.PostgreSQL);
 
-                Assert.That(connection.QuerySingle<int>("SELECT MAX(\"Version\") FROM \"VersionInfo\";"), Is.EqualTo(108));
+                Assert.That(connection.QuerySingle<int>("SELECT MAX(\"Version\") FROM \"VersionInfo\";"), Is.EqualTo(113));
                 AssertPersistedValues(connection);
                 AssertPreservedAndIdempotent(connection, connectionString, before, DatabaseType.PostgreSQL);
                 Assert.That(connection.QuerySingle<int>(@"
@@ -122,6 +124,12 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(connection.QuerySingle<int>(@"
                     SELECT COUNT(*) FROM ""Editions""
                     WHERE to_tsvector('simple', COALESCE(""MatchingTitle"", '')) @@ plainto_tsquery('simple', 'dune ii');"), Is.EqualTo(1));
+                Assert.That(connection.QuerySingle<int>(@"
+                    SELECT COUNT(*) FROM ""Editions""
+                    WHERE ""Id"" IN (11, 12) AND to_tsvector('simple', COALESCE(""MatchingTitle"", '')) @@ plainto_tsquery('simple', 'がとう');"), Is.EqualTo(1));
+                Assert.That(connection.QuerySingle<int>(@"
+                    SELECT COUNT(*) FROM ""Editions""
+                    WHERE ""Id"" IN (11, 12) AND to_tsvector('simple', COALESCE(""MatchingTitle"", '')) @@ plainto_tsquery('simple', 'かとう');"), Is.EqualTo(1));
             }
             finally
             {
@@ -136,8 +144,8 @@ namespace Chaptarr.Core.Test.Datastore
             connection.Execute(postgres
                 ? @"
                     CREATE TABLE ""VersionInfo"" (""Version"" INTEGER PRIMARY KEY, ""AppliedOn"" TIMESTAMP NULL, ""Description"" TEXT NULL);
-                    INSERT INTO ""VersionInfo"" SELECT version, CURRENT_TIMESTAMP, 'test baseline' FROM generate_series(1, 107) AS version;
-                    CREATE TABLE ""Books"" (""Id"" INTEGER PRIMARY KEY, ""Title"" TEXT NOT NULL, ""CleanTitle"" TEXT NOT NULL, ""AuthorId"" INTEGER NOT NULL DEFAULT 1, ""ForeignBookId"" TEXT);
+                    INSERT INTO ""VersionInfo"" SELECT version, CURRENT_TIMESTAMP, 'test baseline' FROM generate_series(1, 112) AS version;
+                    CREATE TABLE ""Books"" (""Id"" INTEGER PRIMARY KEY, ""Title"" TEXT NOT NULL, ""CleanTitle"" TEXT NOT NULL, ""AuthorId"" INTEGER NOT NULL DEFAULT 1, ""MediaType"" INTEGER NOT NULL DEFAULT 0, ""ForeignBookId"" TEXT);
                     CREATE TABLE ""Authors"" (""Id"" INTEGER PRIMARY KEY, ""Name"" TEXT NOT NULL, ""CleanName"" TEXT NOT NULL, ""ForeignAuthorId"" TEXT);
                     CREATE TABLE ""NarratorMetadata"" (""Id"" INTEGER PRIMARY KEY, ""Name"" TEXT NOT NULL);
                     CREATE TABLE ""Narrators"" (""Id"" INTEGER PRIMARY KEY, ""NarratorMetadataId"" INTEGER NOT NULL, ""CleanName"" TEXT NULL);
@@ -148,10 +156,10 @@ namespace Chaptarr.Core.Test.Datastore
                     WITH RECURSIVE versions(version) AS
                     (
                         SELECT 1
-                        UNION ALL SELECT version + 1 FROM versions WHERE version < 107
+                        UNION ALL SELECT version + 1 FROM versions WHERE version < 112
                     )
                     INSERT INTO ""VersionInfo"" SELECT version, CURRENT_TIMESTAMP, 'test baseline' FROM versions;
-                    CREATE TABLE ""Books"" (""Id"" INTEGER PRIMARY KEY, ""Title"" TEXT NOT NULL, ""CleanTitle"" TEXT NOT NULL, ""AuthorId"" INTEGER NOT NULL DEFAULT 1, ""ForeignBookId"" TEXT);
+                    CREATE TABLE ""Books"" (""Id"" INTEGER PRIMARY KEY, ""Title"" TEXT NOT NULL, ""CleanTitle"" TEXT NOT NULL, ""AuthorId"" INTEGER NOT NULL DEFAULT 1, ""MediaType"" INTEGER NOT NULL DEFAULT 0, ""ForeignBookId"" TEXT);
                     CREATE TABLE ""Authors"" (""Id"" INTEGER PRIMARY KEY, ""Name"" TEXT NOT NULL, ""CleanName"" TEXT NOT NULL, ""ForeignAuthorId"" TEXT);
                     CREATE TABLE ""NarratorMetadata"" (""Id"" INTEGER PRIMARY KEY, ""Name"" TEXT NOT NULL);
                     CREATE TABLE ""Narrators"" (""Id"" INTEGER PRIMARY KEY, ""NarratorMetadataId"" INTEGER NOT NULL, ""CleanName"" TEXT NULL);
@@ -204,7 +212,7 @@ namespace Chaptarr.Core.Test.Datastore
         private static void AssertPreservedAndIdempotent(IDbConnection connection, string connectionString, string before, DatabaseType databaseType)
         {
             Assert.That(SnapshotSourceValues(connection), Is.EqualTo(before));
-            foreach (var (table, count) in new[] { ("Books", 7), ("Authors", 3), ("Narrators", 3), ("Editions", 8) })
+            foreach (var (table, count) in new[] { ("Books", 9), ("Authors", 5), ("Narrators", 5), ("Editions", 10) })
             {
                 Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM KeyUpdates WHERE TableName=@table;", new { table }), Is.EqualTo(count), table);
             }
@@ -226,10 +234,13 @@ namespace Chaptarr.Core.Test.Datastore
                     (5, '23 1/2 Lies', '2312lies'),
                     (6, 'Dune ⅩⅣ', 'dunewrong'),
                     (7, 'Dune ⅯⅠⅮ', 'dunemidwrong'),
-                    (8, 'Dune Ⅱ', 'dune2');
-                INSERT INTO ""Authors"" (""Id"", ""Name"", ""CleanName"") VALUES (1, 'Jane One', 'jane1'), (2, 'Jane 𝟙', 'jane𝟙'), (3, 'Correct Author', 'correctauthor'), (4, 'Author ⅮⅤⅮ', 'authorwrong');
-                INSERT INTO ""NarratorMetadata"" (""Id"", ""Name"") VALUES (1, 'Mary Three'), (2, 'Mary 𝟛'), (3, 'Correct Narrator'), (4, 'Narrator ⅮⅤⅮ');
-                INSERT INTO ""Narrators"" (""Id"", ""NarratorMetadataId"", ""CleanName"") VALUES (1, 1, 'mary3'), (2, 2, 'mary𝟛'), (3, 99, 'orphanpreserved'), (4, 3, 'correctnarrator'), (5, 4, 'narratorwrong');
+                    (8, 'Dune Ⅱ', 'dune2'),
+                    (9, 'がとう', 'かとう'),
+                    (10, 'かとう', 'かとう'),
+                    (11, 'Café', 'café');
+                INSERT INTO ""Authors"" (""Id"", ""Name"", ""CleanName"") VALUES (1, 'Jane One', 'jane1'), (2, 'Jane 𝟙', 'jane𝟙'), (3, 'Correct Author', 'correctauthor'), (4, 'Author ⅮⅤⅮ', 'authorwrong'), (5, 'がとう', 'かとう'), (6, 'かとう', 'かとう'), (7, 'José', 'josé');
+                INSERT INTO ""NarratorMetadata"" (""Id"", ""Name"") VALUES (1, 'Mary Three'), (2, 'Mary 𝟛'), (3, 'Correct Narrator'), (4, 'Narrator ⅮⅤⅮ'), (5, 'がとう'), (6, 'かとう'), (7, 'José');
+                INSERT INTO ""Narrators"" (""Id"", ""NarratorMetadataId"", ""CleanName"") VALUES (1, 1, 'mary3'), (2, 2, 'mary𝟛'), (3, 99, 'orphanpreserved'), (4, 3, 'correctnarrator'), (5, 4, 'narratorwrong'), (6, 5, 'かとう'), (7, 6, 'かとう'), (8, 7, 'josé');
                 INSERT INTO ""Editions"" (""Id"", ""Title"", ""MatchingTitle"") VALUES
                     (1, 'Ready Player Two', 'ready player 2'),
                     (2, 'Ready Player 𝟚', 'ready player 𝟚'),
@@ -240,7 +251,10 @@ namespace Chaptarr.Core.Test.Datastore
                     (7, '23 1/2 Lies', '23 1 2 lies'),
                     (8, 'Dune ⅩⅣ', 'dune x iv'),
                     (9, 'Dune ⅯⅠⅮ', 'dune m i d'),
-                    (10, 'Dune Ⅱ', 'dune 2');
+                    (10, 'Dune Ⅱ', 'dune 2'),
+                    (11, 'がとう', 'かとう'),
+                    (12, 'かとう', 'かとう'),
+                    (13, 'Café', 'café');
                 UPDATE ""Books"" SET ""ForeignBookId"" = 'test:book-one' WHERE ""Id""=1;
                 UPDATE ""Authors"" SET ""ForeignAuthorId"" = 'test:author-one' WHERE ""Id""=1;
                 UPDATE ""Editions"" SET ""ForeignEditionId"" = 'test:edition-one' WHERE ""Id""=1;
@@ -258,12 +272,27 @@ namespace Chaptarr.Core.Test.Datastore
                     INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (7, '23 1 2 lies');
                     INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (8, 'dune x iv');
                     INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (9, 'dune m i d');
-                    INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (10, 'dune 2');");
+                    INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (10, 'dune 2');
+                    INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (11, 'かとう');
+                    INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (12, 'かとう');
+                    INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (13, 'café');");
             }
         }
 
         private static void AssertPersistedValues(IDbConnection connection)
         {
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\"=9;"), Is.EqualTo("がとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\"=10;"), Is.EqualTo("かとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\"=11;"), Is.EqualTo("cafe"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Authors\" WHERE \"Id\"=5;"), Is.EqualTo("がとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Authors\" WHERE \"Id\"=6;"), Is.EqualTo("かとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Authors\" WHERE \"Id\"=7;"), Is.EqualTo("jose"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Narrators\" WHERE \"Id\"=6;"), Is.EqualTo("がとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Narrators\" WHERE \"Id\"=7;"), Is.EqualTo("かとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"CleanName\" FROM \"Narrators\" WHERE \"Id\"=8;"), Is.EqualTo("jose"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\"=11;"), Is.EqualTo("がとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\"=12;"), Is.EqualTo("かとう"));
+            Assert.That(connection.QuerySingle<string>("SELECT \"MatchingTitle\" FROM \"Editions\" WHERE \"Id\"=13;"), Is.EqualTo("cafe"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\"=6;"), Is.EqualTo("dunexiv"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\"=7;"), Is.EqualTo("dunemid"));
             Assert.That(connection.QuerySingle<string>("SELECT \"CleanTitle\" FROM \"Books\" WHERE \"Id\"=8;"), Is.EqualTo("duneii"));
@@ -296,7 +325,7 @@ namespace Chaptarr.Core.Test.Datastore
         private static void ApplyMigration(string connectionString, DatabaseType databaseType)
         {
             var migrationController = new MigrationController(LogManager.GetLogger(nameof(NormalizeComparisonKeysMigrationFixture)), null);
-            migrationController.Migrate(connectionString, new MigrationContext(MigrationType.Main, 108), databaseType);
+            migrationController.Migrate(connectionString, new MigrationContext(MigrationType.Main, 113), databaseType);
         }
     }
 }

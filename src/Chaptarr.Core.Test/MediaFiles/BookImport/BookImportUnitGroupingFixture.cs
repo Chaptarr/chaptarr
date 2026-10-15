@@ -10,6 +10,28 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class BookImportUnitGroupingFixture
     {
+        [TestCase("The Novel")]
+        [TestCase("Read")]
+        [TestCase("Performed")]
+        [TestCase("From")]
+        [TestCase("Unabridged")]
+        [TestCase("Complete")]
+        public void literal_title_words_must_remain_grouping_identity(string title)
+        {
+            var key = BookImportUnitGroupingService.BuildIdentityKey(new Dictionary<string, List<string>> { ["TITLE"] = new() { title } });
+            TestContext.WriteLine($"group title={title} identity={key ?? "<null>"}");
+            Assert.That(key, Is.Not.Null);
+        }
+
+        [TestCase("Chapter 1")]
+        [TestCase("Track 01")]
+        [TestCase("Disc 2")]
+        [TestCase("CD 2")]
+        public void numbered_packaging_must_not_split_a_book_unit(string syntax)
+        {
+            Assert.That(BookImportUnitGroupingService.BuildIdentityKey(new Dictionary<string, List<string>> { ["TITLE"] = new() { syntax } }), Is.Null);
+        }
+
         [TestCase("Astorias𠀀Smut", "astorias𠀀smut")]
         [TestCase("Astorias𠀁Smut", "astorias𠀁smut")]
         [TestCase("𠀀 🌶️ high-opp 1.5", "𠀀|high-opp|1.5")]

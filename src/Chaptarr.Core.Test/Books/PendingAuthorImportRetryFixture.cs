@@ -1,14 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Reflection;
 using System.Threading.Tasks;
+using Chaptarr.Core.Test.Common;
+using Chaptarr.Core.Test.MetadataSource.BookInfo;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Http;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Books.Services;
+using NzbDrone.Core.ImportLists.Exclusions;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MetadataSource;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -35,6 +44,11 @@ namespace Chaptarr.Core.Test.Books
                                string.Equals(Active.ProviderId, (string)args[0], StringComparison.OrdinalIgnoreCase)
                             ? Active
                             : null;
+                    case "GetFailedByProviderId":
+                        return Active?.OverallStatus == PendingImportStatus.Failed &&
+                               string.Equals(Active.ProviderId, (string)args[0], StringComparison.OrdinalIgnoreCase)
+                            ? new List<PendingAuthorImport> { Active }
+                            : new List<PendingAuthorImport>();
                     case nameof(IPendingAuthorImportRepository.Insert):
                         Inserted = (PendingAuthorImport)args[0];
                         Inserted.Id = 123;
@@ -97,6 +111,62 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
+        [TestCase(false, 0)]
+        [TestCase(true, 0)]
+        [TestCase(false, 1)]
+        [TestCase(true, 1)]
+        [TestCase(false, 2)]
+        [TestCase(true, 2)]
+        [NonParallelizable]
+        public void metadata_202_hint_should_preserve_the_existing_later_attempt_schedule(bool postgres, int source)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = new RecordingEventAggregator();
+                var authors = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                var repository = new PendingAuthorImportRepository(database, events);
+                var pending = new PendingAuthorImportService(repository, authors, events, LogManager.GetCurrentClassLogger());
+                repository.Insert(new PendingAuthorImport
+                {
+                    ProviderId = "hc:9001", ProviderPrefix = "hc", RequestedBy = "ImportList:Shelf", Version = 1,
+                    OverallStatus = PendingImportStatus.Pending, AudiobookStatus = PendingImportStatus.Pending,
+                    EbookStatus = PendingImportStatus.NotRequested, AttemptCount = 3, CreatedAt = DateTime.UtcNow,
+                    NextAttemptAt = DateTime.UtcNow.AddMinutes(-1),
+                    AudiobookBooksToMonitor = source == 2 ? "[\"hc:1001\"]" : null
+                });
+                var httpCalls = 0;
+                var metadata = BookInfoProxyCanonicalLookupFixture.CreateProxy(Proxy<IHttpClient>((method, args) =>
+                {
+                    httpCalls++;
+                    var headers = new HttpHeader { ContentType = "application/json" };
+                    headers.Add("Retry-After", "60");
+                    var response = new HttpResponse((HttpRequest)args[0], headers, "null", HttpStatusCode.Accepted);
+                    return method.Name.EndsWith("Async", StringComparison.Ordinal) ? Task.FromResult(response) : response;
+                }));
+                var queue = Proxy<IManageCommandQueue>((method, args) => new CommandModel());
+                IProvideAuthorInfo authorInfo = source == 1 ? metadata : Proxy<IProvideAuthorInfo>((method, args) =>
+                    metadata.GetAuthorInfo((string)args[0], (bool)args[1]));
+                IAuthorLibraryService library = source == 2
+                    ? Proxy<IAuthorLibraryService>((method, args) => Task.FromResult(new Author { Id = 42 }))
+                    : new AuthorLibraryService(authors, authorInfo, null, null, null, null, null,
+                        new TestQualityProfileService(), null, null, queue, events, pending, database,
+                        Proxy<IImportListExclusionService>((method, args) => new List<ImportListExclusion>()),
+                        null, null, LogManager.GetCurrentClassLogger());
+                var before = DateTime.UtcNow;
+                new ProcessPendingImportsCommandHandler(pending, library,
+                    Proxy<IBookService>((method, args) => new List<Book>()), metadata, queue, events,
+                    LogManager.GetCurrentClassLogger()).Execute(new ProcessPendingImportsCommand());
+                var reloaded = new PendingAuthorImportService(new PendingAuthorImportRepository(database, events),
+                    authors, events, LogManager.GetCurrentClassLogger());
+                var saved = reloaded.GetByProviderId("hc:9001");
+                Assert.That(saved.NextAttemptAt, Is.InRange(before.AddSeconds(239), DateTime.UtcNow.AddSeconds(361)));
+                Assert.That(saved.AttemptCount, Is.EqualTo(4));
+                Assert.That(saved.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
+                Assert.That(reloaded.GetDueForProcessing(), Is.Empty);
+                Assert.That(httpCalls, Is.EqualTo(1));
+            });
+        }
+
         [Test]
         public void schedule_retry_should_not_turn_a_transient_wait_into_failure_at_the_legacy_ceiling()
         {
@@ -114,6 +184,7 @@ namespace Chaptarr.Core.Test.Books
                 EbookStatus = PendingImportStatus.NotRequested,
                 OverallStatus = PendingImportStatus.Retrying
             };
+            repositoryProxy.Active = item;
             var before = DateTime.UtcNow;
 
             subject.ScheduleRetry(item, PendingAuthorImportRetryReason.AuthorNotYetAvailable);
@@ -305,6 +376,42 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(item.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
             Assert.That(item.Version, Is.EqualTo(6));
             Assert.That(repositoryProxy.FencedUpdateCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task queued_narrations_survive_reload_merge_and_repeat_without_losing_either_pick()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var recorder = (RepositoryProxy)repository;
+            var subject = new PendingAuthorImportService(repository,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+            var first = new MonitoringConfig
+            {
+                CreateAudiobook = true, CreateEbook = false,
+                AudiobookNarrations = new List<RequestedNarration> { new() { WorkProviderId = "hc:100", EditionProviderId = "hc:201", NarratorNames = new List<string> { "Jim Dale" } } }
+            };
+            await subject.EnqueueAsync("gr:123", first, "test");
+            recorder.Active = Newtonsoft.Json.JsonConvert.DeserializeObject<PendingAuthorImport>(Newtonsoft.Json.JsonConvert.SerializeObject(recorder.Inserted));
+            var second = new MonitoringConfig
+            {
+                CreateAudiobook = true, CreateEbook = false,
+                AudiobookNarrations = new List<RequestedNarration>
+                {
+                    new() { WorkProviderId = "HC:100", EditionProviderId = "HC:201", Search = true },
+                    new() { WorkProviderId = "hc:100", EditionProviderId = "hc:202", NarratorNames = new List<string> { "Stephen Fry", "Jane Smith" }, Search = true }
+                }
+            };
+            await subject.EnqueueAsync("gr:123", second, "test");
+            var version = recorder.Active.Version;
+            await subject.EnqueueAsync("gr:123", second, "test");
+            var saved = Newtonsoft.Json.JsonConvert.DeserializeObject<List<RequestedNarration>>(recorder.Active.AudiobookNarrations);
+            Assert.That(saved, Has.Count.EqualTo(2));
+            Assert.That(saved.ConvertAll(request => request.EditionProviderId), Is.EquivalentTo(new[] { "hc:201", "hc:202" }));
+            Assert.That(saved.TrueForAll(request => request.Search), Is.True);
+            Assert.That(saved.Find(request => request.EditionProviderId == "hc:201").NarratorNames, Is.EqualTo(new[] { "Jim Dale" }));
+            Assert.That(saved.Find(request => request.EditionProviderId == "hc:202").NarratorNames, Is.EqualTo(new[] { "Stephen Fry", "Jane Smith" }));
+            Assert.That(recorder.Active.Version, Is.EqualTo(version));
+            Assert.That(recorder.UnfencedUpdateCount, Is.Zero);
         }
 
         [Test]
@@ -764,7 +871,7 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repositoryProxy.Active.OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
             Assert.That(repositoryProxy.Active.LastError, Is.EqualTo("Cancelled by user"));
             Assert.That(repositoryProxy.Active.Version, Is.EqualTo(5));
-            Assert.That(repositoryProxy.FencedUpdateCount, Is.EqualTo(2));
+            Assert.That(repositoryProxy.FencedUpdateCount, Is.EqualTo(1));
             Assert.That(repositoryProxy.UnfencedUpdateCount, Is.Zero);
         }
 

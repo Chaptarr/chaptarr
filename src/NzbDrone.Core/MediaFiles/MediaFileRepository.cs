@@ -273,14 +273,16 @@ namespace NzbDrone.Core.MediaFiles
             if (string.IsNullOrWhiteSpace(mediaType))
             {
                 return conn.Query<BookFile>(
-                    @"SELECT ""Id"", ""Path"", ""Size"", ""Modified"", ""EditionId"", ""MediaType""
+                    @"SELECT ""Id"", ""Path"", ""Size"", ""Modified"", ""EditionId"", ""MediaType"",
+                             CASE WHEN substr(""MatchDetails"", 1, 13) = 'APPLY_FAILED:' THEN 'APPLY_FAILED:' ELSE NULL END AS ""MatchDetails""
                       FROM ""BookFiles""
                       WHERE ""Path"" LIKE @likePath;",
                     new { likePath }).ToList();
             }
 
             return conn.Query<BookFile>(
-                @"SELECT ""Id"", ""Path"", ""Size"", ""Modified"", ""EditionId"", ""MediaType""
+                @"SELECT ""Id"", ""Path"", ""Size"", ""Modified"", ""EditionId"", ""MediaType"",
+                             CASE WHEN substr(""MatchDetails"", 1, 13) = 'APPLY_FAILED:' THEN 'APPLY_FAILED:' ELSE NULL END AS ""MatchDetails""
                   FROM ""BookFiles""
                   WHERE ""Path"" LIKE @likePath
                     AND ""MediaType"" = @mediaType;",

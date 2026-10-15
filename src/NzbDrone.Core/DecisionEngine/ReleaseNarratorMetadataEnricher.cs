@@ -67,7 +67,7 @@ namespace NzbDrone.Core.DecisionEngine
                     continue;
                 }
 
-                foreach (var release in group.Where(IsLikelyAudiobook).Where(NeedsNarratorMetadata))
+                foreach (var release in group.Where(IsLikelyAudiobook).Where(release => NeedsNarratorMetadata(release, searchCriteria)))
                 {
                     lookups++;
                     provider.TryPopulateNarratorMetadata(release);
@@ -124,7 +124,7 @@ namespace NzbDrone.Core.DecisionEngine
             return provider;
         }
 
-        private static bool NeedsNarratorMetadata(ReleaseInfo release)
+        private static bool NeedsNarratorMetadata(ReleaseInfo release, SearchCriteriaBase searchCriteria)
         {
             if (release == null)
             {
@@ -141,7 +141,13 @@ namespace NzbDrone.Core.DecisionEngine
                 return false;
             }
 
-            return string.IsNullOrWhiteSpace(PreferredNarratorMatcher.ExtractNarratorFromFields(new[] { release.Title }));
+            return !(searchCriteria?.Books ?? Enumerable.Empty<NzbDrone.Core.Books.Book>())
+                .Select(book => PreferredNarratorMatcher.BuildTarget(book))
+                .Where(target => target?.Names?.Count > 0 && (!target.HasUnresolvedNames || target.Names.Count == 1))
+                .Any(target => target.Names.All(name =>
+                    ReleaseNarratorEvidenceExtractor.ContainsKnownNarratorName(new[] { name }, release.Title) ||
+                    release.NarratorEvidenceFields?.Any(field =>
+                        ReleaseNarratorEvidenceExtractor.ContainsKnownNarratorName(new[] { name }, field)) == true));
         }
 
         private static bool IsLikelyAudiobook(ReleaseInfo release)

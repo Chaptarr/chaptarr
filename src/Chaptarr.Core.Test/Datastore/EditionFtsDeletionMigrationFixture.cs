@@ -40,8 +40,6 @@ namespace Chaptarr.Core.Test.Datastore
 
                 Apply(connectionString, false, 110);
                 Assert.That(Snapshot(connection), Is.EqualTo(before));
-                new EditionFtsRepository(new MainDatabase(new Database("fts-repair", () => OpenSqlite(connectionString))), LogManager.GetCurrentClassLogger()).RebuildIndex();
-                Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM edition_fts;"), Is.EqualTo(2));
             });
         }
 

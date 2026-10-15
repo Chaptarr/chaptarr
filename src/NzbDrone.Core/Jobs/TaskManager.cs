@@ -252,12 +252,7 @@ namespace NzbDrone.Core.Jobs
         {
             var interval = _configService.BackupInterval;
 
-            if (interval < 1)
-            {
-                interval = 1;
-            }
-
-            return interval * 60 * 24;
+            return Math.Max(0, interval) * 60 * 24;
         }
 
         private int GetRssSyncInterval()

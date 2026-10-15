@@ -12,6 +12,7 @@ using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
+using Swashbuckle.AspNetCore.Annotations;
 
 namespace Chaptarr.Api.V1.Author
 {
@@ -82,6 +83,8 @@ namespace Chaptarr.Api.V1.Author
         public string AudiobookFolder { get; set; }
         public string EbookFolder { get; set; }
         public List<string> Genres { get; set; }
+        [SwaggerSchema("Author spellings supplied by the metadata server; submitted values are ignored.", ReadOnly = true)]
+        public List<string> Pseudonyms { get; set; }
         public string CleanName { get; set; }
         public string SortName { get; set; }
         public string SortNameLastFirst { get; set; }
@@ -132,7 +135,8 @@ namespace Chaptarr.Api.V1.Author
                 AuthorName = model.Name,
                 AuthorNameLastFirst = model.NameLastFirst,
 
-                //AlternateTitles
+                // Read-only: server-supplied spellings; updates never write this field.
+                Pseudonyms = CloneStringList(model.Pseudonyms),
                 SortName = model.SortName,
                 SortNameLastFirst = model.SortNameLastFirst,
 

@@ -4,6 +4,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
@@ -15,6 +17,8 @@ namespace NzbDrone.Core.Download
     {
         Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions);
         Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId);
+        Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions, int? downloadClientId);
+        Task ProcessSelectedDecisions(List<RemoteBook> selected, int? downloadClientId = null);
     }
 
     public class ProcessDownloadDecisions : IProcessDownloadDecisions
@@ -35,7 +39,9 @@ namespace NzbDrone.Core.Download
             _logger = logger;
         }
 
-        public async Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions)
+        public Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions) => ProcessDecisions(decisions, null);
+
+        public async Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions, int? downloadClientId)
         {
             var qualifiedReports = GetQualifiedReports(decisions);
             var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(qualifiedReports);
@@ -48,8 +54,23 @@ namespace NzbDrone.Core.Download
             var usenetFailed = false;
             var torrentFailed = false;
 
-            foreach (var report in prioritizedDecisions)
+            foreach (var report in CoalesceReports(prioritizedDecisions, grabbed))
             {
+                void RemoveJoinedDelays()
+                {
+                    if (!report.RemoteBook.AlternativeCopies || report.RemoteBook.Books.Count < 2)
+                    {
+                        return;
+                    }
+
+                    var ids = report.RemoteBook.Books.Select(book => book.Id).ToHashSet();
+                    bool JoinedDelay(DownloadDecision candidate) => IsDelayOnly(candidate) &&
+                        Equals(GetAlternativeReleaseKey(candidate.RemoteBook.Release), GetAlternativeReleaseKey(report.RemoteBook.Release)) &&
+                        candidate.RemoteBook.Books.All(book => ids.Contains(book.Id));
+                    pendingAddQueue.RemoveAll(pair => JoinedDelay(pair.Item1));
+                    pending.RemoveAll(JoinedDelay);
+                }
+
                 var downloadProtocol = report.RemoteBook.Release.DownloadProtocol;
 
                 //Skip if already grabbed
@@ -67,11 +88,16 @@ namespace NzbDrone.Core.Download
                 if ((downloadProtocol == DownloadProtocol.Usenet && usenetFailed) ||
                     (downloadProtocol == DownloadProtocol.Torrent && torrentFailed))
                 {
+                    RemoveJoinedDelays();
                     PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.DownloadClientUnavailable);
                     continue;
                 }
 
-                var result = await ProcessDecisionInternal(report);
+                var result = await ProcessDecisionInternal(report, downloadClientId);
+                if (result != ProcessedDecisionResult.Skipped)
+                {
+                    RemoveJoinedDelays();
+                }
 
                 switch (result)
                 {
@@ -122,6 +148,109 @@ namespace NzbDrone.Core.Download
             }
 
             return new ProcessedDecisions(grabbed, pending, rejected);
+        }
+
+        public async Task ProcessSelectedDecisions(List<RemoteBook> selected, int? downloadClientId = null)
+        {
+            var decisions = selected.Select(remote => remote.AlternativeCopies ? remote.Release.PendingContext?.RemoteBook ?? remote : remote)
+                .Distinct().Select(remote => new DownloadDecision(remote)).ToList();
+            foreach (var report in CoalesceReports(decisions, new List<DownloadDecision>()))
+            {
+                await _downloadService.DownloadReport(report.RemoteBook, downloadClientId);
+            }
+        }
+
+        private static bool IsDelayOnly(DownloadDecision decision) => decision.TemporarilyRejected &&
+            decision.Rejections.All(rejection => rejection.Category == "Delay");
+
+        private IEnumerable<DownloadDecision> CoalesceReports(List<DownloadDecision> prioritizedDecisions, List<DownloadDecision> grabbed)
+        {
+            var remainingByBook = prioritizedDecisions
+                .SelectMany(decision => decision.RemoteBook.Books.Select(book => (book.Id, Decision: decision)))
+                .GroupBy(pair => pair.Id).ToDictionary(group => group.Key, group => new Queue<DownloadDecision>(group.Select(pair => pair.Decision)));
+            var alternativesByRelease = prioritizedDecisions.Where(decision => decision.RemoteBook.AlternativeCopies)
+                .GroupBy(decision => GetAlternativeReleaseKey(decision.RemoteBook.Release)).ToDictionary(group => group.Key, group => group.ToList());
+            var consumed = new HashSet<DownloadDecision>();
+
+            foreach (var report in prioritizedDecisions)
+            {
+                if (!consumed.Contains(report))
+                {
+                    yield return CoalesceAlternatives(report, alternativesByRelease, remainingByBook, consumed, grabbed);
+                }
+            }
+        }
+
+        private static object GetAlternativeReleaseKey(ReleaseInfo release)
+        {
+            return release.IndexerId > 0 && !string.IsNullOrWhiteSpace(release.Guid) && release.DownloadProtocol != DownloadProtocol.Unknown
+                ? (release.IndexerId, release.DownloadProtocol, release.Guid)
+                : release;
+        }
+
+        private DownloadDecision CoalesceAlternatives(DownloadDecision report,
+            Dictionary<object, List<DownloadDecision>> alternativesByRelease,
+            Dictionary<int, Queue<DownloadDecision>> remainingByBook,
+            HashSet<DownloadDecision> consumed, List<DownloadDecision> grabbed)
+        {
+            var source = report.RemoteBook;
+            if (!source.AlternativeCopies || (!report.Approved && !IsDelayOnly(report)) || source.Books.Count == 0 || IsBookProcessed(grabbed, report))
+            {
+                // Keep a waiting-period-only view available if an eligible same-release copy is encountered later.
+                if (!IsDelayOnly(report))
+                {
+                    consumed.Add(report);
+                }
+
+                return report;
+            }
+
+            var target = source.Books[0];
+            var selected = alternativesByRelease[GetAlternativeReleaseKey(source.Release)].Where(candidate =>
+            {
+                if (consumed.Contains(candidate) || (!candidate.Approved && !IsDelayOnly(candidate)) || candidate.RemoteBook.Books.Count == 0 || IsBookProcessed(grabbed, candidate))
+                {
+                    return false;
+                }
+
+                // Waiting copies retain only their current mapped release's captured group.
+                if (!report.Approved && !ReferenceEquals(candidate.RemoteBook.Release, source.Release))
+                {
+                    return false;
+                }
+
+                return candidate.RemoteBook.Books.All(book =>
+                {
+                    var remaining = remainingByBook[book.Id];
+                    while (report.Approved && remaining.Count > 0 && consumed.Contains(remaining.Peek()))
+                    {
+                        remaining.Dequeue();
+                    }
+
+                    return remaining.Count > 0 && ReferenceEquals(remaining.Peek(), candidate) &&
+                        book.AuthorId == target.AuthorId && book.MediaType == target.MediaType &&
+                        (book.Id == target.Id || WorkIdMatcher.WorkProviderIdMatches(target, book));
+                });
+            }).ToList();
+            if (selected.Count < 2 || !selected.Contains(report))
+            {
+                consumed.Add(report);
+                return report;
+            }
+
+            foreach (var candidate in selected)
+            {
+                consumed.Add(candidate);
+            }
+
+            var merged = source.ForBooks(selected.SelectMany(candidate => candidate.RemoteBook.Books));
+            merged.TargetEditionIds = selected.SelectMany(candidate => candidate.RemoteBook.TargetEditionIds)
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+            merged.TargetCustomFormatScores = selected.SelectMany(candidate => candidate.RemoteBook.Books.Select(book =>
+                new KeyValuePair<int, int>(book.Id, candidate.RemoteBook.Books.Count == 1 ? candidate.RemoteBook.CustomFormatScore :
+                    candidate.RemoteBook.TargetCustomFormatScores.GetValueOrDefault(book.Id, candidate.RemoteBook.CustomFormatScore))))
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+            return new DownloadDecision(merged, report.Rejections.ToArray()) { AutoPickReasons = report.AutoPickReasons };
         }
 
         public async Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId)

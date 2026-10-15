@@ -335,7 +335,7 @@ namespace Chaptarr.Api.V1.Indexers
 
                 // Enhanced metadata from MAM and other indexers
                 Duration = releaseInfo.Duration,
-                Narrator = releaseInfo.Narrator,
+                Narrator = releaseInfo.Narrator ?? CustomFormatCalculationService.GetKnownNarratorDisplay(remoteBook),
                 IsGraphicAudio = releaseInfo.IsGraphicAudio,
 
                 AuthorId = resolvedAuthorId > 0 ? resolvedAuthorId : null,

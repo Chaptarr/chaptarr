@@ -48,9 +48,15 @@ namespace Chaptarr.Core.Test.Books
         private class BookServiceProxy : DispatchProxy
         {
             public int UpdateManyCalls { get; private set; }
+            public Book StoredBook { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IBookService.GetBook) && StoredBook?.Id == (int)args[0])
+                {
+                    return StoredBook;
+                }
+
                 if (targetMethod?.Name == nameof(IBookService.UpdateMany))
                 {
                     UpdateManyCalls++;
@@ -68,7 +74,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> Deleted { get; private set; }
             public List<Edition> UpToDate { get; private set; }
 
-            public bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags)
+            public bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags, IReadOnlyDictionary<int, Edition> matchedRemoteEditions)
             {
                 Added = add.ToList();
                 Updated = update.ToList();
@@ -102,6 +108,11 @@ namespace Chaptarr.Core.Test.Books
                     mediaCoverService: null,
                     logger: logger)
             {
+            }
+
+            public void PrepareExistingChildPublic(Edition local, Edition remote, Book book)
+            {
+                PrepareExistingChild(local, remote, book);
             }
 
             public UpdateResult UpdateEntityPublic(Book local, Book remote)
@@ -394,6 +405,30 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void unchanged_edition_preparation_preserves_prior_alias_evidence_and_selection_for_refresh_comparison()
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var book = new Book { Id = 1, MediaType = BookMediaType.Ebook };
+            var local = new Edition { Id = 2, ForeignEditionId = "hc:edition:10-ebook", Monitored = true, ManualAdd = true,
+                RemoteProviderIds = new HashSet<string> { "gr:49" } };
+            var remote = new Edition { ForeignEditionId = local.ForeignEditionId,
+                RemoteProviderIds = new HashSet<string> { "gr:50", "gr:51" } };
+            service.PrepareExistingChildPublic(local, remote, book);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:49"), Is.True);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:51"), Is.False);
+            Assert.That(local.RemoteProviderIds, Is.EquivalentTo(new[] { "gr:49" }));
+            Assert.That(local.RemoteProviderIds, Is.Not.SameAs(remote.RemoteProviderIds));
+            remote.RemoteProviderIds = new HashSet<string> { "gr:50" };
+            service.PrepareExistingChildPublic(local, remote, book);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:49"), Is.True);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:51"), Is.False);
+            Assert.That(local.RemoteProviderIds, Is.EquivalentTo(new[] { "gr:49" }));
+            Assert.That(local.Id, Is.EqualTo(2));
+            Assert.That(local.Monitored, Is.True);
+            Assert.That(local.ManualAdd, Is.True);
+        }
+
+        [Test]
         public void use_metadata_from_should_clone_remote_provider_ids()
         {
             var source = new Book
@@ -496,6 +531,7 @@ namespace Chaptarr.Core.Test.Books
             var mediaFiles = new StubMediaFileService(file);
             var refreshEditions = new RecordingRefreshEditionService();
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).StoredBook = local;
             var service = new TestableRefreshBookService(mediaFiles, bookService, refreshEditions, LogManager.GetCurrentClassLogger());
 
             service.RefreshBookInfo(local, new List<Book> { remote }, new Author(), false);

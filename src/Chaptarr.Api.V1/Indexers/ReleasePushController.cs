@@ -67,9 +67,8 @@ namespace Chaptarr.Api.V1.Indexers
             {
                 var decisions = _downloadDecisionMaker.GetRssDecision(new List<ReleaseInfo> { info }, true);
 
-                decision = decisions.FirstOrDefault();
-
-                _downloadDecisionProcessor.ProcessDecision(decision, downloadClientId).GetAwaiter().GetResult();
+                var processed = _downloadDecisionProcessor.ProcessDecisions(decisions, downloadClientId).GetAwaiter().GetResult();
+                decision = processed.Grabbed.FirstOrDefault() ?? processed.Pending.FirstOrDefault() ?? decisions.FirstOrDefault();
             }
 
             if (decision?.RemoteBook.ParsedBookInfo == null)

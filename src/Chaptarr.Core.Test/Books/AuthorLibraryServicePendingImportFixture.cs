@@ -49,6 +49,7 @@ namespace Chaptarr.Core.Test.Books
             public List<ImportListExclusion> Exclusions { get; } = new List<ImportListExclusion>();
             public int AllCalls { get; private set; }
             public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion exclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() { AllCalls++; return Exclusions.ToList(); }
@@ -57,6 +58,7 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(string foreignId) => throw new NotImplementedException();
             public ImportListExclusion Get(int id) => throw new NotImplementedException();
             public ImportListExclusion FindByForeignId(string foreignId) => throw new NotImplementedException();
+            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => throw new NotImplementedException();
             public ImportListExclusion Update(ImportListExclusion exclusion) => throw new NotImplementedException();
         }
@@ -68,11 +70,11 @@ namespace Chaptarr.Core.Test.Books
             public Author FindByProviderId(string provider, string providerId) => OnFindByProviderId?.Invoke(provider, providerId);
 
             public Author GetAuthor(int authorId) => throw new NotImplementedException();
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) { AddAuthorCalls++; throw new NotImplementedException(); }
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -80,6 +82,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
@@ -99,6 +102,8 @@ namespace Chaptarr.Core.Test.Books
             private readonly int _enqueueResult;
             private readonly PendingAuthorImport _byProviderId;
             public int EnqueueCalls { get; private set; }
+            public bool ActiveRequest { get; set; } = true;
+            public bool IsActiveRequest(int id, long version) => ActiveRequest;
 
             public StubPendingAuthorImportService(int enqueueResult, PendingAuthorImport byProviderId)
             {
@@ -113,9 +118,12 @@ namespace Chaptarr.Core.Test.Books
             }
             public PendingAuthorImport GetByProviderId(string providerId) => _byProviderId;
 
+            public PendingAuthorImport Get(int id) => GetAll().Find(item => item.Id == id);
+            public NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> GetPaged(NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> pagingSpec) => throw new NotImplementedException();
             public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
             public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null) => throw new NotImplementedException();
+            public bool SaveProgress(PendingAuthorImport item, PendingAuthorImport previous) => throw new NotImplementedException();
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
@@ -351,5 +359,95 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(result.Id, Is.EqualTo(-1));
             Assert.That(pending.EnqueueCalls, Is.EqualTo(1));
         }
+        [Test]
+        public void cancelled_request_should_stop_after_provider_fetch_before_author_persistence()
+        {
+            var pending = new StubPendingAuthorImportService(1, null);
+            var authorService = new StubAuthorService();
+            var info = new StubAuthorInfoNotFound { OnGet = () =>
+            {
+                pending.ActiveRequest = false;
+                return new Author { Name = "Fixture Author", HardcoverAuthorId = "hc:9001", Books = new List<Book>(),
+                    AudiobookRootFolderPath = @"C:\Audio".AsOsAgnostic() };
+            } };
+            var service = BuildSubject(info, pending, new StubImportListExclusionService(), authorService);
+            Assert.ThrowsAsync<OperationCanceledException>(async () => await service.AddAuthorAsync("hc:9001", new MonitoringConfig
+            {
+                RequestedBy = "UserInterface", PendingImportId = 42, PendingImportVersion = 1, IsFromQueue = true,
+                CreateAudiobook = false, CreateEbook = false
+            }));
+            Assert.That(info.Calls, Is.EqualTo(1));
+            Assert.That(authorService.AddAuthorCalls, Is.Zero);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void unavailable_explicit_narration_should_protect_only_its_server_present_audio_parent(bool explicitNarration)
+        {
+            var requested = new Book { HardcoverBookId = "hc:1001", MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { new() { ForeignEditionId = "hc:edition:2001", ReadingFormatId = 2, Narrator = "Fixture Narrator" } } };
+            var unrelated = new Book { HardcoverBookId = "hc:1002", MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { new() { ForeignEditionId = "hc:edition:9999", ReadingFormatId = 2, Narrator = "Other Narrator" } } };
+            var config = new MonitoringConfig { CreateAudiobook = true, CreateEbook = false,
+                AudiobookNarrations = new List<RequestedNarration> { new() { WorkProviderId = "hc:1001", EditionProviderId = "hc:edition:9999", RequiresEdition = explicitNarration } } };
+            AuthorLibraryService.PrepareRequestedNarrations(new Author { Books = new List<Book> { requested, unrelated } }, config);
+            Assert.Multiple(() =>
+            {
+                Assert.That(config.ProtectedNarrationIds, Is.Empty);
+                Assert.That(config.ProtectedNarrationWorkIds.GetValueOrDefault(BookMediaType.Audiobook)?.Contains("hc:1001") == true, Is.EqualTo(explicitNarration));
+                Assert.That(config.ProtectedNarrationWorkIds.GetValueOrDefault(BookMediaType.Audiobook)?.Contains("hc:1002") == true, Is.False);
+                Assert.That(config.KnownParentEditionRequests.Contains((BookMediaType.Audiobook, "hc:edition:9999")), Is.EqualTo(explicitNarration));
+            });
+        }
+
+        [TestCase("wrong-work")]
+        [TestCase("wrong-media")]
+        [TestCase("partial-cast")]
+        [TestCase("different-cast")]
+        public void requested_cast_should_not_protect_an_incompatible_catalog_edition(string mismatch)
+        {
+            var parent = new Book { HardcoverBookId = "hc:1001", MediaType = BookMediaType.Audiobook, Editions = new List<Edition>() };
+            var candidate = new Book { HardcoverBookId = mismatch == "wrong-work" ? "hc:1002" : "hc:1001",
+                MediaType = mismatch == "wrong-media" ? BookMediaType.Ebook : BookMediaType.Audiobook,
+                Editions = new List<Edition> { new() { ForeignEditionId = "hc:edition:2001", ReadingFormatId = 2,
+                    NarratorNames = mismatch == "different-cast" ? new List<string> { "Other Narrator", "Jane Smith" } :
+                        mismatch == "partial-cast" ? new List<string> { "Jim Dale" } : new List<string> { "Jim Dale", "Jane Smith" } } } };
+            var config = new MonitoringConfig { CreateAudiobook = true, CreateEbook = false,
+                AudiobookNarrations = new List<RequestedNarration> { new() { WorkProviderId = "hc:1001", EditionProviderId = "hc:edition:9999",
+                    RequiresEdition = true, NarratorNames = new List<string> { "Jim Dale", "Jane Smith" } } } };
+
+            AuthorLibraryService.PrepareRequestedNarrations(new Author { Books = new List<Book> { parent, candidate } }, config);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(config.ProtectedNarrationIds, Is.Empty);
+                Assert.That(config.KnownParentEditionRequests, Does.Contain((BookMediaType.Audiobook, "hc:edition:9999")));
+                Assert.That(config.ProtectedNarrationWorkIds.GetValueOrDefault(BookMediaType.Audiobook), Does.Contain("hc:1001"));
+                Assert.That(config.ProtectedNarrationWorkIds.GetValueOrDefault(BookMediaType.Audiobook), Does.Not.Contain("hc:1002"));
+            });
+        }
+
+        [Test]
+        public async Task pending_author_marker_preserves_known_name_and_keeps_unknown_name_null(
+            [Values("Selected Search Author", null)] string authorName)
+        {
+            var info = new StubAuthorInfoNotFound();
+            var pending = new StubPendingAuthorImportService(41, null);
+            var service = BuildSubject(info, pending, new StubImportListExclusionService());
+            var author = await service.AddAuthorAsync("hc:2222", new MonitoringConfig
+            {
+                QueueIfUnavailable = true, RequestedBy = "UserInterface", AuthorName = authorName,
+                CreateAudiobook = true, CreateEbook = false
+            });
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.Id, Is.EqualTo(-41));
+                Assert.That(author.Name, Is.EqualTo(authorName));
+                Assert.That(author.CleanName, Is.EqualTo(authorName == null ? null : NzbDrone.Core.Parser.Parser.CleanAuthorName(authorName)));
+                Assert.That(info.Calls, Is.EqualTo(1));
+                Assert.That(pending.EnqueueCalls, Is.EqualTo(1));
+            });
+        }
+
     }
 }

@@ -37,6 +37,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             var lookupIds = GetCanonicalProviderIds(book);
 
             var rawIds = lookupIds
+                .Where(id => id.StartsWith("gr:", StringComparison.OrdinalIgnoreCase))
                 .Select(GetRawId)
                 .Where(id => id.IsNotNullOrWhiteSpace())
                 .ToList();
@@ -71,7 +72,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                 return false;
             }
 
-            return GetLookupIds(book).Any(id => MatchesExclusionId(id, exclusion.ForeignId));
+            return GetLookupIds(book).Any(id => ImportListProviderIdHelper.MatchesExclusionId(id, exclusion.ForeignId));
         }
 
         public static bool AppliesToProviderId(ImportListExclusion exclusion, string providerId, BookMediaType? mediaType)
@@ -85,13 +86,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                 ? ImportListProviderIdHelper.Normalize(providerId, null)
                 : providerId.Trim();
 
-            if (MatchesExclusionId(normalized, exclusion.ForeignId))
-            {
-                return true;
-            }
-
-            var rawId = GetRawId(normalized);
-            return rawId.IsNotNullOrWhiteSpace() && MatchesExclusionId(rawId, exclusion.ForeignId);
+            return ImportListProviderIdHelper.MatchesExclusionId(normalized, exclusion.ForeignId);
         }
 
         public static bool AppliesToMediaType(ImportListExclusion exclusion, BookMediaType? mediaType)
@@ -134,22 +129,5 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             return providerId.Substring(idx + 1);
         }
 
-        private static bool MatchesExclusionId(string providerId, string exclusionId)
-        {
-            if (providerId.IsNullOrWhiteSpace() || exclusionId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            providerId = providerId.Trim();
-            exclusionId = exclusionId.Trim();
-
-            if (exclusionId.Contains(":"))
-            {
-                return providerId.Equals(exclusionId, StringComparison.OrdinalIgnoreCase);
-            }
-
-            return GetRawId(providerId).Equals(exclusionId, StringComparison.OrdinalIgnoreCase);
-        }
     }
 }

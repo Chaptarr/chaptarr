@@ -53,6 +53,7 @@ namespace Chaptarr.Core.Test.Books
                 {
                     Id = 1,
                     ProviderId = "gr:1",
+                    AuthorName = "Selected Search Writer",
                     Version = 4,
                     AudiobookStatus = PendingImportStatus.Pending,
                     EbookStatus = PendingImportStatus.NotRequested,
@@ -63,10 +64,17 @@ namespace Chaptarr.Core.Test.Books
                     Tags = "[1]",
                     LastSelectedMediaType = "ebook",
                     RequestedBy = "UserInterface",
+                    AudiobookNarrations = "[{\"WorkProviderId\":\"hc:100\",\"EditionProviderId\":\"hc:201\",\"NarratorNames\":[\"Jim Dale\",\"Jane Smith\"],\"Search\":true}]",
                     NextAttemptAt = DateTime.UtcNow
                 };
 
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 3), Is.False);
+                using (var verifyStaleUpdate = new SqliteConnection(connectionString))
+                {
+                    verifyStaleUpdate.Open();
+                    Assert.That(verifyStaleUpdate.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.Null);
+                }
+
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 4), Is.True);
                 Assert.That(item.Version, Is.EqualTo(5));
 
@@ -82,6 +90,8 @@ namespace Chaptarr.Core.Test.Books
                     Assert.That(tags.Tags, Is.EqualTo("[1]"));
                     Assert.That(tags.LastSelectedMediaType, Is.EqualTo("ebook"));
                     Assert.That(tags.RequestedBy, Is.EqualTo("UserInterface"));
+                    Assert.That(verifyUpdate.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AuthorName));
+                    Assert.That(verifyUpdate.ExecuteScalar<string>("SELECT \"AudiobookNarrations\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AudiobookNarrations));
                 }
 
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
@@ -124,6 +134,7 @@ namespace Chaptarr.Core.Test.Books
                         CREATE TABLE ""PendingAuthorImport"" (
                             ""Id"" INTEGER PRIMARY KEY,
                             ""ProviderId"" TEXT,
+                            ""AuthorName"" TEXT,
                             ""DiscoveredAuthorFolderPath"" TEXT,
                             ""AudiobookStatus"" INTEGER,
                             ""EbookStatus"" INTEGER,
@@ -136,6 +147,7 @@ namespace Chaptarr.Core.Test.Books
                             ""AudiobookRootFolderPath"" TEXT,
                             ""AudiobookBooksToMonitor"" TEXT,
                             ""AudiobookBooksToSearch"" TEXT,
+                            ""AudiobookNarrations"" TEXT,
                             ""AudiobookTags"" TEXT,
                             ""EbookMonitored"" BOOLEAN,
                             ""EbookMonitorNewItems"" INTEGER,
@@ -182,23 +194,38 @@ namespace Chaptarr.Core.Test.Books
                 {
                     Id = 1,
                     ProviderId = "gr:58",
+                    AuthorName = "Selected Search Writer",
                     Version = 4,
                     AudiobookStatus = PendingImportStatus.Pending,
                     EbookStatus = PendingImportStatus.NotRequested,
                     OverallStatus = PendingImportStatus.Pending,
                     RequestedBy = "UserInterface",
+                    AudiobookNarrations = "[{\"WorkProviderId\":\"hc:100\",\"EditionProviderId\":\"hc:201\",\"NarratorNames\":[\"Jim Dale\",\"Jane Smith\"],\"Search\":true}]",
                     NextAttemptAt = DateTime.UtcNow
                 };
 
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 3), Is.False);
+                using (var verifyStaleUpdate = new NpgsqlConnection(postgresConnectionString))
+                {
+                    verifyStaleUpdate.Open();
+                    Assert.That(verifyStaleUpdate.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.Null);
+                }
+
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 4), Is.True);
                 Assert.That(item.Version, Is.EqualTo(5));
 
                 using var verifyConnection = new NpgsqlConnection(postgresConnectionString);
                 verifyConnection.Open();
+                Assert.That(verifyConnection.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AuthorName));
                 Assert.That(
                     verifyConnection.ExecuteScalar<string>(@"SELECT ""RequestedBy"" FROM ""PendingAuthorImport"" WHERE ""Id"" = 1;"),
                     Is.EqualTo("UserInterface"));
+                using (var verifyNarration = new NpgsqlConnection(postgresConnectionString))
+                {
+                    verifyNarration.Open();
+                    Assert.That(verifyNarration.ExecuteScalar<string>("SELECT \"AudiobookNarrations\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AudiobookNarrations));
+                }
+
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 5), Is.True);
             }
@@ -229,6 +256,7 @@ namespace Chaptarr.Core.Test.Books
                         CREATE TABLE ""PendingAuthorImport"" (
                             ""Id"" INTEGER PRIMARY KEY,
                             ""ProviderId"" TEXT,
+                            ""AuthorName"" TEXT,
                             ""DiscoveredAuthorFolderPath"" TEXT,
                             ""AudiobookStatus"" INTEGER,
                             ""EbookStatus"" INTEGER,
@@ -241,6 +269,7 @@ namespace Chaptarr.Core.Test.Books
                             ""AudiobookRootFolderPath"" TEXT,
                             ""AudiobookBooksToMonitor"" TEXT,
                             ""AudiobookBooksToSearch"" TEXT,
+                            ""AudiobookNarrations"" TEXT,
                             ""AudiobookTags"" TEXT,
                             ""EbookMonitored"" INTEGER,
                             ""EbookMonitorNewItems"" INTEGER,

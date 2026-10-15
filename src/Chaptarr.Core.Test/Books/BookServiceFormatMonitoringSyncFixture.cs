@@ -207,6 +207,9 @@ namespace Chaptarr.Core.Test.Books
 
                 return _editions.Where(item => item.BookId == edition.BookId).ToList();
             }
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private sealed class StubAuthorService : IAuthorService
@@ -226,12 +229,13 @@ namespace Chaptarr.Core.Test.Books
                 return _authors.TryGetValue(authorId, out var author) ? author : null;
             }
 
-            public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
+
+            public List<Author> GetAuthors(IEnumerable<int> authorIds) => authorIds.Distinct().Select(GetAuthor).Where(author => author != null).ToList();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -239,6 +243,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
@@ -871,13 +876,15 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repository.Get(ebook.Id).EbookMonitored, Is.False);
         }
 
-        [Test]
-        public void bulk_reconcile_should_ignore_monitored_unit_clone_when_syncing_opposite_format()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void bulk_reconcile_should_ignore_monitored_unit_clone_when_syncing_opposite_format(bool wantedNarration)
         {
             var author = BuildAuthor(1);
             var audiobook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
             var audiobookClone = BuildBook(12, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
-            audiobookClone.UnitKeyHash = "unit-copy";
+            audiobookClone.UnitKeyHash = wantedNarration ? null : "unit-copy";
+            audiobookClone.TitleSlug = wantedNarration ? "book_wanted_12" : "book_copy_12";
 
             var ebook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: false);
             var repository = new StubBookRepository(new[] { audiobook, audiobookClone, ebook });

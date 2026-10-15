@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Equ;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 
@@ -224,6 +225,19 @@ namespace NzbDrone.Core.Books
         [JsonIgnore]
         public bool HasFiles => BookFiles?.Any() ?? false;
 
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchSeriesName { get; set; }
+
+        public override IEnumerable<string> PrepareForPersistence(IReadOnlyCollection<string> fields)
+        {
+            if (fields == null || fields.Contains(nameof(SeriesName)) || fields.Contains(nameof(SearchSeriesName)))
+            {
+                SearchSeriesName = StringSuperNormalizer.NormalizeForFts(SeriesName);
+                yield return nameof(SearchSeriesName);
+            }
+        }
+
         public override string ToString()
         {
             return string.Format("[{0}][{1}]", Id, Title.NullSafe());
@@ -302,19 +316,15 @@ namespace NzbDrone.Core.Books
 	            LastUpdated = other.LastUpdated ?? LastUpdated;
 	        }
 
-        private static HashSet<string> CloneProviderIds(HashSet<string> source)
-        {
-            return CleanProviderIds(source);
-        }
-
-        private static HashSet<string> CleanProviderIds(IEnumerable<string> source)
+        internal static HashSet<string> CloneProviderIds(HashSet<string> source)
         {
             var values = source?
                 .Where(id => id.IsNotNullOrWhiteSpace() && !ProviderIdHelper.ContainsProviderIdArtifact(id))
                 .Select(id => id.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            return values?.Count > 0 ? values : null;
+            // An empty upstream set withdraws aliases; rejected input does not prove absence.
+            return values?.Count == 0 && source.Count > 0 ? null : values;
         }
 
         private static string CleanProviderIdForCopy(string incoming, string current)

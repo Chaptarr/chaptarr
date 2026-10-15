@@ -95,7 +95,7 @@ namespace NzbDrone.Core.Extras
             foreach (var matchingFilename in filteredFilenames)
             {
                 var extension = Path.GetExtension(matchingFilename);
-                if (string.IsNullOrWhiteSpace(extension) || !wantedExtensions.Contains(extension))
+                if (string.IsNullOrWhiteSpace(extension) || MediaFileExtensions.AllExtensions.Contains(extension) || !wantedExtensions.Contains(extension))
                 {
                     continue;
                 }

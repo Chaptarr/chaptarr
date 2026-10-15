@@ -154,20 +154,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                // If this manual import is coming from a tracked download, prefer the already-known author/book context.
 	                // IMPORTANT: Only use real library entities (Id > 0). RemoteBook can contain parsed placeholders that
 	                // look valid in the UI but serialize to AuthorId/BookId = 0 and cause the import to no-op.
+	                var remote = trackedDownload.RemoteBook;
+	                downloadItemInfo = new ImportDecisionMakerInfo
+	                {
+	                    DownloadClientItem = trackedDownload.DownloadItem,
+	                    ParsedBookInfo = remote?.ParsedBookInfo
+	                };
+	                var overrideAuthor = author;
+	                Book overrideBook = null;
 	                try
 	                {
-	                    var remote = trackedDownload.RemoteBook;
-
-	                    // Always pass download context to the decision maker (even when we can't resolve overrides).
-	                    downloadItemInfo = new ImportDecisionMakerInfo
-	                    {
-	                        DownloadClientItem = trackedDownload.DownloadItem,
-	                        ParsedBookInfo = remote?.ParsedBookInfo
-	                    };
-
-	                    var overrideAuthor = author;
-	                    Book overrideBook = null;
-
 	                    // Resolve author from remote context if the request didn't specify one.
 	                    if (overrideAuthor == null)
 	                    {
@@ -177,43 +173,46 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                        }
 	                        else if (!string.IsNullOrWhiteSpace(remote?.Author?.Name))
 	                        {
-	                            overrideAuthor = _authorService.FindByName(remote.Author.Name) ??
-	                                           _authorService.FindByNameInexact(remote.Author.Name);
+	                            overrideAuthor = _authorService.FindByName(remote.Author.Name);
 	                        }
 	                    }
 
-	                    // Resolve a single book when possible.
+	                }
+	                catch (Exception ex)
+	                {
+	                    _logger.Debug(ex, "Failed to resolve the tracked-download author for manual import (downloadId={0})", downloadId);
+	                }
+
+	                try
+	                {
+	                    // A multi-book download may supply an author without selecting a single book.
 	                    var remoteBookIds = remote?.Books?.Select(b => b?.Id ?? 0).Where(id => id > 0).Distinct().ToList();
 	                    if (remoteBookIds?.Count == 1)
 	                    {
 	                        overrideBook = _bookService.GetBook(remoteBookIds[0]);
 	                        overrideAuthor = overrideBook?.Author ?? overrideAuthor;
 	                    }
-	                    else if (overrideAuthor?.Id > 0 && !string.IsNullOrWhiteSpace(remote?.ParsedBookInfo?.BookTitle))
+	                    else if (remoteBookIds?.Count is not > 0 && overrideAuthor?.Id > 0 && !string.IsNullOrWhiteSpace(remote?.ParsedBookInfo?.BookTitle))
 	                    {
-	                        var title = remote.ParsedBookInfo.BookTitle;
-	                        overrideBook = _bookService.FindByTitle(overrideAuthor.Id, title) ??
-	                                       _bookService.FindByTitleInexact(overrideAuthor.Id, title);
+	                        var books = _parsingService.GetBooks(remote.ParsedBookInfo, overrideAuthor);
+	                        overrideBook = books.Count == 1 ? books[0] : null;
 	                        overrideAuthor = overrideBook?.Author ?? overrideAuthor;
-	                    }
-
-	                    var hasOverrideAuthor = overrideAuthor?.Id > 0;
-	                    var hasOverrideBook = overrideBook?.Id > 0;
-
-	                    if (hasOverrideAuthor || hasOverrideBook)
-	                    {
-	                        downloadOverrides = new IdentificationOverrides
-	                        {
-	                            Author = hasOverrideAuthor ? overrideAuthor : null,
-	                            Book = hasOverrideBook ? overrideBook : null
-	                        };
 	                    }
 	                }
 	                catch (Exception ex)
 	                {
 	                    _logger.Debug(ex, "Failed to build tracked-download overrides for manual import (downloadId={0})", downloadId);
-	                    downloadOverrides = null;
-	                    downloadItemInfo = null;
+	                }
+
+	                var hasOverrideAuthor = overrideAuthor?.Id > 0;
+	                var hasOverrideBook = overrideBook?.Id > 0;
+	                if (hasOverrideAuthor || hasOverrideBook)
+	                {
+	                    downloadOverrides = new IdentificationOverrides
+	                    {
+	                        Author = hasOverrideAuthor ? overrideAuthor : null,
+	                        Book = hasOverrideBook ? overrideBook : null
+	                    };
 	                }
 	            }
 
@@ -264,10 +263,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                return new List<ManualImportItem> { result };
 	            }
 
-	            return ProcessFolder(path, downloadId, author, filter, replaceExistingFiles, cancellationToken, exactPaths);
+	            return ProcessFolder(path, downloadId, author, filter, replaceExistingFiles, cancellationToken, exactPaths, downloadOverrides, downloadItemInfo);
         }
 
-	        private List<ManualImportItem> ProcessFolder(string folder, string downloadId, Author author, FilterFilesType filter, bool replaceExistingFiles, CancellationToken cancellationToken, IReadOnlyCollection<string> exactPaths = null)
+	        private List<ManualImportItem> ProcessFolder(string folder, string downloadId, Author author, FilterFilesType filter, bool replaceExistingFiles, CancellationToken cancellationToken, IReadOnlyCollection<string> exactPaths, IdentificationOverrides downloadOverrides, ImportDecisionMakerInfo downloadItemInfo)
 	        {
 		            cancellationToken.ThrowIfCancellationRequested();
                 if (_logger.IsDebugEnabled)
@@ -275,43 +274,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     _logger.Debug("[MEMORY] Manual import preview start for '{0}': {1}", folder, MemorySnapshot.CaptureDetailed());
                 }
 
-	            DownloadClientItem downloadClientItem = null;
-	            var directoryInfo = new DirectoryInfo(folder);
-	            author = author ?? _parsingService.GetAuthor(directoryInfo.Name);
-	            Book bookOverride = null;
-
-	            if (downloadId.IsNotNullOrWhiteSpace())
-	            {
-	                var trackedDownload = _trackedDownloadService.Find(downloadId);
-	                downloadClientItem = trackedDownload?.DownloadItem;
-
-	                if (author == null)
-	                {
-	                    author = trackedDownload?.RemoteBook?.Author;
-	                }
-
-	                // Prefer the tracked download's book when it is unambiguous (single-book release).
-	                try
-	                {
-	                    var remoteBookId = trackedDownload?.RemoteBook?.Books?.Select(b => b?.Id ?? 0).Distinct().ToList();
-	                    if (remoteBookId?.Count == 1 && remoteBookId[0] > 0)
-	                    {
-	                        bookOverride = _bookService.GetBook(remoteBookId[0]);
-	                        author = bookOverride?.Author ?? author;
-	                    }
-	                    else if (author?.Id > 0 && !string.IsNullOrWhiteSpace(trackedDownload?.RemoteBook?.ParsedBookInfo?.BookTitle))
-	                    {
-	                        var title = trackedDownload.RemoteBook.ParsedBookInfo.BookTitle;
-	                        bookOverride = _bookService.FindByTitle(author.Id, title) ??
-	                                       _bookService.FindByTitleInexact(author.Id, title);
-	                        author = bookOverride?.Author ?? author;
-	                    }
-	                }
-	                catch (Exception ex)
-	                {
-	                    _logger.Debug(ex, "Failed to resolve tracked-download book override for manual import (downloadId={0})", downloadId);
-	                }
-	            }
+            var downloadClientItem = downloadItemInfo?.DownloadClientItem;
+            var directoryInfo = new DirectoryInfo(folder);
+            author = downloadOverrides?.Author ?? author ?? _parsingService.GetAuthor(directoryInfo.Name);
+            var bookOverride = downloadOverrides?.Book;
 
 	            var hasExactPathScope = exactPaths != null;
 	            var requestedPaths = (exactPaths ?? Array.Empty<string>())
@@ -351,26 +317,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
             var decisions = _importDecisionMaker.GetImportDecisions(authorFiles, idOverrides, itemInfo, config, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-
-            // Disabled deliberately: manual retry/import should re-run matching honestly.
-            // Grab history or monitored-edition state must not rewrite an already matched edition.
-            // if (downloadClientItem != null && bookOverride?.Id > 0)
-            // {
-            //     var preferredEdition = TrackedMultipartAudioRepairHelper.ResolveExpectedTrackedEdition(
-            //         bookOverride,
-            //         downloadClientItem.DownloadId ?? downloadId,
-            //         _historyService,
-            //         _editionService);
-            //
-            //     decisions = TrackedMultipartAudioRepairHelper.RepairTrackedSingleBookAudioDecisions(
-            //         decisions,
-            //         bookOverride,
-            //         bookOverride.Author ?? author,
-            //         preferredEdition,
-            //         _editionService,
-            //         _logger,
-            //         downloadClientItem.Title ?? directoryInfo.Name);
-            // }
 
             // paths will be different for new and old files which is why we need to map separately
             var newFiles = authorFiles.Join(decisions,
@@ -508,8 +454,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             }
 
             item.Quality = decision.Item.Quality;
+            item.ReleaseGroup = decision.Item.ReleaseGroup;
             item.IndexerFlags = (int)decision.Item.IndexerFlags;
-            item.Size = fileInfo.Length;
+            item.Size = decision.Item.Size;
             item.Rejections = decision.Rejections;
             item.Tags = decision.Item.RawTags?.AllTags ?? new Dictionary<string, List<string>>();
             item.AdditionalFile = decision.Item.AdditionalFile;
@@ -691,7 +638,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 var fileInfo = _diskProvider.GetFileInfo(requested.Path);
                 var actualPath = fileInfo.FullName ?? requested.Path;
                 var mediaType = GetMediaTypeFromPath(actualPath);
-                if (!fileInfo.Exists)
+                long size;
+                DateTime modified;
+                try
+                {
+                    size = fileInfo.Length;
+                    modified = fileInfo.LastWriteTimeUtc;
+                }
+                catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
                 {
                     suggestedResolutionByPath[requested.Path] = new SuggestedExecutionResolution
                     {
@@ -729,8 +683,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     Discovered = new DiscoveredFileWithMetadata
                     {
                         Path = actualPath,
-                        Size = fileInfo.Length,
-                        Modified = fileInfo.LastWriteTimeUtc,
+                        Size = size,
+                        Modified = modified,
                         AllTags = copiedTags,
                         Quality = requested.Quality,
                         DurationSeconds = durationSeconds
@@ -938,23 +892,35 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     _logger.Warn("Manual import recovered file path '{0}' as '{1}' during execution", requestedPath, actualPath);
                 }
 
-                var fileRootFolder = _rootFolderService.GetBestRootFolder(actualPath);
-                var mediaType = GetMediaTypeFromPath(actualPath);
-
                 var localTrack = new LocalBook
                 {
-                    ExistingFile = fileRootFolder != null,
                     IsManualImport = true,
                     Path = actualPath,
                     Part = 1,
                     PartCount = 1,
-                    Size = fileInfo.Length,
-                    Modified = fileInfo.LastWriteTimeUtc,
                     Quality = file.Quality,
+                    ReleaseGroup = file.ReleaseGroup,
                     IndexerFlags = (IndexerFlags)file.IndexerFlags
                 };
 
                 var importDecision = new ImportDecision<LocalBook>(localTrack);
+
+                try
+                {
+                    localTrack.Size = fileInfo.Length;
+                    localTrack.Modified = fileInfo.LastWriteTimeUtc;
+                }
+                catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    importDecision.Reject(new Rejection($"Selected file no longer exists: '{requestedPath}'."));
+                    decisions.Add(importDecision);
+                    fileCount += 1;
+                    continue;
+                }
+
+                var fileRootFolder = _rootFolderService.GetBestRootFolder(actualPath);
+                var mediaType = GetMediaTypeFromPath(actualPath);
+                localTrack.ExistingFile = fileRootFolder != null;
 
                 Author author = null;
                 Book book = null;
@@ -1138,6 +1104,47 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 fileCount += 1;
             }
 
+            var explicitDownloadIds = message.Files
+                .Select(file => file.DownloadId)
+                .Where(id => id.IsNotNullOrWhiteSpace())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            TrackedDownload associatedDownload = null;
+            string associationReason;
+
+            if (explicitDownloadIds.Count == 1)
+            {
+                associatedDownload = _trackedDownloadService.Find(explicitDownloadIds[0]);
+                associationReason = associatedDownload == null
+                    ? "MANUAL_IMPORT_EXPLICIT_DOWNLOAD_NOT_TRACKED"
+                    : "MANUAL_IMPORT_EXPLICIT_DOWNLOAD_ID";
+            }
+            else if (explicitDownloadIds.Count > 1)
+            {
+                associationReason = "MANUAL_IMPORT_MULTIPLE_EXPLICIT_DOWNLOAD_IDS";
+            }
+            else
+            {
+                associatedDownload = ResolveUniqueTrackedDownload(message.Files.Select(file => file.Path), out associationReason);
+            }
+
+            if (associatedDownload?.RemoteBook?.AlternativeCopies == true)
+            {
+                var allowed = GetExpectedTrackedBooks(associatedDownload).Select(book => book.Id).ToHashSet();
+                disableReleaseSwitchingBookIds.RemoveWhere(id => !allowed.Contains(id));
+                foreach (var decision in decisions.Where(decision => decision.Approved))
+                {
+                    if (!allowed.Contains(decision.Item?.Book?.Id ?? 0))
+                    {
+                        decision.Reject(new Rejection("Manual import must select an original alternative-copy target."));
+                    }
+                    else
+                    {
+                        decision.Item.AlternativeCopyGrabDate = associatedDownload.RemoteBook.AlternativeCopyGrabDate;
+                    }
+                }
+            }
+
             // turn off anyReleaseOk if specified
             foreach (var bookId in disableReleaseSwitchingBookIds)
             {
@@ -1172,30 +1179,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     .Where(d => d.Item?.Book?.Id > 0)
                     .Select(d => d.Item)
                     .ToList());
-
-            var explicitDownloadIds = message.Files
-                .Select(file => file.DownloadId)
-                .Where(id => id.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            TrackedDownload associatedDownload = null;
-            string associationReason;
-
-            if (explicitDownloadIds.Count == 1)
-            {
-                associatedDownload = _trackedDownloadService.Find(explicitDownloadIds[0]);
-                associationReason = associatedDownload == null
-                    ? "MANUAL_IMPORT_EXPLICIT_DOWNLOAD_NOT_TRACKED"
-                    : "MANUAL_IMPORT_EXPLICIT_DOWNLOAD_ID";
-            }
-            else if (explicitDownloadIds.Count > 1)
-            {
-                associationReason = "MANUAL_IMPORT_MULTIPLE_EXPLICIT_DOWNLOAD_IDS";
-            }
-            else
-            {
-                associatedDownload = ResolveUniqueTrackedDownload(message.Files.Select(file => file.Path), out associationReason);
-            }
 
             if (associatedDownload == null)
             {
@@ -1338,7 +1321,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
         internal static bool AreAllTrackedDownloadItemsImported(TrackedDownload trackedDownload, IReadOnlyCollection<ImportResult> importResults, IReadOnlyCollection<ManualImportFile> previewFiles = null)
         {
-            if (importResults == null || importResults.Count == 0)
+            if (importResults == null || importResults.Count == 0 || importResults.Any(result =>
+                result.Result != ImportResultType.Imported && string.IsNullOrWhiteSpace(result.ImportDecision?.Item?.Path) &&
+                !(result.ImportDecision?.Item?.Book?.Id > 0)))
             {
                 return false;
             }
@@ -1358,12 +1343,44 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 return importedResults.Count == importResults.Count;
             }
 
+            var expectedMediaTypes = expectedBooks.Select(book => book.MediaType).ToHashSet();
             var importedBookIds = importedResults
+                .Where(result => result.ImportDecision.Item?.Book != null &&
+                    expectedMediaTypes.Contains(result.ImportDecision.Item.Book.MediaType))
                 .Select(result => result.ImportDecision.Item?.Book?.Id ?? 0)
                 .Where(id => id > 0)
                 .Distinct()
                 .OrderBy(id => id)
                 .ToList();
+
+            if (trackedDownload?.RemoteBook?.AlternativeCopies == true)
+            {
+                var media = trackedDownload.RemoteBook.GetMediaType();
+                var bookResults = importResults.Where(result =>
+                    QualityMediaTypeHelper.GetMediaTypeFromPath(result.ImportDecision?.Item?.Path) == media ||
+                    (string.IsNullOrWhiteSpace(result.ImportDecision?.Item?.Path) && result.ImportDecision?.Item?.Book?.MediaType == media)).ToList();
+                if (!media.HasValue || expectedBooks.Any(book => book.MediaType != media) || importedBookIds.Count != 1 || importedBookIds.Any(id => !expectedBookIds.Contains(id)) ||
+                    bookResults.Any(result => result.Result != ImportResultType.Imported &&
+                        !(ImportApprovedBooks.IsSkippedEbookAlternative(result) && importedResults.Any(imported =>
+                            imported.ImportDecision.Item.Book.Id == result.ImportDecision.Item.Book.Id &&
+                            imported.ImportDecision.Item.Edition?.Id > 0 &&
+                            imported.ImportDecision.Item.Edition?.Id == result.ImportDecision.Item.Edition?.Id))))
+                {
+                    return false;
+                }
+
+                var importedPaths = importedResults.SelectMany(result => GetImportedSourcePaths(result.ImportDecision?.Item))
+                    .Concat(bookResults.Where(ImportApprovedBooks.IsSkippedEbookAlternative)
+                        .SelectMany(result => GetImportedSourcePaths(result.ImportDecision.Item)))
+                    .ToHashSet(PathEqualityComparer.Instance);
+                var previewPaths = previewFiles?.Where(file => file?.Path.IsNotNullOrWhiteSpace() == true &&
+                        QualityMediaTypeHelper.GetMediaTypeFromPath(file.Path) == media &&
+                        (trackedDownload.DownloadItem.DownloadId.IsNullOrWhiteSpace() || file.DownloadId.IsNullOrWhiteSpace() ||
+                            string.Equals(file.DownloadId, trackedDownload.DownloadItem.DownloadId, StringComparison.OrdinalIgnoreCase)))
+                    .Select(file => file.Path) ?? Enumerable.Empty<string>();
+                return bookResults.SelectMany(result => GetImportedSourcePaths(result.ImportDecision?.Item)).All(importedPaths.Contains) &&
+                    previewPaths.All(importedPaths.Contains);
+            }
 
             if (importedBookIds.Count == 0 || !expectedBookIds.SequenceEqual(importedBookIds))
             {

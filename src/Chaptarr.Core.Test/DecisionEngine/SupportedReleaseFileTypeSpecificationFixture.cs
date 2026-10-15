@@ -225,6 +225,37 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(mediaType, Is.EqualTo(BookMediaType.Ebook));
         }
 
+        [TestCase("The Ebook Handbook")]
+        [TestCase("The Audiobook Handbook")]
+        [TestCase("Audible Silence")]
+        [TestCase("A Full Cast of Characters")]
+        [TestCase("The Graphic Audio Guide")]
+        [TestCase("EPUB for Beginners")]
+        public void unknown_quality_should_not_infer_media_from_book_title_words(string title)
+        {
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(Quality.Unknown, new ReleaseInfo { Title = title }), Is.Null);
+        }
+
+        [TestCase("MP3", BookMediaType.Audiobook)]
+        [TestCase("m4b;flac", BookMediaType.Audiobook)]
+        [TestCase("mka", BookMediaType.Audiobook)]
+        [TestCase("EPUB", BookMediaType.Ebook)]
+        [TestCase("pdf,mobi", BookMediaType.Ebook)]
+        [TestCase("epub m4b", null)]
+        [TestCase("unknown", null)]
+        public void structured_file_types_should_preserve_only_unambiguous_media_evidence(string fileType, BookMediaType? mediaType)
+        {
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(Quality.Unknown,
+                new TorrentInfo { Title = "The Ebook Handbook", FileType = fileType }), Is.EqualTo(mediaType));
+        }
+
+        [Test]
+        public void known_quality_should_take_precedence_over_structured_file_type()
+        {
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(Quality.M4B,
+                new TorrentInfo { Title = "The Ebook Handbook", FileType = "epub" }), Is.EqualTo(BookMediaType.Audiobook));
+        }
+
         private static RemoteBook BuildRemoteBook(string fileType, string title = "Example Release")
         {
             return new RemoteBook

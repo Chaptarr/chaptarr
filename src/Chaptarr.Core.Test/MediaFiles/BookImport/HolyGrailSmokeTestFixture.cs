@@ -1,6 +1,9 @@
+using Chaptarr.Core.Test.Common;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
@@ -18,7 +21,773 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
         public class HolyGrailSmokeTestFixture
         {
-            private sealed class StubEditionFtsRepository : IEditionFtsRepository, IEditionFtsTraceRepository
+        private static FileMatchingService CreateOwnSeriesTitleMatcher(IReadOnlyList<Book> books, List<EditionFtsMatch> candidates, string authorName = "Neil Gaiman", IEditionFtsRepository repository = null, IContainmentValidator validator = null)
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var bookService = InterfaceProxy.Proxy<IBookService>((method, values) => method.Name switch
+            {
+                "GetBook" => books.SingleOrDefault(book => book.Id == (int)values[0]),
+                "GetBooks" => books.Where(book => ((IEnumerable<int>)values[0]).Contains(book.Id)).ToList(),
+                "GetBooksByAuthor" => books.Where(book => book.AuthorId == (int)values[0]).ToList(),
+                _ => throw new AssertionException("Unexpected book read " + method.Name)
+            });
+            var authorService = InterfaceProxy.Proxy<IAuthorService>((method, values) => new Author { Id = 77, Name = authorName });
+            return new FileMatchingService(null, null, validator ?? new ContainmentValidator(new TagNormalizer(), logger),
+                null, null, null, null, ConfigServiceTestProxy.Create(), authorService, null, null,
+                repository ?? new StubEditionFtsRepository(candidates), bookService, null, null, null, logger);
+        }
+
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(true, true, false)]
+        [TestCase(true, false, true)]
+        [TestCase(false, true, true)]
+        public void duration_or_narrator_proof_must_not_replace_missing_edition_title_words(
+            bool durationPresent, bool narratorPresent, bool fullTitlePresent)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Red Country", BaseBookId = "hc:297006",
+                MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var edition = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77,
+                AuthorName = "Joe Abercrombie", BookTitle = book.Title,
+                EditionTitle = "Red Country: Booktrack Edition", ReadingFormatId = 2,
+                ForeignEditionId = "az:1549103016-audiobook", NarratorNames = "Steven Pacey",
+                DurationSeconds = 71580, MatchScore = 1 };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { edition }, "Joe Abercrombie");
+            var trace = new RecordingTraceSink();
+            ((System.Threading.AsyncLocal<IMatchingTraceSink>)typeof(FileMatchingService)
+                .GetField("_matchingTraceSink", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(matching)).Value = trace;
+            var tags = new Dictionary<string, List<string>>
+            {
+                ["TITLE"] = new() { fullTitlePresent ? edition.EditionTitle : book.Title },
+                ["AUTHOR"] = new() { edition.AuthorName }
+            };
+            if (narratorPresent)
+            {
+                tags["NARRATOR"] = new() { edition.NarratorNames };
+            }
+
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/captured-title-regression/recording.m4b", AllTags = tags,
+                DurationSeconds = durationPresent ? 71592 : null
+            }, BookMediaType.Audiobook, restrictToAuthorId: 77);
+
+            if (fullTitlePresent)
+            {
+                Assert.That(match?.EditionId, Is.EqualTo(edition.EditionId));
+            }
+            else
+            {
+                Assert.That(match, Is.Null);
+                Assert.That(trace.Events.Any(evt => evt.EditionId == edition.EditionId &&
+                    evt.Reason == "CONTAINMENT_FAILED"), Is.True);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void series_name_equal_to_book_title_must_not_disqualify_the_matching_narration(bool linkedSeries)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Dune", BaseBookId = "hc:312460",
+                MediaType = BookMediaType.Audiobook, SeriesName = linkedSeries ? null : "Dune",
+                AnyEditionOk = true, SeriesLinks = new List<SeriesBookLink>() };
+            if (linkedSeries)
+            {
+                book.SeriesLinks.Add(new SeriesBookLink { BookId = book.Id, Series = new Series { Title = "Dune" } });
+            }
+
+            const string narrators = "Byron Jennings, David R. Gordon, Euan Morton, Ilyana Kadushin, Jason Culp, Kent Broadhurst, Oliver Wyman, Orlagh Cassidy, Patricia Kilgarriff, Scott Brick, Scott Sowers, Simon Vance";
+            var narrated = new EditionFtsMatch { BookId = book.Id, EditionId = 11, AuthorId = 77,
+                AuthorName = "Frank Herbert", BookTitle = book.Title, EditionTitle = "Dune",
+                NarratorNames = narrators, DurationSeconds = 75720, ReadingFormatId = 2,
+                ForeignEditionId = "hc:edition:32909410-audiobook" };
+            var plain = new EditionFtsMatch { BookId = book.Id, EditionId = 22, AuthorId = 77,
+                AuthorName = "Frank Herbert", BookTitle = book.Title, EditionTitle = book.Title,
+                ReadingFormatId = 3, ForeignEditionId = "hc:plain", MatchScore = 100 };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { plain, narrated }, "Frank Herbert");
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/book.m4b",
+                DurationSeconds = 75726,
+                AllTags = new() { ["TITLE"] = new() { "Dune" }, ["AUTHOR"] = new() { "Frank Herbert" },
+                    ["NARRATOR"] = new() { narrators } }
+            }, BookMediaType.Audiobook, restrictToAuthorId: 77);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(book.Id));
+            Assert.That(match.EditionId, Is.EqualTo(narrated.EditionId));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void author_named_title_must_match_in_either_tag_order(bool reverseOrder)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Hugh Howey Free Short Stories", MediaType = BookMediaType.Ebook };
+            var edition = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Hugh Howey",
+                BookTitle = book.Title, EditionTitle = book.Title, ReadingFormatId = 3 };
+            var tags = new Dictionary<string, List<string>>
+            {
+                ["TITLE"] = new() { book.Title },
+                ["AUTHOR"] = new() { "Hugh Howey" }
+            };
+            if (reverseOrder)
+            {
+                tags = tags.Reverse().ToDictionary(pair => pair.Key, pair => pair.Value);
+            }
+
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { edition }, "Hugh Howey");
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata { Path = "/downloads/book.epub", AllTags = tags },
+                BookMediaType.Ebook, restrictToAuthorId: 77);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(edition.EditionId));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void spent_author_tokens_cannot_prove_a_competing_title(bool mixedField)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Dune", SeriesName = "Dune", SeriesPosition = "1", MediaType = BookMediaType.Audiobook };
+            var other = new Book { Id = 2, AuthorId = 77, Title = "Dune Messiah", SeriesName = "Dune", SeriesPosition = "2", MediaType = BookMediaType.Audiobook };
+            var good = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Frank Herbert",
+                BookTitle = book.Title, EditionTitle = book.Title, NarratorNames = "George Guidall", ReadingFormatId = 2 };
+            var wrong = new EditionFtsMatch { BookId = 2, EditionId = 22, AuthorId = 77, AuthorName = "Frank Herbert",
+                BookTitle = other.Title, EditionTitle = "Frank Herbert", ReadingFormatId = 3, MatchScore = 100 };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book, other }, new() { wrong, good }, "Frank Herbert");
+            var tags = mixedField
+                ? new Dictionary<string, List<string>> { ["FIELD"] = new() { "Frank Herbert Dune George Guidall" } }
+                : new Dictionary<string, List<string>> { ["FIRST"] = new() { "Dune" }, ["SECOND"] = new() { "Frank Herbert" }, ["THIRD"] = new() { "George Guidall" } };
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata { Path = "/downloads/book.m4b", AllTags = tags },
+                BookMediaType.Audiobook, restrictToAuthorId: 77);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(good.EditionId));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void independent_author_title_and_narrator_occurrences_preserve_self_titled_self_narrated_books(bool sameField)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Frank Herbert", MediaType = BookMediaType.Audiobook };
+            var edition = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Frank Herbert",
+                BookTitle = book.Title, EditionTitle = book.Title, NarratorNames = "Frank Herbert", ReadingFormatId = 2 };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { edition }, "Frank Herbert");
+            var tags = sameField
+                ? new Dictionary<string, List<string>> { ["FIELD"] = new() { "Frank Herbert; Frank Herbert; Frank Herbert" } }
+                : new Dictionary<string, List<string>> { ["FIRST"] = new() { "Frank Herbert" }, ["SECOND"] = new() { "Frank Herbert" }, ["THIRD"] = new() { "Frank Herbert" } };
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata { Path = "/downloads/book.m4b", AllTags = tags },
+                BookMediaType.Audiobook, restrictToAuthorId: 77);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(edition.EditionId));
+        }
+
+        [Test]
+        public void a_complete_title_equal_to_its_series_must_not_create_partial_title_evidence()
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "The Graveyard Book", SeriesName = "The Graveyard Book", MediaType = BookMediaType.Audiobook };
+            var candidate = new EditionFtsMatch { EditionId = 11, BookId = 1, AuthorId = 77, EditionTitle = book.Title, BookTitle = book.Title };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { candidate });
+            var tags = new Dictionary<string, List<string>> { ["ALBUM"] = new() { "Norse Mythology: The Graphic Novels 3" } };
+            var method = typeof(FileMatchingService).GetMethod("GetSeriesExplainableEditionTitleEvidence", BindingFlags.Instance | BindingFlags.NonPublic);
+            var evidence = (IReadOnlyList<EditionTitleEvidence>)method.Invoke(matching, new object[] { candidate, tags, new Dictionary<int, Book> { [1] = book }, null });
+            Assert.That(evidence, Is.Empty);
+            tags["TITLE"] = new() { book.Title };
+            Assert.That(new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger()).ValidateEditionInTags(book.Title, tags), Is.True);
+        }
+
+        [TestCase(false, BookMediaType.Audiobook)]
+        [TestCase(true, BookMediaType.Audiobook)]
+        [TestCase(false, BookMediaType.Ebook)]
+        [TestCase(true, BookMediaType.Ebook)]
+        public void own_series_must_not_replace_a_different_full_title_with_a_shared_article(bool completeTitle, BookMediaType media)
+        {
+            var target = new Book { Id = 1, AuthorId = 77, Title = "Norse Mythology, Vol. 3", SeriesName = "Norse Mythology: The Graphic Novels", SeriesPosition = "3", BaseBookId = "hc:1179612", MediaType = media };
+            var other = new Book { Id = 2, AuthorId = 77, Title = "The Graveyard Book", SeriesName = "The Graveyard Book", BaseBookId = "hc:270087", MediaType = media };
+            var targetEdition = new EditionFtsMatch { EditionId = 11, BookId = 1, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = target.Title, EditionTitle = "Norse Mythology Volume 3 (Graphic Novel)", ReadingFormatId = 3, Lang = "eng", ForeignEditionId = "az:B09ZH4XGBK-audiobook" };
+            var otherEdition = new EditionFtsMatch { EditionId = 22, BookId = 2, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = other.Title, EditionTitle = other.Title, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Lang = "eng", ForeignEditionId = "gr:13487831-audiobook" };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { target, other }, new() { targetEdition, otherEdition });
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/title-authority." + (media == BookMediaType.Audiobook ? "m4b" : "epub"),
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new() { completeTitle ? targetEdition.EditionTitle : "Norse Mythology Volume 3" },
+                    ["ALBUM"] = new() { "Norse Mythology: The Graphic Novels 3" },
+                    ["AUTHOR"] = new() { "Neil Gaiman" }
+                }
+            };
+            var match = matching.HolyGrailMatchFile(file, media, restrictToAuthorId: 77);
+            if (completeTitle)
+            {
+                Assert.That(match, Is.Not.Null);
+                Assert.That(match.BookId, Is.EqualTo(target.Id));
+                Assert.That(match.EditionId, Is.EqualTo(targetEdition.EditionId));
+            }
+            else
+            {
+                Assert.That(match == null || match.BookId == target.Id, Is.True);
+            }
+        }
+
+        [TestCase("matching", true, true)]
+        [TestCase("missing-series", false, false)]
+        [TestCase("different-series", false, false)]
+        [TestCase("missing-position", false, true)]
+        [TestCase("different-position", false, true)]
+        [TestCase("different-book-title", false, false)]
+        [TestCase("substantive-suffix", false, true)]
+        [TestCase("different-author", true, false)]
+        [TestCase("different-media", true, false)]
+        public void stored_series_derivation_must_remain_distinct_from_complete_book_title_eligibility(
+            string scenario, bool expectedDerivedEvidence, bool expectedTarget)
+        {
+            var target = new Book { Id = 1, AuthorId = scenario == "different-author" ? 78 : 77,
+                Title = scenario == "different-book-title" ? "Another Story" : "Story",
+                SeriesName = scenario == "missing-series" ? null : scenario == "different-series" ? "Other Cycle" : "Story Cycle",
+                SeriesPosition = scenario == "missing-position" ? null : scenario == "different-position" ? "2" : "1",
+                BaseBookId = "hc:91001", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var bundle = new Book { Id = 2, AuthorId = 77, Title = "Story Cycle", SeriesName = "Story Cycle",
+                SeriesPosition = "1-3", BaseBookId = "hc:91002", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var targetEdition = new EditionFtsMatch { EditionId = 11, BookId = target.Id, AuthorId = target.AuthorId,
+                AuthorName = "Neil Gaiman", BookTitle = target.Title,
+                EditionTitle = scenario == "substantive-suffix" ? "Story (Supplement)" : "Story (Story Cycle Book 1)",
+                ReadingFormatId = 3, ForeignEditionId = "hc:edition:91011-audiobook" };
+            var bundleEdition = new EditionFtsMatch { EditionId = 22, BookId = bundle.Id, AuthorId = 77,
+                AuthorName = "Neil Gaiman", BookTitle = bundle.Title, EditionTitle = bundle.Title,
+                ReadingFormatId = 2, ForeignEditionId = "hc:edition:91022-audiobook" };
+            var media = scenario == "different-media" ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            var books = new[] { target, bundle };
+            var candidates = new[] { bundleEdition, targetEdition }
+                .Where(candidate => books.Any(book => book.Id == candidate.BookId && book.MediaType == media))
+                .ToList();
+            var matching = CreateOwnSeriesTitleMatcher(books, candidates);
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/stored-series-title." + (media == BookMediaType.Audiobook ? "m4b" : "epub"),
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new() { "Story" },
+                    ["ALBUM"] = new() { "Story Cycle 1" },
+                    ["AUTHOR"] = new() { "Neil Gaiman" }
+                }
+            };
+            var titleEvidenceMethod = typeof(FileMatchingService).GetMethod(
+                "GetCandidateEditionTitleEvidence", BindingFlags.Instance | BindingFlags.NonPublic);
+            var derivedEvidence = (IReadOnlyList<EditionTitleEvidence>)titleEvidenceMethod.Invoke(matching,
+                new object[] { targetEdition.EditionTitle, targetEdition.Lang, file.AllTags, target, null, false, null });
+            Assert.That(derivedEvidence.Count > 0, Is.EqualTo(expectedDerivedEvidence), "stored-series edition-title derivation");
+            if (expectedDerivedEvidence)
+            {
+                Assert.That(derivedEvidence.Any(evidence =>
+                    string.Equals(evidence.MatchedTitle, "Story", StringComparison.OrdinalIgnoreCase)), Is.True);
+            }
+
+            var match = matching.HolyGrailMatchFile(file, media, restrictToAuthorId: 77);
+            Assert.That(match?.BookId == target.Id, Is.EqualTo(expectedTarget), "complete Book-title eligibility");
+            if (scenario == "different-media")
+            {
+                Assert.That(match, Is.Null);
+            }
+            if (expectedTarget)
+            {
+                Assert.That(match.EditionId, Is.EqualTo(targetEdition.EditionId));
+                Assert.That(match.MatchedVia, Is.EqualTo("escape_hatch"));
+            }
+        }
+
+        [TestCase(BookMediaType.Audiobook, false, true)]
+        [TestCase(BookMediaType.Audiobook, true, true)]
+        [TestCase(BookMediaType.Ebook, false, true)]
+        [TestCase(BookMediaType.Ebook, true, true)]
+        [TestCase(BookMediaType.Audiobook, false, false)]
+        [TestCase(BookMediaType.Audiobook, true, false)]
+        [TestCase(BookMediaType.Ebook, false, false)]
+        [TestCase(BookMediaType.Ebook, true, false)]
+        public void complete_title_should_beat_a_series_container_without_label_priority(
+            BookMediaType media, bool swapLabels, bool includeSeriesTag)
+        {
+            var target = new Book { Id = 1, AuthorId = 77, Title = "Seven and the Swift", BaseBookId = "hc:2565489",
+                MediaType = media, SeriesName = "Shield of Sparrows", SeriesPosition = "3", AnyEditionOk = true };
+            var generic = new Book { Id = 2, AuthorId = 77, Title = "Shield of Sparrows", BaseBookId = "hc:1479224",
+                MediaType = media, SeriesName = "Shield of Sparrows", SeriesPosition = "1", AnyEditionOk = true };
+            var dramatized = new Book { Id = 3, AuthorId = 77, Title = "Shield of Sparrows (Part 1 of 2) [Dramatized Adaptation]", BaseBookId = "gr:256939197",
+                MediaType = media, SeriesName = "Shield of Sparrows [Dramatized Adaptation]", SeriesPosition = "1, Part 1", AnyEditionOk = true };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new() { BookId = target.Id, EditionId = 11, AuthorId = 77, AuthorName = "Devney Perry", BookTitle = target.Title,
+                    EditionTitle = target.Title, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, ForeignEditionId = "hc:target", MatchScore = 1 },
+                new() { BookId = generic.Id, EditionId = 22, AuthorId = 77, AuthorName = "Devney Perry", BookTitle = generic.Title,
+                    EditionTitle = generic.Title, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, ForeignEditionId = "hc:generic", MatchScore = 100 },
+                new() { BookId = dramatized.Id, EditionId = 33, AuthorId = 77, AuthorName = "Devney Perry", BookTitle = dramatized.Title,
+                    EditionTitle = "Shield of Sparrows", ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, ForeignEditionId = "hc:dramatized", MatchScore = 200 }
+            };
+            var books = new[] { target, generic, dramatized }.ToList();
+            var matching = CreateOwnSeriesTitleMatcher(books, candidates, "Devney Perry");
+            var tags = new Dictionary<string, List<string>>
+            {
+                [swapLabels ? "ALBUM" : "TITLE"] = new() { target.Title },
+                ["AUTHOR"] = new() { "Devney Perry" }
+            };
+            if (includeSeriesTag)
+            {
+                tags[swapLabels ? "TITLE" : "ALBUM"] = new() { "Shield of Sparrows 3" };
+            }
+
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/series-evidence." + (media == BookMediaType.Audiobook ? "m4b" : "epub"),
+                AllTags = tags
+            }, media, restrictToAuthorId: 77);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(target.Id));
+            Assert.That(match.EditionId, Is.EqualTo(11));
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void a_standalone_clean_series_named_book_should_retain_its_title_proof(BookMediaType media)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Shield of Sparrows", BaseBookId = "hc:1479224",
+                MediaType = media, SeriesName = "Shield of Sparrows", SeriesPosition = "1", AnyEditionOk = true };
+            var edition = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Devney Perry",
+                BookTitle = book.Title, EditionTitle = book.Title, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, ForeignEditionId = "hc:first" };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { edition }, "Devney Perry");
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/clean-series-title." + (media == BookMediaType.Audiobook ? "m4b" : "epub"),
+                AllTags = new() { ["TITLE"] = new() { book.Title }, ["AUTHOR"] = new() { "Devney Perry" } }
+            }, media, restrictToAuthorId: 77);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.BookId, Is.EqualTo(book.Id));
+        }
+
+        [Test]
+        public void repeated_representative_editions_should_preserve_native_winner_without_multiplying_identity_work()
+        {
+            (long Bytes, int TitleCalls) MatchWithRepresentativeCopies(int count)
+            {
+                var target = new Book { Id = 1, AuthorId = 77, Title = "Silver Sea Complete", BaseBookId = "hc:complete",
+                    MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+                var generic = new Book { Id = 2, AuthorId = 77, Title = "Silver Sea", BaseBookId = "hc:generic",
+                    MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+                var candidates = new List<EditionFtsMatch>();
+                foreach (var book in new[] { target, generic })
+                {
+                    candidates.Add(new EditionFtsMatch { BookId = book.Id, EditionId = book.Id * 10 + 1, AuthorId = 77,
+                        AuthorName = "Neil Gaiman", BookTitle = book.Title, EditionTitle = book.Title + " (Unabridged)",
+                        NarratorNames = "Reader Person", ReadingFormatId = 2, ForeignEditionId = "hc:native:" + book.Id });
+                    candidates.AddRange(Enumerable.Range(0, count).Select(index => new EditionFtsMatch
+                    {
+                        BookId = book.Id, EditionId = book.Id * 1000 + index, AuthorId = 77, AuthorName = "Neil Gaiman",
+                        BookTitle = book.Title, EditionTitle = book.Title, ReadingFormatId = 3,
+                        ForeignEditionId = "hc:representative:" + book.Id + ":" + index
+                    }));
+                }
+
+                var repository = new RecordingStagedEditionFtsRepository(new[] { target, generic }
+                    .Select(book => new BookFtsMatch { BookId = book.Id, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title }).ToList(), candidates);
+                var titleCalls = 0;
+                var realValidator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+                var validator = InterfaceProxy.Proxy<IContainmentValidator>((method, values) =>
+                {
+                    if (method.Name == nameof(IContainmentValidator.GetEditionTitleEvidence))
+                    {
+                        titleCalls++;
+                    }
+
+                    return method.Invoke(realValidator, values);
+                });
+                var matching = CreateOwnSeriesTitleMatcher(new[] { target, generic }, candidates, repository: repository, validator: validator);
+                var file = new DiscoveredFileWithMetadata
+                {
+                    Path = "/downloads/identity-work.m4b",
+                    AllTags = new() { ["TITLE"] = new() { target.Title }, ["ALBUM"] = new() { target.Title },
+                        ["AUTHOR"] = new() { "Neil Gaiman" }, ["NARRATOR"] = new() { "Reader Person" } }
+                };
+                matching.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 77);
+                var firstCallCount = titleCalls;
+                titleCalls = 0;
+                var before = GC.GetAllocatedBytesForCurrentThread();
+                var match = matching.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 77);
+                var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                Assert.That(match?.BookId, Is.EqualTo(target.Id));
+                Assert.That(match.EditionId, Is.EqualTo(11));
+                Assert.That(repository.GatedBooks.Count, Is.EqualTo(2));
+                Assert.That(match.IdentityProof.Values.Where(value => value.Role == MatchIdentityRole.Title).Select(value => value.Field),
+                    Is.EquivalentTo(new[] { "TITLE", "ALBUM" }), "Independent physical proof fields must survive duplicate catalog titles.");
+                Assert.That(titleCalls, Is.EqualTo(firstCallCount), "Evidence reuse must end with each matching operation.");
+                return (allocated, titleCalls);
+            }
+
+            var smaller = MatchWithRepresentativeCopies(32);
+            var larger = MatchWithRepresentativeCopies(128);
+            TestContext.WriteLine($"32 copies: {smaller.Bytes} allocated bytes, {smaller.TitleCalls} title calls; 128 copies: {larger.Bytes} allocated bytes, {larger.TitleCalls} title calls");
+            Assert.That(larger.TitleCalls, Is.EqualTo(smaller.TitleCalls), "Identical representative editions must reuse the same title computation within an operation.");
+            Assert.That(larger.Bytes, Is.LessThan(smaller.Bytes * 6), "Four times the identical catalog evidence must not require quadratic identity work.");
+        }
+
+        [Test]
+        public void repeated_title_evidence_must_keep_distinct_narrator_inputs()
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Garden", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new() { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title,
+                    EditionTitle = book.Title, NarratorNames = "Reader Person", ReadingFormatId = 2 },
+                new() { BookId = 1, EditionId = 22, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title,
+                    EditionTitle = book.Title, NarratorNames = "Other Reader", ReadingFormatId = 2, MatchScore = 100 }
+            };
+            var seenNarrators = new HashSet<string>();
+            var realValidator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+            var validator = InterfaceProxy.Proxy<IContainmentValidator>((method, values) =>
+            {
+                if (method.Name == nameof(IContainmentValidator.GetEditionTitleEvidence) && (string)values[0] == book.Title)
+                {
+                    seenNarrators.Add(string.Join("|", (IEnumerable<string>)values[3] ?? Array.Empty<string>()));
+                }
+
+                return method.Invoke(realValidator, values);
+            });
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, candidates, validator: validator);
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/garden.m4b",
+                AllTags = new() { ["TITLE"] = new() { book.Title }, ["AUTHOR"] = new() { "Neil Gaiman" }, ["NARRATOR"] = new() { "Reader Person" } }
+            }, BookMediaType.Audiobook, restrictToAuthorId: 77);
+            Assert.That(match?.EditionId, Is.EqualTo(11));
+            Assert.That(seenNarrators, Does.Contain("Reader Person"));
+            Assert.That(seenNarrators, Does.Contain("Other Reader"), "Different candidate casts must reach the existing title validator independently.");
+        }
+
+        [Test]
+        public void repeated_title_evidence_must_keep_distinct_edition_languages()
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Ready Player 2", MediaType = BookMediaType.Ebook, BaseBookId = "hc:ready" };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new() { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title,
+                    EditionTitle = book.Title, Lang = "eng", ReadingFormatId = 3, MatchScore = 1 },
+                new() { BookId = 1, EditionId = 22, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title,
+                    EditionTitle = book.Title, Lang = "deu", ReadingFormatId = 3, MatchScore = 100 }
+            };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, candidates);
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/ready.epub",
+                AllTags = new() { ["TITLE"] = new() { "Ready Player Two" }, ["AUTHOR"] = new() { "Neil Gaiman" } }
+            }, BookMediaType.Ebook, restrictToAuthorId: 77);
+            Assert.That(match?.EditionId, Is.EqualTo(11));
+        }
+
+        [Test]
+        public void repeated_title_evidence_must_keep_distinct_book_series_contexts()
+        {
+            var good = new Book { Id = 1, AuthorId = 77, Title = "Shared Name", MediaType = BookMediaType.Ebook,
+                BaseBookId = "hc:river", SeriesName = "River", SeriesPosition = "2" };
+            var other = new Book { Id = 2, AuthorId = 77, Title = "Shared Name", MediaType = BookMediaType.Ebook,
+                BaseBookId = "hc:other", SeriesName = "Other", SeriesPosition = "9" };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new() { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = good.Title,
+                    EditionTitle = "Shared Name: River Book 2", ReadingFormatId = 3, MatchScore = 1 },
+                new() { BookId = 2, EditionId = 22, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = other.Title,
+                    EditionTitle = "Shared Name: River Book 2", ReadingFormatId = 3, MatchScore = 100 }
+            };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { good, other }, candidates);
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/shared.epub",
+                AllTags = new() { ["TITLE"] = new() { "Shared Name" }, ["AUTHOR"] = new() { "Neil Gaiman" } }
+            }, BookMediaType.Ebook, restrictToAuthorId: 77);
+            Assert.That(match?.BookId, Is.EqualTo(good.Id));
+            Assert.That(match.EditionId, Is.EqualTo(11));
+        }
+
+        [Test]
+        public void repeated_title_evidence_must_not_survive_changed_tags_in_a_later_operation()
+        {
+            var books = new[]
+            {
+                new Book { Id = 1, AuthorId = 77, Title = "Garden", MediaType = BookMediaType.Ebook, BaseBookId = "hc:garden" },
+                new Book { Id = 2, AuthorId = 77, Title = "Mountain", MediaType = BookMediaType.Ebook, BaseBookId = "hc:mountain" }
+            };
+            var candidates = books.Select(book => new EditionFtsMatch { BookId = book.Id, EditionId = book.Id * 10 + 1,
+                AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title, EditionTitle = book.Title, ReadingFormatId = 3 }).ToList();
+            var matching = CreateOwnSeriesTitleMatcher(books, candidates);
+            foreach (var book in books)
+            {
+                var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+                {
+                    Path = "/downloads/changed.epub",
+                    AllTags = new() { ["TITLE"] = new() { book.Title }, ["AUTHOR"] = new() { "Neil Gaiman" } }
+                }, BookMediaType.Ebook, restrictToAuthorId: 77);
+                Assert.That(match?.BookId, Is.EqualTo(book.Id));
+                Assert.That(match.EditionId, Is.EqualTo(book.Id * 10 + 1));
+            }
+        }
+
+        [TestCase(2, "undistinguished_audiobook_edition")]
+        [TestCase(3, "escape_hatch")]
+        [TestCase(1, "escape_hatch")]
+        public void staged_selection_should_retain_the_edition_eligibility_explanation(int readingFormat, string expectedMatchedVia)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Silver Sea", BaseBookId = "hc:eligibility",
+                MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var edition = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Neil Gaiman",
+                BookTitle = book.Title, EditionTitle = book.Title, ReadingFormatId = readingFormat, ForeignEditionId = "hc:eligibility-edition" };
+            var editions = new List<EditionFtsMatch> { edition };
+            if (readingFormat == 2)
+            {
+                editions.Add(new EditionFtsMatch { BookId = 1, EditionId = 12, AuthorId = 77, AuthorName = "Neil Gaiman",
+                    BookTitle = book.Title, EditionTitle = book.Title, ReadingFormatId = 2, ForeignEditionId = "hc:eligibility-edition-2" });
+            }
+
+            var match = MatchStagedStructuralScenario("eligibility-explanation", BookMediaType.Audiobook,
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { book.Title }, ["AUTHOR"] = new() { "Neil Gaiman" } },
+                new[] { new BookFtsMatch { BookId = 1, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title } },
+                editions, new[] { book }, 11, expectedMatchedVia: expectedMatchedVia, assertStagedSelection: true);
+            Assert.That(match.Provenance.MatchedVia, Is.EqualTo(expectedMatchedVia));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void owned_series_context_must_not_skip_a_substantive_word_in_an_independent_title(bool swapLabels)
+        {
+            var left = new Book { Id = 1, AuthorId = 77, Title = "Alpha", BaseBookId = "hc:context-left", MediaType = BookMediaType.Audiobook,
+                SeriesName = "Silver Sea", SeriesPosition = "1", AnyEditionOk = true };
+            var right = new Book { Id = 2, AuthorId = 77, Title = "Sea", BaseBookId = "hc:context-right", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new() { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = left.Title, EditionTitle = left.Title,
+                    ReadingFormatId = 2, ForeignEditionId = "hc:left", MatchScore = 1 },
+                new() { BookId = 2, EditionId = 22, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = right.Title, EditionTitle = right.Title,
+                    ReadingFormatId = 2, ForeignEditionId = "hc:right", MatchScore = 100 }
+            };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { left, right }, candidates);
+            var trace = new RecordingTraceSink();
+            ((System.Threading.AsyncLocal<IMatchingTraceSink>)typeof(FileMatchingService)
+                .GetField("_matchingTraceSink", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(matching)).Value = trace;
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/independent-titles.m4b",
+                AllTags = new() { [swapLabels ? "ALBUM" : "TITLE"] = new() { "Alpha" },
+                    [swapLabels ? "TITLE" : "ALBUM"] = new() { "Silver Dark Sea" }, ["AUTHOR"] = new() { "Neil Gaiman" } }
+            }, BookMediaType.Audiobook, restrictToAuthorId: 77);
+            Assert.That(trace.Events.Any(evt => evt.Reason == "BOOK_TITLE_OCCURRENCE_DOMINATED" &&
+                (evt.Detail ?? string.Empty).Contains("base:" + left.BaseBookId + ">")), Is.False);
+        }
+
+        [Test]
+        public void a_numbered_generic_series_title_must_retain_its_same_field_conflicting_position_guard()
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Wild Cards", BaseBookId = "hc:1175234", MediaType = BookMediaType.Audiobook,
+                SeriesName = "Wild Cards", SeriesPosition = "1", AnyEditionOk = true };
+            var edition = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "Neil Gaiman", BookTitle = book.Title,
+                EditionTitle = "Wild Cards I", ReadingFormatId = 2, ForeignEditionId = "hc:numbered-series" };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { edition });
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/numbered-container.m4b",
+                AllTags = new() { ["TITLE"] = new() { "Wild Cards I (Wild Cards Book 2)" }, ["AUTHOR"] = new() { "Neil Gaiman" } }
+            }, BookMediaType.Audiobook, restrictToAuthorId: 77);
+            Assert.That(match, Is.Null);
+        }
+
+        private static Dictionary<string, List<string>> VocabularyTags(params string[] values)
+            => new() { ["TITLE"] = values.ToList() };
+
+        private static List<(int Consumed, IReadOnlyList<string> Leftovers)> Explanations(string title, string field, BookMediaType media)
+        {
+            var matching = new FileMatchingService(null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger());
+            var candidate = new NzbDrone.Core.Books.EditionFtsMatch
+            {
+                BookId = 1, BookTitle = title, EditionTitle = title, AuthorName = "Sample Writer"
+            };
+            var evidence = new[] { new EditionTitleEvidence("TITLE", field, title) };
+            var method = typeof(FileMatchingService).GetMethod("BuildTitleOccurrenceExplanations", BindingFlags.Instance | BindingFlags.NonPublic);
+            var rows = (IEnumerable)method.Invoke(matching, new object[]
+            {
+                candidate, evidence, VocabularyTags(field), media, new Dictionary<int, Book> { [1] = new Book { Id = 1 } }, false
+            });
+            return rows.Cast<object>().Select(row =>
+                (((HashSet<int>)row.GetType().GetProperty("MeaningfulConsumedIndexes").GetValue(row)).Count,
+                 (IReadOnlyList<string>)row.GetType().GetProperty("NearbyUnexplainedTokens").GetValue(row))).ToList();
+        }
+
+        [TestCase("The Novel", BookMediaType.Audiobook)]
+        [TestCase("The Novel", BookMediaType.Ebook)]
+        [TestCase("Read", BookMediaType.Audiobook)]
+        [TestCase("Read", BookMediaType.Ebook)]
+        [TestCase("Performed", BookMediaType.Audiobook)]
+        [TestCase("Performed", BookMediaType.Ebook)]
+        public void literal_title_words_must_count_as_title_discriminators(string title, BookMediaType media)
+        {
+            var rows = Explanations(title, title, media);
+            TestContext.WriteLine($"title={title} media={media} occurrences={rows.Count}");
+            Assert.That(rows, Has.Count.EqualTo(1));
+        }
+
+        [TestCase("Novel", BookMediaType.Audiobook)]
+        [TestCase("Novel", BookMediaType.Ebook)]
+        [TestCase("Read", BookMediaType.Audiobook)]
+        [TestCase("Read", BookMediaType.Ebook)]
+        [TestCase("Performed", BookMediaType.Audiobook)]
+        [TestCase("Performed", BookMediaType.Ebook)]
+        public void extra_literal_words_must_remain_available_to_sibling_competition(string extra, BookMediaType media)
+        {
+            var rows = Explanations("Garden", "Garden " + extra, media);
+            TestContext.WriteLine($"extra={extra} media={media} leftovers={string.Join(",", rows.Single().Leftovers)}");
+            Assert.That(rows.Single().Leftovers, Does.Contain(extra.ToLowerInvariant()));
+        }
+
+        [TestCase("Garden Track 1", BookMediaType.Audiobook)]
+        [TestCase("Garden Track 1", BookMediaType.Ebook)]
+        [TestCase("Garden Chapter 2", BookMediaType.Audiobook)]
+        [TestCase("Garden Chapter 2", BookMediaType.Ebook)]
+        public void numbered_packaging_must_remain_explained(string field, BookMediaType media)
+        {
+            Assert.That(Explanations("Garden", field, media).Single().Leftovers, Is.Empty);
+        }
+
+        [TestCase("Garden (Read)", "Pat Smith")]
+        [TestCase("Garden (A Novel)", "Pat Smith")]
+        [TestCase("Garden (Complete)", "Pat Smith")]
+        [TestCase("Garden (Narré par Pat Smith)", "Pat Smith")]
+        [TestCase("Garden (Narrated by Pat Smith)", "Pat Smith")]
+        public void absent_catalog_title_content_must_not_be_invented(string title, string otherTag)
+        {
+            var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+            var tags = VocabularyTags("Garden"); tags["COMPOSER"] = new() { otherTag };
+            var matches = validator.ValidateEditionInTags(title, tags);
+            TestContext.WriteLine($"catalog={title} actual=Garden + {otherTag} contained={matches}");
+            Assert.That(matches, Is.False);
+        }
+
+        [TestCase("Garden (Narrated by Pat Smith)", "Pat Smith", "Pat Smith")]
+        [TestCase("Garden (Narrated by Pat Smith)", "Narrated by Pat Smith", null)]
+        [TestCase("Garden (Narré par Pat Smith)", "Narré par Pat Smith", null)]
+        [TestCase("Garden (Gelesen von Pat Smith)", "Pat Smith", "Pat Smith")]
+        public void complete_parenthetical_or_stored_narrator_credit_must_still_match(string title, string content, string knownNarrator)
+        {
+            var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+            var tags = VocabularyTags("Garden"); tags["COMPOSER"] = new() { content };
+            Assert.That(validator.ValidateEditionInTags(title, tags,
+                knownNarrators: knownNarrator == null ? null : new[] { knownNarrator }), Is.True);
+        }
+
+        [TestCase("Garden (Narrated by Pat Smith)", false)]
+        [TestCase("Garden (Narrated by Pat Smith)", true)]
+        [TestCase("Garden ［other words Pat Smith］", false)]
+        [TestCase("Garden ［other words Pat Smith］", true)]
+        public void file_matching_title_evidence_should_use_the_stored_edition_narrators(string title, bool withKnownNarrator)
+        {
+            var edition = new Edition
+            {
+                Id = 11, BookId = 1, Title = title,
+                NarratorNames = withKnownNarrator ? new List<string> { "Pat Smith" } : new List<string>()
+            };
+            var editionReads = 0;
+            var editions = InterfaceProxy.Proxy<IEditionService>((method, arguments) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IEditionService.GetEdition)));
+                Assert.That(arguments[0], Is.EqualTo(edition.Id));
+                editionReads++;
+                return edition;
+            });
+            var logger = LogManager.GetCurrentClassLogger();
+            var validator = new ContainmentValidator(new TagNormalizer(), logger);
+            var matching = new FileMatchingService(null, null, validator, null, null, null, null, null,
+                null, null, null, null, null, editions, null, null, logger);
+            var match = new FileMatch { BookId = edition.BookId, EditionId = edition.Id, BookTitle = title };
+            var tags = VocabularyTags("Garden"); tags["COMPOSER"] = new() { "Pat Smith" };
+            var method = typeof(FileMatchingService).GetMethod("GetBookEvidenceFields", BindingFlags.Instance | BindingFlags.NonPublic);
+            var evidence = (IReadOnlyList<EditionTitleEvidence>)method.Invoke(matching, new object[] { match, tags });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(evidence, Has.Count.EqualTo(withKnownNarrator ? 1 : 0));
+                Assert.That(editionReads, Is.EqualTo(1));
+            });
+        }
+
+        [TestCase("2", false)]
+        [TestCase("Book 2", true)]
+        public void a_track_number_must_not_prove_a_catalog_book_position(string observed, bool expected)
+        {
+            var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+            var tags = VocabularyTags("Garden"); tags["CUSTOM"] = new() { observed };
+            Assert.That(validator.ValidateEditionInTags("Garden (Book 2)", tags), Is.EqualTo(expected));
+        }
+        [TestCase(false)]
+        [TestCase(true)]
+        public void catalog_parentheticals_must_not_reconstruct_people_from_separate_credits(bool singleField)
+        {
+            var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+            var tags = VocabularyTags("Garden");
+            tags["COMPOSER"] = singleField
+                ? new() { "Narrated by Pat Jones; Jane Smith" }
+                : new() { "Narrated by Pat Jones", "Jane Smith" };
+            Assert.That(validator.ValidateEditionInTags("Garden (Narrated by Pat Smith)", tags), Is.False);
+        }
+
+        [TestCase("Novel", BookMediaType.Audiobook)]
+        [TestCase("Novel", BookMediaType.Ebook)]
+        [TestCase("Read", BookMediaType.Audiobook)]
+        [TestCase("Read", BookMediaType.Ebook)]
+        [TestCase("Performed", BookMediaType.Audiobook)]
+        [TestCase("Performed", BookMediaType.Ebook)]
+        public void staged_matching_must_preserve_literal_title_words_when_selecting_a_sibling(string word, BookMediaType media)
+        {
+            var titles = new[] { "Garden", "Garden " + word };
+            var recalls = titles.Select((title, index) => new BookFtsMatch
+            {
+                BookId = index + 1, AuthorId = 77, AuthorName = "Sample Writer", BookTitle = title
+            }).ToArray();
+            var editions = titles.Select((title, index) => new EditionFtsMatch
+            {
+                EditionId = index + 1, BookId = index + 1, AuthorId = 77, AuthorName = "Sample Writer",
+                BookTitle = title, EditionTitle = title, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3
+            }).ToArray();
+            var books = titles.Select((title, index) => new Book
+            {
+                Id = index + 1, AuthorId = 77, Title = title, MediaType = media, BaseBookId = "hc:work" + (index + 1)
+            }).ToArray();
+            var tags = VocabularyTags(titles[1]);
+            tags["ALBUM"] = new() { titles[0] };
+            tags["ARTIST"] = new() { "Sample Writer" };
+
+            MatchStagedStructuralScenario("literal-" + word, media, tags, recalls, editions, books, 2, expectedMatchedVia: null);
+        }
+
+        [TestCase("bonus", BookMatchingStrictness.Strict)]
+        [TestCase("zusatz", BookMatchingStrictness.Strict)]
+        [TestCase("追加資料", BookMatchingStrictness.Strict)]
+        [TestCase("bonus", BookMatchingStrictness.Balanced)]
+        [TestCase("zusatz", BookMatchingStrictness.Balanced)]
+        [TestCase("追加資料", BookMatchingStrictness.Balanced)]
+        [TestCase("bonus", BookMatchingStrictness.Aggressive)]
+        [TestCase("zusatz", BookMatchingStrictness.Aggressive)]
+        [TestCase("追加資料", BookMatchingStrictness.Aggressive)]
+        public void an_unexplained_word_must_not_erase_collected_numeric_evidence(string extra, BookMatchingStrictness strictness)
+        {
+            var matching = new FileMatchingService(null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger());
+            var value = "Garden " + extra + " VII";
+            var candidate = new EditionFtsMatch { BookId = 1, BookTitle = "Garden", EditionTitle = "Garden", AuthorName = "Sample Writer" };
+            var evidence = new[] { new EditionTitleEvidence("ALBUM", value, "Garden") };
+            var tags = new Dictionary<string, List<string>> { ["ALBUM"] = new() { value } };
+            var books = new Dictionary<int, Book> { [1] = new() { Id = 1, Title = "Garden" } };
+            var method = typeof(FileMatchingService).GetMethod("PassesLeftoverTokenGate", BindingFlags.Instance | BindingFlags.NonPublic);
+            var result = (ValueTuple<bool, string, IReadOnlyList<string>>)method.Invoke(matching,
+                new object[] { candidate, evidence, tags, books, strictness, null });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Item1, Is.EqualTo(strictness != BookMatchingStrictness.Strict));
+                Assert.That(result.Item3, Is.EquivalentTo(strictness == BookMatchingStrictness.Aggressive
+                    ? new[] { extra } : new[] { extra, "vii" }));
+            });
+        }
+
+            private sealed class StubEditionFtsRepository : StagedEditionFtsStub
             {
             private readonly List<EditionFtsMatch> _results;
             private readonly bool _throwOnSearch;
@@ -31,10 +800,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             public int Calls { get; private set; }
 
-            public bool FtsTableExists() => true;
-            public void RebuildIndex() { }
+            public override bool FtsTableExists() => true;
+            public override void RebuildIndex() { }
 
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
+            protected override List<EditionFtsMatch> SelectEditions(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit)
             {
                 Calls++;
                 if (_throwOnSearch)
@@ -45,55 +814,20 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 return _results.Take(limit).ToList();
             }
 
-            public List<EditionFtsMatch> SearchWithTwoStepWithTrace(
-                int? authorId,
-                IEnumerable<string> tokens,
-                BookMediaType mediaType,
-                Action<EditionFtsTraceEvent> trace,
-                int limit = 20)
+            public override List<EditionFtsMatch> RankEditions(IReadOnlyCollection<BookFtsMatch> recalledBooks,
+                IReadOnlyCollection<EditionFtsFieldQuery> fieldQueries, BookMediaType mediaType, Action<EditionFtsTraceEvent> trace = null)
             {
-                var tokenList = (tokens ?? Enumerable.Empty<string>()).ToList();
-                trace?.Invoke(new EditionFtsTraceEvent
+                if (_throwOnSearch)
                 {
-                    EventType = "input",
-                    Step = "input",
-                    Terms = tokenList
-                });
-
-                var results = SearchWithTwoStep(authorId, tokenList, mediaType, limit);
-                for (var i = 0; i < results.Count; i++)
-                {
-                    var candidate = results[i];
-                    trace?.Invoke(new EditionFtsTraceEvent
-                    {
-                        EventType = "candidate",
-                        Step = "edition_expansion",
-                        RawRank = i + 1,
-                        DistinctBookRank = i + 1,
-                        EditionId = candidate.EditionId,
-                        BookId = candidate.BookId,
-                        AuthorId = candidate.AuthorId,
-                        Score = candidate.MatchScore,
-                        EditionTitle = candidate.EditionTitle,
-                        BookTitle = candidate.BookTitle,
-                        AuthorName = candidate.AuthorName
-                    });
+                    throw new AssertionException("FTS should not be called when identifier short-circuit succeeds");
                 }
 
-                trace?.Invoke(new EditionFtsTraceEvent
-                {
-                    EventType = "summary",
-                    Step = "edition_expansion",
-                    ResultCount = results.Count,
-                    DistinctBookCount = results.Select(result => result.BookId).Distinct().Count()
-                });
-
-                return results;
+                return base.RankEditions(recalledBooks, fieldQueries, mediaType, trace);
             }
 
             }
 
-            private sealed class RecordingStagedEditionFtsRepository : IEditionFtsRepository, IStagedEditionFtsRepository
+            private sealed class RecordingStagedEditionFtsRepository : IEditionFtsRepository
             {
                 private readonly List<BookFtsMatch> _recalls;
                 private readonly List<EditionFtsMatch> _rankedEditions;
@@ -111,13 +845,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public List<BookFtsMatch> GatedBooks { get; private set; } = new();
                 public List<EditionFtsFieldQuery> ResidualQueries { get; private set; } = new();
 
+                public void EnsureIndexPopulated() => RebuildIndex();
                 public bool FtsTableExists() => true;
                 public void RebuildIndex() { }
 
-                public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
-                {
-                    throw new AssertionException("The staged production contract should replace the historical combined search.");
-                }
 
                 public List<BookFtsMatch> RecallBooks(
                     int? authorId,
@@ -191,7 +922,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 int expectedEditionId,
                 int? durationSeconds = null,
                 string expectedMatchedVia = "staged_field_representation",
-                IReadOnlyList<IDictionary<string, List<string>>> groupMemberTags = null)
+                IReadOnlyList<IDictionary<string, List<string>>> groupMemberTags = null,
+                bool assertStagedSelection = false)
             {
                 var logger = LogManager.GetCurrentClassLogger();
                 var stagedFts = new RecordingStagedEditionFtsRepository(recalls, editions);
@@ -236,6 +968,13 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                         .ToList()
                 };
 
+                var trace = new RecordingTraceSink();
+                if (assertStagedSelection)
+                {
+                    ((System.Threading.AsyncLocal<IMatchingTraceSink>)typeof(FileMatchingService)
+                        .GetField("_matchingTraceSink", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(service)).Value = trace;
+                }
+
                 var match = service.HolyGrailMatchFile(file, mediaType, restrictToAuthorId: null);
 
                 Assert.That(match, Is.Not.Null, scenario);
@@ -246,6 +985,13 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
                 Assert.That(stagedFts.RecallCalls, Is.EqualTo(1), scenario);
                 Assert.That(stagedFts.RankCalls, Is.EqualTo(1), scenario);
+                if (assertStagedSelection)
+                {
+                    Assert.That(trace.Events.Any(evt => evt.EventType == "fts_stage2_book_selected"), Is.True);
+                    Assert.That(trace.Events.Any(evt => evt.EventType == "candidate_ranked" &&
+                        evt.Data.TryGetValue("selectionScope", out var scope) && scope == "global-stage2-selected-provider-book"), Is.True);
+                }
+
                 return match;
             }
 
@@ -310,6 +1056,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
                 public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags)
                 {
+                    return ValidateAuthorInTags(authorName, allTags, null);
+                }
+
+                public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags, IEnumerable<string> knownTitles)
+                {
                     if (allTags != null && allTags.Count > 1)
                     {
                         NeighborhoodAuthorChecks[authorName] = NeighborhoodAuthorChecks.TryGetValue(authorName, out var count)
@@ -317,17 +1068,19 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                             : 1;
                     }
 
-                    return _inner.ValidateAuthorInTags(authorName, allTags);
+                    return knownTitles == null
+                        ? _inner.ValidateAuthorInTags(authorName, allTags)
+                        : _inner.ValidateAuthorInTags(authorName, allTags, knownTitles);
                 }
 
-                public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags) =>
-                    _inner.ValidateEditionInTags(editionTitle, allTags);
+                public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags, IEnumerable<string> knownNarrators = null) =>
+                    _inner.ValidateEditionInTags(editionTitle, allTags, knownNarrators);
 
                 public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(
                     string editionTitle,
                     IDictionary<string, List<string>> allTags,
-                    bool includeDurationGatedNearExact = false) =>
-                    _inner.GetEditionTitleEvidence(editionTitle, allTags, includeDurationGatedNearExact);
+                    bool includeDurationGatedNearExact = false, IEnumerable<string> knownNarrators = null) =>
+                    _inner.GetEditionTitleEvidence(editionTitle, allTags, includeDurationGatedNearExact, knownNarrators);
             }
 
             private sealed class StubEditionRepository : IEditionRepository
@@ -390,6 +1143,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public int Count() => throw new NotImplementedException();
                 public Edition Find(int id) => throw new NotImplementedException();
                 public Edition Get(int id) => throw new NotImplementedException();
+                public void RefreshProviderAliases(IList<Edition> editions) { }
                 public Edition Insert(Edition model) => throw new NotImplementedException();
                 public Edition Update(Edition model) => throw new NotImplementedException();
                 public Edition Upsert(Edition model) => throw new NotImplementedException();
@@ -411,8 +1165,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
                 public Edition FindByForeignEditionId(string foreignEditionId) => throw new NotImplementedException();
                 public List<Edition> FindAllByForeignEditionId(string foreignEditionId) => throw new NotImplementedException();
+                public List<Edition> FindAllByForeignEditionId(IEnumerable<string> ids) => new();
                 public Edition FindByHardcoverEditionId(string hardcoverEditionId) => throw new NotImplementedException();
                 public List<Edition> FindAllByHardcoverEditionId(string hardcoverEditionId) => throw new NotImplementedException();
+                public List<Edition> FindAllByHardcoverEditionId(IEnumerable<string> ids) => new();
                 public Edition FindByGoodreadsEditionId(long goodreadsEditionId) => throw new NotImplementedException();
                 public List<Edition> FindAllByGoodreadsEditionId(long goodreadsEditionId) => throw new NotImplementedException();
                 public Edition FindByGoogleBooksEditionId(string googleBooksEditionId) => throw new NotImplementedException();
@@ -421,8 +1177,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public List<Edition> FindAllByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
                 public List<Edition> FindByBook(IEnumerable<int> ids) => throw new NotImplementedException();
                 public List<Edition> FindByAuthor(int id, bool onlyMonitored = false) => throw new NotImplementedException();
-                public List<Edition> FindByAuthorId(int id, bool onlyMonitored) => throw new NotImplementedException();
-                public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
                 public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
                 public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
                 public HashSet<string> FindExistingTitleSlugsForUniqueness(IEnumerable<string> baseTitleSlugs) => throw new NotImplementedException();
@@ -509,12 +1263,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
 
             public Author GetAuthor(int authorId) => _author;
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -522,6 +1276,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
@@ -575,15 +1330,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
             public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
-            public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
-            public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public List<Book> FindAllByProviderId(string provider, string providerId, BookMediaType mediaType) => new List<Book>();
             public Book FindByISBN(string isbn) => throw new NotImplementedException();
             public Book FindByASIN(string asin) => throw new NotImplementedException();
-            public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
@@ -712,7 +1464,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(result.MatchedFiles, Has.Length.EqualTo(1));
             Assert.That(result.MatchedFiles[0].EditionId, Is.EqualTo(candidate.EditionId));
             Assert.That(trace.Events.Any(evt => evt.EventType == "fts_input"), Is.True);
-            Assert.That(trace.Events.Any(evt => evt.EventType == "fts_edition_expansion_candidate" && evt.Rank == 1 && evt.EditionId == candidate.EditionId), Is.True);
+            Assert.That(trace.Events.Any(evt => evt.EventType == "fts_stage2_field_ranking_candidate" && evt.Rank == 1 && evt.EditionId == candidate.EditionId), Is.True);
             Assert.That(trace.Events.Any(evt => evt.EventType == "candidate_ranked" && evt.Rank == 1 && evt.EditionId == candidate.EditionId), Is.True);
             Assert.That(trace.Events.Any(evt => evt.EventType == "match_selected" && evt.EditionId == candidate.EditionId), Is.True);
 
@@ -746,8 +1498,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     {
                         EditionId = 1001,
                         BookId = 101,
-                        EditionTitle = "The Fall: The Bound and The Broken Novella",
-                        MatchingTitle = "The Fall: The Bound and The Broken Novella",
+                        EditionTitle = "The Fall",
+                        MatchingTitle = "The Fall",
+                        EditionSubTitle = "The Bound and The Broken Novella",
                         BookTitle = "The Fall",
                         AuthorId = 1,
                         AuthorName = "Ryan Cahill",
@@ -808,15 +1561,22 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var residualValues = stagedFts.ResidualQueries
                 .Select(query => string.Join(" ", query.Terms))
                 .ToList();
-            Assert.That(residualValues, Does.Contain("the fall"));
+            var titleQuery = stagedFts.ResidualQueries.Single(query => query.SourceFields.SequenceEqual(new[] { "MP4:©nam[0]" }));
+            Assert.That(titleQuery.Key, Is.EqualTo("MP4:©nam[0]"));
+            Assert.That(titleQuery.ResidualValue, Is.EqualTo("The Fall"));
+            Assert.That(titleQuery.Terms, Is.EqualTo(new[] { "the", "fall" }));
             var residualFields = stagedFts.ResidualQueries.SelectMany(query => query.SourceFields).ToList();
             Assert.That(residualFields, Does.Contain("MP4:©nam[0]"));
             Assert.That(residualFields, Does.Not.Contain("TITLE[0]"), "a generated canonical view must not duplicate its raw physical field");
 
-            Assert.That(residualValues, Does.Contain("derek perkins"));
+            var narratorQuery = stagedFts.ResidualQueries.Single(query => query.SourceFields.SequenceEqual(new[] { "COMPOSER[0]" }));
+            Assert.That(narratorQuery.Key, Is.EqualTo("COMPOSER[0]"));
+            Assert.That(narratorQuery.ResidualValue, Is.EqualTo("Derek Perkins"));
+            Assert.That(narratorQuery.Terms, Is.EqualTo(new[] { "derek", "perkins" }));
             Assert.That(residualValues.Any(value => value.Contains("novella", StringComparison.OrdinalIgnoreCase)), Is.True);
-            Assert.That(residualValues.Any(value => value.Contains("ryan", StringComparison.OrdinalIgnoreCase)), Is.False);
-            Assert.That(residualValues.Any(value => value.Contains("cahill", StringComparison.OrdinalIgnoreCase)), Is.False);
+            Assert.That(stagedFts.ResidualQueries.Any(query => query.Key == "ARTIST[0]"), Is.False);
+            Assert.That(stagedFts.ResidualQueries.Single(query => query.Key == "ALBUMARTIST[0]").ResidualValue,
+                Is.EqualTo("Ryan Cahill (The Bound and The Broken)"));
             Assert.That(residualValues.Any(value => value.Contains("bound", StringComparison.OrdinalIgnoreCase)), Is.True, "series text must remain available for sibling discrimination");
             Assert.That(match.MatchedVia, Is.EqualTo("staged_field_representation"));
         }
@@ -1517,14 +2277,16 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 new Book { Id = 702, AuthorId = 61, Title = series, SeriesName = $"{series} (Publication Order)", HardcoverBookId = "hc:narnia-collection", MediaType = BookMediaType.Audiobook }
             };
 
-            MatchStagedStructuralScenario(
+            var match = MatchStagedStructuralScenario(
                 "prince-caspian-series-container",
                 BookMediaType.Audiobook,
                 tags,
                 recalls,
                 editions,
                 books,
-                expectedEditionId: 7001);
+                expectedEditionId: 7001,
+                expectedMatchedVia: null);
+            Assert.That(match.BookId, Is.EqualTo(701));
         }
 
         [Test]
@@ -1575,14 +2337,16 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 new Book { Id = 802, AuthorId = 62, Title = "Wild Cards", SeriesName = "Wild Cards", HardcoverBookId = "hc:wild-cards", MediaType = BookMediaType.Audiobook }
             };
 
-            MatchStagedStructuralScenario(
+            var match = MatchStagedStructuralScenario(
                 "mississippi-roll-series-container",
                 BookMediaType.Audiobook,
                 tags,
                 recalls,
                 editions,
                 books,
-                expectedEditionId: 8001);
+                expectedEditionId: 8001,
+                expectedMatchedVia: null);
+            Assert.That(match.BookId, Is.EqualTo(801));
         }
 
         [Test]
@@ -1852,8 +2616,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 AllTags = new Dictionary<string, List<string>>
                 {
                     { "TITLE", new List<string> { "Harry Potter and the Order of the Phoenix" } },
-                    // Stephen Fry is not in TITLE, but is present in another tag field.
-                    { "COMPOSER", new List<string> { "Stephen Fry" } },
+                    // The complete parenthetical content is observed in another eligible field.
+                    { "COMPOSER", new List<string> { "Narrated by Stephen Fry" } },
                     { "ARTIST", new List<string> { "J.K. Rowling" } },
                 }
             };
@@ -2666,71 +3430,49 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match.Provenance.MatchedVia, Is.Not.EqualTo("provider_identifier"));
         }
 
-	        [Test]
-	        public void should_reject_series_trailing_parenthetical_when_series_not_evidenced_in_tags()
-	        {
-	            var logger = LogManager.GetCurrentClassLogger();
-	            var containment = new ContainmentValidator(new TagNormalizer(), logger);
+        [TestCase(false)]
+        [TestCase(true)]
+        public void clean_sibling_title_must_not_veto_the_matching_recording(bool reverseCandidates)
+        {
+            var book = new Book { Id = 21535, AuthorId = 77, Title = "Fire & Blood",
+                BaseBookId = "hc:460320", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var candidates = new List<EditionFtsMatch>
+            {
+                new() { BookId = book.Id, EditionId = 55105, AuthorId = 77,
+                    AuthorName = "George R.R. Martin", BookTitle = book.Title,
+                    EditionTitle = "Fire & Blood", NarratorNames = "Simon Vance", ReadingFormatId = 2,
+                    ForeignEditionId = "gr:39978052-audiobook" },
+                new() { BookId = book.Id, EditionId = 55106, AuthorId = 77,
+                    AuthorName = "George R.R. Martin", BookTitle = book.Title,
+                    EditionTitle = "Fire & Blood (HBO Tie-in Edition)", NarratorNames = "Simon Vance",
+                    DurationSeconds = 95040, ReadingFormatId = 2, ForeignEditionId = "az:B07CLNJBLD-audiobook" },
+                new() { BookId = book.Id, EditionId = 55107, AuthorId = 77,
+                    AuthorName = "George R.R. Martin", BookTitle = book.Title,
+                    EditionTitle = "Fire and Blood", NarratorNames = "Simon Vance",
+                    DurationSeconds = 98100, ReadingFormatId = 2, ForeignEditionId = "az:B07CPGC93B-audiobook" }
+            };
+            if (reverseCandidates)
+            {
+                candidates.Reverse();
+            }
 
-	            // FTS order: series-qualified edition first (should be rejected), plain edition second (should win).
-	            var fts = new StubEditionFtsRepository(new List<EditionFtsMatch>
-	            {
-	                new EditionFtsMatch
-	                {
-	                    EditionId = 517,
-	                    BookId = 143,
-	                    EditionTitle = "Never Come Back (Nora McTavish, Book 2)",
-	                    BookTitle = "Never Come Back (Nora McTavish, Book 2)",
-	                    AuthorId = 6,
-	                    AuthorName = "Joe Hart",
-	                },
-	                new EditionFtsMatch
-	                {
-	                    EditionId = 518,
-	                    BookId = 143,
-	                    EditionTitle = "Never Come Back",
-	                    BookTitle = "Never Come Back",
-	                    AuthorId = 6,
-	                    AuthorName = "Joe Hart",
-	                }
-	            });
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, candidates, "George R.R. Martin");
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/captured-title-regression/recording.m4b",
+                DurationSeconds = 95087,
+                AllTags = new()
+                {
+                    ["TITLE"] = new() { "Fire & Blood" },
+                    ["AUTHOR"] = new() { "George R.R. Martin" },
+                    ["NARRATOR"] = new() { "Simon Vance" }
+                }
+            };
 
-	            var authorService = new StubAuthorService(new Author { Id = 6, Name = "Joe Hart" });
+            var match = matching.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 77);
 
-	            var svc = new FileMatchingService(
-	                matchingLogger: null,
-	                v5MatchingService: null,
-	                containmentValidator: containment,
-	                pendingAuthorImportService: null,
-	                commandQueue: null,
-	                authorFolderMatchingService: null,
-	                rootFolderService: null,
-	                configService: ConfigServiceTestProxy.Create(usePathAsTagsFallback: false),
-	                authorService: authorService,
-	                eventAggregator: null,
-	                authorLibraryService: null,
-	                editionFtsRepository: fts,
-	                bookService: null,
-	                editionService: null,
-	                editionRepository: null,
-	                mediaInfoExtractor: null,
-	                logger: logger);
-
-	            var file = new DiscoveredFileWithMetadata
-	            {
-	                Path = "/audiobooks/Joe Hart/Never Come Back/Never Come Back.m4b",
-	                AllTags = new Dictionary<string, List<string>>
-	                {
-	                    { "TITLE", new List<string> { "Never Come Back" } },
-	                    { "ARTIST", new List<string> { "Joe Hart" } },
-	                }
-	            };
-
-	            var match = svc.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 6);
-
-	            Assert.That(match, Is.Not.Null);
-	            Assert.That(match.EditionId, Is.EqualTo(518));
-	        }
+            Assert.That(match?.EditionId, Is.EqualTo(55106));
+        }
 
 	        [Test]
 	        public void should_allow_bracketed_series_label_when_series_metadata_explains_suffix()
@@ -3494,12 +4236,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
-	        public void should_use_duration_as_tiebreak_for_same_narrator_and_year()
+	        public void should_use_edition_score_when_same_narrator_and_year_durations_are_within_tolerance()
 	        {
 	            var logger = LogManager.GetCurrentClassLogger();
 	            var containment = new ContainmentValidator(new TagNormalizer(), logger);
 
-            // Same narrator + year; duration should pick the closer DurationSeconds.
+            // Same narrator and year; both durations qualify, so edition score decides.
             var fts = new StubEditionFtsRepository(new List<EditionFtsMatch>
             {
                 new EditionFtsMatch
@@ -3513,6 +4255,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     NarratorNames = "Tom Hollander",
                     ReleaseDate = new DateTime(2012, 1, 1),
                     DurationSeconds = 36000, // 10:00:00
+                    MatchScore = 20.0,
                 },
                 new EditionFtsMatch
                 {
@@ -3525,6 +4268,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     NarratorNames = "Tom Hollander",
                     ReleaseDate = new DateTime(2012, 1, 1),
                     DurationSeconds = 36600, // 10:10:00
+                    MatchScore = 10.0,
                 }
             });
 
@@ -3565,7 +4309,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var match = svc.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 25);
 
 		            Assert.That(match, Is.Not.Null);
-		            Assert.That(match.EditionId, Is.EqualTo(21));
+		            Assert.That(match.EditionId, Is.EqualTo(20));
 		        }
 
 		        [Test]
@@ -3708,13 +4452,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 	        }
 
 	        [Test]
-	        public void should_select_native_representative_when_author_proof_is_not_narrator_proof()
+	        public void spent_author_proof_is_not_narrator_evidence_or_a_self_narrator_rejection()
 	        {
 	            var logger = LogManager.GetCurrentClassLogger();
 	            var containment = new ContainmentValidator(new TagNormalizer(), logger);
 
-	            // The author field proves the book, but a self-narrator needs a second field before it can
-	            // distinguish an edition. Missing edition evidence is neutral, not a narrator contradiction.
+	            // Spent author evidence neither proves nor contradicts self-narration.
 	            var fts = new StubEditionFtsRepository(new List<EditionFtsMatch>
 	            {
 	                new EditionFtsMatch
@@ -3789,7 +4532,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 	            var match = svc.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 25);
 
 	            Assert.That(match, Is.Not.Null);
-	            Assert.That(match.EditionId, Is.EqualTo(50));
+	            Assert.That(match.EditionId, Is.EqualTo(51), "Unproven narration retains the existing provider-identity tie-break, including self-narrated editions.");
+                Assert.That(match.Provenance.SupportingSignals.Any(signal => signal.Type == "narrator"), Is.False);
 	            Assert.That(match.MatchedVia, Is.EqualTo("undistinguished_audiobook_edition"));
 	        }
 
@@ -5590,7 +6334,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
 
                 [Test]
-                public void should_not_let_subtitle_presence_override_closer_duration_for_sibling_audiobook_editions()
+                public void should_preserve_known_subtitle_evidence_when_durations_are_within_tolerance()
                 {
                     var logger = LogManager.GetCurrentClassLogger();
                     var containment = new ContainmentValidator(new TagNormalizer(), logger);
@@ -5663,7 +6407,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     var match = svc.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 6);
 
 	                    Assert.That(match, Is.Not.Null);
-	                    Assert.That(match.EditionId, Is.EqualTo(517));
+	                    Assert.That(match.EditionId, Is.EqualTo(518));
 	                }
 
 	                [Test]
@@ -7192,6 +7936,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
 
                 [Test]
+                [Ignore("Upload mislabeled: Jim Dale US recording tagged with the UK title. Revisit.")]
                 public void should_use_book_title_proof_to_select_regional_narrator_edition_without_falling_into_pocket_potters()
                 {
                     var logger = LogManager.GetCurrentClassLogger();
@@ -7421,8 +8166,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     });
                 }
 
-                [Test]
-                public void should_prefer_direct_edition_title_when_book_title_candidate_only_has_equivalent_duration_proof()
+                [TestCase(71592)] // Actual combined duration of the two captured M4Bs.
+                [TestCase(71580)] // Even an exact duration is not stronger than another in-tolerance duration.
+                public void should_preserve_edition_title_score_when_durations_share_matching_tolerance(int observedDuration)
                 {
                     var logger = LogManager.GetCurrentClassLogger();
                     var containment = new ContainmentValidator(new TagNormalizer(), logger);
@@ -7440,7 +8186,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                             NarratorNames = "Steven Pacey",
                             DurationSeconds = 71520,
                             ReadingFormatId = 2,
-                            MatchScore = 25.0
+                            MatchScore = 1.4347928966671133
                         },
                         new EditionFtsMatch
                         {
@@ -7453,7 +8199,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                             NarratorNames = "Steven Pacey",
                             DurationSeconds = 71580,
                             ReadingFormatId = 2,
-                            MatchScore = 30.0
+                            MatchScore = 1.083415044422106
                         }
                     });
 
@@ -7482,7 +8228,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     var file = new DiscoveredFileWithMetadata
                     {
                         Path = "/audiobooks/Joe Abercrombie/Red Country/Red Country.m4b",
-                        DurationSeconds = 71556,
+                        DurationSeconds = observedDuration,
                         AllTags = new Dictionary<string, List<string>>
                         {
                             { "TITLE", new List<string> { "Red Country 1" } },

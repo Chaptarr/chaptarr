@@ -75,7 +75,8 @@ namespace NzbDrone.Core.Profiles.Qualities
 
             var importListInUse = _importListFactory
                 .All()
-                .Any(l => l.QualityProfileId == id);
+                .Any(l => l.QualityProfileId == id || l.Settings is DualMediaImportListSettings settings &&
+                    (settings.AudiobookQualityProfileId == id || settings.EbookQualityProfileId == id));
 
             var rootFolderInUse = _rootFolderService
                 .All()

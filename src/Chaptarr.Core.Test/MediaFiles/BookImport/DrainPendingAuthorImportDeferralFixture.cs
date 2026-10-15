@@ -35,9 +35,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             private static IEnumerable<IngestQueueItem> QueueItemsOrItems(RecordingIngestQueueRepository repository) => repository.QueueItems;
             private static IngestQueueItem CloneItem(IngestQueueItem item) => item;
 
-            public void BeginSession(int commandId)
-            {
-            }
 
             public void InsertBatch(List<IngestQueueItem> items)
             {
@@ -86,7 +83,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     .ToList();
             }
 
-            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0)
+            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0, bool includeCompleted = false)
             {
                 return QueueItemsOrItems(this)
                     .Where(item => item.Id > afterId)
@@ -198,16 +195,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 return QueueItems.Count(item => string.Equals(item.Status, "queued", StringComparison.OrdinalIgnoreCase));
             }
 
-            public int RequeueFailedOrUnmappedUnderPath(string pathPrefix)
-            {
-                throw new NotImplementedException();
-            }
 
-            public int RequeueFailedPaths(IEnumerable<string> paths)
-            {
-                throw new NotImplementedException();
-            }
 
+            public int PurgeCompletedResults(IEnumerable<int> resultIds) => 0;
             public int PurgeUnderPath(string pathPrefix)
             {
                 throw new NotImplementedException();
@@ -218,10 +208,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 throw new NotImplementedException();
             }
 
-            public void PurgeOldCompleted(int daysToKeep = 14)
-            {
-                throw new NotImplementedException();
-            }
 
             public void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null)
             {
@@ -234,7 +220,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 UpdateStatus(queueItemId, "done", statusError);
             }
 
-            public List<NzbDrone.Core.Datastore.ImportResult> GetImportResults(int? commandId = null)
+            public List<NzbDrone.Core.Datastore.ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null)
             {
                 throw new NotImplementedException();
             }

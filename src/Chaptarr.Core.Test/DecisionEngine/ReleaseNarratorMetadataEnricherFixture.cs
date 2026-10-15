@@ -140,7 +140,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var missingNarrator = new ReleaseInfo { Title = "Harry Potter m4b", IndexerId = 1 };
             var existingNarrator = new ReleaseInfo { Title = "Harry Potter mp3", IndexerId = 1, Narrator = "Stephen Fry" };
             var noNfo = new ReleaseInfo { Title = "Harry Potter flac", IndexerId = 1, HasNfo = false };
-            var titleCarriesNarrator = new ReleaseInfo { Title = "Harry Potter narrated by Stephen Fry m4b", IndexerId = 1 };
+            var titleCarriesNarrator = new ReleaseInfo { Title = "Harry Potter narrated by Jim Dale m4b", IndexerId = 1 };
 
             enricher.EnrichReleaseNarratorMetadata(
                 new List<ReleaseInfo> { missingNarrator, existingNarrator, noNfo, titleCarriesNarrator },
@@ -312,6 +312,44 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 new StubIndexerFactory(indexers.ToArray()),
                 new StubQualityProfileService(profiles.ToArray()),
                 new StubCustomFormatService(formats.ToArray()));
+        }
+
+        [TestCase("Read by Jim Dale, Ben Reader, Cara Reader", 0)]
+        [TestCase("Gelesen von Jim Dale, Ben Reader, Cara Reader", 0)]
+        [TestCase("Jim Dale + 2 more narrators", 1)]
+        [TestCase("Jim Dale + 2 weitere Sprecher", 1)]
+        public void known_complete_credit_should_avoid_fetch_but_partial_free_text_should_not(string credit, int expectedCalls)
+        {
+            var names = new[] { "Jim Dale", "Ben Reader", "Cara Reader" };
+            var criteria = CreateCriteria(anyEditionOk: false);
+            var edition = criteria.Books.Single().Editions.Single();
+            edition.NarratorNames = names.ToList();
+            edition.Narrator = string.Join(", ", names);
+            var indexer = new StubEnhancedIndexer(1, release =>
+            {
+                release.Narrator = string.Join(", ", names);
+                return true;
+            });
+            var release = new ReleaseInfo { Title = "Harry Potter M4B [" + credit + "]", IndexerId = 1 };
+            CreateEnricher(indexer).EnrichReleaseNarratorMetadata(new List<ReleaseInfo> { release }, criteria);
+            Assert.That(indexer.PopulateCalls, Is.EqualTo(expectedCalls));
+        }
+
+        [TestCase("Read by Jim Dale, Ben Reader, Cara Reader", 0)]
+        [TestCase("Gelesen von Jim Dale, Ben Reader, Cara Reader", 0)]
+        [TestCase("Jim Dale + 2 more narrators", 1)]
+        [TestCase("Jim Dale + 2 weitere Sprecher", 1)]
+        public void raw_fields_should_reuse_known_cast_evidence_without_promoting_partial_credit(string field, int expectedCalls)
+        {
+            var names = new[] { "Jim Dale", "Ben Reader", "Cara Reader" };
+            var criteria = CreateCriteria(anyEditionOk: false);
+            var edition = criteria.Books.Single().Editions.Single();
+            edition.NarratorNames = names.ToList();
+            edition.Narrator = string.Join(", ", names);
+            var indexer = new StubEnhancedIndexer(1, _ => true);
+            var release = new ReleaseInfo { Title = "Harry Potter M4B", IndexerId = 1, NarratorEvidenceFields = new List<string> { field } };
+            CreateEnricher(indexer).EnrichReleaseNarratorMetadata(new List<ReleaseInfo> { release }, criteria);
+            Assert.That(indexer.PopulateCalls, Is.EqualTo(expectedCalls));
         }
 
         private static BookSearchCriteria CreateCriteria(bool anyEditionOk)

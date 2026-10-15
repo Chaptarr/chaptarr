@@ -156,6 +156,32 @@ namespace Chaptarr.Core.Test.ImportLists
 
         [TestCase(false)]
         [TestCase(true)]
+        public void legacy_number_lookup_must_preserve_provider_and_media_boundaries(bool postgres)
+        {
+            using var db = new DatabaseHarness(postgres);
+            var service = db.CreateService();
+            var exclusion = service.Add(new ImportListExclusion
+            {
+                ForeignId = "123", Name = "Legacy Goodreads exclusion", MediaType = BookMediaType.Audiobook
+            });
+            var hardcover = new Book { HardcoverBookId = "hc:123", MediaType = BookMediaType.Audiobook };
+            var goodreads = new Book { GoodreadsWorkId = "gr:123", MediaType = BookMediaType.Audiobook };
+            var otherMedia = new Book { GoodreadsWorkId = "gr:123", MediaType = BookMediaType.Ebook };
+            var isbn = new Book { ISBN13 = "123", MediaType = BookMediaType.Audiobook };
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(service.FindByForeignId(ImportListExclusionBookMatcher.GetLookupIds(hardcover)), Is.Empty);
+                Assert.That(service.FindByForeignId(ImportListExclusionBookMatcher.GetLookupIds(goodreads)).Single().Id, Is.EqualTo(exclusion.Id));
+                Assert.That(ImportListExclusionBookMatcher.AppliesToBook(exclusion, hardcover), Is.False);
+                Assert.That(ImportListExclusionBookMatcher.AppliesToBook(exclusion, goodreads), Is.True);
+                Assert.That(ImportListExclusionBookMatcher.AppliesToBook(exclusion, otherMedia), Is.False);
+                Assert.That(ImportListExclusionBookMatcher.AppliesToBook(exclusion, isbn), Is.True);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void author_scopes_survive_reopen_and_explicit_both_replaces_only_narrower_scopes(bool postgres)
         {
             using var db = new DatabaseHarness(postgres);
@@ -187,7 +213,7 @@ namespace Chaptarr.Core.Test.ImportLists
             var refresh = (RefreshAuthorService)RuntimeHelpers.GetUninitializedObject(typeof(RefreshAuthorService));
             typeof(RefreshAuthorService).GetField("_importListExclusionService", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(refresh, exclusions);
             typeof(RefreshAuthorService).GetMethod("MoveAuthorImportExclusions", BindingFlags.Instance | BindingFlags.NonPublic)
-                .Invoke(refresh, new object[] { source, target });
+                .Invoke(refresh, new object[] { source, target, null, null });
             Assert.That(db.CreateService().All().Select(row => row.MediaType),
                 Is.EquivalentTo(new BookMediaType?[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
         }

@@ -9,11 +9,13 @@ namespace NzbDrone.Core.Books.Commands
     public class UpdateFtsCommandHandler : IExecute<UpdateFtsCommand>, IHandle<ApplicationStartedEvent>
     {
         private readonly IFtsMaintenanceService _ftsMaintenanceService;
+        private readonly IEditionFtsRepository _editionFtsRepository;
         private readonly Logger _logger;
 
-        public UpdateFtsCommandHandler(IFtsMaintenanceService ftsMaintenanceService, Logger logger)
+        public UpdateFtsCommandHandler(IFtsMaintenanceService ftsMaintenanceService, IEditionFtsRepository editionFtsRepository, Logger logger)
         {
             _ftsMaintenanceService = ftsMaintenanceService;
+            _editionFtsRepository = editionFtsRepository;
             _logger = logger;
         }
 
@@ -21,6 +23,7 @@ namespace NzbDrone.Core.Books.Commands
         {
             _logger.Debug("[FTS-UPDATE] Starting FTS update");
             _ftsMaintenanceService.RebuildAllFts();
+            _editionFtsRepository.EnsureIndexPopulated();
             _logger.Debug("[FTS-UPDATE] FTS update completed");
         }
 

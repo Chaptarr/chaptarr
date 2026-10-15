@@ -117,7 +117,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
             }
 
-            public void BeginSession(int commandId) { }
             public void InsertBatch(List<IngestQueueItem> items) => throw new NotImplementedException();
 
             public List<IngestQueueItem> GetQueuedItems(int limit = 100)
@@ -177,7 +176,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     .ToList();
             }
 
-            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0)
+            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0, bool includeCompleted = false)
             {
                 return QueueItemsOrItems(this)
                     .Where(item => item.Id > afterId)
@@ -284,11 +283,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                                          string.Equals(x.Status, "in_progress", StringComparison.OrdinalIgnoreCase));
             }
 
-            public int RequeueFailedOrUnmappedUnderPath(string pathPrefix) => 0;
-            public int RequeueFailedPaths(IEnumerable<string> paths) => 0;
+            public int PurgeCompletedResults(IEnumerable<int> resultIds) => 0;
             public int PurgeUnderPath(string pathPrefix) => 0;
             public int PurgePaths(IEnumerable<string> paths) => 0;
-            public void PurgeOldCompleted(int daysToKeep = 14) { }
 
             public void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null)
             {
@@ -301,7 +298,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 UpdateStatus(queueItemId, "done", statusError);
             }
 
-            public List<NzbDrone.Core.Datastore.ImportResult> GetImportResults(int? commandId = null)
+            public List<NzbDrone.Core.Datastore.ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null)
             {
                 return Results
                     .Select((r, index) => new NzbDrone.Core.Datastore.ImportResult
@@ -540,8 +537,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         {
             public bool Contains(string haystack, string needle) => true;
             public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags) => true;
-            public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags) => true;
-            public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false) => Array.Empty<EditionTitleEvidence>();
+            public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags, IEnumerable<string> knownTitles) => true;
+            public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags, IEnumerable<string> knownNarrators = null) => true;
+            public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false, IEnumerable<string> knownNarrators = null) => Array.Empty<EditionTitleEvidence>();
         }
 
         private class ThrowingProxy<T> : DispatchProxy where T : class

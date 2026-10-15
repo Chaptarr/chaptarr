@@ -1,8 +1,10 @@
 using System;
-using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.CustomFormats
 {
@@ -17,6 +19,11 @@ namespace NzbDrone.Core.CustomFormats
 
         public static bool IsMatch(string observedName, string configuredName)
         {
+            if (AuthorNameMatcher.AuthorNamesMatch(configuredName, observedName))
+            {
+                return true;
+            }
+
             var observedTokens = NormalizeTokens(observedName);
             var configuredTokens = NormalizeTokens(configuredName);
 
@@ -32,8 +39,7 @@ namespace NzbDrone.Core.CustomFormats
 
             // Typo tolerance is deliberately narrow: keep every given/middle-name component exact
             // and allow one inserted, removed, or substituted code point only in a reasonably long
-            // family-name component. This catches "Marster"/"Marsters" without turning a shared
-            // surname into identity proof for a different person.
+            // family-name component. A shared surname cannot establish a different person's identity.
             if (observedTokens.Length != configuredTokens.Length || configuredTokens.Length < 2)
             {
                 return false;
@@ -54,77 +60,41 @@ namespace NzbDrone.Core.CustomFormats
                    IsWithinOneEdit(observedFamilyName, configuredFamilyName);
         }
 
+        // Used only after provider identity has established the same book. Acquisition
+        // preferences retain IsMatch's stricter given-name policy.
+        public static bool IsSamePersonWithinBook(string left, string right)
+        {
+            var a = NormalizeTokens(left?.Replace("'", string.Empty).Replace("’", string.Empty).Replace("‘", string.Empty));
+            var b = NormalizeTokens(right?.Replace("'", string.Empty).Replace("’", string.Empty).Replace("‘", string.Empty));
+            if (a.Length == 0 || a.Length != b.Length)
+            {
+                return false;
+            }
+
+            if (a.SequenceEqual(b))
+            {
+                return true;
+            }
+
+            var differences = Enumerable.Range(0, a.Length).Where(i => a[i] != b[i]).ToList();
+            if (a.Length < 2 || differences.Count != 1 ||
+                Math.Max(a[differences[0]].EnumerateRunes().Count(), b[differences[0]].EnumerateRunes().Count()) < 4)
+            {
+                return false;
+            }
+
+            // Keep other name components exact and limit spelling tolerance so a long
+            // shared surname cannot hide an entirely different given name.
+            var normalizedLeft = string.Join(" ", a);
+            var normalizedRight = string.Join(" ", b);
+            var edits = normalizedLeft.LevenshteinDistance(normalizedRight);
+            return edits <= 2 && 1.0 - (double)edits / Math.Max(normalizedLeft.Length, normalizedRight.Length) >= 0.8;
+        }
+
         private static string[] NormalizeTokens(string value)
         {
-            return NormalizeWords(value)
+            return UnicodeComparisonNormalizer.NormalizeWords(value)
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        }
-
-        private static string NormalizeWords(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            var builder = new StringBuilder(value.Length);
-            var pendingSeparator = false;
-            var previousBaseWasLatin = false;
-
-            foreach (var rune in value.Normalize(NormalizationForm.FormD).EnumerateRunes())
-            {
-                var category = Rune.GetUnicodeCategory(rune);
-                if (category == UnicodeCategory.NonSpacingMark ||
-                    category == UnicodeCategory.SpacingCombiningMark ||
-                    category == UnicodeCategory.EnclosingMark)
-                {
-                    // Accent-insensitive matching is useful for Latin names (Jose/José), but
-                    // combining marks are identity-bearing in many other scripts. For example,
-                    // dropping the Japanese dakuten would make か and が compare as equal.
-                    if (!previousBaseWasLatin && builder.Length > 0 && !pendingSeparator)
-                    {
-                        builder.Append(rune);
-                    }
-
-                    continue;
-                }
-
-                if (Rune.IsLetterOrDigit(rune))
-                {
-                    if (pendingSeparator && builder.Length > 0 && builder[^1] != ' ')
-                    {
-                        builder.Append(' ');
-                    }
-
-                    builder.Append(Rune.ToLowerInvariant(rune));
-                    pendingSeparator = false;
-                    previousBaseWasLatin = IsLatin(rune);
-                }
-                else if (builder.Length > 0)
-                {
-                    pendingSeparator = true;
-                    previousBaseWasLatin = false;
-                }
-            }
-
-            return builder.ToString().Normalize(NormalizationForm.FormC).Trim();
-        }
-
-        private static bool IsLatin(Rune rune)
-        {
-            var value = rune.Value;
-
-            return (value >= 'A' && value <= 'Z') ||
-                   (value >= 'a' && value <= 'z') ||
-                   (value >= 0x00C0 && value <= 0x02AF) ||
-                   (value >= 0x1D00 && value <= 0x1D7F) ||
-                   (value >= 0x1D80 && value <= 0x1DBF) ||
-                   (value >= 0x1E00 && value <= 0x1EFF) ||
-                   (value >= 0x2C60 && value <= 0x2C7F) ||
-                   (value >= 0xA720 && value <= 0xA7FF) ||
-                   (value >= 0xAB30 && value <= 0xAB6F) ||
-                   (value >= 0x10780 && value <= 0x107BF) ||
-                   (value >= 0x1DF00 && value <= 0x1DFFF);
         }
 
         private static bool IsWithinOneEdit(string left, string right)

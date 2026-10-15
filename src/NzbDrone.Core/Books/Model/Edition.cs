@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Equ;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 
@@ -54,6 +55,10 @@ namespace NzbDrone.Core.Books
         public string HardcoverEditionId { get; set; }
         public string OpenLibraryEditionId { get; set; }
 
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public HashSet<string> RemoteProviderIds { get; set; }
+
         // Format identification
         public int? ReadingFormatId { get; set; } // 1=physical, 2=audio, 3=ebook
         public string EditionFormat { get; set; } // Specific format like "Paperback", "Hardcover", "Kindle Edition"
@@ -101,6 +106,46 @@ namespace NzbDrone.Core.Books
         [MemberwiseEqualityIgnore]
         public List<BookFile> BookFiles { get; set; }
 
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchSubtitle { get; set; }
+
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchNarrator { get; set; }
+
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchNarratorNames { get; set; }
+
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchPublisher { get; set; }
+
+        public override IEnumerable<string> PrepareForPersistence(IReadOnlyCollection<string> fields)
+        {
+            if (fields == null || fields.Contains(nameof(Subtitle)) || fields.Contains(nameof(SearchSubtitle)))
+            {
+                SearchSubtitle = StringSuperNormalizer.NormalizeForFts(Subtitle);
+                yield return nameof(SearchSubtitle);
+            }
+            if (fields == null || fields.Contains(nameof(Narrator)) || fields.Contains(nameof(SearchNarrator)))
+            {
+                SearchNarrator = StringSuperNormalizer.NormalizeForFts(Narrator);
+                yield return nameof(SearchNarrator);
+            }
+            if (fields == null || fields.Contains(nameof(NarratorNames)) || fields.Contains(nameof(SearchNarratorNames)))
+            {
+                SearchNarratorNames = StringSuperNormalizer.NormalizeNarratorsForFts(NarratorNames);
+                yield return nameof(SearchNarratorNames);
+            }
+            if (fields == null || fields.Contains(nameof(Publisher)) || fields.Contains(nameof(SearchPublisher)))
+            {
+                SearchPublisher = StringSuperNormalizer.NormalizeForFts(Publisher);
+                yield return nameof(SearchPublisher);
+            }
+        }
+
         public override string ToString()
         {
             return string.Format("[{0}][{1}]", ForeignEditionId, Title.NullSafe());
@@ -138,6 +183,7 @@ namespace NzbDrone.Core.Books
 		            }
 
 		            // Provider IDs
+		            RemoteProviderIds = RefreshEntityCopy.CloneProviderIds(other.RemoteProviderIds);
 		            GoodreadsEditionId = other.GoodreadsEditionId;
 			            HardcoverEditionId = CleanProviderIdForCopy(other.HardcoverEditionId, HardcoverEditionId);
 			            OpenLibraryEditionId = CleanProviderIdForCopy(other.OpenLibraryEditionId, OpenLibraryEditionId);

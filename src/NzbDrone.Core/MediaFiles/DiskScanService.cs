@@ -221,7 +221,7 @@ namespace NzbDrone.Core.MediaFiles
             LogMemorySnapshot("Disk scan folders complete ({0} files, {1})", totalScannedFiles, scanStopwatch.Elapsed);
 
             // Notify completion for each author
-            var authors = _authorService.GetAuthors(authorIds ?? new List<int>());
+            var authors = _authorService.GetExistingAuthors(authorIds ?? new List<int>());
             foreach (var author in authors)
             {
                 CheckForPauseAndWait(ref cancellationToken);
@@ -565,6 +565,18 @@ namespace NzbDrone.Core.MediaFiles
             {
                 throw new InventoryReconciliationException("Unable to prove that every observed root media file has exactly one BookFile row", ex);
             }
+
+            try
+            {
+                if (result?.StagingResults?.Count > 0)
+                {
+                    _ingestQueueRepository.PurgeCompletedResults(result.StagingResults.Select(item => item.Id));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Library inventory verified; completed scratch work retained because cleanup failed");
+            }
         }
 
         private void EnsureScannedFilesVisibleCore(OrchestratorImportResult result, bool includeReportedReasons)
@@ -639,7 +651,8 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var reason = reasonByPath[item.Key];
                 if (item.Value[0].EditionId == 0 &&
-                    reason?.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) == true)
+                    (reason?.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) == true ||
+                     (reason != inventoryReason && item.Value[0].MatchDetails?.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) == true)))
                 {
                     pathsNeedingSave[item.Key] = reason;
                 }
@@ -791,7 +804,8 @@ namespace NzbDrone.Core.MediaFiles
                             var changed = TryHydrateUnmappedMetadata(existingFile, existingInfo);
                             reasonByPath.TryGetValue(filePath, out var existingReason);
                             if (!string.IsNullOrWhiteSpace(existingReason) &&
-                                existingReason.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) &&
+                                (existingReason.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) ||
+                                 existingFile.MatchDetails?.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) == true) &&
                                 !string.Equals(existingFile.MatchDetails, existingReason, StringComparison.Ordinal))
                             {
                                 existingFile.MatchDetails = existingReason;

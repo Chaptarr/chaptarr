@@ -233,7 +233,7 @@ namespace NzbDrone.Core.RootFolders
 
         public List<RootFolder> AllForTag(int tagId)
         {
-            return All().Where(r => r.DefaultTags.Contains(tagId)).ToList();
+            return All().Where(r => r.GetReferencedTags().Contains(tagId)).ToList();
         }
 
         public RootFolder GetBestRootFolder(string path)

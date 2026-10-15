@@ -5,6 +5,8 @@ namespace NzbDrone.Core.Books
 {
     public static class EditionPinPolicy
     {
+        public static bool IsManuallyPinned(Edition edition) => edition?.ManualAdd == true;
+
         public static IReadOnlyList<Edition> GetProtectedEditions(Book book, IEnumerable<Edition> editions)
         {
             if (book == null)
@@ -17,10 +19,10 @@ namespace NzbDrone.Core.Books
                 .ToList() ?? new List<Edition>();
 
             return available
-                .Where(edition => edition.ManualAdd || (!book.AnyEditionOk && edition.Monitored))
+                .Where(edition => IsManuallyPinned(edition) || (!book.AnyEditionOk && edition.Monitored))
                 .GroupBy(edition => edition.Id)
                 .Select(group => group.First())
-                .OrderByDescending(edition => edition.ManualAdd)
+                .OrderByDescending(IsManuallyPinned)
                 .ThenByDescending(edition => edition.Monitored)
                 .ThenBy(edition => edition.Id)
                 .ToList();

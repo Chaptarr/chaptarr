@@ -2,17 +2,25 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using Chaptarr.Api.V1.Config;
+using Chaptarr.Http.ErrorManagement;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Housekeeping.Housekeepers;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaCover.Commands;
@@ -291,6 +299,44 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(books.LibraryBookIdCalls, Is.EqualTo(1));
             Assert.That(disk.SizedDirectories, Is.EqualTo(new[] { Path.Combine(coverRoot, "102") }));
             Assert.That(disk.DeletedDirectories, Is.Empty);
+        }
+
+        [Test]
+        public async Task cover_cleanup_timeout_should_return_a_client_error_without_error_or_fatal_logs()
+        {
+            var configApi = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            var config = (ConfigServiceProxy)(object)configApi;
+            var queueApi = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
+            var queue = (RecordingCommandQueueProxy)(object)queueApi;
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, EstimateAppFolderProxy>();
+            ((EstimateAppFolderProxy)(object)appFolder).AppDataFolder = @"C:\config".AsOsAgnostic();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, EstimateDiskProviderProxy>();
+            var disk = (EstimateDiskProviderProxy)(object)diskProvider;
+            disk.Directories.Add(Path.Combine(appFolder.AppDataFolder, "MediaCover", "Books", "102"));
+            disk.FolderSize = _ => throw new TimeoutException("Book-cover savings could not be estimated in time");
+            var books = DispatchProxy.Create<IBookService, EstimateBookServiceProxy>();
+            var coverService = DispatchProxy.Create<IMapCoversToLocal, DefaultDependencyProxy>();
+            var cleanup = new CleanupOrphanedBookCovers(books, diskProvider, appFolder,
+                LogManager.GetCurrentClassLogger(), configApi, coverService);
+            var controller = CreateController(configApi, queueApi, cleanup);
+
+            var exception = Assert.Throws<NzbDroneClientException>(() => controller.GetCoverCleanupEstimate(CancellationToken.None));
+            using var factory = new LogFactory();
+            var target = new MemoryTarget { Layout = "${level}|${message}" };
+            var logging = new LoggingConfiguration();
+            logging.AddRule(LogLevel.Debug, LogLevel.Fatal, target);
+            factory.Configuration = logging;
+            var context = new DefaultHttpContext();
+            context.Response.Body = new MemoryStream();
+            context.Features.Set<IExceptionHandlerPathFeature>(new ExceptionHandlerFeature { Error = exception });
+
+            await new ChaptarrErrorPipeline(factory.GetLogger(nameof(ChaptarrErrorPipeline))).HandleException(context);
+
+            Assert.That(context.Response.StatusCode, Is.EqualTo((int)HttpStatusCode.RequestTimeout));
+            Assert.That(target.Logs, Has.None.StartWith("Error|").And.None.StartWith("Fatal|"));
+            Assert.That(disk.DeletedDirectories, Is.Empty);
+            Assert.That(config.SaveCalls, Is.Zero);
+            Assert.That(queue.Commands, Is.Empty);
         }
 
         [TestCase(CoverDownloadScope.AllBooks, CoverDownloadScope.LibraryBooks, true)]

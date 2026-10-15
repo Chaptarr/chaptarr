@@ -96,12 +96,19 @@ namespace NzbDrone.Core.Books.Services
 
         // Pending import support
         public bool QueueIfUnavailable { get; set; } = false;
+        internal int? PendingImportId { get; set; }
+        internal long PendingImportVersion { get; set; }
         public bool IsFromQueue { get; set; } = false;  // Prevents re-queuing when processing from queue
         public bool CreateAudiobook { get; set; } = true;
         public bool CreateEbook { get; set; } = true;
         public List<string> AudiobookBooksToMonitor { get; set; }
         public List<string> EbookBooksToMonitor { get; set; }
         public List<string> AudiobookBooksToSearch { get; set; }
+        public List<RequestedNarration> AudiobookNarrations { get; set; }
+        internal Dictionary<BookMediaType, IReadOnlySet<string>> ProtectedNarrationIds { get; set; }
+        internal Dictionary<BookMediaType, IReadOnlySet<string>> ProtectedNarrationWorkIds { get; set; }
+        internal HashSet<(BookMediaType MediaType, string Id)> KnownParentEditionRequests { get; set; }
+        internal Dictionary<int, int?> PreviouslyMonitoredEditions { get; set; }
         public List<string> EbookBooksToSearch { get; set; }
         public HashSet<int> AudiobookTags { get; set; }
         public HashSet<int> EbookTags { get; set; }
@@ -323,16 +330,18 @@ namespace NzbDrone.Core.Books.Services
                     return new Author
                     {
                         Id = -pendingId,
-                        Name = config.AuthorName ?? "Pending Import",
+                        Name = config.AuthorName,
                         Status = AuthorStatusType.Continuing,
                         Path = "pending",
-                        CleanName = config.AuthorName?.CleanAuthorName() ?? "pending_import"
+                        CleanName = config.AuthorName?.CleanAuthorName()
                     };
                 }
 
                 // If not configured to queue, re-throw the exception
                 throw;
             }
+
+            PrepareRequestedNarrations(author, config);
 
             // CRITICAL: Verify dual-record creation is happening
             _logger.Debug("[DUAL-RECORD] Author '{0}' fetched with {1} books from API",
@@ -358,6 +367,10 @@ namespace NzbDrone.Core.Books.Services
             try
             {
                 // Provider IDs are identity. Display names are not: distinct authors can share one.
+                if (config?.PendingImportId is int pendingId && !_pendingImportService.IsActiveRequest(pendingId, config.PendingImportVersion))
+                {
+                    throw new OperationCanceledException("The queued author request was cancelled or changed before persistence.");
+                }
                 var existingAuthor = FindExistingAuthor(providerId, author);
                 ThrowIfImportListAuthorExcluded(providerId, author, config);
                 if (existingAuthor != null)
@@ -365,6 +378,8 @@ namespace NzbDrone.Core.Books.Services
                     var handledAuthor = await HandleExistingAuthorAsync(existingAuthor, author, config);
                     return await QueueMissingRequestedWorks(handledAuthor, providerId, config);
                 }
+
+                PrepareRequestedWorkPreservation(author, config, null);
 
                 var usesDiscoveredPath = !string.IsNullOrWhiteSpace(config?.DiscoveredAuthorFolderPath) &&
                                          new[] { author.Path, author.AudiobookPath, author.EbookPath }
@@ -519,6 +534,10 @@ namespace NzbDrone.Core.Books.Services
                 config.CreateAudiobook = false;
                 config.AudiobookBooksToMonitor = null;
                 config.AudiobookBooksToSearch = null;
+                config.AudiobookNarrations?.RemoveAll(request => request.MediaType == BookMediaType.Audiobook);
+                config.ProtectedNarrationIds?.Remove(BookMediaType.Audiobook);
+                config.ProtectedNarrationWorkIds?.Remove(BookMediaType.Audiobook);
+                config.KnownParentEditionRequests?.RemoveWhere(request => request.MediaType == BookMediaType.Audiobook);
             }
 
             if (excludeEbook)
@@ -526,6 +545,10 @@ namespace NzbDrone.Core.Books.Services
                 config.CreateEbook = false;
                 config.EbookBooksToMonitor = null;
                 config.EbookBooksToSearch = null;
+                config.AudiobookNarrations?.RemoveAll(request => request.MediaType == BookMediaType.Ebook);
+                config.ProtectedNarrationIds?.Remove(BookMediaType.Ebook);
+                config.ProtectedNarrationWorkIds?.Remove(BookMediaType.Ebook);
+                config.KnownParentEditionRequests?.RemoveWhere(request => request.MediaType == BookMediaType.Ebook);
             }
 
             if (((excludeAudio || excludeEbook) && !config.CreateAudiobook && !config.CreateEbook) ||
@@ -576,6 +599,8 @@ namespace NzbDrone.Core.Books.Services
                 authorProviderId,
                 string.Join(",", missing.Select(target => target.ProviderId)));
 
+            if (string.IsNullOrWhiteSpace(config.AuthorName)) config.AuthorName = author.Name;
+
             var pendingId = await _pendingImportService.EnqueueAsync(
                 authorProviderId,
                 config,
@@ -588,10 +613,10 @@ namespace NzbDrone.Core.Books.Services
             return new Author
             {
                 Id = -pendingId,
-                Name = config.AuthorName ?? author.Name ?? "Pending Import",
+                Name = config.AuthorName ?? author.Name,
                 Status = AuthorStatusType.Continuing,
                 Path = "pending",
-                CleanName = (config.AuthorName ?? author.Name)?.CleanAuthorName() ?? "pending_import"
+                CleanName = (config.AuthorName ?? author.Name)?.CleanAuthorName()
             };
         }
 
@@ -1111,12 +1136,91 @@ namespace NzbDrone.Core.Books.Services
             return _authorService.FindByProviderId(provider, rawId);
         }
 
+        internal static void PrepareRequestedNarrations(Author remoteAuthor, MonitoringConfig config)
+        {
+            if (config == null)
+            {
+                return;
+            }
+
+            config.ProtectedNarrationIds = new Dictionary<BookMediaType, IReadOnlySet<string>>();
+            config.ProtectedNarrationWorkIds = new Dictionary<BookMediaType, IReadOnlySet<string>>();
+            config.KnownParentEditionRequests = new HashSet<(BookMediaType, string)>();
+            if (config.AudiobookNarrations?.Count is not > 0)
+            {
+                return;
+            }
+
+            var workLookup = (remoteAuthor.Books ?? new List<Book>())
+                .SelectMany(book => BookIdentity.GetStableWorkProviderIdentityTokens(book).Select(id => (id, book)))
+                .ToLookup(value => (value.book.MediaType, value.id.ToLowerInvariant()), value => value.book);
+            foreach (var mediaRequests in config.AudiobookNarrations
+                .Where(request => request.MediaType == BookMediaType.Audiobook ? config.CreateAudiobook : config.CreateEbook)
+                .GroupBy(request => request.MediaType))
+            {
+                var protectedEditions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var protectedWorks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var request in mediaRequests)
+                {
+                    var id = BookEditionIdentity.NormalizeRequestedEditionProviderId(request.EditionProviderId);
+                    var parentWorks = new HashSet<Book>(workLookup[(request.MediaType, request.WorkProviderId.ToLowerInvariant())], ReferenceEqualityComparer.Instance);
+                    var matches = parentWorks.SelectMany(book => book.Editions ?? new List<Edition>())
+                        .Where(edition => BookEditionIdentity.MatchesRequestedNarration(edition, request.EditionProviderId,
+                            request.MediaType == BookMediaType.Audiobook ? request.NarratorNames : null)).ToList();
+                    var requestedEditions = request.MediaType == BookMediaType.Audiobook
+                        ? matches.Where(BookEditionIdentity.IsNarratedAudiobookEdition).ToList()
+                        : matches;
+                    if (request.MediaType == BookMediaType.Ebook || (matches.Count == 0 && request.NarratorNames?.Count > 0))
+                    {
+                        request.RequiresEdition = true;
+                    }
+                    else if (matches.Count > 0)
+                    {
+                        request.RequiresEdition = requestedEditions.Count > 0;
+                    }
+
+                    if (request.MediaType == BookMediaType.Audiobook && requestedEditions.Count > 0 && request.NarratorNames?.Count is not > 0)
+                    {
+                        request.NarratorNames = BookEditionIdentity.GetNarratorNames(requestedEditions[0]);
+                    }
+
+                    if (request.RequiresEdition)
+                    {
+                        protectedWorks.UnionWith(parentWorks.SelectMany(BookIdentity.GetStableWorkProviderIdentityTokens));
+                    }
+                    foreach (var edition in requestedEditions)
+                    {
+                        protectedEditions.UnionWith(EditionMetadataProfileFilter.GetProtectionTokens(edition));
+                    }
+
+                    if (parentWorks.Count > 0 && request.RequiresEdition)
+                    {
+                        config.KnownParentEditionRequests.Add((request.MediaType, id?.ToLowerInvariant()));
+                    }
+                }
+
+                if (protectedEditions.Count > 0) config.ProtectedNarrationIds[mediaRequests.Key] = protectedEditions;
+                if (protectedWorks.Count > 0) config.ProtectedNarrationWorkIds[mediaRequests.Key] = protectedWorks;
+            }
+        }
+
         private async Task<Author> HandleExistingAuthorAsync(Author existingAuthor, Author remoteAuthor, MonitoringConfig config)
         {
             var initializeAudiobook = config?.CreateAudiobook == true &&
-                (!existingAuthor.AudiobookQualityProfileId.HasValue || string.IsNullOrWhiteSpace(existingAuthor.AudiobookRootFolderPath));
+                (!existingAuthor.HasMediaTypeSettings(BookMediaType.Audiobook) || string.IsNullOrWhiteSpace(existingAuthor.AudiobookRootFolderPath));
             var initializeEbook = config?.CreateEbook == true &&
-                (!existingAuthor.EbookQualityProfileId.HasValue || string.IsNullOrWhiteSpace(existingAuthor.EbookRootFolderPath));
+                (!existingAuthor.HasMediaTypeSettings(BookMediaType.Ebook) || string.IsNullOrWhiteSpace(existingAuthor.EbookRootFolderPath));
+
+            if (config != null)
+            {
+                NormalizeMonitoringConfigFromExplicitRootFolders(config);
+                // Only a new author delegates this request's aggregate search to its initial scan.
+                if (MonitoringConfig.IsImportListRequestOrigin(config.RequestedBy))
+                    config.SearchForMissingBooks = false;
+            }
+
+            // Books must see the same fill-missing settings that will be persisted for this media side.
+            existingAuthor = ApplyExistingAuthorProgressiveSettings(existingAuthor, config);
 
             existingAuthor = MergeMissingProviderIds(existingAuthor, remoteAuthor);
             existingAuthor = ApplyAuthorMetadata(existingAuthor, remoteAuthor);
@@ -1124,11 +1228,8 @@ namespace NzbDrone.Core.Books.Services
 
             if (config != null)
             {
-                NormalizeMonitoringConfigFromExplicitRootFolders(config);
+                _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(existingAuthor));
             }
-
-            // Books must see the same fill-missing settings that will be persisted for this media side.
-            existingAuthor = ApplyExistingAuthorProgressiveSettings(existingAuthor, config);
 
             var audiobookInitialMode = initializeAudiobook ? remoteAuthor.AddOptions?.AudiobookMonitor : null;
             var ebookInitialMode = initializeEbook ? remoteAuthor.AddOptions?.EbookMonitor : null;
@@ -1146,6 +1247,20 @@ namespace NzbDrone.Core.Books.Services
             // CreateAudiobook/CreateEbook controls settings intent, not whether the server catalog may enter
             // the canonical profile/retention pipeline.
             var existingBooks = _bookService.GetBooksByAuthor(existingAuthor.Id) ?? new List<Book>();
+            var requestedWorkMarkers = PrepareRequestedWorkPreservation(remoteAuthor, config, existingBooks);
+            if (requestedWorkMarkers.Count > 0)
+            {
+                var markerWriteTimer = System.Diagnostics.Stopwatch.StartNew();
+                _bookService.SetAddOptions(requestedWorkMarkers);
+                _logger.Info("Requested-work preservation: wrote {0} local book marker rows in one batch in {1} ms",
+                    requestedWorkMarkers.Count, markerWriteTimer.ElapsedMilliseconds);
+            }
+            if (config?.AudiobookNarrations?.Count > 0 && MonitoringConfig.IsImportListRequestOrigin(config.RequestedBy))
+            {
+                config.PreviouslyMonitoredEditions ??= existingBooks.Where(book => book.IsMonitored())
+                    .ToDictionary(book => book.Id, book => BookEditionIdentity.GetMonitoredEdition(book)?.Id);
+            }
+
 
             var hasAudiobook = existingBooks.Any(b => b.MediaType == BookMediaType.Audiobook);
             var hasEbook = existingBooks.Any(b => b.MediaType == BookMediaType.Ebook);
@@ -1189,17 +1304,24 @@ namespace NzbDrone.Core.Books.Services
             }
 
             var requestedProviderIds = GetRequestedBookProviderIdsByMediaType(config);
-            if (requestedProviderIds.Any(requested =>
+            if ((config?.ProtectedNarrationIds?.Count > 0 || config?.ProtectedNarrationWorkIds?.Count > 0 || requestedProviderIds.Any(requested =>
                     remoteAuthor?.Books?.Any(remoteBook =>
                         remoteBook != null &&
                         remoteBook.MediaType == requested.Key &&
-                        requested.Value.Any(providerId => BookMatchesProviderId(remoteBook, providerId))) == true) &&
+                        requested.Value.Any(providerId => BookMatchesProviderId(remoteBook, providerId))) == true)) &&
                 _refreshAuthorService != null)
             {
                 // Initialize a missing media catalog with its one-time policy before refresh.
                 // Otherwise the first request for the second format uses the ongoing policy
                 // instead. Reconciliation still consumes only the authoritative author blob.
-                _refreshAuthorService.ReconcileAuthorBlob(existingAuthor, remoteAuthor);
+                if (config?.ProtectedNarrationIds?.Count > 0 || config?.ProtectedNarrationWorkIds?.Count > 0)
+                {
+                    _refreshAuthorService.ReconcileAuthorBlob(existingAuthor, remoteAuthor, config.ProtectedNarrationIds, config.ProtectedNarrationWorkIds);
+                }
+                else
+                {
+                    _refreshAuthorService.ReconcileAuthorBlob(existingAuthor, remoteAuthor);
+                }
                 existingAuthor = _authorService.GetAuthor(existingAuthor.Id) ?? existingAuthor;
             }
 
@@ -1241,18 +1363,31 @@ namespace NzbDrone.Core.Books.Services
 
             try
             {
-                var updated = _authorService.UpdateAuthorProgressiveSettings(
-                    existingAuthor,
-                    config.CreateAudiobook ? config.AudiobookQualityProfileId : null,
-                    config.CreateAudiobook ? config.AudiobookMetadataProfileId : null,
-                    config.CreateAudiobook ? config.AudiobookMonitored : null,
-                    config.CreateAudiobook ? config.AudiobookMonitorNewItems : null,
-                    config.CreateEbook ? config.EbookQualityProfileId : null,
-                    config.CreateEbook ? config.EbookMetadataProfileId : null,
-                    config.CreateEbook ? config.EbookMonitored : null,
-                    config.CreateEbook ? config.EbookMonitorNewItems : null,
-                    // Single path param: prefer audiobook path if present else ebook
-                    config.AudiobookRootFolderPath ?? config.EbookRootFolderPath);
+                var updated = existingAuthor;
+                // Each side must use its own compatible root while filling only missing settings.
+                if (config.CreateAudiobook)
+                {
+                    updated = _authorService.UpdateAuthorProgressiveSettings(
+                        updated,
+                        config.AudiobookQualityProfileId,
+                        config.AudiobookMetadataProfileId,
+                        config.AudiobookMonitored,
+                        config.AudiobookMonitorNewItems,
+                        null, null, null, null,
+                        config.AudiobookRootFolderPath);
+                }
+
+                if (config.CreateEbook)
+                {
+                    updated = _authorService.UpdateAuthorProgressiveSettings(
+                        updated,
+                        null, null, null, null,
+                        config.EbookQualityProfileId,
+                        config.EbookMetadataProfileId,
+                        config.EbookMonitored,
+                        config.EbookMonitorNewItems,
+                        config.EbookRootFolderPath);
+                }
 
                 var authorChanged = false;
                 if (config.CreateAudiobook && updated.AudiobookTags == null && config.AudiobookTags != null)
@@ -1304,7 +1439,6 @@ namespace NzbDrone.Core.Books.Services
                     }
                 }
 
-                _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(updated));
                 return updated;
             }
             catch (Exception mergeEx)
@@ -1877,6 +2011,7 @@ namespace NzbDrone.Core.Books.Services
             if (audiobookInitialMode.HasValue || ebookInitialMode.HasValue || config.SearchForMissingBooks == true)
             {
                 author.AddOptions ??= new AddAuthorOptions();
+                author.AddOptions.Monitor = config.MonitorMode == MonitorTypes.SpecificBook ? null : config.MonitorMode;
                 author.AddOptions.AudiobookMonitor = audiobookInitialMode;
                 author.AddOptions.EbookMonitor = ebookInitialMode;
                 author.AddOptions.SearchForMissingBooks = config.SearchForMissingBooks == true;
@@ -2197,7 +2332,9 @@ namespace NzbDrone.Core.Books.Services
                 ebookMetadataProfileIdOverride: GetEffectiveMetadataProfileId(author, config, BookMediaType.Ebook),
                 editionSelector: _editionSelector,
                 retainEditions: true,
-                logContext: "ProcessBooksForAuthor");
+                logContext: "ProcessBooksForAuthor",
+                requestedNarrationIds: config?.ProtectedNarrationIds,
+                requestedNarrationWorkIds: config?.ProtectedNarrationWorkIds);
 
             if (!books.Any())
             {
@@ -2541,6 +2678,74 @@ namespace NzbDrone.Core.Books.Services
             }
 
             return Array.Empty<string>();
+        }
+
+        private List<Book> PrepareRequestedWorkPreservation(Author remoteAuthor, MonitoringConfig config, IEnumerable<Book> localBooks)
+        {
+            var changed = new List<Book>();
+            if (!MonitoringConfig.IsImportListRequestOrigin(config?.RequestedBy))
+            {
+                return changed;
+            }
+
+            var requested = GetRequestedBookProviderIdsByMediaType(config);
+            if (!config.CreateAudiobook) requested.Remove(BookMediaType.Audiobook);
+            if (!config.CreateEbook) requested.Remove(BookMediaType.Ebook);
+            foreach (var side in requested)
+            {
+                side.Value.ExceptWith((config.AudiobookNarrations ?? new List<RequestedNarration>())
+                    .Where(request => request.MediaType == side.Key && request.RequiresEdition).Select(request => request.WorkProviderId));
+            }
+
+            if (!requested.Values.Any(ids => ids.Count > 0))
+            {
+                return changed;
+            }
+
+            var preservationTimer = System.Diagnostics.Stopwatch.StartNew();
+            var protectedWorks = 0;
+            var remoteLookup = (remoteAuthor?.Books ?? new List<Book>()).Where(book => book != null)
+                .SelectMany(book => BookIdentity.GetStableWorkProviderIdentityTokens(book).Select(id => (book, id)))
+                .ToLookup(value => (value.book.MediaType, value.id.ToLowerInvariant()), value => value.book);
+            var localLookup = (localBooks ?? Enumerable.Empty<Book>()).Where(book => book != null)
+                .SelectMany(book => BookIdentity.GetStableWorkProviderIdentityTokens(book).Select(id => (book, id)))
+                .ToLookup(value => (value.book.MediaType, value.id.ToLowerInvariant()), value => value.book);
+            foreach (var side in requested)
+            {
+                foreach (var id in side.Value)
+                {
+                    var key = (side.Key, id.ToLowerInvariant());
+                    var local = BookIdentity.SelectRequestedBook(localLookup[key]);
+                    // An existing explicit selection already preserves this work; generic intent must not change it.
+                    if (local != null && local.AddOptions?.AddType != BookAddType.Manual && BookIdentity.HasUserPreservationMarker(local))
+                    {
+                        protectedWorks++;
+                        continue;
+                    }
+
+                    var remote = local == null ? remoteLookup[key].FirstOrDefault() : BookIdentity.FindMatchingRemotePocket(remoteLookup[key], local);
+                    if (remote == null)
+                    {
+                        continue;
+                    }
+
+                    protectedWorks++;
+                    remote.AddOptions ??= new AddBookOptions();
+                    remote.AddOptions.AddType = BookAddType.Manual;
+                    if (local != null && local.AddOptions?.AddType != BookAddType.Manual)
+                    {
+                        local.AddOptions ??= new AddBookOptions();
+                        local.AddOptions.AddType = BookAddType.Manual;
+                        changed.Add(local);
+                    }
+                }
+            }
+
+            var prepared = changed.DistinctBy(book => book.Id).ToList();
+            _logger.Info("Requested-work preservation: inspected {0} remote book rows and {1} local book rows for {2} work requests; protected {3} work requests, prepared {4} local marker rows in {5} ms",
+                remoteAuthor?.Books?.Count ?? 0, localBooks?.Count() ?? 0, requested.Values.Sum(ids => ids.Count),
+                protectedWorks, prepared.Count, preservationTimer.ElapsedMilliseconds);
+            return prepared;
         }
 
         private static Dictionary<BookMediaType, HashSet<string>> GetRequestedBookProviderIdsByMediaType(MonitoringConfig config)

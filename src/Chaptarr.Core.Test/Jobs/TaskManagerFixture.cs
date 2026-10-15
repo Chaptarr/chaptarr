@@ -142,6 +142,22 @@ namespace Chaptarr.Core.Test.Jobs
             Assert.That(mamTask.Interval, Is.EqualTo(60));
         }
 
+        [TestCase(0, 0)]
+        [TestCase(1, 1440)]
+        [TestCase(7, 10080)]
+        public void backup_interval_should_disable_only_the_scheduled_task(int days, int minutes)
+        {
+            var repository = DispatchProxy.Create<IScheduledTaskRepository, ScheduledTaskRepositoryProxy>();
+            var config = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            ((ConfigServiceProxy)(object)config).BackupIntervalValue = days;
+            var subject = new TaskManager(repository, config, new CacheManager(), LogManager.GetCurrentClassLogger());
+            subject.Handle(new ApplicationStartedEvent());
+            var task = subject.GetAll().Single(item => item.TypeName == typeof(BackupCommand).FullName);
+            Assert.That(task.Interval, Is.EqualTo(minutes));
+            task.LastExecution = DateTime.UtcNow.AddDays(-100);
+            Assert.That(subject.GetPending().Any(item => item.TypeName == typeof(BackupCommand).FullName), Is.EqualTo(days != 0));
+        }
+
         [Test]
         public void should_update_task_cache_when_config_is_saved_before_startup_cache_is_populated()
         {

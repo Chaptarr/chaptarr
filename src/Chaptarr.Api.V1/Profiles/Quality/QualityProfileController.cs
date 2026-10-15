@@ -22,20 +22,13 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         {
             _qualityProfileService = qualityProfileService;
             _formatService = formatService;
-            SharedValidator.RuleFor(c => c.Name).NotEmpty();
-            SharedValidator.RuleFor(c => c.ProfileType)
-                .Must(x => Enum.IsDefined(typeof(ProfileType), x))
-                .WithMessage("Profile type must be Audiobook or Ebook");
-            SharedValidator.RuleFor(c => c.Cutoff).ValidCutoff();
-            SharedValidator.RuleFor(c => c.Items).ValidItems();
-
             SharedValidator.RuleFor(c => c.FormatItems).NotNull();
 
             SharedValidator.RuleFor(c => c).Custom((profile, context) =>
             {
-                foreach (var failure in GetProfileTypeQualityFailures(profile))
+                foreach (var failure in new QualityProfileValidator().Validate(profile.ToModel()).Errors)
                 {
-                    context.AddFailure(failure.PropertyName, failure.Message);
+                    context.AddFailure(failure);
                 }
 
                 var formatItems = profile.FormatItems ?? new List<ProfileFormatItemResource>();
@@ -51,12 +44,6 @@ namespace Chaptarr.Api.V1.Profiles.Quality
                     context.AddFailure("FormatItems", "Every applicable Custom Format, and no incompatible ones, must be present. Try refreshing your browser.");
                 }
 
-                var highestSingleScore = formatItems.Any() ? formatItems.Max(x => x.Score) : 0;
-                if (formatItems.Where(x => x.Score > 0).Sum(x => x.Score) < profile.MinFormatScore &&
-                    highestSingleScore < profile.MinFormatScore)
-                {
-                    context.AddFailure("Minimum Custom Format Score can never be satisfied");
-                }
             });
         }
 
@@ -100,99 +87,5 @@ namespace Chaptarr.Api.V1.Profiles.Quality
             return profiles.ToResource(filterToProfileType: requestedMediaType.HasValue);
         }
 
-        private static IEnumerable<(string PropertyName, string Message)> GetProfileTypeQualityFailures(QualityProfileResource profile)
-        {
-            foreach (var quality in GetEnabledQualityIds(profile.Items))
-            {
-                if (!ProfileResourceMapper.IsQualityAllowedForProfileType(quality.Id, profile.ProfileType))
-                {
-                    yield return ("Items", $"{quality.Name} cannot be enabled on a {profile.ProfileType} quality profile");
-                }
-            }
-
-            foreach (var quality in GetCutoffQualityIds(profile.Items, profile.Cutoff))
-            {
-                if (!ProfileResourceMapper.IsQualityAllowedForProfileType(quality.Id, profile.ProfileType))
-                {
-                    yield return ("Cutoff", $"{quality.Name} cannot be used as the cutoff for a {profile.ProfileType} quality profile");
-                }
-            }
-
-            if (profile.ConvertToQualityId.HasValue &&
-                profile.ConvertToQualityId.Value > 0 &&
-                !ProfileResourceMapper.IsQualityAllowedForProfileType(profile.ConvertToQualityId.Value, profile.ProfileType))
-            {
-                yield return ("ConvertToQualityId", $"Conversion target must be a {profile.ProfileType} quality");
-            }
-        }
-
-        private static IEnumerable<NzbDrone.Core.Qualities.Quality> GetEnabledQualityIds(IEnumerable<QualityProfileQualityItemResource> items, bool parentAllowed = true)
-        {
-            foreach (var item in items ?? Enumerable.Empty<QualityProfileQualityItemResource>())
-            {
-                var itemAllowed = parentAllowed && item.Allowed;
-
-                if (item.Quality != null)
-                {
-                    if (itemAllowed)
-                    {
-                        yield return item.Quality;
-                    }
-
-                    continue;
-                }
-
-                foreach (var child in GetEnabledQualityIds(item.Items, itemAllowed))
-                {
-                    yield return child;
-                }
-            }
-        }
-
-        private static IEnumerable<NzbDrone.Core.Qualities.Quality> GetCutoffQualityIds(IEnumerable<QualityProfileQualityItemResource> items, int cutoff)
-        {
-            foreach (var item in items ?? Enumerable.Empty<QualityProfileQualityItemResource>())
-            {
-                if (item.Quality != null)
-                {
-                    if (item.Quality.Id == cutoff)
-                    {
-                        yield return item.Quality;
-                    }
-
-                    continue;
-                }
-
-                if (item.Id == cutoff)
-                {
-                    foreach (var child in FlattenQualityIds(item.Items))
-                    {
-                        yield return child;
-                    }
-                }
-
-                foreach (var child in GetCutoffQualityIds(item.Items, cutoff))
-                {
-                    yield return child;
-                }
-            }
-        }
-
-        private static IEnumerable<NzbDrone.Core.Qualities.Quality> FlattenQualityIds(IEnumerable<QualityProfileQualityItemResource> items)
-        {
-            foreach (var item in items ?? Enumerable.Empty<QualityProfileQualityItemResource>())
-            {
-                if (item.Quality != null)
-                {
-                    yield return item.Quality;
-                    continue;
-                }
-
-                foreach (var child in FlattenQualityIds(item.Items))
-                {
-                    yield return child;
-                }
-            }
-        }
     }
 }

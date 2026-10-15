@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
-using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using NLog;
@@ -17,39 +16,9 @@ namespace NzbDrone.Core.Books
     {
         bool FtsTableExists();
         void RebuildIndex();
+        void EnsureIndexPopulated();
 
-        /// <summary>
-        /// Rank distinct books from edition title plus book series/author text, then return every
-        /// edition under those recalled books. All sibling editions share the book-level FTS score;
-        /// the production evidence evaluator owns narrator, duration, year, publisher, and format
-        /// selection. The historical method name is retained while callers migrate.
-        /// </summary>
-        List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20);
-    }
-
-    /// <summary>
-    /// Optional, read-only diagnostics for production book recall and edition expansion.
-    /// Normal callers use <see cref="IEditionFtsRepository"/>; MatchBench opts into
-    /// this interface so it can observe the exact production query without
-    /// maintaining a second implementation.
-    /// </summary>
-    public interface IEditionFtsTraceRepository
-    {
-        List<EditionFtsMatch> SearchWithTwoStepWithTrace(
-            int? authorId,
-            IEnumerable<string> tokens,
-            BookMediaType mediaType,
-            Action<EditionFtsTraceEvent> trace,
-            int limit = 20);
-    }
-
-    /// <summary>
-    /// Production staged matching contract. Book recall and Edition ranking are deliberately
-    /// separate so the matcher can prove candidate authors from the original file tags before
-    /// any sibling Editions are expanded or allowed to earn a score.
-    /// </summary>
-    public interface IStagedEditionFtsRepository
-    {
+        // Separate recall from ranking so author proof gates sibling edition expansion.
         List<BookFtsMatch> RecallBooks(
             int? authorId,
             IEnumerable<string> tokens,
@@ -139,13 +108,13 @@ namespace NzbDrone.Core.Books
         public string ResultSource { get; set; }
     }
 
-    public class EditionFtsRepository : IEditionFtsRepository, IEditionFtsTraceRepository, IStagedEditionFtsRepository
+    public class EditionFtsRepository : IEditionFtsRepository
     {
+        private const string SqliteTokenizerSql = "unicode61 remove_diacritics 1 tokenchars ''-.''";
         private readonly IMainDatabase _database;
         private readonly Logger _logger;
         private bool? _ftsTableExists;
         private readonly DatabaseType _dbType;
-        private bool _indexCheckedOnce;
 
         public EditionFtsRepository(IMainDatabase database, Logger logger)
         {
@@ -173,13 +142,17 @@ namespace NzbDrone.Core.Books
                 try
                 {
                     // SQLite FTS5 check
-                    var sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='edition_fts'";
+                    var sql = "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='edition_fts')";
                     var count = conn.ExecuteScalar<int>(sql);
                     var exists = count > 0;
                     if (exists)
                     {
                         _ftsTableExists = true;
                         _logger.Debug("[FTS-EXISTS] FTS5 edition search table found and ready");
+                        if (HasUnindexedEditions(conn))
+                        {
+                            _logger.Warn("[EDITION-FTS] Edition search index is empty with stored editions; run the existing UpdateFts maintenance command to restore it");
+                        }
                     }
                     else
                     {
@@ -197,33 +170,28 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private void EnsureIndexPopulated()
+        private static bool HasUnindexedEditions(IDbConnection connection)
+        {
+            return connection.ExecuteScalar<bool>("SELECT NOT EXISTS(SELECT 1 FROM edition_fts) AND EXISTS(SELECT 1 FROM Editions)");
+        }
+
+        public void EnsureIndexPopulated()
         {
             if (_dbType != DatabaseType.SQLite) return;
-            if (_indexCheckedOnce) return;
             try
             {
                 using (var conn = _database.OpenConnection())
                 {
-                    var tbl = conn.ExecuteScalar<int>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='edition_fts'");
-                    if (tbl > 0)
+                    if (conn.ExecuteScalar<bool>("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='edition_fts')") && HasUnindexedEditions(conn))
                     {
-                        var n = conn.ExecuteScalar<int>("SELECT COUNT(*) FROM edition_fts");
-                        if (n == 0)
-                        {
-                            _logger.Debug("[EDITION-FTS] edition_fts is empty on first use; rebuilding index now");
-                            RebuildIndex();
-                        }
+                        _logger.Warn("[EDITION-FTS] Restoring empty edition search index during FTS maintenance");
+                        RebuildIndex();
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "[EDITION-FTS] EnsureIndexPopulated check failed; continuing");
-            }
-            finally
-            {
-                _indexCheckedOnce = true;
+                _logger.Warn(ex, "[EDITION-FTS] FTS maintenance could not restore the edition search index");
             }
         }
 
@@ -231,247 +199,89 @@ namespace NzbDrone.Core.Books
         {
             if (_dbType != DatabaseType.SQLite)
             {
-                _logger.Info("Edition FTS rebuild not needed for PostgreSQL (uses generated column)");
+                _logger.Info("Edition FTS rebuild not needed for PostgreSQL (expression indexes update with stored projections)");
                 return;
             }
 
-            using (var conn = _database.OpenConnection())
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            RebuildSqliteIndex(connection, transaction, _logger);
+            transaction.Commit();
+        }
+
+        private static readonly (string Name, string Event, string Delete, string Where, string When)[] SqliteIndexTriggers = new[]
+        {
+            (Name: "ai", Event: "AFTER INSERT ON Editions", Delete: "", Where: "e.Id = new.Id", When: (string)null),
+            (Name: "ad", Event: "AFTER DELETE ON Editions",
+                Delete: "DELETE FROM edition_fts WHERE rowid = old.Id;", Where: (string)null, When: (string)null),
+            (Name: "au", Event: "AFTER UPDATE OF Id, BookId, MatchingTitle, SearchSubtitle, SearchNarratorNames, SearchNarrator, SearchPublisher ON Editions",
+                Delete: "DELETE FROM edition_fts WHERE rowid = old.Id;", Where: "e.Id = new.Id",
+                When: "old.Id IS NOT new.Id OR old.BookId IS NOT new.BookId OR COALESCE(old.MatchingTitle, '') IS NOT COALESCE(new.MatchingTitle, '') OR COALESCE(old.SearchSubtitle, '') IS NOT COALESCE(new.SearchSubtitle, '') OR COALESCE(old.SearchNarratorNames, '') IS NOT COALESCE(new.SearchNarratorNames, '') OR COALESCE(old.SearchNarrator, '') IS NOT COALESCE(new.SearchNarrator, '') OR COALESCE(old.SearchPublisher, '') IS NOT COALESCE(new.SearchPublisher, '')"),
+            (Name: "book_au", Event: "AFTER UPDATE OF SearchSeriesName, AuthorId ON Books",
+                Delete: "DELETE FROM edition_fts WHERE rowid IN (SELECT Id FROM Editions WHERE BookId = old.Id);",
+                Where: "e.BookId = new.Id", When: "old.SearchSeriesName IS NOT new.SearchSeriesName OR old.AuthorId IS NOT new.AuthorId"),
+            (Name: "author_au", Event: "AFTER UPDATE OF SearchName ON Authors",
+                Delete: "DELETE FROM edition_fts WHERE rowid IN (SELECT e.Id FROM Editions e JOIN Books b ON e.BookId = b.Id WHERE b.AuthorId = old.Id);",
+                Where: "b.AuthorId = new.Id", When: "old.SearchName IS NOT new.SearchName")
+        };
+
+        internal static void DropSqliteIndexTriggers(IDbConnection connection, IDbTransaction transaction)
+        {
+            foreach (var trigger in SqliteIndexTriggers)
             {
-                try
-                {
-                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    _logger.Info("Rebuilding edition FTS index...");
-
-                    // Detect schema version by checking columns
-                    // Migration 016+: MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator, Publisher
-                    // Migration 010+: MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator (Title removed)
-                    // Migration 009:  Title, MatchingTitle, SeriesName, AuthorName, Narrator
-                    // Migration 008:  Title, SeriesName, AuthorName, Narrator
-                    bool hasMatchingTitle = false;
-                    bool hasSeriesAuthor = false;
-                    bool hasSubtitle = false;
-                    bool hasTitle = false;
-                    bool hasPublisher = false;
-                    try
-                    {
-                        var colNames = conn.Query<(int cid, string name, object type, int notnull, object dflt, int pk)>("PRAGMA table_info('edition_fts')")
-                            .Select(x => x.name?.ToLowerInvariant()).ToHashSet();
-                        hasMatchingTitle = colNames.Contains("matchingtitle");
-                        hasSeriesAuthor = colNames.Contains("seriesname") && colNames.Contains("authorname");
-                        hasSubtitle = colNames.Contains("subtitle");
-                        hasTitle = colNames.Contains("title");
-                        hasPublisher = colNames.Contains("publisher");
-                    }
-                    catch { /* fallback safe */ }
-
-                    using var transaction = conn.BeginTransaction();
-                    int Exec(string sql) => conn.Execute(sql, transaction: transaction);
-
-                    // Clear existing index
-                    var deleteStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    // This clear operation supports both historical contentless indexes
-                    // and indexes that allow deletion by row ID.
-                    Exec("INSERT INTO edition_fts(edition_fts) VALUES('delete-all');");
-                    deleteStopwatch.Stop();
-                    _logger.Debug("[DB-TIMING][FTS-INDEX] Cleared existing FTS index in {0}ms", deleteStopwatch.ElapsedMilliseconds);
-
-                    var insertStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    if (hasPublisher && hasMatchingTitle && hasSubtitle && hasSeriesAuthor)
-                    {
-                        // Current schema (migration 016+): MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator, Publisher
-                        // Condition includes hasSeriesAuthor as safety guard since INSERT targets those columns
-                        Exec(@"
-                            INSERT INTO edition_fts (rowid, MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator, Publisher)
-                            SELECT e.Id,
-                                   COALESCE(e.MatchingTitle, ''),
-                                   COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(b.SeriesName, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                   COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(a.Name, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                   COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Subtitle, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-	                                   COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CASE
-	                                       WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-	                                           THEN COALESCE((SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-	                                       ELSE COALESCE(e.Narrator, '')
-	                                   END, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                   COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Publisher, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), '')
-                            FROM Editions e
-                            JOIN Books b ON e.BookId = b.Id
-                            JOIN Authors a ON b.AuthorId = a.Id
-                            WHERE e.Title IS NOT NULL");
-                        _logger.Debug("[FTS-INDEX] Using 6-column schema (MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator, Publisher)");
-                    }
-                    else if (hasMatchingTitle)
-                    {
-                        if (hasSubtitle)
-                        {
-                            if (hasTitle)
-                            {
-                                // Legacy/unknown schema: Title, MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator
-                                Exec(@"
-                                    INSERT INTO edition_fts (rowid, Title, MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator)
-                                    SELECT e.Id,
-                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Title, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                           COALESCE(e.MatchingTitle, ''),
-                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(b.SeriesName, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(a.Name, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Subtitle, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-	                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CASE
-	                                               WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-	                                                   THEN COALESCE((SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-	                                               ELSE COALESCE(e.Narrator, '')
-	                                           END, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), '')
-                                    FROM Editions e
-                                    JOIN Books b ON e.BookId = b.Id
-                                    JOIN Authors a ON b.AuthorId = a.Id
-                                    WHERE e.Title IS NOT NULL");
-                                _logger.Debug("[FTS-INDEX] Using 6-column schema (Title, MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator)");
-                            }
-                            else
-                            {
-                                // Schema (migration 010+): MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator
-                                Exec(@"
-                                    INSERT INTO edition_fts (rowid, MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator)
-                                    SELECT e.Id,
-                                           COALESCE(e.MatchingTitle, ''),
-                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(b.SeriesName, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(a.Name, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Subtitle, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-	                                           COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CASE
-	                                               WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-	                                                   THEN COALESCE((SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-	                                               ELSE COALESCE(e.Narrator, '')
-	                                           END, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), '')
-                                    FROM Editions e
-                                    JOIN Books b ON e.BookId = b.Id
-                                    JOIN Authors a ON b.AuthorId = a.Id
-                                    WHERE e.Title IS NOT NULL");
-                                _logger.Debug("[FTS-INDEX] Using 5-column schema (MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator)");
-                            }
-                        }
-                        else
-                        {
-                            // Migration 009 schema: Title, MatchingTitle, SeriesName, AuthorName, Narrator
-                            Exec(@"
-                                INSERT INTO edition_fts (rowid, Title, MatchingTitle, SeriesName, AuthorName, Narrator)
-                                SELECT e.Id,
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Title, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                       COALESCE(e.MatchingTitle, ''),
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(b.SeriesName, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(a.Name, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-	                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CASE
-	                                           WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-	                                               THEN COALESCE((SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-	                                           ELSE COALESCE(e.Narrator, '')
-	                                       END, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), '')
-                                FROM Editions e
-                                JOIN Books b ON e.BookId = b.Id
-                                JOIN Authors a ON b.AuthorId = a.Id
-                                WHERE e.Title IS NOT NULL");
-                            _logger.Debug("[FTS-INDEX] Using 5-column schema (Title, MatchingTitle, SeriesName, AuthorName, Narrator)");
-                        }
-                    }
-                    else if (hasSeriesAuthor)
-                    {
-                        if (hasSubtitle)
-                        {
-                            // Schema without MatchingTitle but with Subtitle
-                            Exec(@"
-                                INSERT INTO edition_fts (rowid, Title, SeriesName, AuthorName, Subtitle, Narrator)
-                                SELECT e.Id,
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Title, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(b.SeriesName, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(a.Name, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Subtitle, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-	                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CASE
-	                                           WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-	                                               THEN COALESCE((SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-	                                           ELSE COALESCE(e.Narrator, '')
-	                                       END, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), '')
-                                FROM Editions e
-                                JOIN Books b ON e.BookId = b.Id
-                                JOIN Authors a ON b.AuthorId = a.Id
-                                WHERE e.Title IS NOT NULL");
-                            _logger.Debug("[FTS-INDEX] Using 5-column schema (Title, SeriesName, AuthorName, Subtitle, Narrator)");
-                        }
-                        else
-                        {
-                            // Migration 008 schema: Title, SeriesName, AuthorName, Narrator
-                            Exec(@"
-                                INSERT INTO edition_fts (rowid, Title, SeriesName, AuthorName, Narrator)
-                                SELECT e.Id,
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Title, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(b.SeriesName, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(a.Name, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-	                                       COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CASE
-	                                           WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-	                                               THEN COALESCE((SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-	                                           ELSE COALESCE(e.Narrator, '')
-	                                       END, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), '')
-                                FROM Editions e
-                                JOIN Books b ON e.BookId = b.Id
-                                JOIN Authors a ON b.AuthorId = a.Id
-                                WHERE e.Title IS NOT NULL");
-                            _logger.Debug("[FTS-INDEX] Using 4-column schema (Title, SeriesName, AuthorName, Narrator)");
-                        }
-                    }
-                    else
-                    {
-                        // Legacy schema - should not happen after migration 008
-                        _logger.Warn("[FTS-INDEX] Detected legacy FTS schema - consider running migrations");
-                        Exec(@"
-                            INSERT INTO edition_fts (rowid, Title, Narrator)
-                            SELECT e.Id,
-                                   COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.Title, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), ''),
-	                                   COALESCE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(CASE
-	                                       WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-	                                           THEN COALESCE((SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-	                                       ELSE COALESCE(e.Narrator, '')
-	                                   END, '&#39;', ''''), '&apos;', ''''), '&quot;', '""'), '&amp;', '&'), '&nbsp;', ' '), '')
-                            FROM Editions e
-                            WHERE e.Title IS NOT NULL");
-                        _logger.Debug("[FTS-INDEX] Using legacy 2-column schema (Title, Narrator)");
-                    }
-                    insertStopwatch.Stop();
-
-                    transaction.Commit();
-                    
-                    var count = conn.ExecuteScalar<int>("SELECT COUNT(*) FROM edition_fts");
-                    stopwatch.Stop();
-                    
-                    _logger.Debug("[DB-TIMING][FTS-INDEX] Edition FTS index rebuilt with {0} entries in {1}ms total (delete: {2}ms, insert: {3}ms)",
-                        count, stopwatch.ElapsedMilliseconds, deleteStopwatch.ElapsedMilliseconds, insertStopwatch.ElapsedMilliseconds);
-                    
-                    // Special logging for large rebuilds
-                    if (count > 1000)
-                    {
-                        _logger.Debug("[DB-TIMING][FTS-INDEX][LARGE-REBUILD] Rebuilt FTS for {0} editions at {1} editions/sec",
-                            count, (count * 1000.0) / stopwatch.ElapsedMilliseconds);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "Error rebuilding edition FTS index");
-                    throw;
-                }
+                connection.Execute($"DROP TRIGGER IF EXISTS edition_fts_{trigger.Name};", transaction: transaction);
             }
         }
 
-        private static string BuildPostgresTsQuery(IEnumerable<string> tokens)
+        internal static void RebuildSqliteIndex(IDbConnection connection, IDbTransaction transaction, Logger logger)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            // Reuse one projection for rebuilding and every insert/update trigger.
+            // Deletes must need only the row ID, even after a parent has disappeared.
+            const string insert = @"
+                INSERT INTO edition_fts(rowid, MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator, Publisher)
+                SELECT e.Id, COALESCE(e.MatchingTitle, ''), COALESCE(b.SearchSeriesName, ''),
+                       COALESCE(a.SearchName, ''), COALESCE(e.SearchSubtitle, ''),
+                       COALESCE(NULLIF(e.SearchNarratorNames, ''), e.SearchNarrator, ''), COALESCE(e.SearchPublisher, '')
+                FROM Editions e JOIN Books b ON e.BookId = b.Id JOIN Authors a ON b.AuthorId = a.Id";
+
+            DropSqliteIndexTriggers(connection, transaction);
+
+            connection.Execute(@"
+                DROP TABLE IF EXISTS edition_fts;
+                CREATE VIRTUAL TABLE edition_fts USING fts5(
+                    MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator, Publisher,
+                    content='', content_rowid='rowid', contentless_delete=1,
+                    tokenize = 'unicode61 remove_diacritics 1 tokenchars ''-.''');", transaction: transaction);
+            connection.Execute(insert, transaction: transaction);
+
+            foreach (var trigger in SqliteIndexTriggers)
+            {
+                var populate = trigger.Where == null ? string.Empty : $"{insert} WHERE {trigger.Where};";
+                var guard = trigger.When == null ? string.Empty : $" WHEN {trigger.When}";
+                connection.Execute($"CREATE TRIGGER edition_fts_{trigger.Name} {trigger.Event}{guard} BEGIN {trigger.Delete} {populate} END;", transaction: transaction);
+            }
+
+            var indexed = connection.ExecuteScalar<long>("SELECT COUNT(*) FROM edition_fts;", transaction: transaction);
+            logger.Info("Rebuilt folded edition search index: {0} entries, one population statement, elapsed {1} ms", indexed, stopwatch.ElapsedMilliseconds);
+        }
+
+        private static string BuildPostgresTsQuery(IEnumerable<string> tokens, bool requireAllTerms = false)
         {
             if (tokens == null)
             {
                 return string.Empty;
             }
 
-            // Build a safe tsquery string (OR'ed terms) using Unicode-aware lexeme extraction.
+            // Build exact-term queries for broad recall and complete-evidence ordering.
             // Scalar boundaries preserve supplementary letters without admitting tsquery operators.
-            var parts = tokens
+            var parts = NormalizeFtsTerms(tokens)
+                .SelectMany(t => UnicodeComparisonNormalizer.WordSpans(t).Select(m => m.Value))
                 .Where(t => !string.IsNullOrWhiteSpace(t))
-                .SelectMany(t => UnicodeComparisonNormalizer.WordSpans(StringSuperNormalizer.NormalizeForFts(t)).Select(m => m.Value))
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Distinct(StringComparer.Ordinal)
                 .ToList();
 
-            return parts.Count == 0 ? string.Empty : string.Join(" | ", parts);
+            return parts.Count == 0 ? string.Empty : string.Join(requireAllTerms ? " & " : " | ", parts);
         }
 
         /// <summary>
@@ -488,29 +298,73 @@ namespace NzbDrone.Core.Books
             return UnicodeComparisonNormalizer.WordSpans(token).Any();
         }
 
+        private static IReadOnlyDictionary<string, string> PrepareSqliteQueryTermKeys(
+            IDbConnection connection,
+            IEnumerable<string> terms,
+            Action<EditionFtsTraceEvent> trace = null)
+        {
+            var inputs = terms.Distinct(StringComparer.Ordinal).ToList();
+            if (inputs.Count < 2)
+            {
+                return inputs.ToDictionary(term => term, term => term, StringComparer.Ordinal);
+            }
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            connection.Execute(@"
+                DROP TABLE IF EXISTS temp.query_terms_vocab;
+                DROP TABLE IF EXISTS temp.query_terms_fts;");
+            try
+            {
+                connection.Execute($@"
+                    CREATE VIRTUAL TABLE temp.query_terms_fts USING fts5(
+                        Terms, content='', content_rowid='rowid',
+                        tokenize = '{SqliteTokenizerSql}');
+                    CREATE VIRTUAL TABLE temp.query_terms_vocab USING fts5vocab(
+                        'temp', 'query_terms_fts', 'instance');");
+                connection.Execute(@"
+                    INSERT INTO temp.query_terms_fts(rowid, Terms)
+                    SELECT CAST(key AS INTEGER) + 1, value FROM json_each(@terms);",
+                    new { terms = System.Text.Json.JsonSerializer.Serialize(inputs) });
+                // Native token sequences remove duplicate query weight without changing whole-term syntax.
+                var sequences = connection.Query<(int Doc, int Offset, string Term)>(@"
+                    SELECT doc, offset, term FROM temp.query_terms_vocab ORDER BY doc, offset;")
+                    .GroupBy(token => token.Doc)
+                    .ToDictionary(group => group.Key, group => string.Join("\u001f", group.Select(token => token.Term)));
+                return inputs.Select((term, index) => new { Term = term, Key = sequences.GetValueOrDefault(index + 1, string.Empty) })
+                    .ToDictionary(input => input.Term, input => input.Key, StringComparer.Ordinal);
+            }
+            finally
+            {
+                connection.Execute(@"
+                    DROP TABLE IF EXISTS temp.query_terms_vocab;
+                    DROP TABLE IF EXISTS temp.query_terms_fts;");
+                stopwatch.Stop();
+                EmitFtsTrace(trace, new EditionFtsTraceEvent
+                {
+                    EventType = "normalization",
+                    Step = "sqlite_query_tokenization",
+                    Terms = inputs,
+                    ElapsedMilliseconds = stopwatch.ElapsedMilliseconds
+                });
+            }
+        }
+
         private static List<string> NormalizeFtsTerms(IEnumerable<string> tokens)
         {
             return tokens?
                 .Where(token => !string.IsNullOrWhiteSpace(token))
-                .Select(StringSuperNormalizer.NormalizeForFts)
+                .SelectMany(token => StringSuperNormalizer.GetFtsQueryTerms(token))
                 .Where(token => !string.IsNullOrWhiteSpace(token) && IsValidFtsToken(token))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Distinct(StringComparer.Ordinal)
                 .ToList() ?? new List<string>();
         }
 
         /// <summary>
-        /// Convert token to FTS query term. Quote if contains special chars.
+        /// Render literal text without allowing it to become FTS query syntax.
         /// </summary>
         private static string TokenToFtsQueryTerm(string token)
         {
-            // If token contains hyphen, period, or is pure digits, quote it
-            // Otherwise FTS interprets '-' as MINUS operator
-            if (token.Contains('-') || token.Contains('.') || token.All(char.IsDigit))
-            {
-                // Escape double quotes for FTS5: " -> ""
-                return $"\"{token.Replace("\"", "\"\"")}\"";
-            }
-            return token;
+            return $"\"{token.Replace("\"", "\"\"")}\"";
         }
 
         private static void EmitFtsTrace(Action<EditionFtsTraceEvent> trace, EditionFtsTraceEvent evt)
@@ -530,96 +384,6 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private static void EmitFtsCandidates(
-            Action<EditionFtsTraceEvent> trace,
-            string step,
-            IReadOnlyList<EditionFtsMatch> candidates)
-        {
-            if (trace == null || candidates == null)
-            {
-                return;
-            }
-
-            var distinctBookRanks = new Dictionary<int, int>();
-            for (var i = 0; i < candidates.Count; i++)
-            {
-                var candidate = candidates[i];
-                if (candidate == null)
-                {
-                    continue;
-                }
-
-                if (!distinctBookRanks.TryGetValue(candidate.BookId, out var distinctBookRank))
-                {
-                    distinctBookRank = distinctBookRanks.Count + 1;
-                    distinctBookRanks[candidate.BookId] = distinctBookRank;
-                }
-
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "candidate",
-                    Step = step,
-                    RawRank = i + 1,
-                    DistinctBookRank = distinctBookRank,
-                    EditionId = candidate.EditionId > 0 ? candidate.EditionId : null,
-                    BookId = candidate.BookId > 0 ? candidate.BookId : null,
-                    AuthorId = candidate.AuthorId > 0 ? candidate.AuthorId : null,
-                    Score = candidate.MatchScore,
-                    EditionTitle = candidate.EditionTitle,
-                    BookTitle = candidate.BookTitle,
-                    AuthorName = candidate.AuthorName,
-                    NarratorNames = candidate.NarratorNames,
-                    Publisher = candidate.Publisher,
-                    DurationSeconds = candidate.DurationSeconds,
-                    ReleaseDate = candidate.ReleaseDate,
-                    ReadingFormatId = candidate.ReadingFormatId
-                });
-            }
-        }
-
-        private static List<EditionFtsMatch> ApplyBookRecallRanking(
-            IReadOnlyList<EditionFtsMatch> recalledBooks,
-            IEnumerable<EditionFtsMatch> editions)
-        {
-            var recallByBookId = recalledBooks
-                .Select((candidate, index) => new
-                {
-                    candidate.BookId,
-                    candidate.MatchScore,
-                    Rank = index
-                })
-                .Where(candidate => candidate.BookId > 0)
-                .GroupBy(candidate => candidate.BookId)
-                .ToDictionary(
-                    group => group.Key,
-                    group => new
-                    {
-                        Rank = group.Min(candidate => candidate.Rank),
-                        Score = group.Max(candidate => candidate.MatchScore)
-                    });
-
-            var expanded = new List<EditionFtsMatch>();
-            foreach (var edition in editions ?? Enumerable.Empty<EditionFtsMatch>())
-            {
-                if (edition == null || !recallByBookId.TryGetValue(edition.BookId, out var recall))
-                {
-                    continue;
-                }
-
-                // FTS ranks books only. Every sibling edition receives the same book-level score;
-                // edition selection remains the responsibility of the production evidence evaluator.
-                edition.MatchScore = recall.Score;
-                expanded.Add(edition);
-            }
-
-            return expanded
-                .OrderBy(edition => recallByBookId[edition.BookId].Rank)
-                .ThenBy(edition => string.IsNullOrWhiteSpace(edition.ForeignEditionId) ? 1 : 0)
-                .ThenBy(edition => edition.ForeignEditionId, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(edition => edition.EditionId)
-                .ToList();
-        }
-
         public List<BookFtsMatch> RecallBooks(
             int? authorId,
             IEnumerable<string> tokens,
@@ -628,7 +392,7 @@ namespace NzbDrone.Core.Books
             int limit = 20,
             bool monitoredOnly = false)
         {
-            EnsureIndexPopulated();
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             if (!FtsTableExists())
             {
                 return new List<BookFtsMatch>();
@@ -640,9 +404,12 @@ namespace NzbDrone.Core.Books
                 return new List<BookFtsMatch>();
             }
 
-            return _dbType == DatabaseType.PostgreSQL
+            var results = _dbType == DatabaseType.PostgreSQL
                 ? RecallBooksPostgres(authorId, terms, mediaType, trace, limit, monitoredOnly)
                 : RecallBooksSqlite(authorId, terms, mediaType, trace, limit, monitoredOnly);
+            _logger.Debug("Edition FTS recall {0}: author {1}, media {2}, terms {3}, books {4}, elapsed {5} ms",
+                _dbType, authorId, mediaType, terms.Count, results.Count, stopwatch.ElapsedMilliseconds);
+            return results;
         }
 
         public List<EditionFtsMatch> RankEditions(
@@ -651,6 +418,7 @@ namespace NzbDrone.Core.Books
             BookMediaType mediaType,
             Action<EditionFtsTraceEvent> trace = null)
         {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var recalls = (recalledBooks ?? Array.Empty<BookFtsMatch>())
                 .Where(recall => recall != null && recall.BookId > 0)
                 .GroupBy(recall => recall.BookId)
@@ -675,9 +443,12 @@ namespace NzbDrone.Core.Books
                 .Select(group => group.First())
                 .ToList();
 
-            return _dbType == DatabaseType.PostgreSQL
+            var results = _dbType == DatabaseType.PostgreSQL
                 ? RankEditionsPostgres(recalls, queries, mediaType, trace)
                 : RankEditionsSqlite(recalls, queries, mediaType, trace);
+            _logger.Debug("Edition FTS rank {0}: media {1}, books {2}, fields {3}, editions {4}, elapsed {5} ms",
+                _dbType, mediaType, recalls.Count, queries.Count, results.Count, stopwatch.ElapsedMilliseconds);
+            return results;
         }
 
         private List<BookFtsMatch> RecallBooksSqlite(
@@ -688,6 +459,10 @@ namespace NzbDrone.Core.Books
             int limit,
             bool monitoredOnly)
         {
+            using var connection = _database.OpenConnection();
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var termKeys = PrepareSqliteQueryTermKeys(connection, terms, trace);
+            terms = terms.DistinctBy(term => termKeys[term], StringComparer.Ordinal).ToList();
             var columns = "MatchingTitle SeriesName AuthorName";
             var query = string.Join(" OR ", terms.Select(term => $"{{{columns}}}:{TokenToFtsQueryTerm(term)}"));
             var titleAliasGroups = BuildTitleLookupAliasGroups(terms);
@@ -700,12 +475,12 @@ namespace NzbDrone.Core.Books
                 Query = query
             });
 
-            using var connection = _database.OpenConnection();
             var monitoredBooks = monitoredOnly ? BuildMonitoredBookIds(mediaType) : null;
             var parameters = monitoredBooks == null
                 ? new DynamicParameters()
                 : new DynamicParameters(monitoredBooks.Parameters);
             parameters.Add("ftsQuery", query);
+            parameters.Add("allTermsQuery", string.Join(" AND ", terms.Select(term => $"{{{columns}}}:{TokenToFtsQueryTerm(term)}")));
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
             var ftsMatchSelects = new List<string>
@@ -747,7 +522,6 @@ namespace NzbDrone.Core.Books
                 parameters.Add("authorId", authorId.Value);
             }
 
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var sql = $@"
                 WITH fts_matches AS MATERIALIZED (
                     {string.Join(" UNION ALL ", ftsMatchSelects)}
@@ -768,7 +542,8 @@ namespace NzbDrone.Core.Books
                 WHERE b.MediaType = @mediaType
                   {(authorId.HasValue ? "AND b.AuthorId = @authorId" : string.Empty)}
                 GROUP BY b.Id, b.AuthorId, a.Name, b.Title, b.SeriesName, b.SeriesPosition
-                ORDER BY MIN(fts_matches.bm25_score)
+                ORDER BY MAX(fts_matches.rowid IN (SELECT rowid FROM edition_fts WHERE edition_fts MATCH @allTermsQuery)) DESC,
+                         MIN(fts_matches.bm25_score)
                 LIMIT @limit";
             var results = connection.Query<BookFtsMatch>(sql, parameters).ToList();
             stopwatch.Stop();
@@ -806,6 +581,7 @@ namespace NzbDrone.Core.Books
                 ? new DynamicParameters()
                 : new DynamicParameters(monitoredBooks.Parameters);
             parameters.Add("tsQuery", query);
+            parameters.Add("allTermsQuery", BuildPostgresTsQuery(terms, requireAllTerms: true));
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
             var titleAliasCandidateSelects = new List<string>();
@@ -854,12 +630,12 @@ namespace NzbDrone.Core.Books
                     UNION
                     SELECT b.""Id""
                     FROM ""Books"" b
-                    WHERE to_tsvector('simple', COALESCE(b.""SeriesName"", '')) @@ to_tsquery('simple', @tsQuery)
+                    WHERE to_tsvector('simple', COALESCE(b.""SearchSeriesName"", '')) @@ to_tsquery('simple', @tsQuery)
                     UNION
                     SELECT b.""Id""
                     FROM ""Books"" b
                     INNER JOIN ""Authors"" a ON a.""Id"" = b.""AuthorId""
-                    WHERE to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @tsQuery)
+                    WHERE to_tsvector('simple', COALESCE(a.""SearchName"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')) @@ to_tsquery('simple', @tsQuery)
                     {(titleAliasCandidateSelects.Count == 0 ? string.Empty : "UNION\n" + string.Join("\nUNION\n", titleAliasCandidateSelects))}
                 )
                 SELECT
@@ -871,8 +647,8 @@ namespace NzbDrone.Core.Books
                     b.""SeriesPosition"" AS SeriesPosition,
                     MAX(GREATEST(
                         ts_rank(to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')), to_tsquery('simple', @tsQuery)) +
-                        ts_rank(to_tsvector('simple', COALESCE(b.""SeriesName"", '')), to_tsquery('simple', @tsQuery)) +
-                        ts_rank(to_tsvector('simple', COALESCE(a.""Name"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')), to_tsquery('simple', @tsQuery))
+                        ts_rank(to_tsvector('simple', COALESCE(b.""SearchSeriesName"", '')), to_tsquery('simple', @tsQuery)) +
+                        ts_rank(to_tsvector('simple', COALESCE(a.""SearchName"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", '')), to_tsquery('simple', @tsQuery))
                         {(titleAliasScoreExpressions.Count == 0 ? string.Empty : ", " + string.Join(", ", titleAliasScoreExpressions))}
                     )) AS MatchScore
                 FROM ""Editions"" e
@@ -884,7 +660,11 @@ namespace NzbDrone.Core.Books
                   AND b.""Id"" IN (SELECT ""Id"" FROM candidates)
                   {(authorId.HasValue ? "AND b.\"AuthorId\" = @authorId" : string.Empty)}
                 GROUP BY b.""Id"", b.""AuthorId"", a.""Name"", b.""Title"", b.""SeriesName"", b.""SeriesPosition""
-                ORDER BY MatchScore DESC
+                ORDER BY BOOL_OR((
+                    to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) ||
+                    to_tsvector('simple', COALESCE(b.""SearchSeriesName"", '')) ||
+                    to_tsvector('simple', COALESCE(a.""SearchName"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", ''))
+                ) @@ to_tsquery('simple', @allTermsQuery)) DESC, MatchScore DESC
                 LIMIT @limit";
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var results = connection.Query<BookFtsMatch>(sql, parameters).ToList();
@@ -903,7 +683,9 @@ namespace NzbDrone.Core.Books
         {
             var words = (terms ?? Array.Empty<string>())
                 .Where(term => !string.IsNullOrWhiteSpace(term))
-                .SelectMany(term => UnicodeComparisonNormalizer.WordSpans(StringSuperNormalizer.NormalizeForFts(term))
+                .Select(StringSuperNormalizer.NormalizeForFts)
+                .Distinct(StringComparer.Ordinal)
+                .SelectMany(term => UnicodeComparisonNormalizer.WordSpans(term)
                     .Select(match => match.Value))
                 .ToList();
             if (words.Count == 0)
@@ -984,21 +766,11 @@ namespace NzbDrone.Core.Books
             return $"TRIM(SPLIT_PART(LOWER(REPLACE(TRIM(COALESCE({languageExpression}, '')), '_', '-')), '-', 1))";
         }
 
-        private static string AliasToFtsQueryTerm(string alias)
-        {
-            if (alias.Any(char.IsWhiteSpace))
-            {
-                return $"\"{alias.Replace("\"", "\"\"")}\"";
-            }
-
-            return TokenToFtsQueryTerm(alias);
-        }
-
         private static string BuildSqliteTitleAliasQuery(IEnumerable<string> aliases)
         {
             return string.Join(" OR ", aliases
                 .Where(alias => !string.IsNullOrWhiteSpace(alias))
-                .Select(alias => $"{{MatchingTitle}}:{AliasToFtsQueryTerm(alias)}"));
+                .Select(alias => $"{{MatchingTitle}}:{TokenToFtsQueryTerm(alias)}"));
         }
 
         private static string BuildPostgresPhraseTsQuery(IEnumerable<string> aliases)
@@ -1064,6 +836,14 @@ namespace NzbDrone.Core.Books
             var fieldHits = new Dictionary<int, Dictionary<string, EditionFtsFieldHit>>();
             var detailColumn = mediaType == BookMediaType.Ebook ? "Publisher" : "Narrator";
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var termKeys = PrepareSqliteQueryTermKeys(connection, queries.SelectMany(query => query.Terms), trace);
+            queries = queries.Select(query => new EditionFtsFieldQuery
+            {
+                Key = query.Key,
+                ResidualValue = query.ResidualValue,
+                Terms = query.Terms.DistinctBy(term => termKeys[term], StringComparer.Ordinal).ToList(),
+                SourceFields = query.SourceFields
+            }).ToList();
             PrepareSqliteStage2Indexes(connection, recalls, mediaType);
             try
             {
@@ -1122,8 +902,8 @@ namespace NzbDrone.Core.Books
             var matchedFields = new Dictionary<int, HashSet<string>>();
             var fieldHits = new Dictionary<int, Dictionary<string, EditionFtsFieldHit>>();
             var detailExpression = mediaType == BookMediaType.Ebook
-                ? @"COALESCE(e.""Publisher"", '')"
-                : @"COALESCE(e.""NarratorNames"", '') || ' ' || COALESCE(e.""Narrator"", '')";
+                ? @"COALESCE(e.""SearchPublisher"", '')"
+                : @"COALESCE(NULLIF(e.""SearchNarratorNames"", ''), e.""SearchNarrator"", '')";
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
             AccumulatePostgresFieldScores(
@@ -1219,8 +999,8 @@ namespace NzbDrone.Core.Books
                     b.AuthorId AS AuthorId,
                     a.Name AS AuthorName,
                     CASE
-                        WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-                            THEN COALESCE((SELECT GROUP_CONCAT(value, ', ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
+                        WHEN COALESCE(e.SearchNarratorNames, '') <> ''
+                            THEN COALESCE((SELECT GROUP_CONCAT(value, '; ') FROM (SELECT value FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != '' ORDER BY CAST(key AS INTEGER))), COALESCE(e.Narrator, ''))
                         ELSE COALESCE(e.Narrator, '')
                     END AS NarratorNames,
                     e.Publisher AS Publisher,
@@ -1253,7 +1033,13 @@ namespace NzbDrone.Core.Books
                     b.""Title"" AS BookTitle,
                     b.""AuthorId"" AS AuthorId,
                     a.""Name"" AS AuthorName,
-                    COALESCE(NULLIF(translate(e.""NarratorNames"", '[]""', ''), ''), COALESCE(e.""Narrator"", '')) AS NarratorNames,
+                    CASE
+                        WHEN COALESCE(e.""SearchNarratorNames"", '') <> ''
+                            THEN COALESCE((SELECT string_agg(names.value, '; ' ORDER BY names.position)
+                                FROM jsonb_array_elements_text(e.""NarratorNames""::jsonb) WITH ORDINALITY AS names(value, position)
+                                WHERE names.value IS NOT NULL AND names.value <> ''), COALESCE(e.""Narrator"", ''))
+                        ELSE COALESCE(e.""Narrator"", '')
+                    END AS NarratorNames,
                     e.""Publisher"" AS Publisher,
                     e.""Images"" AS CoverUrl,
                     e.""DurationSeconds"" AS DurationSeconds,
@@ -1303,18 +1089,18 @@ namespace NzbDrone.Core.Books
             connection.Execute(@"
                 DROP TABLE IF EXISTS temp.stage2_title_fts;
                 DROP TABLE IF EXISTS temp.stage2_detail_fts;");
-            connection.Execute(@"
+            connection.Execute($@"
                 CREATE VIRTUAL TABLE temp.stage2_title_fts USING fts5(
                     MatchingTitle,
                     content='',
                     content_rowid='rowid',
-                    tokenize = 'unicode61 remove_diacritics 1 tokenchars ''-.'''
+                    tokenize = '{SqliteTokenizerSql}'
                 );
                 CREATE VIRTUAL TABLE temp.stage2_detail_fts USING fts5(
                     Detail,
                     content='',
                     content_rowid='rowid',
-                    tokenize = 'unicode61 remove_diacritics 1 tokenchars ''-.'''
+                    tokenize = '{SqliteTokenizerSql}'
                 );");
             connection.Execute($@"
                 INSERT INTO stage2_title_fts(rowid, MatchingTitle)
@@ -1325,14 +1111,8 @@ namespace NzbDrone.Core.Books
                 WHERE e.BookId IN ({string.Join(",", placeholders)})",
                 parameters);
             var detailExpression = mediaType == BookMediaType.Ebook
-                ? "COALESCE(e.Publisher, '')"
-                : @"CASE
-                        WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-                            THEN COALESCE(
-                                (SELECT GROUP_CONCAT(value, ' ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''),
-                                COALESCE(e.Narrator, ''))
-                        ELSE COALESCE(e.Narrator, '')
-                    END";
+                ? "COALESCE(e.SearchPublisher, '')"
+                : "COALESCE(NULLIF(e.SearchNarratorNames, ''), e.SearchNarrator, '')";
             connection.Execute($@"
                 INSERT INTO stage2_detail_fts(rowid, Detail)
                 SELECT
@@ -1362,7 +1142,6 @@ namespace NzbDrone.Core.Books
                     Query = fieldQuery,
                     Terms = fieldQuery.Terms
                         .Where(term => !string.IsNullOrWhiteSpace(term) && IsValidFtsToken(term))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList()
                 })
                 .Where(item => item.Terms.Count > 0)
@@ -1660,9 +1439,10 @@ namespace NzbDrone.Core.Books
                     ? hits.Values.OrderBy(hit => hit.FieldKey, StringComparer.OrdinalIgnoreCase).ToList()
                     : new List<EditionFtsFieldHit>();
 
-                // BM25/ts_rank is diagnostic here. Cross-field sums reward rarity and allow one
-                // physical field to earn both title and narrator/publisher credit.
-                edition.MatchScore = edition.BroadRecallScore;
+                // Preserve each edition's title score for the final edition comparison. Broad
+                // recall locates Books; it cannot distinguish their sibling Editions. Keep detail
+                // evidence separate so one field cannot earn both title and narrator/publisher credit.
+                edition.MatchScore = edition.Stage2TitleScore;
             }
         }
 
@@ -1745,526 +1525,6 @@ namespace NzbDrone.Core.Books
             public double Score { get; set; }
         }
 
-        /// <summary>
-        /// FTS ranks distinct books from MatchingTitle, SeriesName, and AuthorName, then expands
-        /// every recalled book to all sibling editions without edition-level reranking.
-        /// </summary>
-        public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
-        {
-            return SearchWithTwoStepCore(authorId, tokens, mediaType, limit, null);
-        }
-
-        public List<EditionFtsMatch> SearchWithTwoStepWithTrace(
-            int? authorId,
-            IEnumerable<string> tokens,
-            BookMediaType mediaType,
-            Action<EditionFtsTraceEvent> trace,
-            int limit = 20)
-        {
-            return SearchWithTwoStepCore(authorId, tokens, mediaType, limit, trace);
-        }
-
-        private List<EditionFtsMatch> SearchWithTwoStepCore(
-            int? authorId,
-            IEnumerable<string> tokens,
-            BookMediaType mediaType,
-            int limit,
-            Action<EditionFtsTraceEvent> trace)
-        {
-            EnsureIndexPopulated();
-            if (!FtsTableExists())
-            {
-                _logger.Warn("[TWO-STEP] FTS table does not exist");
-                return new List<EditionFtsMatch>();
-            }
-
-            if (_dbType == DatabaseType.PostgreSQL)
-            {
-                return SearchWithTwoStepPostgres(authorId, NormalizeFtsTerms(tokens), mediaType, limit, trace);
-            }
-
-            var tokenList = NormalizeFtsTerms(tokens);
-            if (tokenList == null || tokenList.Count == 0)
-            {
-                _logger.Warn("[TWO-STEP] No valid tokens provided");
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "completed",
-                    Step = "input",
-                    Terms = Array.Empty<string>(),
-                    ResultCount = 0,
-                    DistinctBookCount = 0,
-                    ResultSource = "no_valid_terms"
-                });
-                return new List<EditionFtsMatch>();
-            }
-
-            EmitFtsTrace(trace, new EditionFtsTraceEvent
-            {
-                EventType = "input",
-                Step = "input",
-                Terms = tokenList.ToList(),
-                ResultCount = tokenList.Count
-            });
-
-            using (var conn = _database.OpenConnection())
-            {
-                try
-                {
-                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-                    // Step 1: Search title columns only (no Subtitle, no Narrator) to find the right BOOK
-                    // Column restriction syntax: {col1 col2}:term
-                    // NOTE: Title removed from FTS to avoid double-counting with MatchingTitle
-                    // NOTE: Subtitle excluded from Step 1 - should only influence EDITION selection, not BOOK selection
-                    var titleColumns = "MatchingTitle SeriesName AuthorName";
-                    var step1QueryParts = tokenList.Select(t => $"{{{titleColumns}}}:{TokenToFtsQueryTerm(t)}");
-                    var step1Query = string.Join(" OR ", step1QueryParts);
-
-                    EmitFtsTrace(trace, new EditionFtsTraceEvent
-                    {
-                        EventType = "query",
-                        Step = "step1_book_recall",
-                        Terms = tokenList.ToList(),
-                        Columns = titleColumns,
-                        Query = step1Query
-                    });
-
-                    _logger.Debug("[TWO-STEP] Step 1 query (title only): {0}",
-                        step1Query.Length > 200 ? step1Query.Substring(0, 200) + "..." : step1Query);
-
-                    // DISABLED 2025-12-28: Token count ranking was causing series-name-as-title books
-                    // (e.g., "The Codex Alera") to outrank correct individual books (e.g., "Academ's Fury")
-                    // because series tokens in file tags inflated token counts for compilations.
-                    // BM25 alone + smoke test should handle ranking correctly.
-                    // See: Codex Alera investigation - raw BM25 ranked correctly, token count broke it.
-                    //
-                    // var tokenCountParts = tokenList.Select(t =>
-                    // {
-                    //     var escapedToken = TokenToFtsQueryTerm(t).Replace("'", "''");
-                    //     return $"COALESCE((SELECT 1 FROM edition_fts WHERE edition_fts.rowid = fts_matches.rowid AND edition_fts MATCH '{{MatchingTitle}}:{escapedToken}'), 0)";
-                    // });
-                    // var tokenCountExpr = tokenList.Count > 0 ? string.Join(" + ", tokenCountParts) : "0";
-
-                    var p1 = new DynamicParameters();
-                    p1.Add("ftsQuery", step1Query);
-                    p1.Add("mediaType", (int)mediaType);
-                    p1.Add("limit", limit);
-
-                    string sql1;
-                    if (authorId.HasValue)
-                    {
-                        p1.Add("authorId", authorId.Value);
-                        sql1 = $@"
-                            WITH fts_matches AS MATERIALIZED (
-                                SELECT rowid, bm25(edition_fts) as bm25_score
-                                FROM edition_fts
-                                WHERE edition_fts MATCH @ftsQuery
-                            )
-                            SELECT
-                                e.BookId AS BookId,
-                                MAX(0 - fts_matches.bm25_score) AS MatchScore
-                            FROM fts_matches
-                            INNER JOIN Editions e ON e.Id = fts_matches.rowid
-                            INNER JOIN Books b ON e.BookId = b.Id
-                            WHERE b.AuthorId = @authorId
-                              AND b.MediaType = @mediaType
-                            GROUP BY e.BookId
-                            ORDER BY MIN(fts_matches.bm25_score)
-                            LIMIT @limit";
-                    }
-                    else
-                    {
-                        sql1 = $@"
-                            WITH fts_matches AS MATERIALIZED (
-                                SELECT rowid, bm25(edition_fts) as bm25_score
-                                FROM edition_fts
-                                WHERE edition_fts MATCH @ftsQuery
-                            )
-                            SELECT
-                                e.BookId AS BookId,
-                                MAX(0 - fts_matches.bm25_score) AS MatchScore
-                            FROM fts_matches
-                            INNER JOIN Editions e ON e.Id = fts_matches.rowid
-                            INNER JOIN Books b ON e.BookId = b.Id
-                            WHERE b.MediaType = @mediaType
-                            GROUP BY e.BookId
-                            ORDER BY MIN(fts_matches.bm25_score)
-                            LIMIT @limit";
-                    }
-
-                    var step1Stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    var step1Results = conn.Query<EditionFtsMatch>(sql1, p1).ToList();
-                    step1Stopwatch.Stop();
-                    _logger.Debug("[TWO-STEP] Step 1 returned {0} results", step1Results.Count);
-
-                    EmitFtsCandidates(trace, "step1_book_recall", step1Results);
-                    EmitFtsTrace(trace, new EditionFtsTraceEvent
-                    {
-                        EventType = "summary",
-                        Step = "step1_book_recall",
-                        ElapsedMilliseconds = step1Stopwatch.ElapsedMilliseconds,
-                        TotalElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
-                        ResultCount = step1Results.Count,
-                        DistinctBookCount = step1Results.Select(result => result.BookId).Distinct().Count()
-                    });
-
-                    if (step1Results.Count == 0)
-                    {
-                        stopwatch.Stop();
-                        _logger.Debug("[TWO-STEP] No Step 1 results, returning empty");
-                        EmitFtsTrace(trace, new EditionFtsTraceEvent
-                        {
-                            EventType = "completed",
-                            Step = "completed",
-                            TotalElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
-                            ResultCount = 0,
-                            DistinctBookCount = 0,
-                            ResultSource = "step1_empty"
-                        });
-                        return new List<EditionFtsMatch>();
-                    }
-
-                    var bookIds = step1Results.Select(r => r.BookId).Distinct().ToList();
-                    _logger.Debug("[BOOK-RECALL] Expanding {0} recalled books to all sibling editions", bookIds.Count);
-                    EmitFtsTrace(trace, new EditionFtsTraceEvent
-                    {
-                        EventType = "query",
-                        Step = "edition_expansion",
-                        Columns = "all editions for recalled books",
-                        DistinctBookCount = bookIds.Count
-                    });
-
-                    var p2 = new DynamicParameters();
-                    p2.Add("mediaType", (int)mediaType);
-
-                    var bookIdPlaceholders = new List<string>();
-                    for (int i = 0; i < bookIds.Count; i++)
-                    {
-                        var pname = $"@bookId{i}";
-                        bookIdPlaceholders.Add(pname);
-                        p2.Add($"bookId{i}", bookIds[i]);
-                    }
-                    var bookIdInClause = string.Join(",", bookIdPlaceholders);
-
-                    string sql2;
-                    if (authorId.HasValue)
-                    {
-                        p2.Add("authorId", authorId.Value);
-                        sql2 = $@"
-                            SELECT
-                                e.Id AS EditionId,
-                                e.ForeignEditionId AS ForeignEditionId,
-                                e.BookId AS BookId,
-                                COALESCE(NULLIF(LOWER(TRIM(e.Language)), ''), 'unknown') AS Lang,
-                                e.Title AS EditionTitle,
-                                e.Subtitle AS EditionSubTitle,
-                                b.Title AS BookTitle,
-	                                b.AuthorId AS AuthorId,
-		                                a.Name AS AuthorName,
-		                                CASE
-		                                    WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-		                                        THEN COALESCE((SELECT GROUP_CONCAT(value, ', ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-		                                    ELSE COALESCE(e.Narrator, '')
-		                                END AS NarratorNames,
-		                                e.Publisher AS Publisher,
-		                                e.Images AS CoverUrl,
-		                                e.DurationSeconds AS DurationSeconds,
-		                                e.ReleaseDate AS ReleaseDate,
-		                                e.ReadingFormatId AS ReadingFormatId,
-	                                0.0 AS MatchScore
-                            FROM Editions e
-                            INNER JOIN Books b ON e.BookId = b.Id
-                            INNER JOIN Authors a ON b.AuthorId = a.Id
-                            WHERE b.AuthorId = @authorId
-                              AND b.MediaType = @mediaType
-                              AND b.Id IN ({bookIdInClause})";
-                    }
-                    else
-                    {
-                        sql2 = $@"
-                            SELECT
-                                e.Id AS EditionId,
-                                e.ForeignEditionId AS ForeignEditionId,
-                                e.BookId AS BookId,
-                                COALESCE(NULLIF(LOWER(TRIM(e.Language)), ''), 'unknown') AS Lang,
-                                e.Title AS EditionTitle,
-                                e.Subtitle AS EditionSubTitle,
-                                b.Title AS BookTitle,
-	                                b.AuthorId AS AuthorId,
-		                                a.Name AS AuthorName,
-		                                CASE
-		                                    WHEN json_valid(e.NarratorNames) AND json_type(e.NarratorNames) = 'array'
-		                                        THEN COALESCE((SELECT GROUP_CONCAT(value, ', ') FROM json_each(e.NarratorNames) WHERE value IS NOT NULL AND value != ''), COALESCE(e.Narrator, ''))
-		                                    ELSE COALESCE(e.Narrator, '')
-		                                END AS NarratorNames,
-		                                e.Publisher AS Publisher,
-		                                e.Images AS CoverUrl,
-		                                e.DurationSeconds AS DurationSeconds,
-		                                e.ReleaseDate AS ReleaseDate,
-		                                e.ReadingFormatId AS ReadingFormatId,
-	                                0.0 AS MatchScore
-                            FROM Editions e
-                            INNER JOIN Books b ON e.BookId = b.Id
-                            INNER JOIN Authors a ON b.AuthorId = a.Id
-                            WHERE b.MediaType = @mediaType
-                              AND b.Id IN ({bookIdInClause})";
-                    }
-
-                    var expansionStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    var expandedResults = ApplyBookRecallRanking(
-                        step1Results,
-                        conn.Query<EditionFtsMatch>(sql2, p2).ToList());
-                    expansionStopwatch.Stop();
-                    stopwatch.Stop();
-
-                    EmitFtsCandidates(trace, "edition_expansion", expandedResults);
-                    EmitFtsTrace(trace, new EditionFtsTraceEvent
-                    {
-                        EventType = "summary",
-                        Step = "edition_expansion",
-                        ElapsedMilliseconds = expansionStopwatch.ElapsedMilliseconds,
-                        TotalElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
-                        ResultCount = expandedResults.Count,
-                        DistinctBookCount = expandedResults.Select(result => result.BookId).Distinct().Count()
-                    });
-
-                    EmitFtsTrace(trace, new EditionFtsTraceEvent
-                    {
-                        EventType = "completed",
-                        Step = "completed",
-                        TotalElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
-                        ResultCount = expandedResults.Count,
-                        DistinctBookCount = expandedResults.Select(result => result.BookId).Distinct().Count(),
-                        ResultSource = "book_recall_edition_expansion"
-                    });
-                    return expandedResults;
-                }
-                catch (SqliteException ex) when (ex.Message?.Contains("no such column") == true || ex.Message?.Contains("malformed") == true)
-                {
-                    _logger.Error(ex, "[TWO-STEP] FTS query error - query may be malformed");
-                    return new List<EditionFtsMatch>();
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "[TWO-STEP] Error performing two-step search");
-                    return new List<EditionFtsMatch>();
-                }
-            }
-        }
-
-        private List<EditionFtsMatch> SearchWithTwoStepPostgres(
-            int? authorId,
-            IEnumerable<string> tokens,
-            BookMediaType mediaType,
-            int limit,
-            Action<EditionFtsTraceEvent> trace)
-        {
-            var inputTerms = tokens?
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .ToList() ?? new List<string>();
-            var tsQuery = BuildPostgresTsQuery(inputTerms);
-            if (string.IsNullOrWhiteSpace(tsQuery))
-            {
-                _logger.Warn("[TWO-STEP] No valid tokens for PostgreSQL tsquery");
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "completed",
-                    Step = "input",
-                    Terms = inputTerms,
-                    ResultCount = 0,
-                    DistinctBookCount = 0,
-                    ResultSource = "no_valid_terms"
-                });
-                return new List<EditionFtsMatch>();
-            }
-
-            // Extract individual tokens for token count expression
-            var tokenList = inputTerms
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .SelectMany(t => UnicodeComparisonNormalizer.WordSpans(t).Select(m => m.Value))
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            EmitFtsTrace(trace, new EditionFtsTraceEvent
-            {
-                EventType = "input",
-                Step = "input",
-                Terms = inputTerms,
-                Query = tsQuery,
-                ResultCount = tokenList.Count
-            });
-
-            using (var conn = _database.OpenConnection())
-            {
-                var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var p1 = new DynamicParameters();
-                p1.Add("tsQuery", tsQuery);
-                p1.Add("mediaType", (int)mediaType);
-                p1.Add("limit", limit);
-
-                var queryExpr = "to_tsquery('simple', @tsQuery)";
-                var seriesVectorExpr = @"to_tsvector('simple', COALESCE(b.""SeriesName"", ''))";
-
-                // Match baseline idx_authors_fts expression (migration 001) so the index can be used.
-                var authorVectorExpr = @"
-                    to_tsvector('simple',
-                        COALESCE(a.""Name"", '') || ' ' ||
-                        COALESCE(a.""CleanName"", '') || ' ' ||
-                        COALESCE(a.""TitleSlug"", '')
-                    )";
-
-                // DISABLED 2025-12-28: Token count ranking disabled - see SQLite comment above.
-                // BM25/ts_rank alone + smoke test should handle ranking correctly.
-                //
-                // var matchingTitleVector = @"to_tsvector('simple', COALESCE(e.""MatchingTitle"", ''))";
-                // var pgTokenCountParts = tokenList.Select(t =>
-                //     $"CASE WHEN {matchingTitleVector} @@ to_tsquery('simple', '{t.Replace("'", "''")}') THEN 1 ELSE 0 END");
-                // var pgTokenCountExpr = tokenList.Count > 0 ? string.Join(" + ", pgTokenCountParts) : "0";
-
-                // STEP 1: PARITY WITH SQLITE - Title columns only (no Subtitle, no Narrator)
-                // SQLite uses: {MatchingTitle SeriesName AuthorName}:token
-                // So we match: MatchingTitle, SeriesName, AuthorName (via JOINs)
-                var step1EditionVectorExpr = @"to_tsvector('simple', COALESCE(e.""MatchingTitle"", ''))";
-                var step1ScoreExpr = $"(ts_rank({step1EditionVectorExpr}, {queryExpr}) + ts_rank({seriesVectorExpr}, {queryExpr}) + ts_rank({authorVectorExpr}, {queryExpr}))";
-
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "query",
-                    Step = "step1_book_recall",
-                    Terms = inputTerms,
-                    Columns = "MatchingTitle SeriesName AuthorName",
-                    Query = tsQuery
-                });
-
-                // Order by ts_rank only (token count disabled)
-                var step1Sql = $@"
-                    SELECT
-                        b.""Id"" AS BookId,
-                        MAX({step1ScoreExpr}) AS MatchScore
-                    FROM ""Editions"" e
-                    INNER JOIN ""Books"" b ON e.""BookId"" = b.""Id""
-                    INNER JOIN ""Authors"" a ON b.""AuthorId"" = a.""Id""
-                    WHERE b.""MediaType"" = @mediaType
-                      AND (
-                        {step1EditionVectorExpr} @@ {queryExpr}
-                        OR {seriesVectorExpr} @@ {queryExpr}
-                        OR {authorVectorExpr} @@ {queryExpr}
-                      )
-                      {(authorId.HasValue ? "AND b.\"AuthorId\" = @authorId" : string.Empty)}
-                    GROUP BY b.""Id""
-                    ORDER BY MAX({step1ScoreExpr}) DESC
-                    LIMIT @limit";
-
-                if (authorId.HasValue)
-                {
-                    p1.Add("authorId", authorId.Value);
-                }
-
-                var step1Stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var step1Results = conn.Query<EditionFtsMatch>(step1Sql, p1).ToList();
-                step1Stopwatch.Stop();
-                var bookIds = step1Results.Select(result => result.BookId).ToList();
-
-                EmitFtsCandidates(trace, "step1_book_recall", step1Results);
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "summary",
-                    Step = "step1_book_recall",
-                    ElapsedMilliseconds = step1Stopwatch.ElapsedMilliseconds,
-                    TotalElapsedMilliseconds = totalStopwatch.ElapsedMilliseconds,
-                    ResultCount = step1Results.Count,
-                    DistinctBookCount = bookIds.Distinct().Count()
-                });
-
-                if (bookIds.Count == 0)
-                {
-                    totalStopwatch.Stop();
-                    EmitFtsTrace(trace, new EditionFtsTraceEvent
-                    {
-                        EventType = "completed",
-                        Step = "completed",
-                        TotalElapsedMilliseconds = totalStopwatch.ElapsedMilliseconds,
-                        ResultCount = 0,
-                        DistinctBookCount = 0,
-                        ResultSource = "step1_empty"
-                    });
-                    return new List<EditionFtsMatch>();
-                }
-
-                var p2 = new DynamicParameters();
-                p2.Add("mediaType", (int)mediaType);
-                p2.Add("bookIds", bookIds.ToArray()); // Dapper requires array for = ANY(@param)
-
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "query",
-                    Step = "edition_expansion",
-                    Columns = "all editions for recalled books",
-                    DistinctBookCount = bookIds.Count
-                });
-
-                var expansionSql = $@"
-                    SELECT
-                        e.""Id"" AS EditionId,
-                        e.""ForeignEditionId"" AS ForeignEditionId,
-                        e.""BookId"" AS BookId,
-                        COALESCE(NULLIF(LOWER(TRIM(e.""Language"")), ''), 'unknown') AS Lang,
-                        e.""Title"" AS EditionTitle,
-                        e.""Subtitle"" AS EditionSubTitle,
-                        b.""Title"" AS BookTitle,
-	                        b.""AuthorId"" AS AuthorId,
-		                        a.""Name"" AS AuthorName,
-		                        COALESCE(NULLIF(translate(e.""NarratorNames"", '[]""', ''), ''), COALESCE(e.""Narrator"", '')) AS NarratorNames,
-		                        e.""Publisher"" AS Publisher,
-		                        e.""Images"" AS CoverUrl,
-		                        e.""DurationSeconds"" AS DurationSeconds,
-		                        e.""ReleaseDate"" AS ReleaseDate,
-		                        e.""ReadingFormatId"" AS ReadingFormatId,
-	                        0.0 AS MatchScore
-                    FROM ""Editions"" e
-                    INNER JOIN ""Books"" b ON e.""BookId"" = b.""Id""
-                    INNER JOIN ""Authors"" a ON b.""AuthorId"" = a.""Id""
-                    WHERE b.""MediaType"" = @mediaType
-                      AND b.""Id"" = ANY(@bookIds)
-                      {(authorId.HasValue ? "AND b.\"AuthorId\" = @authorId" : string.Empty)}";
-
-                if (authorId.HasValue)
-                {
-                    p2.Add("authorId", authorId.Value);
-                }
-
-                var expansionStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var expandedResults = ApplyBookRecallRanking(
-                    step1Results,
-                    conn.Query<EditionFtsMatch>(expansionSql, p2).ToList());
-                expansionStopwatch.Stop();
-                totalStopwatch.Stop();
-
-                EmitFtsCandidates(trace, "edition_expansion", expandedResults);
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "summary",
-                    Step = "edition_expansion",
-                    ElapsedMilliseconds = expansionStopwatch.ElapsedMilliseconds,
-                    TotalElapsedMilliseconds = totalStopwatch.ElapsedMilliseconds,
-                    ResultCount = expandedResults.Count,
-                    DistinctBookCount = expandedResults.Select(result => result.BookId).Distinct().Count()
-                });
-                EmitFtsTrace(trace, new EditionFtsTraceEvent
-                {
-                    EventType = "completed",
-                    Step = "completed",
-                    TotalElapsedMilliseconds = totalStopwatch.ElapsedMilliseconds,
-                    ResultCount = expandedResults.Count,
-                    DistinctBookCount = expandedResults.Select(result => result.BookId).Distinct().Count(),
-                    ResultSource = "book_recall_edition_expansion"
-                });
-
-                return expandedResults;
-            }
-        }
 
     }
 
@@ -2301,21 +1561,5 @@ namespace NzbDrone.Core.Books
         public string MatchedBy { get; set; } // ASIN, AUDIBLE_ASIN, ISBN10, ISBN13
         public string MatchedValue { get; set; }
     }
-
-	    // Typed DTO for SQLite in-memory grouping — avoids dynamic/binder issues
-		    internal class ScoredEditionRow
-		    {
-	        public int EditionId { get; set; }
-	        public int BookId { get; set; }
-	        public string Lang { get; set; }
-	        public string EditionTitle { get; set; }
-	        public string BookTitle { get; set; }
-	        public int AuthorId { get; set; }
-	        public string AuthorName { get; set; }
-	        public string NarratorNames { get; set; }
-	        public DateTime? ReleaseDate { get; set; }
-	        public int? DurationSeconds { get; set; }
-	        public double MatchScore { get; set; }
-	    }
 
 }

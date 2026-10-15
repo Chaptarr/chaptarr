@@ -6,6 +6,8 @@ using NLog;
 using NzbDrone.Common.Crypto;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
@@ -32,6 +34,7 @@ namespace NzbDrone.Core.Queue
         private readonly IEventAggregator _eventAggregator;
         private static List<Queue> _queue = new();
         private readonly IHistoryService _historyService;
+        private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IConversionTrackingService _conversionTrackingService;
         private readonly IConversionJobService _conversionJobService;
         private readonly IDiskProvider _diskProvider;
@@ -40,12 +43,14 @@ namespace NzbDrone.Core.Queue
 
         public QueueService(IEventAggregator eventAggregator,
                             IHistoryService historyService,
+                            ICustomFormatCalculationService formatCalculator,
                             IConversionTrackingService conversionTrackingService = null,
                             IDiskProvider diskProvider = null,
                             IConversionJobService conversionJobService = null)
         {
             _eventAggregator = eventAggregator;
             _historyService = historyService;
+            _formatCalculator = formatCalculator;
             _conversionTrackingService = conversionTrackingService;
             _conversionJobService = conversionJobService;
             _diskProvider = diskProvider;
@@ -63,7 +68,13 @@ namespace NzbDrone.Core.Queue
 
         public Queue Find(int id)
         {
-            return CloneQueueItem(_queue.SingleOrDefault(q => q.Id == id));
+            var matches = _queue.Where(item => item.Id == id).Take(2).ToList();
+            if (matches.Count > 1)
+            {
+                throw new ModelConflictException(typeof(Queue), id, "matches multiple tracked items; no item was selected");
+            }
+
+            return CloneQueueItem(matches.FirstOrDefault());
         }
 
         public void Remove(int id)
@@ -178,6 +189,14 @@ namespace NzbDrone.Core.Queue
             var conversionTarget = QualityConversionHelper.GetPlannedConversionTarget(author, quality);
             var activeConversion = _conversionTrackingService?.Get(trackedDownload.DownloadItem.DownloadId);
 
+            var remoteBook = trackedDownload.RemoteBook;
+            if (remoteBook?.AlternativeCopies == true && book != null)
+            {
+                remoteBook = remoteBook.ForBooks(new[] { book });
+                remoteBook.CustomFormats = _formatCalculator.ParseCustomFormat(remoteBook, trackedDownload.DownloadItem.TotalSize);
+                remoteBook.CustomFormatScore = remoteBook.GetQualityProfile()?.CalculateCustomFormatScore(remoteBook.CustomFormats) ?? 0;
+            }
+
             var queue = new Queue
             {
                 Author = author,
@@ -193,7 +212,7 @@ namespace NzbDrone.Core.Queue
                 TrackedDownloadState = trackedDownload.State,
                 StatusMessages = trackedDownload.StatusMessages.ToList(),
                 ErrorMessage = GetQueueErrorMessage(trackedDownload),
-                RemoteBook = trackedDownload.RemoteBook,
+                RemoteBook = remoteBook,
                 DownloadId = trackedDownload.DownloadItem.DownloadId,
                 TargetBookIds = GetTargetBookIds(grabHistory, trackedDownload, book),
                 ConversionStatus = activeConversion?.Status,
@@ -490,9 +509,7 @@ namespace NzbDrone.Core.Queue
                 .Where(history => !string.IsNullOrWhiteSpace(history.DownloadId))
                 .GroupBy(history => history.DownloadId, StringComparer.OrdinalIgnoreCase))
             {
-                grabbedHistoryByDownloadId[group.Key] = group
-                    .OrderByDescending(h => h.Date)
-                    .ToList();
+                grabbedHistoryByDownloadId[group.Key] = RemoteBook.GetCapturedGrabHistory(group);
             }
 
             return grabbedHistoryByDownloadId;
@@ -510,9 +527,7 @@ namespace NzbDrone.Core.Queue
                 return grabHistory ?? new List<EntityHistory>();
             }
 
-            return _historyService.Find(downloadId, EntityHistoryEventType.Grabbed)
-                .OrderByDescending(h => h.Date)
-                .ToList();
+            return RemoteBook.GetCapturedGrabHistory(_historyService.Find(downloadId, EntityHistoryEventType.Grabbed));
         }
 
         private void ApplyConversionStatuses(List<Queue> queue)

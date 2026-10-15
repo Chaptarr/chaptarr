@@ -175,7 +175,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                     return Decision.RejectHardFilter("Release appears to match a different book by this author", "Matching");
 
                 case TitleMatchProblemCode.SuspiciousAdjacentNumber:
-                    return Decision.RejectSoftFilter("Unexplained number after matched title", "Matching");
+                    return Decision.RejectSoftFilter("Unexplained number adjacent to matched title", "Matching");
 
                 default:
                     return Decision.RejectSoftFilter("Title/Author mismatch", "Matching");

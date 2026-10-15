@@ -19,7 +19,7 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class AuthorLibraryServiceSpecificBookMonitoringFixture
     {
-        private sealed class StubAuthorInfo : IProvideAuthorInfo
+        internal sealed class StubAuthorInfo : IProvideAuthorInfo
         {
             private readonly Author _author;
 
@@ -45,6 +45,8 @@ namespace Chaptarr.Core.Test.Books
                 newAuthor.Id = _nextId++;
                 return newAuthor;
             }
+
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
 
             public Author UpdateAuthor(Author author)
             {
@@ -93,10 +95,10 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public Author GetAuthor(int authorId) => ExistingAuthor?.Id == authorId ? ExistingAuthor : null;
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByName(string title) => null;
-            public Author FindByNameInexact(string title) => null;
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -226,9 +228,12 @@ namespace Chaptarr.Core.Test.Books
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
-        private sealed class StubMetadataProfileService : IMetadataProfileService
+        internal sealed class StubMetadataProfileService : IMetadataProfileService
         {
             public List<int> FilterProfileIds { get; } = new();
 
@@ -243,9 +248,15 @@ namespace Chaptarr.Core.Test.Books
                 FilterProfileIds.Add(profileId);
                 return input?.Books?.ToList() ?? new List<Book>();
             }
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                FilterBooks(input, profileId, requestedNarrationIds, null);
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                FilterBooks(input, profileId);
         }
 
-        private sealed class StubRootFolderService : IRootFolderService
+        internal sealed class StubRootFolderService : IRootFolderService
         {
             private readonly List<RootFolder> _rootFolders;
 
@@ -274,7 +285,7 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
-        private sealed class StubAuthorPathBuilder : IBuildAuthorPaths
+        internal sealed class StubAuthorPathBuilder : IBuildAuthorPaths
         {
             public string BuildPath(Author author, bool useExistingRelativeFolder) => $"/authors/{author?.Name ?? "unknown"}";
             public string BuildPathForQuality(Author author, NzbDrone.Core.Qualities.Quality quality, bool useExistingRelativeFolder) => BuildPath(author, useExistingRelativeFolder);
@@ -311,6 +322,12 @@ namespace Chaptarr.Core.Test.Books
                     .Where(book => !BookEditionIdentity.GetCanonicalWorkProviderIds(book).Any(knownIds.Contains)));
                 return true;
             }
+
+            public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                ReconcileAuthorBlob(localAuthor, authoritativeRemoteAuthor, requestedNarrationIds, null);
+
+            public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                ReconcileAuthorBlob(localAuthor, authoritativeRemoteAuthor);
         }
 
         [Test]
@@ -1058,7 +1075,7 @@ namespace Chaptarr.Core.Test.Books
             };
         }
 
-        private static RootFolder BuildAudiobookRoot(string path)
+        internal static RootFolder BuildAudiobookRoot(string path)
         {
             var root = new RootFolder
             {
@@ -1077,7 +1094,7 @@ namespace Chaptarr.Core.Test.Books
             return root;
         }
 
-        private static RootFolder BuildEbookRoot(string path)
+        internal static RootFolder BuildEbookRoot(string path)
         {
             var root = new RootFolder
             {

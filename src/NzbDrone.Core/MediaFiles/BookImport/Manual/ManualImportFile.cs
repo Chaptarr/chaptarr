@@ -24,6 +24,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
         public string ForeignEditionTitle { get; set; }
         public ManualImportSelectionSource SelectionSource { get; set; }
         public QualityModel Quality { get; set; }
+        public string ReleaseGroup { get; set; }
         public int IndexerFlags { get; set; }
         public string DownloadId { get; set; }
         public bool DisableReleaseSwitching { get; set; }

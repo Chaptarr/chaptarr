@@ -234,6 +234,11 @@ namespace NzbDrone.Core.Download.History
 
             var targetBook = message.TrackedDownload.RemoteBook?.GetBooksMatchingReleaseMediaType().FirstOrDefault();
 
+            if (message.PersistedHistory != null)
+            {
+                return;
+            }
+
             var history = new DownloadHistory
             {
                 EventType = DownloadHistoryEventType.DownloadImportIncomplete,
@@ -241,7 +246,7 @@ namespace NzbDrone.Core.Download.History
                 BookId = targetBook?.Id ?? 0,
                 DownloadId = NormalizeDownloadId(message.TrackedDownload.DownloadItem.DownloadId),
                 SourceTitle = message.TrackedDownload.DownloadItem.OutputPath.ToString(),
-                Date = DateTime.UtcNow,
+                Date = message.Date,
                 Protocol = message.TrackedDownload.Protocol,
                 DownloadClientId = message.TrackedDownload.DownloadClient
             };

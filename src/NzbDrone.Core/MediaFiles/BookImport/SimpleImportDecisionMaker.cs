@@ -116,23 +116,28 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         Quality = new QualityModel(detectedQuality)
                     };
 
+                    var mediaType = MediaFileExtensions.AudioExtensions.Contains(fileExtension) ? BookMediaType.Audiobook :
+                                    MediaFileExtensions.TextExtensions.Contains(fileExtension) ? BookMediaType.Ebook :
+                                    (BookMediaType?)null;
+                    var shouldSuggestMatch = itemInfo != null;
+
                     // Apply user's manual selections if provided
                     if (idOverrides != null)
                     {
                         localBook.Author = idOverrides.Author;
                         localBook.Book = idOverrides.Book;
                         localBook.Edition = idOverrides.Edition;
+                        if (shouldSuggestMatch && mediaType.HasValue && localBook.Book != null && localBook.Book.MediaType != mediaType)
+                        {
+                            localBook.Book = null;
+                            localBook.Edition = null;
+                        }
                     }
 
                     // For initial manual-import UI load (itemInfo != null), try to suggest a match from the library.
                     // For UpdateItems (itemInfo == null), do NOT auto-override user selections.
-                    var shouldSuggestMatch = itemInfo != null;
                     if (shouldSuggestMatch && (localBook.Book == null || localBook.Edition == null))
                     {
-                        var mediaType = MediaFileExtensions.AudioExtensions.Contains(fileExtension) ? BookMediaType.Audiobook :
-                                        MediaFileExtensions.TextExtensions.Contains(fileExtension) ? BookMediaType.Ebook :
-                                        (BookMediaType?)null;
-
                         if (mediaType != null)
                         {
                             var discoveredTags = ToCaseInsensitiveTags(rawTags?.AllTags);

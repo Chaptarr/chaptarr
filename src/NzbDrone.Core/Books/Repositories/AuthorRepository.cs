@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using Dapper;
 using NLog;
@@ -11,8 +12,9 @@ namespace NzbDrone.Core.Books
 {
     public interface IAuthorRepository : IBasicRepository<Author>
     {
+        Author Update(Author author, IDbConnection connection, IDbTransaction transaction);
+        List<Author> FindExisting(IEnumerable<int> ids);
         bool AuthorPathExists(string path);
-        Author FindByName(string cleanName);
         Author FindByGoodreadsId(string goodreadsId);
         Author FindByHardcoverId(string hardcoverId);
         Author FindByAudnexusId(string audnexusId);
@@ -50,6 +52,14 @@ namespace NzbDrone.Core.Books
             return database.Query<Author>(builder);
         }
 
+        public Author Update(Author author, IDbConnection connection, IDbTransaction transaction)
+        {
+            UpdateMany(new[] { author }, connection, transaction);
+            return author;
+        }
+
+        public List<Author> FindExisting(IEnumerable<int> ids) => FindMany(ids);
+
         public bool AuthorPathExists(string path)
         {
             return Query(c => c.Path == path || c.AudiobookPath == path || c.EbookPath == path).Any();
@@ -78,13 +88,6 @@ namespace NzbDrone.Core.Books
         public Author FindByGoogleBooksId(string googleBooksAuthorId)
         {
             return Query(a => a.GoogleBooksAuthorId == googleBooksAuthorId).SingleOrDefault();
-        }
-
-        public Author FindByName(string cleanName)
-        {
-            cleanName = cleanName.ToLowerInvariant();
-
-            return Query(s => s.CleanName == cleanName).ExclusiveOrDefault();
         }
 
         public List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId)

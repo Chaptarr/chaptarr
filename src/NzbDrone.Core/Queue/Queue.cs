@@ -11,6 +11,7 @@ namespace NzbDrone.Core.Queue
 {
     public class Queue : ModelBase
     {
+        public int PendingReleaseId { get; set; }
         public Author Author { get; set; }
         public Book Book { get; set; }
         public QualityModel Quality { get; set; }

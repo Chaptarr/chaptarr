@@ -39,6 +39,42 @@ namespace NzbDrone.Core.Books
 
     public static class BookIdentity
     {
+        internal static Author GetRequestedWorkPrimaryAuthor(Tuple<string, Book, List<Author>> metadata, string workProviderId, BookMediaType mediaType)
+        {
+            var book = metadata?.Item2;
+            if (book?.MediaType != mediaType ||
+                !ProviderIdHelper.TryNormalize(workProviderId, null, out var requestedWorkId) ||
+                !GetStableWorkProviderIdentityTokens(book).Contains(requestedWorkId))
+            {
+                return null;
+            }
+
+            return GetLookupPrimaryAuthor(metadata);
+        }
+
+        internal static Author GetLookupPrimaryAuthor(Tuple<string, Book, List<Author>> metadata)
+        {
+            if (!ProviderIdHelper.TryNormalize(metadata?.Item1, null, out var primaryProviderId)) return null;
+            // The lookup's selected persona owns this work; contributor order cannot
+            // replace that identity or override a conflicting returned book owner.
+            var bookAuthorIds = AuthorIdentity.GetProviderIdentityTokens(metadata.Item2?.Author);
+            if (bookAuthorIds.Count > 0)
+            {
+                return bookAuthorIds.Contains(primaryProviderId) ? metadata.Item2.Author : null;
+            }
+
+            var selected = metadata.Item3?.Where(author => AuthorIdentity.GetProviderIdentityTokens(author).Contains(primaryProviderId)).ToList();
+            return selected?.Count == 1 ? selected[0] : null;
+        }
+
+        public static Book SelectRequestedBook(IEnumerable<Book> books)
+        {
+            return books.Where(book => book.Id > 0)
+                .OrderByDescending(book => book.IsMonitored())
+                .ThenBy(book => book.Id)
+                .FirstOrDefault();
+        }
+
         internal static bool HasUserPreservationMarker(Book book)
         {
             return book == null ||

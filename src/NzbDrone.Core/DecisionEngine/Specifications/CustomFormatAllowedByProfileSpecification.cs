@@ -1,4 +1,5 @@
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 
@@ -11,7 +12,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public virtual Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
-            var profile = subject.Author.GetQualityProfileForQuality(subject.ParsedBookInfo.Quality.Quality);
+            var profile = subject.GetQualityProfile();
             if (profile == null)
             {
                 return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);

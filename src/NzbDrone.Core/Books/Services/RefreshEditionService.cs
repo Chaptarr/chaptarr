@@ -12,7 +12,7 @@ namespace NzbDrone.Core.Books
 {
     public interface IRefreshEditionService
     {
-        bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags);
+        bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags, IReadOnlyDictionary<int, Edition> matchedRemoteEditions);
     }
 
     public class RefreshEditionService : IRefreshEditionService
@@ -36,9 +36,20 @@ namespace NzbDrone.Core.Books
             _logger = logger;
         }
 
-        public bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags)
+        public bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags, IReadOnlyDictionary<int, Edition> matchedRemoteEditions)
         {
             var updateList = new List<Edition>();
+            var aliasUpdates = new List<Edition>();
+            foreach (var edition in upToDate)
+            {
+                if (!matchedRemoteEditions.TryGetValue(edition.Id, out var remote) || remote.RemoteProviderIds == null) continue;
+                var localIds = ProviderAliasService.NormalizeAliases(BookEditionIdentity.GetEditionProviderIds(edition).Select(BookEditionIdentity.NormalizeRequestedEditionProviderId)).ToHashSet();
+                var remoteIds = ProviderAliasService.NormalizeAliases(BookEditionIdentity.GetEditionProviderIds(remote).Select(BookEditionIdentity.NormalizeRequestedEditionProviderId)).ToHashSet();
+                if (localIds.SetEquals(remoteIds)) continue;
+                edition.RemoteProviderIds = RefreshEntityCopy.CloneProviderIds(remote.RemoteProviderIds);
+                aliasUpdates.Add(edition);
+            }
+            if (aliasUpdates.Count > 0) _editionService.RefreshProviderAliases(aliasUpdates);
 
 	            // Merge duplicate local edition rows first so downstream operations (tag sync, deletes) operate on a converged DB.
 	            // This is a repair path for legacy/buggy DBs where ForeignEditionId isn't unique within a book.
@@ -72,7 +83,7 @@ namespace NzbDrone.Core.Books
 	                        sample += ", ...";
 	                    }
 
-	                    _logger.Warn("Remote metadata returned {0} duplicate editions by ForeignEditionId. Using first match for updates. Duplicates: {1}",
+	                    _logger.Warn("Remote metadata returned {0} duplicate editions by ForeignEditionId. Updates use the resolved local and remote edition pairs. Duplicates: {1}",
 	                        duplicates.Count, sample);
 	                }
 	            }
@@ -80,8 +91,7 @@ namespace NzbDrone.Core.Books
 		            // for editions that need updating, just grab the remote edition and set db ids
 		            foreach (var edition in update)
 		            {
-		                // ForeignEditionId should be unique, but tolerate duplicates to avoid aborting refreshes.
-		                var remoteEdition = remoteEditions.FirstOrDefault(e => e.ForeignEditionId == edition.ForeignEditionId);
+		                matchedRemoteEditions.TryGetValue(edition.Id, out var remoteEdition);
 		                if (remoteEdition != null)
 		                {
 		                    var remoteForUpdate = RefreshEntityCopy.CloneEdition(remoteEdition);
@@ -92,7 +102,7 @@ namespace NzbDrone.Core.Books
 		                {
 		                    // Protected local editions can be preserved even when remote metadata no longer includes them.
 		                    // Still persist local-only fields (Monitored/ManualAdd/etc) so user intent isn't lost.
-		                    _logger.Warn("Remote edition not found for ForeignEditionId: {0}. Preserving local edition and updating local fields only.", edition.ForeignEditionId);
+		                    _logger.Warn("No remote metadata matched local edition {0}. Preserving local edition and updating local fields only.", edition.Id);
 		                }
 
 		                // make sure title is not null

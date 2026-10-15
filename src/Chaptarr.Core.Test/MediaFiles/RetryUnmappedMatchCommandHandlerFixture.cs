@@ -183,11 +183,15 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return Task.FromResult(NextId++);
             }
 
+            public PendingAuthorImport Get(int id) => GetAll().Find(item => item.Id == id);
+            public NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> GetPaged(NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> pagingSpec) => throw new NotImplementedException();
             public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
             public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
             public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null) => throw new NotImplementedException();
+            public bool SaveProgress(PendingAuthorImport item, PendingAuthorImport previous) => throw new NotImplementedException();
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
+            public bool IsActiveRequest(int id, long version) => true;
             public void Cancel(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void CleanupOldCompleted() => throw new NotImplementedException();

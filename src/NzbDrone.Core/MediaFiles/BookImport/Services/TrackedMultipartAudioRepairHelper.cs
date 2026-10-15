@@ -272,7 +272,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             IEditionService editionService,
             IContainmentValidator containmentValidator)
         {
-            if (clusterTags == null || clusterTags.Count == 0 || !containmentValidator.ValidateAuthorInTags(targetAuthor?.Name, clusterTags))
+            if (clusterTags == null || clusterTags.Count == 0)
             {
                 return null;
             }
@@ -312,6 +312,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 .Select(edition =>
                 {
                     var evidence = ExactMatchEvidenceBuilder.Build(targetAuthor?.Name, targetBook.Title, edition, clusterTags, containmentValidator);
+                    if (evidence.AuthorTags.Count == 0)
+                    {
+                        return null;
+                    }
 
                     return new EditionCandidate
                     {
@@ -320,6 +324,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         NarratorEvidenceCount = CountValues(evidence.NarratorTags)
                     };
                 })
+                .Where(candidate => candidate != null)
                 .ToList();
 
             if (strictEdition)
@@ -348,7 +353,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return containmentValidator.ValidateEditionInTags(targetBook.Title, clusterTags)
-                ? preferredEdition ?? audiobookEditions.FirstOrDefault(edition => edition.Monitored) ?? audiobookEditions.First()
+                ? candidates.FirstOrDefault(candidate => candidate.Edition.Id == preferredEdition?.Id)?.Edition ??
+                  candidates.FirstOrDefault(candidate => candidate.Edition.Monitored)?.Edition ??
+                  candidates.FirstOrDefault()?.Edition
                 : null;
         }
 

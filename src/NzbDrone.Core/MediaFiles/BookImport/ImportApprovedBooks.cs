@@ -16,6 +16,7 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Utilities;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Configuration;
@@ -46,6 +47,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
     /// </summary>
     public class ImportApprovedBooks : IImportApprovedBooks
     {
+        internal const string EbookAlternativeRejectionCategory = "EbookAlternative";
+
         private const string ConversionArtifactManifestFileName = "conversion-artifact.json";
         private static readonly string[] SourceCoverBaseNames = { "cover", "front", "folder", "album", "albumart" };
         private static readonly string[] SourceCoverExtensions = { ".jpg", ".jpeg", ".png" };
@@ -162,6 +165,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             var importResults = new List<ImportResult>();
             var importedBookEventContexts = new List<(Author Author, Book Book, BookFile File)>();
+            var replacedBookFilesByBook = new Dictionary<int, List<BookFile>>();
             var bookFileConvertedEvents = new List<BookFileConvertedEvent>();
 
             // Filter to only approved decisions
@@ -385,7 +389,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 // another edition, preserve both truths by routing the import to a separate Book instance.
                 // The shared policy covers the normal GUI pin (AnyEditionOk=false) and the local ManualAdd
                 // preservation marker; never let automatic import clear either through SetMonitored().
-                if (newBookInstance == null)
+                if (newBookInstance == null && !bookDecisions.All(decision => decision.Item.AlternativeCopyGrabDate.HasValue))
                 {
                     var allEditionsForBook = _editionService.GetEditionsByBook(book.Id);
                     var firstMismatch = bookDecisions.FirstOrDefault(decision =>
@@ -624,6 +628,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             throw;
                         }
 
+                        var replacedFilesForBook = pendingFileCommits
+                            .SelectMany(commit => commit.StagedReplacements)
+                            .Select(replacement => replacement.OldFile)
+                            .Where(file => file?.Id > 0)
+                            .DistinctBy(file => file.Id)
+                            .ToList();
+
+                        if (replacedFilesForBook.Any())
+                        {
+                            replacedBookFilesByBook[(newBookInstance ?? book).Id] = replacedFilesForBook;
+                        }
+
                         FinalizePendingFileCommits(pendingFileCommits);
                         WriteTagsForCommittedFiles(pendingFileCommits);
                         batchStopwatch.Stop();
@@ -728,21 +744,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
 
                     var firstContext = bookGroup.First();
+                    var oldFiles = replacedBookFilesByBook.TryGetValue(bookGroup.Key, out var replacedFiles)
+                        ? replacedFiles
+                        : new List<BookFile>();
                     totalFiles += importedFiles.Count;
 
                     _eventAggregator.PublishEvent(new BookImportedEvent(
                         firstContext.Author,
                         firstContext.Book,
                         importedFiles,
-                        new List<BookFile>(), // oldFiles were already deleted
+                        oldFiles,
                         downloadClientItem != null,
                         downloadClientItem));
 
                     // Info deliberately: default-log evidence that the import-to-notification pipeline fired.
-                    _logger.Info("[NOTIFY] Published BookImportedEvent for '{0}' (BookId={1}, Files={2}, NewDownload={3})",
+                    _logger.Info("[NOTIFY] Published BookImportedEvent for '{0}' (BookId={1}, Files={2}, OldFiles={3}, NewDownload={4})",
                         firstContext.Book.Title,
                         firstContext.Book.Id,
                         importedFiles.Count,
+                        oldFiles.Count,
                         downloadClientItem != null);
                 }
 
@@ -801,7 +821,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 var skippedQuality = decision.Item?.Quality?.Quality?.Name ?? "Unknown Text";
                 var reason = $"Skipped duplicate ebook format from the same download; selected {selectedQuality} over {skippedQuality}";
-                decision.Reject(new Rejection(reason));
+                decision.Reject(new Rejection(reason) { Category = EbookAlternativeRejectionCategory });
                 importResults.Add(new ImportResult(decision, reason));
                 _logger.Debug("[EBOOK-DUPLICATE-FORMAT] {0}: {1}", book.Title, reason);
             }
@@ -809,6 +829,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return bookDecisions
                 .Where(d => !skipped.Contains(d))
                 .ToList();
+        }
+
+        internal static bool IsSkippedEbookAlternative(ImportResult result)
+        {
+            // Completion still requires an imported winner for the same edition before ignoring an ineligible format.
+            return result?.Result == ImportResultType.Rejected && result.ImportDecision.Item?.Book?.MediaType == BookMediaType.Ebook &&
+                result.ImportDecision.Rejections.Count == 1 && (result.ImportDecision.Rejections[0].Category == EbookAlternativeRejectionCategory ||
+                    result.ImportDecision.Rejections[0].IsQualityFilter);
         }
 
         private static bool IsAutomaticEbookImportDecision(ImportDecision<LocalBook> decision)
@@ -1156,8 +1184,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         if (hasTrackedReleaseEvidence)
                         {
                             bookFile.SceneName = localBook.SceneName;
-                            bookFile.ReleaseGroup = localBook.ReleaseGroup;
                             bookFile.IndexerFlags = localBook.IndexerFlags;
+                        }
+
+                        if (hasTrackedReleaseEvidence || (localBook.IsManualImport && localBook.ReleaseGroup.IsNotNullOrWhiteSpace()))
+                        {
+                            bookFile.ReleaseGroup = localBook.ReleaseGroup;
                         }
 
                         bookFile.IsGraphicAudio = isGraphicAudio;
@@ -1414,10 +1446,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
                 }
 
-                // The imported file's edition is the persisted display/search truth for this book row.
-                // Manual-pin conflicts are handled before this point by routing the import to a separate
-                // book instance, so never leave "file edition" and "monitored edition" divergent here.
-                if (!edition.Monitored || edition.Id != localBook.Edition.Id)
+                // Ordinary imports keep file and monitored edition aligned after pin-conflict routing.
+                // A captured sent alternative retains its original edition without overwriting a later user pin.
+                if (!localBook.AlternativeCopyGrabDate.HasValue && (!edition.Monitored || edition.Id != localBook.Edition.Id))
                 {
                     if (edition.Id != localBook.Edition.Id)
                     {
@@ -1956,29 +1987,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 return new[] { book?.Title, matchedEdition?.Title }
                     .Where(value => value.IsNotNullOrWhiteSpace())
-                    .Select(NormalizeSourceCoverName)
+                    .Select(UnicodeComparisonNormalizer.NormalizeKey)
                     .Where(value => value.Length >= 8)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-            }
-
-            private static string NormalizeSourceCoverName(string value)
-            {
-                if (value.IsNullOrWhiteSpace())
-                {
-                    return string.Empty;
-                }
-
-                var normalized = new StringBuilder(value.Length);
-                foreach (var ch in value)
-                {
-                    if (char.IsLetterOrDigit(ch))
-                    {
-                        normalized.Append(char.ToLowerInvariant(ch));
-                    }
-                }
-
-                return normalized.ToString();
             }
 
             private static int SourceCoverRank(string path, IReadOnlyCollection<string> titleKeys)
@@ -2003,7 +2015,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return SourceCoverBaseNames.Length + 1;
                 }
 
-                var normalizedName = NormalizeSourceCoverName(name);
+                var normalizedName = UnicodeComparisonNormalizer.NormalizeKey(name);
                 if (normalizedName.Length >= 8 &&
                     titleKeys != null &&
                     titleKeys.Any(titleKey =>
@@ -2360,6 +2372,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     IsInitialImport = first.IsInitialImport,
                     IsManualImport = first.IsManualImport,
                     MatchProvenance = first.MatchProvenance,
+                    AlternativeCopyIncompatibleEditionIds = first.AlternativeCopyIncompatibleEditionIds,
+                    AlternativeCopyGrabDate = first.AlternativeCopyGrabDate,
                     CommonTags = first.CommonTags
                 };
             }
@@ -3498,6 +3512,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var localBook = decision.Item;
             var originalEdition = localBook.Edition;
 
+            Book duplicateBook = null;
             try
             {
 
@@ -3555,102 +3570,46 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     counter++;
                 } while (existingSlugs.Contains(nextSlug));
 
-                // Create the duplicate book
-                var duplicateBook = new Book
-                {
-                    TitleSlug = nextSlug,
-                    Title = originalBook.Title,
-                    CleanTitle = originalBook.CleanTitle,
-                    Overview = originalBook.Overview,
-                    AuthorId = author.Id,
-                    Author = author,
-                    // A physical-copy row inherits the user's monitoring choice from
-                    // the canonical row. The imported file selects its edition below;
-                    // file ownership must not create new book-monitoring intent.
-                    AudiobookMonitored = originalBook.AudiobookMonitored,
-                    EbookMonitored = originalBook.EbookMonitored,
-                    AnyEditionOk = anyEditionOk,
-                    Added = DateTime.UtcNow,
-                    ReleaseDate = originalBook.ReleaseDate,
-                    Links = originalBook.Links != null ? new List<Links>(originalBook.Links) : new List<Links>(),
-                    Genres = originalBook.Genres != null ? new List<string>(originalBook.Genres) : new List<string>(),
-                    Ratings = originalBook.Ratings,
-                    MediaType = mediaType,
-                    UnitKeyHash = unitKeyHash,
-                    HardcoverBookId = originalBook.HardcoverBookId,
-                    RemoteProviderIds = CloneRemoteProviderIds(originalBook.RemoteProviderIds),
-                    IsGraphicAudio = DetectGraphicAudioFromLocalTags(localBook),
-                    
-                    // Copy all metadata fields that were previously missing
-                    Images = originalBook.Images != null ? new List<MediaCover.MediaCover>(originalBook.Images) : new List<MediaCover.MediaCover>(),
-                    OpenLibraryWorkId = originalBook.OpenLibraryWorkId,
-                    ProviderUrls = originalBook.ProviderUrls != null ? new ProviderUrlMap(originalBook.ProviderUrls) : new ProviderUrlMap(),
-                    LastInfoSync = originalBook.LastInfoSync,
-                    LastUpdated = DateTime.UtcNow,
-                    PageCount = originalBook.PageCount,
-                    Publisher = originalBook.Publisher,
-                    PublicationYear = originalBook.PublicationYear,
-                    LanguageCode = originalBook.LanguageCode,
-                    LanguageName = originalBook.LanguageName,
-                    SeriesId = originalBook.SeriesId,
-                    SeriesName = originalBook.SeriesName,
-                    SeriesPosition = originalBook.SeriesPosition,
-                    DurationMinutes = originalBook.DurationMinutes,
-                    AudioProductionType = originalBook.AudioProductionType,
-                    Narrator = originalBook.Narrator,
-                    GoodreadsWorkId = originalBook.GoodreadsWorkId
-                };
+                // Shared metadata copying keeps physical instances in the same authoritative work.
+                duplicateBook = RefreshEntityCopy.CloneBook(originalBook, includeEditions: false, includeSeriesLinks: false);
+                duplicateBook.TitleSlug = nextSlug;
+                duplicateBook.AuthorId = author.Id;
+                duplicateBook.Author = author;
+                duplicateBook.MediaType = mediaType;
+                duplicateBook.AnyEditionOk = anyEditionOk;
+                duplicateBook.UnitKeyHash = unitKeyHash;
+                duplicateBook.IsGraphicAudio = DetectGraphicAudioFromLocalTags(localBook);
+                duplicateBook.Added = DateTime.UtcNow;
+                duplicateBook.LastUpdated = DateTime.UtcNow;
+                duplicateBook.LastSearchTime = null;
+                duplicateBook.AddOptions = null;
+                duplicateBook.ForeignEditionId = originalEdition?.ForeignEditionId;
 
                 // Ensure unique slug
                 _bookService.InsertMany(new List<Book> { duplicateBook });
 
                 // Create edition for the new book
-                var newEdition = new Edition
-                {
-                    Title = originalEdition.Title,
-                    TitleSlug = $"{duplicateBook.TitleSlug}_edition",
-                    ForeignEditionId = BookEditionIdentity.GetTrustedForeignEditionId(originalEdition),
-                    Monitored = true,
-                    ManualAdd = false,
-                    BookId = duplicateBook.Id,
-                    Book = duplicateBook,
-                    Ratings = originalEdition.Ratings,
-                    ReviewCount = originalEdition.ReviewCount,
-                    ReleaseDate = originalEdition.ReleaseDate,
-                    PageCount = originalEdition.PageCount,
-                    Isbn13 = originalEdition.Isbn13,
-                    Asin = originalEdition.Asin,
-                    Asins = originalEdition.Asins != null ? new List<string>(originalEdition.Asins) : new List<string>(),
-                    GoodreadsEditionId = originalEdition.GoodreadsEditionId,
-                    HardcoverEditionId = originalEdition.HardcoverEditionId,
-                    Format = originalEdition.Format,
-                    IsEbook = originalEdition.IsEbook,
-                    ReadingFormatId = originalEdition.ReadingFormatId,
-                    Narrator = originalEdition.Narrator,
-                    NarratorNames = originalEdition.NarratorNames != null ? new List<string>(originalEdition.NarratorNames) : new List<string>(),
-                    DurationSeconds = originalEdition.DurationSeconds,
-                    ChapterCount = originalEdition.ChapterCount,
-                    HasChapters = originalEdition.HasChapters,
-                    Chapters = originalEdition.Chapters?.Select(c => new EditionChapter
-                    {
-                        Title = c?.Title,
-                        StartOffsetMs = c?.StartOffsetMs ?? 0,
-                        StartOffsetSec = c?.StartOffsetSec ?? 0,
-                        LengthMs = c?.LengthMs ?? 0
-                    }).ToList() ?? new List<EditionChapter>(),
-                    AudibleASIN = originalEdition.AudibleASIN,
-                    AudioProductionType = originalEdition.AudioProductionType
-                };
+                var newEdition = RefreshEntityCopy.CloneEdition(originalEdition);
+                newEdition.TitleSlug = $"{duplicateBook.TitleSlug}_edition";
+                newEdition.Monitored = true;
+                newEdition.ManualAdd = false;
+                newEdition.BookId = duplicateBook.Id;
+                newEdition.Book = duplicateBook;
 
                 _editionService.InsertMany(new List<Edition> { newEdition });
                 
-                // Trigger series link creation for the new book
+                // Publish the normal book-added lifecycle for the new instance.
                 _eventAggregator.PublishEvent(new BookAddedEvent(duplicateBook, false));
 
                 return new BatchBookResult { NewBook = duplicateBook, NewEdition = newEdition };
             }
             catch (Exception ex)
             {
+                if (duplicateBook?.Id > 0)
+                {
+                    _bookService.DeleteBook(duplicateBook.Id, deleteFiles: false);
+                }
+
                 _logger.Error(ex, "Failed to create new book instance for batch");
                 return null;
             }

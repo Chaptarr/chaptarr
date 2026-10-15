@@ -4,12 +4,13 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Extensions;
 
@@ -433,9 +434,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             });
         }
 
-        private static readonly IReadOnlySet<string> HolyGrailLeftoverHardNoiseTokens =
-            Services.BookImportUnitGroupingService.HardNoiseTokens;
-
         private static readonly IReadOnlySet<string> HolyGrailLeftoverStructuralTokens =
             Services.BookImportUnitGroupingService.StructuralTokens;
 
@@ -610,6 +608,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 .Where(id => id > 0)
                 .Distinct()
                 .ToHashSet();
+
+            if (context.AlternativeCopies)
+            {
+                return Task.FromResult(MatchAlternativeCopyFiles(filesWithMetadata, restrictToAuthorId, context));
+            }
 
             var pinnedFirstCrack = targetBookIds?.Count == 1
                 ? TryBuildPinnedEditionFirstCrackTarget(targetBookIds[0], restrictToAuthorId)
@@ -2611,6 +2614,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 result.MatchedFiles = groupedMatched.ToArray();
                 result.UnmatchedFiles = groupedUnmatched.ToArray();
+                AssociateSingleTargetGrabFiles(result, targetBookIds);
 
                 totalStopwatch.Stop();
                 _logger.Debug("[PERFORMANCE] File matching complete: {0} matched, {1} unmatched. Total time: {2}ms ({3:F2}s)",
@@ -2846,6 +2850,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             result.MatchedFiles = matchedList.ToArray();
             result.UnmatchedFiles = unmatchedList.ToArray();
+            AssociateSingleTargetGrabFiles(result, targetBookIds);
 
             totalStopwatch.Stop();
             _logger.Debug("[PERFORMANCE] File matching complete: {0} matched, {1} unmatched. Total time: {2}ms ({3:F2}s)",
@@ -3498,6 +3503,230 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
         }
 
+        private void AssociateSingleTargetGrabFiles(FileMatchResult result, IReadOnlyCollection<int> targetBookIds)
+        {
+            if (targetBookIds?.Count != 1 || result.MatchedFiles.Length == 0 || result.UnmatchedFiles.Length == 0)
+            {
+                return;
+            }
+
+            var witness = result.MatchedFiles[0];
+            var media = QualityMediaTypeHelper.GetMediaTypeFromPath(witness.File.Path);
+            if (!media.HasValue || witness.EditionId <= 0 || result.MatchedFiles.Any(match =>
+                match.BookId != targetBookIds.First() || match.BookId != witness.BookId || match.EditionId != witness.EditionId ||
+                QualityMediaTypeHelper.GetMediaTypeFromPath(match.File.Path) != media))
+            {
+                return;
+            }
+
+            var following = result.UnmatchedFiles.Where(unmatched =>
+                QualityMediaTypeHelper.GetMediaTypeFromPath(unmatched.File.Path) == media).ToList();
+            var explainedValues = GetProvenFileIdentityValues(result.MatchedFiles.Select(match => match.File));
+            following = following.Where(unmatched => ExtractIdentifierEvidence(unmatched.File, unmatched.File.AllTags).Count == 0 &&
+                string.IsNullOrWhiteSpace(BookImportUnitGroupingService.BuildIdentityKey(unmatched.File.AllTags, excludedIdentityValues: explainedValues))).ToList();
+
+            result.MatchedFiles = result.MatchedFiles.Concat(following.Select(unmatched => new FileMatch
+            {
+                File = unmatched.File,
+                AuthorId = witness.AuthorId,
+                AuthorName = witness.AuthorName,
+                BookId = witness.BookId,
+                BookTitle = witness.BookTitle,
+                EditionId = witness.EditionId,
+                MatchedVia = "shared_grab"
+            })).ToArray();
+            result.UnmatchedFiles = result.UnmatchedFiles.Except(following).ToArray();
+        }
+
+        private static HashSet<string> GetProvenFileIdentityValues(IEnumerable<DiscoveredFileWithMetadata> files) => files
+            .SelectMany(file => (file.AllTags ?? new Dictionary<string, List<string>>())
+                .Where(pair => !TagExclusionPolicy.IsExcludedFromMatching(pair.Key))
+                .SelectMany(pair => pair.Value ?? new List<string>()))
+            .Select(BookImportUnitGroupingService.NormalizeIdentityValue)
+            .Where(value => !string.IsNullOrWhiteSpace(value)).ToHashSet(StringComparer.Ordinal);
+
+        private FileMatchResult MatchAlternativeCopyFiles(DiscoveredFileWithMetadata[] files, int? authorId, MatchingContext context)
+        {
+            files ??= Array.Empty<DiscoveredFileWithMetadata>();
+            var timer = Stopwatch.StartNew();
+            var candidateCount = 0;
+            var catalogByAuthor = new Dictionary<int, List<Book>>();
+            FileMatchResult Finish(FileMatchResult result)
+            {
+                foreach (var match in result.MatchedFiles)
+                {
+                    LogDecisionWithProvenance(match.File.Path, "MATCHED", "Files proved a captured alternative copy", match.File.AllTags,
+                        match.AlternativeCopyEdition.Book.MediaType, match);
+                }
+
+                foreach (var unmatched in result.UnmatchedFiles)
+                {
+                    var media = MediaFileExtensions.AudioExtensions.Contains(Path.GetExtension(unmatched.File.Path)) ? BookMediaType.Audiobook : BookMediaType.Ebook;
+                    LogDecisionWithProvenance(unmatched.File.Path, "UNMATCHED", unmatched.Reason, unmatched.File.AllTags, media);
+                }
+
+                _logger.Debug("[ALTERNATIVE-COPY-PROOF] files={0} candidates={1} matched={2} held={3} catalogLoads={4} elapsedMs={5}",
+                    files.Length, candidateCount, result.MatchedFiles.Length, result.UnmatchedFiles.Length, catalogByAuthor.Count, timer.Elapsed.TotalMilliseconds);
+                return result;
+            }
+
+            FileMatchResult Hold(string reason) => Finish(HoldAlternativeCopyFiles(files, reason));
+            var captured = context.TargetEditionIds ?? new Dictionary<int, int>();
+            var books = _bookService.GetExistingBooks(captured.Keys);
+            List<Book> LoadCatalog(int id)
+            {
+                if (!catalogByAuthor.TryGetValue(id, out var catalog))
+                {
+                    catalog = LoadNumericAliasAuthorCatalog(id);
+                    catalogByAuthor[id] = catalog;
+                }
+
+                return catalog;
+            }
+
+            var booksById = books.ToDictionary(book => book.Id);
+            var wanted = books.Select(book => book.Editions?.FirstOrDefault(edition =>
+                    captured.TryGetValue(book.Id, out var id) && edition.Id == id && edition.BookId == book.Id))
+                .Where(edition => edition != null).ToList();
+            foreach (var edition in wanted)
+            {
+                edition.Book = booksById[edition.BookId];
+            }
+
+            var first = wanted.FirstOrDefault()?.Book;
+            if (first == null || wanted.Count != captured.Count || !authorId.HasValue || first.AuthorId != authorId.Value ||
+                wanted.Any(edition => edition.Book.AuthorId != authorId || edition.Book.MediaType != first.MediaType ||
+                    (edition.BookId != first.Id && !WorkIdMatcher.WorkProviderIdMatches(first, edition.Book))))
+            {
+                return Hold("Captured alternative-copy context could not be verified. Select a target manually.");
+            }
+
+            var completeCasts = new Dictionary<int, IReadOnlyList<string>>();
+            foreach (var edition in wanted)
+            {
+                if (ReleaseNarratorEvidenceExtractor.TryGetCompleteCast(edition, out var cast))
+                {
+                    completeCasts[edition.Id] = cast;
+                }
+            }
+
+            foreach (var edition in wanted.Where(edition => (edition.NarratorNames?.Count ?? 0) == 0 && (edition.NarratorCredits?.Count ?? 0) == 0))
+            {
+                foreach (var knownCast in completeCasts.Values.ToList())
+                {
+                    if (ReleaseNarratorEvidenceExtractor.TryGetCompleteCast(edition, out var cast, knownCast))
+                    {
+                        edition.NarratorNames = cast.ToList();
+                        completeCasts[edition.Id] = cast;
+                        break;
+                    }
+                }
+            }
+
+            var bookFiles = files.Where(file => QualityMediaTypeHelper.GetMediaTypeFromPath(file.Path) == first.MediaType).ToList();
+            foreach (var companion in files.Except(bookFiles))
+            {
+                _logger.Debug("[DOWNLOAD-IMPORT] Leaving companion outside book matching: {0}", companion.Path);
+            }
+            var proven = new Dictionary<DiscoveredFileWithMetadata, FileMatch>();
+            foreach (var file in bookFiles)
+            {
+                context.CancellationToken.ThrowIfCancellationRequested();
+                var tags = file.AllTags ?? new Dictionary<string, List<string>>();
+                var identifiers = ExtractIdentifierEvidence(file, tags);
+                var proofs = new List<FileMatch>();
+                foreach (var edition in wanted)
+                {
+                    candidateCount++;
+                    var exact = identifiers.Where(evidence => BookEditionIdentity.EditionMatchesProviderId(edition, evidence.Identifier)).ToList();
+                    FileMatch proof = null;
+                    if (exact.Count > 0)
+                    {
+                        var identity = TryBuildIdentifierCandidateProof(edition, exact, CategorizeTagsForHolyGrail(tags), authorId, out _, LoadCatalog);
+                        if (identity != null)
+                        {
+                            var provenance = BuildIdentifierMatchProvenance(exact, GetConfiguredMatchingStrictness(), out var identityProof, tags, identity);
+                            proof = CreateFileMatchFromEdition(file, edition, provenance, identityProof);
+                        }
+                    }
+
+                    if (proof == null && first.MediaType == BookMediaType.Audiobook && completeCasts.TryGetValue(edition.Id, out var cast))
+                    {
+                        var target = new PinnedEditionFirstCrackTarget(edition.Book, edition, new[] { string.Join("; ", cast) });
+                        proof = EvaluatePinnedEditionFirstCrack(file, tags, first.MediaType, target, out _, LoadCatalog)?.Match;
+                    }
+
+                    if (proof != null)
+                    {
+                        proof.AlternativeCopyEdition = edition;
+                        proofs.Add(proof);
+                    }
+                }
+
+                if (first.MediaType == BookMediaType.Audiobook)
+                {
+                    foreach (var edition in wanted.Where(edition => proofs.All(proof => proof.BookId != edition.BookId)))
+                    {
+                        var equivalent = proofs.FirstOrDefault(proof => BookEditionIdentity.HasSameNarration(proof.AlternativeCopyEdition, edition));
+                        if (equivalent != null)
+                        {
+                            var proof = CreateFileMatchFromEdition(file, edition, equivalent.Provenance, equivalent.IdentityProof);
+                            proof.AlternativeCopyEdition = edition;
+                            proofs.Add(proof);
+                        }
+                    }
+                }
+
+                if (proofs.Count > 1 || (proofs.Count == 0 && identifiers.Count > 0))
+                {
+                    return Hold("Files did not uniquely prove a captured alternative copy. Select a target manually.");
+                }
+
+                if (proofs.Count == 1)
+                {
+                    var selected = proofs[0];
+                    var selectedEdition = selected.AlternativeCopyEdition;
+                    selected.AlternativeCopyIncompatibleEditionIds = wanted
+                        .Where(edition => edition.BookId != selected.BookId &&
+                            (first.MediaType == BookMediaType.Audiobook
+                                ? completeCasts.ContainsKey(selectedEdition.Id) && completeCasts.ContainsKey(edition.Id) &&
+                                    !BookEditionIdentity.HasSameNarration(selectedEdition, edition)
+                                : identifiers.Any(evidence => BookEditionIdentity.EditionMatchesProviderId(selectedEdition, evidence.Identifier)) &&
+                                    BookEditionIdentity.GetTrustedForeignEditionId(edition) != null && !BookEditionIdentity.EditionsMatch(selectedEdition, edition)))
+                        .ToDictionary(edition => edition.BookId, edition => edition.Id);
+                    proven.Add(file, selected);
+                }
+            }
+
+            if (proven.Count == 0 || proven.Values.Select(match => match.BookId).Distinct().Count() != 1)
+            {
+                return Hold("Files did not prove one captured alternative copy for this grab. Select a target manually.");
+            }
+
+            var explainedValues = GetProvenFileIdentityValues(proven.Keys);
+            if (bookFiles.Except(proven.Keys).Any(file => !string.IsNullOrWhiteSpace(
+                BookImportUnitGroupingService.BuildIdentityKey(file.AllTags, excludedIdentityValues: explainedValues))))
+            {
+                return Hold("Files contain conflicting book or narrator evidence. Select a target manually.");
+            }
+
+            var witness = proven.Values.First();
+            var incompatible = witness.AlternativeCopyIncompatibleEditionIds.Where(pair => proven.Values.All(match =>
+                    match.AlternativeCopyIncompatibleEditionIds.GetValueOrDefault(pair.Key) == pair.Value))
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+            var matched = bookFiles.Select(file =>
+            {
+                var match = proven.GetValueOrDefault(file) ?? CreateFileMatchFromEdition(file, witness.AlternativeCopyEdition);
+                match.AlternativeCopyEdition = witness.AlternativeCopyEdition;
+                match.AlternativeCopyIncompatibleEditionIds = incompatible;
+                return match;
+            }).ToArray();
+            return Finish(new FileMatchResult { MatchedFiles = matched });
+        }
+
+        private static FileMatchResult HoldAlternativeCopyFiles(IEnumerable<DiscoveredFileWithMetadata> files, string reason) =>
+            new FileMatchResult { UnmatchedFiles = files.Select(file => new UnmatchedFile { File = file, Reason = reason }).ToArray() };
+
         private sealed class PinnedEditionFirstCrackTarget
         {
             public PinnedEditionFirstCrackTarget(Book book, Edition edition, IReadOnlyList<string> narratorCandidates)
@@ -3561,7 +3790,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return null;
             }
 
-            var narratorCandidates = GetNarratorCandidates(monitoredEdition);
+            var narratorCandidates = ExactMatchEvidenceBuilder.GetNarratorCandidates(monitoredEdition);
             if (narratorCandidates.Count == 0)
             {
                 return null;
@@ -3597,7 +3826,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             IDictionary<string, List<string>> tags,
             BookMediaType mediaType,
             PinnedEditionFirstCrackTarget target,
-            out string matchedNarrator)
+            out string matchedNarrator,
+            Func<int, List<Book>> authorCatalogLoader = null)
         {
             matchedNarrator = null;
 
@@ -3627,14 +3857,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 target.Edition.Title,
                 target.Edition.Language,
                 tags,
-                target.Book);
+                target.Book,
+                authorCatalogLoader,
+                knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(target.Edition));
             if (pinnedTitleEvidence.Count == 0)
             {
                 return new PinnedFirstCrackEvaluation { FailureReason = "wanted edition title not present in embedded tags" };
             }
 
             // 3) Author smoke test (reuse existing containment logic)
-            if (!_containmentValidator.ValidateAuthorInTags(target.Book.Author?.Name, tags))
+            if (!_containmentValidator.ValidateAuthorInTags(target.Book.Author?.Name, tags, new[] { target.Edition.Title, target.Book.Title }))
             {
                 return new PinnedFirstCrackEvaluation { FailureReason = "wanted author not present in embedded tags" };
             }
@@ -3670,7 +3902,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 });
             }
 
-            foreach (var authorEvidence in BuildRawAuthorEvidenceTags(target.Book.Author?.Name, tags))
+            foreach (var authorEvidence in BuildRawAuthorEvidenceTags(target.Book.Author?.Name, tags, new[] { target.Edition.Title, target.Book.Title }))
             {
                 foreach (var value in authorEvidence.Value ?? new List<string>())
                 {
@@ -3737,52 +3969,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             };
         }
 
-        private static List<string> GetNarratorCandidates(Edition edition)
-        {
-            var output = new List<string>();
-
-            if (edition?.NarratorNames != null && edition.NarratorNames.Any())
-            {
-                output.AddRange(edition.NarratorNames);
-            }
-
-            if (!string.IsNullOrWhiteSpace(edition?.Narrator))
-            {
-                output.Add(edition.Narrator);
-            }
-
-            return output
-                .SelectMany(ExpandNarratorVariants)
-                .Select(n => n?.Trim())
-                .Where(n => !string.IsNullOrWhiteSpace(n))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private static IEnumerable<string> ExpandNarratorVariants(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                yield break;
-            }
-
-            yield return raw;
-
-            // "Last, First" -> "First Last"
-            if (raw.Contains(","))
-            {
-                var parts = raw.Split(',')
-                    .Select(p => p.Trim())
-                    .Where(p => !string.IsNullOrWhiteSpace(p))
-                    .ToArray();
-
-                if (parts.Length >= 2)
-                {
-                    yield return string.Join(" ", parts.Skip(1).Concat(parts.Take(1)));
-                }
-            }
-        }
-
         private bool TryFindNarratorEvidence(
             IReadOnlyList<string> narratorCandidates,
             string authorName,
@@ -3807,35 +3993,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             return false;
         }
-
-        private static string NormalizePersonNameForMatch(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s))
-            {
-                return string.Empty;
-            }
-
-            var t = s.Trim().ToLowerInvariant();
-            var sb = new StringBuilder(t.Length);
-            foreach (var ch in t)
-            {
-                if (char.IsLetterOrDigit(ch))
-                {
-                    sb.Append(ch);
-                }
-                else if (char.IsWhiteSpace(ch))
-                {
-                    sb.Append(' ');
-                }
-                else
-                {
-                    sb.Append(' ');
-                }
-            }
-
-            return Regex.Replace(sb.ToString(), "\\s+", " ").Trim();
-        }
-
 
         private HolyGrailAttemptResult TryMatchWithHolyGrail(
             DiscoveredFileWithMetadata file,
@@ -4166,7 +4323,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             text = NormalizeForPathTokens(text);
 
             // Keep hyphens and periods intact here; SQLite FTS tokenchars is "-." so they remain part of tokens.
-            // Apostrophes are separators in our FTS configuration and are handled later by TokenizeText().
+            // Apostrophes are separators in our FTS configuration and are handled later by UnicodeComparisonNormalizer.WordSpans().
             var seps = new[] { ' ', '_', ',', ';', '(', ')', '[', ']', '{', '}', '&', '+' };
             var parts = text.Split(seps, StringSplitOptions.RemoveEmptyEntries);
             foreach (var p in parts)
@@ -4702,7 +4859,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 {
                     return true;
                 }
-                if (HolyGrailLeftoverHardNoiseTokens.Contains(tok)) return false;
                 if (HolyGrailLeftoverStructuralTokens.Contains(tok)) return false;
                 if (tok.All(char.IsDigit)) return true; // numbers are meaningful disambiguators (e.g., "Dune 2", "Season 3")
                 if (SeriesPositionTokenHelper.LooksLikeRomanNumeralToken(tok)) return true;
@@ -4765,11 +4921,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 if (boundaryTokens.Contains(tok))
                 {
                     return true;
-                }
-
-                if (HolyGrailLeftoverHardNoiseTokens.Contains(tok))
-                {
-                    return false;
                 }
 
                 if (explainableTokens.Contains(tok))
@@ -5002,7 +5153,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     fieldTokens.ExceptWith(explainableTokens);
                     fieldTokens.ExceptWith(recognizedSeriesDecorationTokens);
                     fieldTokens.RemoveWhere(IsObservedSeriesPositionToken);
-                    fieldTokens.RemoveWhere(t => HolyGrailLeftoverHardNoiseTokens.Contains(t));
                     fieldTokens.RemoveWhere(t =>
                         t.All(char.IsDigit) &&
                         explainableTokens.Contains(t.TrimStart('0').Length > 0 ? t.TrimStart('0') : "0"));
@@ -5111,11 +5261,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
 
                     tok = tok.Trim();
-
-                    if (HolyGrailLeftoverHardNoiseTokens.Contains(tok))
-                    {
-                        return;
-                    }
 
                     if (IsRecognizedSeriesDecoration(tok, index))
                     {
@@ -5320,7 +5465,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             if (contradictions.Count > 0)
                             {
                                 // Keep the smallest contradiction set for reporting if no evidence field passes.
-                                var distinct = contradictions.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                                var distinct = contradictions.Concat(ambiguousNumeric).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
                                 if (strictness == BookMatchingStrictness.Strict)
                                 {
@@ -5429,8 +5574,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                         // Only split when the prefix is a known structural/packaging marker (e.g., "pt01", "track2", "vol3").
                         if (!HolyGrailLeftoverStructuralTokens.Contains(maybePrefix) &&
-                            !HolyGrailLeftoverNumericPackagingTokens.Contains(maybePrefix) &&
-                            !HolyGrailLeftoverHardNoiseTokens.Contains(maybePrefix))
+                            !HolyGrailLeftoverNumericPackagingTokens.Contains(maybePrefix))
                         {
                             return false;
                         }
@@ -5683,19 +5827,31 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 allTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             }
 
+            var originalTags = allTags;
             var strictness = GetConfiguredMatchingStrictness();
 
             // Series info comes from DB only. Tag labels are never trusted.
 
                 var booksById = new Dictionary<int, Book>();
 
-                var stagedFtsUsed = false;
+                var authorGateCache = new Dictionary<
+                    string,
+                    (bool Proven, bool TrustedScope, string ProvenName, IReadOnlyList<string> IdentityNames, bool HasPossibleSpan)>(
+                    StringComparer.OrdinalIgnoreCase);
+
+                string AuthorGateKey(int identityAuthorId, string identityAuthorName)
+                {
+                    return identityAuthorId > 0
+                        ? $"id:{identityAuthorId.ToString(CultureInfo.InvariantCulture)}"
+                        : $"name:{identityAuthorName?.Trim() ?? string.Empty}";
+                }
+
+                var authorRejectedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 var stagedFieldQueries = new List<EditionFtsFieldQuery>();
                 var stagedGroupFields = new List<GroupPhysicalField>();
                 List<EditionFtsMatch> ftsResults;
-                if (_editionFtsRepository is IStagedEditionFtsRepository stagedRepository)
                 {
-                    stagedFtsUsed = true;
                     Action<EditionFtsTraceEvent> trace = IsMatchingTraceEnabled()
                         ? evt => RecordFtsTrace(evt, rejectionPhase, filePath)
                         : null;
@@ -5706,19 +5862,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         Step = "staged_matching",
                         Terms = tokens.ToList()
                     });
-                    var recalledBooks = stagedRepository.RecallBooks(authorId, tokens, mediaType, trace, limit: 20);
-                    var authorGateCache = new Dictionary<
-                        string,
-                        (bool Proven, bool TrustedScope, string ProvenName, IReadOnlyList<string> IdentityNames)>(
-                        StringComparer.OrdinalIgnoreCase);
-                    var authorNamesToConsume = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                    string AuthorGateKey(BookFtsMatch recalledBook)
-                    {
-                        return recalledBook.AuthorId > 0
-                            ? $"id:{recalledBook.AuthorId.ToString(CultureInfo.InvariantCulture)}"
-                            : $"name:{recalledBook.AuthorName?.Trim() ?? string.Empty}";
-                    }
+                    var recalledBooks = _editionFtsRepository.RecallBooks(authorId, tokens, mediaType, trace, limit: 20);
+                    var authorsToConsume = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+                    var authorFields = allTags
+                        .Where(pair => !IsExcludedFromMatching(pair.Key) && pair.Value != null)
+                        .SelectMany(pair => pair.Value)
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Select(value => (Value: value, Tokens: ReleaseTitleMatchScorer.TokenizeWithSpans(value)))
+                        .ToList();
 
                     IReadOnlyList<string> ResolveAuthorIdentityNames(BookFtsMatch recalledBook)
                     {
@@ -5759,37 +5910,40 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             .ToList();
                     }
 
-                    (bool Proven, bool TrustedScope, string ProvenName, IReadOnlyList<string> IdentityNames)
+                    (bool Proven, bool TrustedScope, string ProvenName, IReadOnlyList<string> IdentityNames, bool HasPossibleSpan)
                         EvaluateAuthorGate(BookFtsMatch recalledBook)
                     {
                         if (recalledBook == null)
                         {
-                            return (false, false, null, Array.Empty<string>());
+                            return (false, false, null, Array.Empty<string>(), false);
                         }
 
-                        var cacheKey = AuthorGateKey(recalledBook);
-                        if (authorGateCache.TryGetValue(cacheKey, out var cached))
+                        var cacheKey = AuthorGateKey(recalledBook.AuthorId, recalledBook.AuthorName);
+                        if (!authorGateCache.TryGetValue(cacheKey, out var cached))
                         {
-                            return cached;
+                            var identityNames = ResolveAuthorIdentityNames(recalledBook);
+                            var trustedScope = authorId.HasValue && recalledBook.AuthorId == authorId.Value;
+                            string provenName = null;
+                            if (!authorId.HasValue)
+                            {
+                                provenName = identityNames.FirstOrDefault(name =>
+                                    _containmentValidator.ValidateAuthorInTags(name, allTags) ||
+                                    TryBuildExactGroupIdentitySpanProof(name, groupMemberTags, out _));
+                            }
+
+                            cached = (
+                                Proven: trustedScope || provenName != null,
+                                TrustedScope: trustedScope,
+                                ProvenName: provenName,
+                                IdentityNames: identityNames,
+                                HasPossibleSpan: !authorId.HasValue && provenName == null && identityNames
+                                    .Select(AuthorNameMatcher.PrepareName)
+                                    .Any(name => authorFields.Any(field =>
+                                        AuthorNameMatcher.FindNameSpans(field.Value, field.Tokens, name).Any())));
+                            authorGateCache[cacheKey] = cached;
                         }
 
-                        var identityNames = ResolveAuthorIdentityNames(recalledBook);
-                        var trustedScope = authorId.HasValue && recalledBook.AuthorId == authorId.Value;
-                        string provenName = null;
-                        if (!authorId.HasValue)
-                        {
-                            provenName = identityNames.FirstOrDefault(name =>
-                                _containmentValidator.ValidateAuthorInTags(name, allTags) ||
-                                TryBuildExactGroupIdentitySpanProof(name, groupMemberTags, out _));
-                        }
-
-                        var result = (
-                            Proven: trustedScope || provenName != null,
-                            TrustedScope: trustedScope,
-                            ProvenName: provenName,
-                            IdentityNames: identityNames);
-                        authorGateCache[cacheKey] = result;
-                        return result;
+                        return cached;
                     }
 
                     var gatedBooks = new List<BookFtsMatch>();
@@ -5820,6 +5974,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         }
 
                         var authorGate = EvaluateAuthorGate(recalledBook);
+                        var retainForEditionProof = authorGate.Proven || authorGate.HasPossibleSpan;
                         var rejectionReason = authorId.HasValue
                             ? "AUTHOR_SCOPE_MISMATCH"
                             : "AUTHOR_NOT_IN_TAGS";
@@ -5833,10 +5988,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             BroadRecallScore = recalledBook.MatchScore
                         };
                         RecordTrace(
-                            authorGate.Proven ? "fts_author_gate_passed" : "fts_author_gate_rejected",
+                            authorGate.Proven ? "fts_author_gate_passed" : authorGate.HasPossibleSpan ? "fts_author_gate_provisional" : "fts_author_gate_rejected",
                             rejectionPhase,
                             traceCandidate,
-                            authorGate.Proven ? null : rejectionReason,
+                            retainForEditionProof ? null : rejectionReason,
                             filePath: filePath,
                             data: new Dictionary<string, string>
                             {
@@ -5845,17 +6000,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     ? "trusted_scope"
                                     : authorGate.ProvenName != null
                                         ? "embedded_name"
-                                        : "none",
+                                        : authorGate.HasPossibleSpan ? "pending_edition_title" : "none",
                                 ["authorProofName"] = authorGate.ProvenName ?? string.Empty,
                                 ["authorsEvaluated"] = authorGateCache.Count.ToString(CultureInfo.InvariantCulture)
                             });
-                        if (authorGate.Proven)
+                        if (retainForEditionProof)
                         {
                             gatedBooks.Add(recalledBook);
-                            foreach (var identityName in authorGate.IdentityNames)
-                            {
-                                authorNamesToConsume.Add(identityName);
-                            }
+                        }
+                        else if (!string.IsNullOrWhiteSpace(recalledBook.AuthorName))
+                        {
+                            authorRejectedNames.Add(recalledBook.AuthorName);
+                        }
+
+                        if (authorGate.Proven)
+                        {
+                            authorsToConsume[AuthorGateKey(recalledBook.AuthorId, recalledBook.AuthorName)] = authorGate.IdentityNames;
                         }
                     }
 
@@ -5867,16 +6027,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return null;
                     }
 
-                    stagedFieldQueries = BuildStagedFtsFieldQueries(
-                        allTags,
-                        gatedBooks,
-                        authorNamesToConsume,
-                        rejectionPhase,
-                        filePath);
-                    stagedGroupFields = BuildCandidateRelativeGroupFields(
-                        groupMemberTags,
-                        authorNamesToConsume);
-                    ftsResults = stagedRepository.RankEditions(gatedBooks, stagedFieldQueries, mediaType, trace);
+                    var residualOccurrences = ConsumeAuthorEvidence(allTags, authorsToConsume.Values, rejectionPhase, filePath);
+                    allTags = residualOccurrences.GroupBy(occurrence => occurrence.Field, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => group.Select(occurrence => occurrence.ResidualValue).ToList(), StringComparer.OrdinalIgnoreCase);
+                    stagedFieldQueries = BuildStagedFtsFieldQueries(residualOccurrences, gatedBooks, rejectionPhase, filePath);
+                    stagedGroupFields = BuildCandidateRelativeGroupFields(groupMemberTags, authorsToConsume.Values);
+                    ftsResults = _editionFtsRepository.RankEditions(gatedBooks, stagedFieldQueries, mediaType, trace);
                     stagedStopwatch.Stop();
                     trace?.Invoke(new EditionFtsTraceEvent
                     {
@@ -5896,19 +6052,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         ftsResults?.Count ?? 0,
                         stagedFieldQueries.Count);
                 }
-                else
-                {
-                    // Test doubles and compatibility callers that only implement the historical contract.
-                    ftsResults = IsMatchingTraceEnabled() && _editionFtsRepository is IEditionFtsTraceRepository traceRepository
-                        ? traceRepository.SearchWithTwoStepWithTrace(
-                            authorId,
-                            tokens,
-                            mediaType,
-                            evt => RecordFtsTrace(evt, rejectionPhase, filePath),
-                            limit: 20)
-                        : _editionFtsRepository.SearchWithTwoStep(authorId, tokens, mediaType, limit: 20);
-                }
-
                 if (hardAllowedBookIds?.Count > 0 && ftsResults != null)
                 {
                     ftsResults = ftsResults
@@ -6012,7 +6155,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         // Trash/exclude keys already filtered. All remaining tags treated uniformly.
                         const int maxContainmentEvidenceValueLength = 400;
                         authorEvidenceTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var kv in allTags)
+                        foreach (var kv in originalTags)
                         {
                             if (kv.Value == null) continue;
                             var authorValues = kv.Value
@@ -6022,6 +6165,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             {
                                 authorEvidenceTags[kv.Key] = authorValues;
                             }
+                        }
+
+                        foreach (var kv in allTags)
+                        {
+                            if (kv.Value == null) continue;
                             foreach (var v in kv.Value)
                             {
                                 if (string.IsNullOrWhiteSpace(v) || v.Length >= 5000) continue;
@@ -6039,24 +6187,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
 
                     var candidateAuthorEvidenceCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-                    bool CandidateAuthorInTags(string candidateAuthorName)
+                    bool CandidateAuthorInTags(string candidateAuthorName, IEnumerable<string> knownTitles = null)
                     {
                         if (string.IsNullOrWhiteSpace(candidateAuthorName))
                         {
                             return false;
                         }
 
-                        if (candidateAuthorEvidenceCache.TryGetValue(candidateAuthorName, out var cached))
+                        if (!candidateAuthorEvidenceCache.TryGetValue(candidateAuthorName, out var cached))
                         {
-                            return cached;
-                        }
-
-                        var result = (authorEvidenceTags != null &&
+                            cached = (authorEvidenceTags != null &&
                                       authorEvidenceTags.Count > 0 &&
                                       _containmentValidator.ValidateAuthorInTags(candidateAuthorName, authorEvidenceTags)) ||
                                      TryBuildExactGroupIdentitySpanProof(candidateAuthorName, groupMemberTags, out _);
-                        candidateAuthorEvidenceCache[candidateAuthorName] = result;
-                        return result;
+                            candidateAuthorEvidenceCache[candidateAuthorName] = cached;
+                        }
+
+                        return cached || (knownTitles != null &&
+                                          authorEvidenceTags?.Count > 0 &&
+                                          _containmentValidator.ValidateAuthorInTags(candidateAuthorName, authorEvidenceTags, knownTitles));
                     }
 
                 var narratorMatchCache = new Dictionary<int, int>();
@@ -6077,7 +6226,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return cached;
                     }
 
-                    var computed = CountNarratorMatchesInTags(candidate.NarratorNames, candidate.AuthorName, allTags);
+                    var computed = CountNarratorMatchesInResidualTags(candidate.NarratorNames, candidate.AuthorName, allTags);
                     narratorMatchCache[candidate.EditionId] = computed;
                     return computed;
                 }
@@ -6147,75 +6296,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         HasCompleteNarratorEvidence(other));
                 }
 
-                bool HasInsufficientSelfNarratorSignal(EditionFtsMatch candidate)
-                {
-                    if (candidate == null ||
-                        mediaType != BookMediaType.Audiobook ||
-                        string.IsNullOrWhiteSpace(candidate.NarratorNames) ||
-                        allTags == null ||
-                        allTags.Count == 0 ||
-                        !allowNarratorEvidence)
-                    {
-                        return false;
-                    }
-
-                    foreach (var narrator in SplitNarrators(candidate.NarratorNames))
-                    {
-                        if (!IsAuthorAsNarrator(narrator, candidate.AuthorName))
-                        {
-                            continue;
-                        }
-
-                        var normalizedNarrator = NormalizePersonNameForMatch(narrator);
-                        if (string.IsNullOrWhiteSpace(normalizedNarrator))
-                        {
-                            continue;
-                        }
-
-                        var narratorNoSpace = normalizedNarrator.Replace(" ", string.Empty);
-                        var narratorWords = normalizedNarrator.Split(' ').Where(w => w.Length > 1).ToList();
-                        var distinctFieldCount = 0;
-
-                        foreach (var kv in allTags)
-                        {
-                            if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value == null || kv.Value.Count == 0 || IsExcludedFromMatching(kv.Key))
-                            {
-                                continue;
-                            }
-
-                            var fieldMatched = kv.Value.Any(rawValue =>
-                            {
-                                if (string.IsNullOrWhiteSpace(rawValue))
-                                {
-                                    return false;
-                                }
-
-                                var haystack = NormalizePersonNameForMatch(rawValue);
-                                if (string.IsNullOrWhiteSpace(haystack))
-                                {
-                                    return false;
-                                }
-
-                                var haystackNoSpace = haystack.Replace(" ", string.Empty);
-                                return haystackNoSpace.Contains(narratorNoSpace, StringComparison.Ordinal) ||
-                                       (narratorWords.Count >= 2 && narratorWords.All(w => haystackNoSpace.Contains(w, StringComparison.Ordinal)));
-                            });
-
-                            if (fieldMatched)
-                            {
-                                distinctFieldCount++;
-                            }
-                        }
-
-                        if (distinctFieldCount > 0 && distinctFieldCount < 2)
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
                 bool HasEquivalentExplicitNarratorDuplicateSet(EditionFtsMatch candidate)
                 {
                     if (candidate == null || mediaType != BookMediaType.Audiobook)
@@ -6223,7 +6303,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return false;
                     }
 
-                    var candidateNarratorKey = BuildNarratorIdentityKey(candidate.NarratorNames);
+                    var candidateNarratorKey = ReleaseNarratorEvidenceExtractor.BuildNarratorIdentityKey(candidate.NarratorNames);
                     if (string.IsNullOrWhiteSpace(candidateNarratorKey))
                     {
                         return false;
@@ -6241,7 +6321,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return sameWorkCandidates.Count > 1 &&
                            sameWorkCandidates.All(other =>
                                string.Equals(
-                                   BuildNarratorIdentityKey(other.NarratorNames),
+                                   ReleaseNarratorEvidenceExtractor.BuildNarratorIdentityKey(other.NarratorNames),
                                    candidateNarratorKey,
                                    StringComparison.OrdinalIgnoreCase));
                 }
@@ -6430,28 +6510,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         .ToList();
                 }
 
-                IEnumerable<string> GetBookSeriesNames(Book book)
-                {
-                    if (book == null)
-                    {
-                        yield break;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(book.SeriesName))
-                    {
-                        yield return book.SeriesName;
-                    }
-
-                    foreach (var link in book.SeriesLinks ?? Enumerable.Empty<SeriesBookLink>())
-                    {
-                        var name = link?.Series?.Value?.Title;
-                        if (!string.IsNullOrWhiteSpace(name))
-                        {
-                            yield return name;
-                        }
-                    }
-                }
-
                 bool BaseTitleMatchesSeriesPrefix(EditionFtsMatch candidate, string baseTitle)
                 {
                     var baseTokens = NormalizeSeriesPrefixTokens(baseTitle);
@@ -6500,10 +6558,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 bool CandidateExplainsSingleField(EditionFtsMatch candidate, IDictionary<string, List<string>> singleFieldTags)
                 {
-                    if ((_containmentValidator.GetEditionTitleEvidence(candidate.EditionTitle, singleFieldTags)?.Count ?? 0) > 0 ||
+                    if ((_containmentValidator.GetEditionTitleEvidence(candidate.EditionTitle, singleFieldTags, knownNarrators: SplitNarrators(candidate.NarratorNames))?.Count ?? 0) > 0 ||
                         (!string.IsNullOrWhiteSpace(candidate.BookTitle) &&
                          !string.Equals(candidate.BookTitle.Trim(), candidate.EditionTitle?.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                         (_containmentValidator.GetEditionTitleEvidence(candidate.BookTitle, singleFieldTags)?.Count ?? 0) > 0))
+                         (_containmentValidator.GetEditionTitleEvidence(candidate.BookTitle, singleFieldTags, knownNarrators: SplitNarrators(candidate.NarratorNames))?.Count ?? 0) > 0))
                     {
                         return true;
                     }
@@ -6512,7 +6570,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                candidate.EditionTitle,
                                candidate.EditionSubTitle,
                                out var otherBaseTitle) &&
-                           (_containmentValidator.GetEditionTitleEvidence(otherBaseTitle, singleFieldTags)?.Count ?? 0) > 0;
+                           (_containmentValidator.GetEditionTitleEvidence(otherBaseTitle, singleFieldTags, knownNarrators: SplitNarrators(candidate.NarratorNames))?.Count ?? 0) > 0;
                 }
 
                 IReadOnlyList<EditionTitleEvidence> GetUnambiguousBaseTitleEvidence(
@@ -6534,7 +6592,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return Array.Empty<EditionTitleEvidence>();
                     }
 
-                    var baseEvidence = _containmentValidator.GetEditionTitleEvidence(baseTitle, allTags, includeDurationGatedNearExact);
+                    var baseEvidence = _containmentValidator.GetEditionTitleEvidence(baseTitle, allTags, includeDurationGatedNearExact, SplitNarrators(candidate.NarratorNames));
                     if (baseEvidence == null || baseEvidence.Count == 0)
                     {
                         return Array.Empty<EditionTitleEvidence>();
@@ -6579,7 +6637,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
 
                 var fileYear = TryExtractYearFromTags(allTags);
-                if (stagedFtsUsed)
                 {
                     var stagedDecision = SelectStagedBookByFieldRepresentation(
                         ftsResults,
@@ -6611,15 +6668,24 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 var titleEvidenceCandidateCount = 0;
                 var strictSeriesPositionRejectedCount = 0;
                 var leftoverRejectedCount = 0;
-                var authorRejectedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var candidateTitleEvidence = new Dictionary<(int BookId, string Title, string Lang, string NarratorNames, bool IncludeDurationGatedNearExact, bool IsEditionTitle), IReadOnlyList<EditionTitleEvidence>>();
+                var candidateSeriesPositionEvidence = new Dictionary<int, SeriesPositionEvidence>();
                 IReadOnlyList<EditionTitleEvidence> GetCandidateTitleEvidence(
                     EditionFtsMatch candidate,
                     string title,
                     bool includeDurationGatedNearExact)
                 {
-                    var combined = new List<EditionTitleEvidence>();
                     var isCandidateEditionTitle = candidate != null &&
                                                   string.Equals(title?.Trim(), candidate.EditionTitle?.Trim(), StringComparison.OrdinalIgnoreCase);
+                    var key = (candidate?.BookId ?? 0, title, candidate?.Lang, candidate?.NarratorNames, includeDurationGatedNearExact, isCandidateEditionTitle);
+                    // A missing Book may be loaded by a later existing lookup. Do not reuse that incomplete snapshot.
+                    var canReuse = candidate != null && booksById.TryGetValue(candidate.BookId, out var loadedBook) && loadedBook != null;
+                    if (canReuse && candidateTitleEvidence.TryGetValue(key, out var cached))
+                    {
+                        return cached;
+                    }
+
+                    var combined = new List<EditionTitleEvidence>();
                     var candidateBook = isCandidateEditionTitle
                         ? TryGetBookCached(candidate.BookId, booksById)
                         : null;
@@ -6630,8 +6696,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             allTags,
                             candidateBook,
                             GetNumericAliasAuthorCatalog,
-                            includeDurationGatedNearExact)
-                        : _containmentValidator.GetEditionTitleEvidence(title, allTags, includeDurationGatedNearExact);
+                            includeDurationGatedNearExact,
+                            SplitNarrators(candidate.NarratorNames))
+                        : _containmentValidator.GetEditionTitleEvidence(title, allTags, includeDurationGatedNearExact, SplitNarrators(candidate?.NarratorNames));
                     if (candidateEvidence != null)
                     {
                         combined.AddRange(candidateEvidence.Where(item => item != null));
@@ -6648,8 +6715,36 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             GetNumericAliasAuthorCatalog));
                     }
 
+                    var evidence = DistinctTitleEvidence(combined);
+                    if (canReuse)
+                    {
+                        candidateTitleEvidence[key] = evidence;
+                    }
+
+                    return evidence;
+                }
+
+                SeriesPositionEvidence GetCandidateSeriesPositionEvidence(EditionFtsMatch candidate)
+                {
+                    var canReuse = booksById.TryGetValue(candidate.BookId, out var loadedBook) && loadedBook != null;
+                    if (canReuse && candidateSeriesPositionEvidence.TryGetValue(candidate.BookId, out var cached))
+                    {
+                        return cached;
+                    }
+
+                    var evidence = GetSeriesPositionEvidence(candidate, allTags, booksById);
+                    if (canReuse)
+                    {
+                        candidateSeriesPositionEvidence[candidate.BookId] = evidence;
+                    }
+
+                    return evidence;
+                }
+
+                IReadOnlyList<EditionTitleEvidence> DistinctTitleEvidence(IEnumerable<EditionTitleEvidence> evidence)
+                {
                     var distinct = new List<EditionTitleEvidence>();
-                    foreach (var item in combined)
+                    foreach (var item in evidence)
                     {
                         if (item == null ||
                             distinct.Any(existing =>
@@ -6670,6 +6765,26 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return distinct;
                 }
 
+                var representativeEditionsByBook = mediaType == BookMediaType.Audiobook
+                    ? ftsResults.Where(candidate => candidate != null && IsRepresentativeEdition(candidate)).ToLookup(candidate => candidate.BookId)
+                    : null;
+                var representativeTitleEvidence = new Dictionary<(int BookId, int AuthorId), IReadOnlyList<EditionTitleEvidence>>();
+                IReadOnlyList<EditionTitleEvidence> GetSameBookRepresentativeTitleEvidence(EditionFtsMatch nativeEdition)
+                {
+                    var key = (nativeEdition.BookId, nativeEdition.AuthorId);
+                    if (!representativeTitleEvidence.TryGetValue(key, out var cached))
+                    {
+                        cached = DistinctTitleEvidence(representativeEditionsByBook[nativeEdition.BookId]
+                            .Where(other => other.AuthorId == nativeEdition.AuthorId)
+                            .SelectMany(other => GetCandidateTitleEvidence(other, other.EditionTitle, includeDurationGatedNearExact: false)
+                                .Where(item => !item.IsNearExact && !item.RequiresAudiobookDurationCorroboration &&
+                                    string.Equals(item.MatchedTitle?.Trim(), other.EditionTitle?.Trim(), StringComparison.OrdinalIgnoreCase))));
+                        representativeTitleEvidence[key] = cached;
+                    }
+
+                    return cached;
+                }
+
                 ScoredCandidate TryScoreCandidate(EditionFtsMatch result)
                 {
                     if (allTags == null || allTags.Count == 0)
@@ -6680,7 +6795,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     var includeDurationGatedNearExact = mediaType == BookMediaType.Audiobook && fileDurationSeconds.HasValue;
                     var unfilteredDirectEditionEvidence = GetCandidateTitleEvidence(result, result.EditionTitle, includeDurationGatedNearExact);
                     var directEditionEvidence = unfilteredDirectEditionEvidence;
-                    var seriesPositionEvidence = GetSeriesPositionEvidence(result, allTags, booksById);
+                    var seriesPositionEvidence = GetCandidateSeriesPositionEvidence(result);
                     var invalidatedTitleEvidenceFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     var titleEvidenceCounted = false;
 
@@ -6725,23 +6840,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     directEditionEvidence = ApplyStrictSeriesPositionFieldPolicy(directEditionEvidence);
                     var evidence = directEditionEvidence;
                     var candidateBook = TryGetBookCached(result.BookId, booksById);
-                    var bookTitleIsSeriesTitle = !string.IsNullOrWhiteSpace(candidateBook?.SeriesName) &&
-                                                 string.Equals(result.BookTitle?.Trim(), candidateBook.SeriesName.Trim(), StringComparison.OrdinalIgnoreCase);
-                    var hasCompleteNarratorProof = HasCompleteNarratorEvidence(result);
-                    var hasEditionProofForBookTitle = mediaType == BookMediaType.Audiobook &&
-                                                      IsAudiobookEdition(result) &&
-                                                      !bookTitleIsSeriesTitle &&
-                                                      (hasCompleteNarratorProof || TryGetDurationFallbackDetail(result, out _));
-                    if ((evidence == null || evidence.Count == 0) &&
-                        hasEditionProofForBookTitle &&
-                        !string.IsNullOrWhiteSpace(result.BookTitle) &&
-                        !string.Equals(result.BookTitle.Trim(), result.EditionTitle?.Trim(), StringComparison.OrdinalIgnoreCase))
-                    {
-                        evidence = ApplyStrictSeriesPositionFieldPolicy(GetCandidateTitleEvidence(
-                            result,
-                            result.BookTitle,
-                            includeDurationGatedNearExact));
-                    }
                     if (evidence == null || evidence.Count == 0)
                     {
                         evidence = GetSeriesExplainableEditionTitleEvidence(
@@ -6761,19 +6859,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             if (hasTrailingParenthetical)
                             {
                                 var baseEvidence = ApplyStrictSeriesPositionFieldPolicy(
-                                    _containmentValidator.GetEditionTitleEvidence(stripped, allTags, includeDurationGatedNearExact));
+                                    _containmentValidator.GetEditionTitleEvidence(stripped, allTags, includeDurationGatedNearExact, SplitNarrators(result.NarratorNames)));
                                 if (baseEvidence != null && baseEvidence.Count > 0)
                                 {
-                                    var hasCleanSiblingEdition = ftsResults.Any(r =>
-                                        r != null &&
-                                        SameLogicalWork(r, result, booksById) &&
-                                        r.EditionId != result.EditionId &&
-                                        string.Equals(r.EditionTitle?.Trim(), stripped, StringComparison.OrdinalIgnoreCase));
+                                    // May re-visit this again after working to clean up titles upstream
+                                    // var hasCleanSiblingEdition = ftsResults.Any(r =>
+                                        // r != null &&
+                                        // SameLogicalWork(r, result, booksById) &&
+                                        // r.EditionId != result.EditionId &&
+                                        // string.Equals(r.EditionTitle?.Trim(), stripped, StringComparison.OrdinalIgnoreCase));
 
-                                    if (hasCleanSiblingEdition)
-                                    {
-                                        return null;
-                                    }
+                                    // if (hasCleanSiblingEdition)
+                                    // {
+                                        // return null;
+                                    // }
 
                                     evidence = baseEvidence;
                                 }
@@ -6875,11 +6974,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return null;
                     }
 
-                        if (!stagedFtsUsed && !authorId.HasValue && !string.IsNullOrWhiteSpace(result.AuthorName))
+                        if (!authorId.HasValue && !string.IsNullOrWhiteSpace(result.AuthorName))
                         {
                         try
                         {
-                            if (!CandidateAuthorInTags(result.AuthorName))
+                            IEnumerable<string> identityNames = new[] { result.AuthorName };
+                            var authorAlreadyProven = false;
+                            if (authorGateCache.TryGetValue(AuthorGateKey(result.AuthorId, result.AuthorName), out var stagedAuthorGate))
+                            {
+                                authorAlreadyProven = stagedAuthorGate.Proven;
+                                identityNames = stagedAuthorGate.IdentityNames;
+                            }
+
+                            // Recall may retain a name span, but only this edition's title can complete its identity proof.
+                            if (!authorAlreadyProven && !identityNames.Any(name =>
+                                    CandidateAuthorInTags(name, new[] { result.EditionTitle, result.BookTitle })))
                             {
                                 authorRejectedNames.Add(result.AuthorName);
 
@@ -6905,16 +7014,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                         if (mediaType == BookMediaType.Audiobook)
                         {
-                            if (HasInsufficientSelfNarratorSignal(result))
-                            {
-                                RecordCandidateRejection(result, "SELF_NARRATOR_SINGLE_FIELD");
-                                return null;
-                            }
-
                             audiobookNarratorMatches = GetNarratorMatchCountCached(result);
                             audiobookDurationMatches = TryGetDurationFallbackDetail(result, out _);
                             audiobookRepresentativeTitleMatch = IsRepresentativeEdition(result) &&
-                                                                  HasStrongDirectEditionTitleEvidence(directEditionEvidence);
+                                                                  (HasStrongDirectEditionTitleEvidence(directEditionEvidence) ||
+                                                                   HasStrongDirectEditionTitleEvidence(evidence.Where(item =>
+                                                                       string.Equals(item.MatchedTitle?.Trim(), result.BookTitle?.Trim(), StringComparison.OrdinalIgnoreCase)).ToList()));
 
                             if (IsRepresentativeEdition(result))
                             {
@@ -6951,9 +7056,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             }
                         }
 
+                    var bookIdentityEvidence = evidence;
+                    var hasAudiobookCorroboration = mediaType == BookMediaType.Audiobook &&
+                                                   IsAudiobookEdition(result) &&
+                                                   (HasCompleteNarratorEvidence(result) || TryGetDurationFallbackDetail(result, out _));
+                    if (hasAudiobookCorroboration && candidateBook?.MediaType == mediaType && candidateBook.AuthorId == result.AuthorId)
+                    {
+                        // Stored same-book titles explain book context without changing native edition proof.
+                        bookIdentityEvidence = ApplyStrictSeriesPositionFieldPolicy(DistinctTitleEvidence(evidence
+                            .Concat(GetSameBookRepresentativeTitleEvidence(result))));
+                    }
+
                     var (passesLeftover, leftoverField, leftovers) = PassesLeftoverTokenGate(
                         result,
-                        evidence,
+                        bookIdentityEvidence,
                         allTags,
                         booksById,
                         strictness: strictness,
@@ -6988,7 +7104,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     var scoredCandidate = ScoreCandidate(
                         result,
                         evidence,
-                        allTags,
                         tagTokens,
                         fileYear,
                         fileDurationSeconds,
@@ -7001,11 +7116,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         audiobookDurationMatches,
                         audiobookRepresentativeTitleMatch,
                         audiobookUndistinguishedEditionFallback);
+                    scoredCandidate.AuthorMatch = authorGateCache.TryGetValue(AuthorGateKey(result.AuthorId, result.AuthorName), out var scoredAuthorGate) &&
+                        (scoredAuthorGate.ProvenName != null || scoredAuthorGate.IdentityNames.Any(name => CandidateAuthorInTags(name, new[] { result.EditionTitle, result.BookTitle })));
                     scoredCandidate.HasDurationProof = audiobookDurationMatches;
-                    scoredCandidate.HasDirectEditionTitleProof = HasStrongDirectEditionTitleEvidence(directEditionEvidence);
                     scoredCandidate.TitleOccurrenceExplanations = BuildTitleOccurrenceExplanations(
                         result,
-                        evidence,
+                        bookIdentityEvidence,
                         allTags,
                         mediaType,
                         booksById);
@@ -7080,7 +7196,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     {
                         var editionRankingPriority = mediaType == BookMediaType.Ebook
                             ? "titleEvidenceTier,exactYear,closestYear,publisherMatches,author,seriesName,seriesPosition,readingFormat,fewerLeftovers,ftsScore"
-                            : "titleEvidenceTier,audiobookProofTier,durationProof,directEditionTitleProof,representativeRank,narratorTier,narratorMatches,author,seriesName,seriesPosition,readingFormat,closestDuration,exactYear,closestYear,fewerLeftovers,ftsScore,providerIdentityTie";
+                            : "titleEvidenceTier,audiobookProofTier,durationProof,representativeRank,narratorTier,narratorMatches,author,seriesName,seriesPosition,readingFormat,closestDurationOutsideTolerance,exactYear,closestYear,fewerLeftovers,ftsScore,providerIdentityTie";
                         var rankingPriority = string.Equals(selectionScope, "global-stage2-selected-provider-book", StringComparison.OrdinalIgnoreCase)
                             ? "stage2ProviderBookScore," + editionRankingPriority
                             : selectionScope?.StartsWith("global-", StringComparison.OrdinalIgnoreCase) == true
@@ -7131,7 +7247,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                 Title = candidate.EditionTitle ?? candidate.BookTitle,
                                 Rank = i + 1,
                                 Reason = i == 0 ? "production-winner-at-this-scope" : "eligible-runner-up",
-                                Detail = $"titleProof={titleProof} in {scored.TitleEvidenceCount} field(s) [{evidenceFields}]; audiobookProof={audiobookProof}; durationProof={scored.HasDurationProof}; directEditionTitleProof={scored.HasDirectEditionTitleProof}; narrator={narratorProof}; author={scored.AuthorMatch}; series={scored.SeriesNameMatch}; position={scored.SeriesPositionMatch}; nativeFormat={scored.ReadingFormatMatch}; durationDiff={durationDiff}; yearDiff={yearDiff}; publisherMatches={scored.PublisherMatchCount}; leftovers={scored.LeftoverCount}; fts={scored.Bm25Score.ToString("R", CultureInfo.InvariantCulture)}",
+                                Detail = $"titleProof={titleProof} in {scored.TitleEvidenceCount} field(s) [{evidenceFields}]; audiobookProof={audiobookProof}; durationProof={scored.HasDurationProof}; narrator={narratorProof}; author={scored.AuthorMatch}; series={scored.SeriesNameMatch}; position={scored.SeriesPositionMatch}; nativeFormat={scored.ReadingFormatMatch}; durationDiff={durationDiff}; yearDiff={yearDiff}; publisherMatches={scored.PublisherMatchCount}; leftovers={scored.LeftoverCount}; fts={scored.Bm25Score.ToString("R", CultureInfo.InvariantCulture)}",
                                 Data = new Dictionary<string, string>
                                 {
                                     ["selectionScope"] = selectionScope ?? string.Empty,
@@ -7145,7 +7261,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     ["titleEvidenceFields"] = evidenceFields,
                                     ["audiobookProofTier"] = scored.AudiobookProofTier.ToString(CultureInfo.InvariantCulture),
                                     ["durationProof"] = scored.HasDurationProof.ToString(CultureInfo.InvariantCulture),
-                                    ["directEditionTitleProof"] = scored.HasDirectEditionTitleProof.ToString(CultureInfo.InvariantCulture),
                                     ["representativeRank"] = scored.RepresentativeRank.ToString(CultureInfo.InvariantCulture),
                                     ["narratorTier"] = scored.NarratorTier.ToString(CultureInfo.InvariantCulture),
                                     ["narratorMatchCount"] = scored.NarratorMatchCount.ToString(CultureInfo.InvariantCulture),
@@ -7174,10 +7289,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 ScoredCandidate selectedCandidate = null;
                 string selectionReason = null;
                 var scoredCandidates = new List<ScoredCandidate>();
-                var primaryResults = stagedPreferredBookIds == null
-                    ? ftsResults
-                    : ftsResults.Where(result => result != null && stagedPreferredBookIds.Contains(result.BookId)).ToList();
-                foreach (var result in primaryResults)
+                foreach (var result in ftsResults)
                 {
                     var scored = TryScoreCandidate(result);
                     if (scored != null)
@@ -7186,58 +7298,28 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
                 }
 
-                var stagedBookSelectionSucceeded = stagedPreferredBookIds != null && scoredCandidates.Count > 0;
-                if (stagedPreferredBookIds != null && scoredCandidates.Count == 0)
+                if (stagedPreferredBookIds != null && !scoredCandidates.Any(candidate => stagedPreferredBookIds.Contains(candidate.Match.BookId)))
                 {
                     _logger.Warn(
-                        "[HOLY-GRAIL][{0}][STAGED-FTS-FALLBACK] Stage 2 selected provider Book '{1}', but none of its Editions passed eligibility; running deep analysis on the remaining author-gated Books.",
+                        "[HOLY-GRAIL][{0}][STAGED-FTS-FALLBACK] Stage 2 selected provider Book '{1}', but none of its Editions passed eligibility; using the eligible author-gated Books.",
                         phase,
                         stagedPreferredWorkKey);
                     RecordTrace(
                         "fts_stage2_selected_book_rejected",
                         rejectionPhase,
                         reason: "STAGE2_SELECTED_BOOK_INELIGIBLE",
-                        detail: "No Edition under the Stage 2 provider-Book winner passed normal eligibility; deep candidate analysis resumed.",
+                        detail: "No Edition under the Stage 2 provider-Book winner passed normal eligibility; eligible Books remain in the shared identity comparison.",
                         filePath: filePath,
                         data: new Dictionary<string, string>
                         {
                             ["providerWorkKey"] = stagedPreferredWorkKey ?? string.Empty,
                             ["localBookIds"] = string.Join(",", stagedPreferredBookIds.OrderBy(id => id))
                         });
-                    foreach (var result in ftsResults.Where(result => result != null && !stagedPreferredBookIds.Contains(result.BookId)))
-                    {
-                        var scored = TryScoreCandidate(result);
-                        if (scored != null)
-                        {
-                            scoredCandidates.Add(scored);
-                        }
-                    }
+
                 }
 
                 if (scoredCandidates.Count > 0)
                 {
-                    if (stagedBookSelectionSucceeded)
-                    {
-                        EnableSeriesPositionTiebreaks(scoredCandidates);
-                        scoredCandidates.Sort((left, right) => CompareScoredCandidates(right, left, mediaType));
-                        RecordProductionRanking(
-                            scoredCandidates,
-                            "global-stage2-selected-provider-book",
-                            stagedPreferredWorkKey);
-                        selectedCandidate = scoredCandidates.FirstOrDefault();
-                        if (selectedCandidate != null)
-                        {
-                            selectedCandidate.MatchedVia = "staged_field_representation";
-                        }
-                        winner = selectedCandidate?.Match;
-                        selectionReason = selectedCandidate == null
-                            ? null
-                            : selectedCandidate.LeftoverCount == 0
-                                ? "staged-fts-book-edition-selection"
-                                : "staged-fts-book-edition-selection-leftover";
-                    }
-                    else
-                    {
                     // Book identity is resolved before Edition identity. Each provider Book contributes its
                     // best eligible Edition, while a Book whose best same-occurrence title explanation is a
                     // strict subset of another Book's explanation cannot win on later Edition-only signals.
@@ -7250,9 +7332,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     foreach (var work in occurrenceSelection.Works)
                     {
-                        var withinWork = work.Candidates.ToList();
-                        withinWork.Sort((left, right) => CompareScoredCandidates(right, left, mediaType));
-                        RecordProductionRanking(withinWork, "within-logical-work", work.LogicalWorkKey);
+                        if (CanRecord())
+                        {
+                            var withinWork = work.Candidates.ToList();
+                            withinWork.Sort((left, right) => CompareScoredCandidates(right, left, mediaType));
+                            RecordProductionRanking(withinWork, "within-logical-work", work.LogicalWorkKey);
+                        }
 
                         if (!work.IsDominated || work.EditionWinner?.Match == null)
                         {
@@ -7264,39 +7349,57 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         RecordCandidateRejection(
                             work.EditionWinner.Match,
                             "BOOK_TITLE_OCCURRENCE_DOMINATED",
-                            $"same-occurrence supersets=[{string.Join(" | ", incomingEdges.Take(8))}]",
+                            $"book title/owned-series explanations=[{string.Join(" | ", incomingEdges.Take(8))}]",
                             "contradictory");
                     }
 
-                    // Keep the established Edition selector intact. Duration/year-shaped inputs select one
-                    // Edition per Book before the global comparison; other inputs retain the existing global
-                    // Edition comparison. The occurrence ledger only removes a Book when another Book proves
-                    // a strict same-value token-position superset.
-                    var globalCandidates = useGroupedSelection
-                        ? occurrenceSelection.NonDominatedWorkWinners.ToList()
+                    var selectionCandidates = stagedPreferredBookIds == null
+                        ? new List<ScoredCandidate>()
                         : occurrenceSelection.Works
                             .Where(work => !work.IsDominated)
                             .SelectMany(work => work.Candidates)
+                            .Where(candidate => stagedPreferredBookIds.Contains(candidate.Match.BookId))
                             .ToList();
-                    EnableSeriesPositionTiebreaks(globalCandidates);
-                    if (HasNearExactTitleAmbiguity(phase, globalCandidates, booksById))
+                    var useStagedSelection = selectionCandidates.Count > 0;
+                    if (!useStagedSelection)
                     {
-                        // Near-exact ambiguity is shared weak evidence, not positive competing proof.
-                        // It stays InsufficientEvidence so folder/filename evidence may disambiguate.
+                        // Duration/year evidence retains one Edition per Book; other inputs compare all
+                        // eligible Editions after the common Book identity comparison.
+                        selectionCandidates = useGroupedSelection
+                            ? occurrenceSelection.NonDominatedWorkWinners.ToList()
+                            : occurrenceSelection.Works
+                                .Where(work => !work.IsDominated)
+                                .SelectMany(work => work.Candidates)
+                                .ToList();
+                    }
+
+                    EnableSeriesPositionTiebreaks(selectionCandidates);
+                    if (!useStagedSelection && HasNearExactTitleAmbiguity(phase, selectionCandidates, booksById))
+                    {
+                        // Shared weak evidence is insufficient, so folder/filename evidence may disambiguate.
                         return null;
                     }
 
-                    globalCandidates.Sort((left, right) => CompareScoredCandidates(right, left, mediaType));
+                    selectionCandidates.Sort((left, right) => CompareScoredCandidates(right, left, mediaType));
                     RecordProductionRanking(
-                        globalCandidates,
-                        useGroupedSelection ? "global-logical-work-winners" : "global-eligible-candidates");
-                    selectedCandidate = globalCandidates.FirstOrDefault();
-                    winner = selectedCandidate?.Match;
-                    selectionReason = selectedCandidate == null
-                        ? null
-                        : selectedCandidate.LeftoverCount == 0
-                            ? "book-occurrence-edition-selection"
-                            : "book-occurrence-edition-selection-leftover";
+                        selectionCandidates,
+                        useStagedSelection ? "global-stage2-selected-provider-book"
+                            : useGroupedSelection ? "global-logical-work-winners" : "global-eligible-candidates",
+                        useStagedSelection ? stagedPreferredWorkKey : null);
+                    selectedCandidate = selectionCandidates.FirstOrDefault();
+                    if (selectedCandidate != null)
+                    {
+                        if (useStagedSelection && string.IsNullOrWhiteSpace(selectedCandidate.MatchedVia))
+                        {
+                            selectedCandidate.MatchedVia = "staged_field_representation";
+                        }
+
+                        winner = selectedCandidate.Match;
+                        selectionReason = useStagedSelection ? "staged-fts-book-edition-selection" : "book-occurrence-edition-selection";
+                        if (selectedCandidate.LeftoverCount > 0)
+                        {
+                            selectionReason += "-leftover";
+                        }
                     }
                 }
 
@@ -7339,7 +7442,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 RecordTrace("match_selected", rejectionPhase, winner, selectionReason, filePath: filePath);
                 var identityProof = BuildSelectedMatchIdentityProof(
                     selectedCandidate,
-                    allTags,
+                    originalTags,
                     phase,
                     groupMemberTags);
                 return new FtsSmokeTestResult
@@ -7384,7 +7487,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 public bool ReadingFormatMatch { get; set; }
                 public int AudiobookProofTier { get; set; }
                 public bool HasDurationProof { get; set; }
-                public bool HasDirectEditionTitleProof { get; set; }
                 public int RepresentativeRank { get; set; }
                 public bool UndistinguishedAudiobookEditionFallback { get; set; }
                 public string MatchedVia { get; set; }
@@ -7404,6 +7506,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 public string OccurrenceKey { get; set; }
                 public string FieldName { get; set; }
                 public bool IsNearExact { get; set; }
+                public bool IsSeriesContext { get; set; }
                 public HashSet<int> MeaningfulConsumedIndexes { get; set; } = new HashSet<int>();
                 public IReadOnlyList<string> NearbyUnexplainedTokens { get; set; } = Array.Empty<string>();
             }
@@ -7431,7 +7534,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             private ScoredCandidate ScoreCandidate(
                 EditionFtsMatch candidate,
                 IReadOnlyList<EditionTitleEvidence> evidence,
-                Dictionary<string, List<string>> allTags,
                 HashSet<string> tagTokens,
                 int? fileYear,
                 int? fileDurationSeconds,
@@ -7495,21 +7597,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
                 }
 
-                    // Narrator signal (audiobooks):
-                    // Boost only when the candidate's narrator (not the author) is contained in a single tag field.
-                    // Do not scrape comment/description fields.
-                    if (mediaType == BookMediaType.Audiobook &&
-                        !string.IsNullOrWhiteSpace(candidate.NarratorNames) &&
-                        allTags != null &&
-                        allTags.Count > 0)
-                    {
-                        var narratorMatches = CountNarratorMatchesInTags(candidate.NarratorNames, candidate.AuthorName, allTags);
-                        if (narratorMatches > 0)
-                        {
-                            scored.NarratorTier = 2;
-                            scored.NarratorMatchCount = narratorMatches;
-                        }
-                    }
+                scored.NarratorMatchCount = audiobookNarratorMatches;
+                scored.NarratorTier = audiobookNarratorMatches > 0 ? 2 : 0;
 
                 // Duration signal
                 if (fileDurationSeconds.HasValue &&
@@ -7545,20 +7634,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     {
                         var matched = seriesTokens.Count(t => tagTokens.Contains(t));
                         scored.SeriesNameMatch = matched >= Math.Max(1.0, seriesTokens.Count * 0.5);
-                    }
-                }
-
-                // Author match — majority of tokens must appear (Python parity: * 0.5 not integer / 2)
-                if (!string.IsNullOrWhiteSpace(candidate.AuthorName) && tagTokens.Count > 0)
-                {
-                    var authorTokens = TokenizeForLeftoverGate(candidate.AuthorName)
-                        .Where(t => !string.IsNullOrWhiteSpace(t) && t.Length > 1)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    if (authorTokens.Count > 0)
-                    {
-                        var matched = authorTokens.Count(t => tagTokens.Contains(t));
-                        scored.AuthorMatch = matched >= Math.Max(1.0, authorTokens.Count * 0.5);
                     }
                 }
 
@@ -7613,36 +7688,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var candidateBook = TryGetBookCached(candidate.BookId, booksById);
-                var candidateSeriesNames = new List<string>();
-                if (!string.IsNullOrWhiteSpace(candidateBook?.SeriesName))
+                var candidateSeriesNames = GetBookSeriesNames(candidateBook).ToList();
+                foreach (var seriesName in candidateSeriesNames)
                 {
-                    candidateSeriesNames.Add(candidateBook.SeriesName);
+                    AddExplainable(seriesName);
                 }
 
-                AddExplainable(candidateBook?.SeriesName);
                 AddPositionExplainable(candidateBook?.SeriesPosition);
                 foreach (var link in candidateBook?.SeriesLinks ?? Enumerable.Empty<SeriesBookLink>())
                 {
-                    if (!string.IsNullOrWhiteSpace(link?.Series?.Value?.Title))
-                    {
-                        candidateSeriesNames.Add(link.Series.Value.Title);
-                    }
-
-                    AddExplainable(link?.Series?.Value?.Title);
                     AddPositionExplainable(link?.Position);
                     if (link?.SeriesPosition > 0)
                     {
                         AddPositionExplainable(link.SeriesPosition.ToString(CultureInfo.InvariantCulture));
                     }
-                }
-
-                if (mediaType == BookMediaType.Audiobook)
-                {
-                    AddExplainable("audio audiobook");
-                }
-                else if (mediaType == BookMediaType.Ebook)
-                {
-                    AddExplainable("ebook e-book");
                 }
 
                 bool IsBackedByObservedValue(EditionTitleEvidence item)
@@ -7655,11 +7714,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return allTags.TryGetValue(item.FieldName, out var values) &&
                            values != null &&
                            values.Any(value => string.Equals(value?.Trim(), item.FieldValue.Trim(), StringComparison.Ordinal));
-                }
-
-                bool IsGlueToken(string token)
-                {
-                    return token is "a" or "an" or "and" or "or" or "the" or "of" or "in" or "on" or "at" or "by" or "for" or "with" or "to" or "from" or "as";
                 }
 
                 bool IsPhysicalPackagingMarker(string token)
@@ -7685,15 +7739,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 bool IsComparativeTitleToken(IReadOnlyList<string> valueTokens, int index)
                 {
                     var token = valueTokens[index];
-                    if (string.IsNullOrWhiteSpace(token) || IsGlueToken(token))
+                    if (string.IsNullOrWhiteSpace(token))
                     {
                         return false;
                     }
 
-                    // These describe the file/container or introduce another metadata role. They are
-                    // not Book-title discriminators merely because a catalog row happens to contain them.
-                    if (token is "audio" or "audiobook" or "ebook" or "narrated" or "narrator" or "narration" or "read" or "performed" or "novel" ||
-                        IsPhysicalPackagingMarker(token))
+                    if (IsPhysicalPackagingMarker(token))
                     {
                         return false;
                     }
@@ -7762,13 +7813,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 bool IsStrictlyIgnorableResidual(IReadOnlyList<string> valueTokens, int index)
                 {
                     var token = valueTokens[index];
-                    if (string.IsNullOrWhiteSpace(token) || IsGlueToken(token))
+                    if (string.IsNullOrWhiteSpace(token))
                     {
                         return true;
                     }
 
-                    if (token is "audio" or "audiobook" or "ebook" or "narrated" or "narrator" or "narration" or "read" or "performed" or "novel" ||
-                        IsPhysicalPackagingMarker(token))
+                    if (IsPhysicalPackagingMarker(token))
                     {
                         return true;
                     }
@@ -7983,6 +8033,41 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return left.MeaningfulConsumedIndexes.IsProperSupersetOf(right.MeaningfulConsumedIndexes);
             }
 
+            private static int CompareWorkOccurrenceExplanations(
+                IReadOnlyList<TitleOccurrenceExplanation> left,
+                IReadOnlyList<TitleOccurrenceExplanation> right,
+                bool allowSeriesContext)
+            {
+                var leftTitles = left.Where(item => !item.IsSeriesContext).ToList();
+                var rightTitles = right.Where(item => !item.IsSeriesContext).ToList();
+                bool Covers(TitleOccurrenceExplanation explanation, TitleOccurrenceExplanation title) =>
+                    string.Equals(explanation.OccurrenceKey, title.OccurrenceKey, StringComparison.Ordinal) &&
+                    (!explanation.IsNearExact || title.IsNearExact) &&
+                    explanation.MeaningfulConsumedIndexes.IsSupersetOf(title.MeaningfulConsumedIndexes);
+
+                bool ExplainsConnectedEvidence(
+                    IReadOnlyList<TitleOccurrenceExplanation> explanations,
+                    IReadOnlyList<TitleOccurrenceExplanation> titles,
+                    IReadOnlyList<TitleOccurrenceExplanation> otherExplanations,
+                    IReadOnlyList<TitleOccurrenceExplanation> otherTitles) =>
+                    explanations.Any(item => item.IsSeriesContext) && otherTitles.Count > 0 &&
+                    otherTitles.All(title => explanations.Any(item => Covers(item, title))) &&
+                    titles.Any(title => !title.IsNearExact && !otherExplanations.Any(item => Covers(item, title)));
+
+                var leftExplainsMore = allowSeriesContext && ExplainsConnectedEvidence(left, leftTitles, right, rightTitles);
+                var rightExplainsMore = allowSeriesContext && ExplainsConnectedEvidence(right, rightTitles, left, leftTitles);
+                if (leftExplainsMore != rightExplainsMore)
+                {
+                    return leftExplainsMore ? 1 : -1;
+                }
+
+                // A book's own series can explain an otherwise competing title; without that
+                // connection, preserve the strict title comparison within each physical value.
+                leftExplainsMore = leftTitles.Any(item => rightTitles.Any(other => StrictlyExplainsMoreOfSameOccurrence(item, other)));
+                rightExplainsMore = rightTitles.Any(item => leftTitles.Any(other => StrictlyExplainsMoreOfSameOccurrence(item, other)));
+                return leftExplainsMore == rightExplainsMore ? 0 : leftExplainsMore ? 1 : -1;
+            }
+
             private OccurrenceSelectionResult BuildOccurrenceSelection(
                 IReadOnlyList<ScoredCandidate> scoredCandidates,
                 IReadOnlyList<EditionFtsMatch> recalledCandidates,
@@ -8023,15 +8108,79 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     .ToList();
 
                 result.Works = works;
+                var observedValues = (allTags ?? new Dictionary<string, List<string>>())
+                    .Where(field => !IsExcludedFromMatching(field.Key) && field.Value != null)
+                    .SelectMany(field => field.Value.Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Select(value => (FieldName: field.Key, Tokens: TokenizeForLeftoverGateSequence(value))))
+                    .Where(value => value.Tokens.Count > 0)
+                    .ToList();
+                foreach (var work in works)
+                {
+                    var workBook = TryGetBookCached(work.EditionWinner.Match.BookId, booksById);
+                    if (workBook == null || workBook.MediaType != mediaType || workBook.AuthorId <= 0 ||
+                        !work.Explanations.Any())
+                    {
+                        continue;
+                    }
+
+                    foreach (var candidate in work.Candidates.GroupBy(item => item.Match.BookId).Select(group => group.First()))
+                    {
+                        var book = TryGetBookCached(candidate.Match.BookId, booksById);
+                        if (book == null || book.MediaType != mediaType || book.AuthorId != workBook.AuthorId)
+                        {
+                            continue;
+                        }
+
+                        var seriesNames = GetBookSeriesNames(book)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Select(name => TokenizeForLeftoverGateSequence(StripTrailingParentheticals(name)))
+                            .Where(tokens => tokens.Count > 0)
+                            .ToList();
+                        foreach (var observed in observedValues)
+                        {
+                            foreach (var seriesTokens in seriesNames)
+                            {
+                                foreach (var span in ReleaseTitleMatchScorer.FindExactTitleSpans(observed.Tokens, seriesTokens))
+                                {
+                                    work.Explanations.Add(new TitleOccurrenceExplanation
+                                    {
+                                        OccurrenceKey = string.Join("\u001f", observed.Tokens),
+                                        FieldName = observed.FieldName,
+                                        IsSeriesContext = true,
+                                        MeaningfulConsumedIndexes = Enumerable.Range(span.Start, span.End - span.Start + 1).ToHashSet()
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
 
                 void KeepOnlyMaximalWorkExplanations()
                 {
                     foreach (var work in works)
                     {
-                        var explanations = work.Explanations.ToList();
+                        // Repeated sibling Editions do not create new physical title evidence.
+                        // Retain every proof and diagnostic distinction before comparing strict supersets.
+                        var explanations = new List<TitleOccurrenceExplanation>();
+                        foreach (var explanation in work.Explanations)
+                        {
+                            if (!explanations.Any(existing =>
+                                string.Equals(existing.OccurrenceKey, explanation.OccurrenceKey, StringComparison.Ordinal) &&
+                                string.Equals(existing.FieldName, explanation.FieldName, StringComparison.Ordinal) &&
+                                existing.IsNearExact == explanation.IsNearExact &&
+                                existing.IsSeriesContext == explanation.IsSeriesContext &&
+                                existing.MeaningfulConsumedIndexes.SetEquals(explanation.MeaningfulConsumedIndexes) &&
+                                existing.NearbyUnexplainedTokens.SequenceEqual(explanation.NearbyUnexplainedTokens, StringComparer.Ordinal)))
+                            {
+                                explanations.Add(explanation);
+                            }
+                        }
+
                         work.Explanations = explanations
                             .Where(explanation => !explanations.Any(other =>
                                 !ReferenceEquals(other, explanation) &&
+                                other.IsSeriesContext == explanation.IsSeriesContext &&
                                 StrictlyExplainsMoreOfSameOccurrence(other, explanation)))
                             .ToList();
                     }
@@ -8058,20 +8207,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                 continue;
                             }
 
-                            var leftExplainsMore = left.Explanations.Any(leftExplanation =>
-                                right.Explanations.Any(rightExplanation => StrictlyExplainsMoreOfSameOccurrence(leftExplanation, rightExplanation)));
-                            var rightExplainsMore = right.Explanations.Any(rightExplanation =>
-                                left.Explanations.Any(leftExplanation => StrictlyExplainsMoreOfSameOccurrence(rightExplanation, leftExplanation)));
-
-                            // Conflicting independent occurrences are not a license for evaluation order to choose.
-                            // Only a one-way same-occurrence superset dominates the less complete Book explanation.
-                            if (leftExplainsMore == rightExplainsMore)
+                            var leftBook = TryGetBookCached(left.EditionWinner.Match.BookId, booksById);
+                            var rightBook = TryGetBookCached(right.EditionWinner.Match.BookId, booksById);
+                            var sameAuthorAndMedia = leftBook != null && rightBook != null &&
+                                leftBook.MediaType == mediaType && rightBook.MediaType == mediaType &&
+                                leftBook.AuthorId > 0 && leftBook.AuthorId == rightBook.AuthorId;
+                            var comparison = CompareWorkOccurrenceExplanations(left.Explanations, right.Explanations, sameAuthorAndMedia);
+                            if (comparison == 0)
                             {
                                 continue;
                             }
 
-                            var winner = leftExplainsMore ? left : right;
-                            var loser = leftExplainsMore ? right : left;
+                            var winner = comparison > 0 ? left : right;
+                            var loser = comparison > 0 ? right : left;
                             loser.IsDominated = true;
                             result.DominanceEdges.Add($"{winner.LogicalWorkKey}>{loser.LogicalWorkKey}");
                         }
@@ -8359,7 +8507,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     if (selected.NarratorMatchCount > 0)
                     {
-                        var narratorEvidence = FindNarratorEvidenceFields(candidate.NarratorNames, candidate.AuthorName, evidenceTags);
+                        var narratorEvidence = ExactMatchEvidenceBuilder.FindNarratorEvidenceFields(candidate.NarratorNames, candidate.AuthorName, evidenceTags, applySelfNarrationGate: false);
                         foreach (var item in narratorEvidence)
                         {
                             AddSignal(provenance.SupportingSignals, new MatchSignal
@@ -8549,7 +8697,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 if (selected.AuthorMatch)
                 {
-                    foreach (var field in BuildAuthorEvidenceTags(candidate.AuthorName, evidenceTags))
+                    foreach (var field in BuildAuthorEvidenceTags(candidate.AuthorName, evidenceTags, new[] { candidate.EditionTitle, candidate.BookTitle }))
                     {
                         foreach (var value in field.Value ?? new List<string>())
                         {
@@ -8887,12 +9035,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return;
                 }
 
-                var titleEvidence = _containmentValidator.GetEditionTitleEvidence(selected.EditionTitle, embeddedTags);
+                var titleEvidence = _containmentValidator.GetEditionTitleEvidence(selected.EditionTitle, embeddedTags, knownNarrators: SplitNarrators(selected.NarratorNames));
                 if ((titleEvidence == null || titleEvidence.Count == 0) &&
                     !string.IsNullOrWhiteSpace(selected.BookTitle) &&
                     !string.Equals(selected.BookTitle, selected.EditionTitle, StringComparison.OrdinalIgnoreCase))
                 {
-                    titleEvidence = _containmentValidator.GetEditionTitleEvidence(selected.BookTitle, embeddedTags);
+                    titleEvidence = _containmentValidator.GetEditionTitleEvidence(selected.BookTitle, embeddedTags, knownNarrators: SplitNarrators(selected.NarratorNames));
                 }
 
                 var titleScope = string.Equals(selected.EditionTitle?.Trim(), selected.BookTitle?.Trim(), StringComparison.OrdinalIgnoreCase)
@@ -8921,7 +9069,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     });
                 }
 
-                var embeddedAuthorEvidence = BuildAuthorEvidenceTags(selected.AuthorName, embeddedTags);
+                var embeddedAuthorEvidence = BuildAuthorEvidenceTags(selected.AuthorName, embeddedTags, new[] { selected.EditionTitle, selected.BookTitle });
                 foreach (var field in embeddedAuthorEvidence)
                 {
                     foreach (var value in field.Value ?? new List<string>())
@@ -9063,9 +9211,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cmp = a.HasDurationProof.CompareTo(b.HasDurationProof);
                 if (cmp != 0) return cmp;
 
-                cmp = a.HasDirectEditionTitleProof.CompareTo(b.HasDirectEditionTitleProof);
-                if (cmp != 0) return cmp;
-
                 cmp = a.RepresentativeRank.CompareTo(b.RepresentativeRank);
                 if (cmp != 0) return cmp;
 
@@ -9089,10 +9234,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cmp = a.ReadingFormatMatch.CompareTo(b.ReadingFormatMatch);
                 if (cmp != 0) return cmp;
 
-                cmp = (a.DurationDiff == 0).CompareTo(b.DurationDiff == 0);
-                if (cmp != 0) return cmp;
-
-                if (a.DurationDiff != int.MaxValue || b.DurationDiff != int.MaxValue)
+                // Durations accepted by the shared matching tolerance provide equal evidence.
+                // I may want to re-visit doing tighter banding inside of editions that
+                // pass the generic 5 mins or 2% check to tighten up on very long audiobooks which
+                // editions are candidates, like red country booktrack vs regular
+                if (!a.HasDurationProof && !b.HasDurationProof)
                 {
                     cmp = b.DurationDiff.CompareTo(a.DurationDiff);
                     if (cmp != 0) return cmp;
@@ -9893,23 +10039,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     RegexOptions.IgnoreCase);
             }
 
-            private List<string> SplitNarrators(string narratorNames)
-            {
-                if (string.IsNullOrWhiteSpace(narratorNames))
-                {
-                    return new List<string>();
-                }
+            private List<string> SplitNarrators(string narratorNames) => ReleaseNarratorEvidenceExtractor.SplitCredits(narratorNames).ToList();
 
-                return narratorNames
-                    .Replace(" & ", ", ", StringComparison.OrdinalIgnoreCase)
-                    .Replace(" and ", ", ", StringComparison.OrdinalIgnoreCase)
-                    .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(n => n.Trim())
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .ToList();
-            }
-
-            private int CountNarratorMatchesInTags(string narratorNames, string authorName, IDictionary<string, List<string>> allTags)
+            private int CountNarratorMatchesInResidualTags(string narratorNames, string authorName, IDictionary<string, List<string>> allTags)
             {
                 if (string.IsNullOrWhiteSpace(narratorNames) || allTags == null || allTags.Count == 0)
                 {
@@ -9919,7 +10051,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 var matchedNarratorCount = 0;
                 foreach (var narrator in SplitNarrators(narratorNames))
                 {
-                    if (FindNarratorEvidenceFields(narrator, authorName, allTags).Count > 0)
+                    if (ExactMatchEvidenceBuilder.FindNarratorEvidenceFields(narrator, authorName, allTags, applySelfNarrationGate: false).Count > 0)
                     {
                         matchedNarratorCount++;
                     }
@@ -9928,247 +10060,44 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return matchedNarratorCount;
             }
 
-            private int NarratorTokenMatchCount(string narrator, HashSet<string> tagTokens)
-            {
-                if (string.IsNullOrWhiteSpace(narrator) || tagTokens == null || tagTokens.Count == 0)
-                {
-                    return 0;
-                }
-
-                var narratorTokens = TokenizeForLeftoverGate(narrator)
-                    .Where(t => !string.IsNullOrWhiteSpace(t))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                if (narratorTokens.Count == 0)
-                {
-                    return 0;
-                }
-
-                var count = 0;
-                foreach (var tok in narratorTokens)
-                {
-                    if (tagTokens.Contains(tok))
-                    {
-                        count++;
-                    }
-                }
-
-                return count;
-            }
-
-            private List<KeyValuePair<string, string>> FindNarratorEvidenceFields(
+            private static List<KeyValuePair<string, string>> FindNarratorEvidenceFields(
                 string narratorRaw,
                 string authorName,
                 IDictionary<string, List<string>> tags)
             {
-                var evidence = new List<KeyValuePair<string, string>>();
-
-                if (string.IsNullOrWhiteSpace(narratorRaw) || tags == null || tags.Count == 0)
-                {
-                    return evidence;
-                }
-
-                const int maxValueLength = 400;
-
-                var narrator = NormalizePersonNameForMatch(narratorRaw);
-                if (string.IsNullOrWhiteSpace(narrator))
-                {
-                    return evidence;
-                }
-
-                var narratorNoSpace = narrator.Replace(" ", string.Empty);
-                var narratorWords = narrator.Split(' ').Where(w => w.Length > 1).ToList();
-                var normalizedAuthor = NormalizePersonNameForMatch(authorName);
-                var selfNarrated = !string.IsNullOrWhiteSpace(normalizedAuthor) &&
-                                   (string.Equals(narrator, normalizedAuthor, StringComparison.Ordinal) ||
-                                    IsAuthorAsNarrator(narratorRaw, authorName));
-
-                foreach (var kv in tags)
-                {
-                    if (kv.Value == null || kv.Value.Count == 0 || string.IsNullOrWhiteSpace(kv.Key))
-                    {
-                        continue;
-                    }
-
-                    if (IsExcludedFromMatching(kv.Key))
-                    {
-                        continue;
-                    }
-
-                    foreach (var rawValue in kv.Value)
-                    {
-                        if (string.IsNullOrWhiteSpace(rawValue) || rawValue.Length > maxValueLength)
-                        {
-                            continue;
-                        }
-
-                        var haystack = NormalizePersonNameForMatch(rawValue);
-                        if (string.IsNullOrWhiteSpace(haystack))
-                        {
-                            continue;
-                        }
-
-                        var haystackNoSpace = haystack.Replace(" ", string.Empty);
-                        var matchesNarrator =
-                            haystackNoSpace.Contains(narratorNoSpace, StringComparison.Ordinal) ||
-                            (narratorWords.Count >= 2 && narratorWords.All(w => haystackNoSpace.Contains(w, StringComparison.Ordinal)));
-
-                        if (!matchesNarrator)
-                        {
-                            continue;
-                        }
-
-                        if (!evidence.Any(existing =>
-                                string.Equals(existing.Key, kv.Key, StringComparison.OrdinalIgnoreCase) &&
-                                string.Equals(existing.Value, rawValue, StringComparison.Ordinal)))
-                        {
-                            evidence.Add(new KeyValuePair<string, string>(kv.Key, rawValue));
-                        }
-                    }
-                }
-
-                if (!selfNarrated)
-                {
-                    return evidence;
-                }
-
-                var distinctFieldCount = evidence
-                    .Select(item => item.Key)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Count();
-
-                return distinctFieldCount >= 2
-                    ? evidence
-                    : new List<KeyValuePair<string, string>>();
+                return ExactMatchEvidenceBuilder.FindNarratorEvidenceFields(narratorRaw, authorName, tags);
             }
 
-            private static string BuildNarratorIdentityKey(string narratorNames)
+            private static IEnumerable<string> GetBookSeriesNames(Book book)
             {
-                if (string.IsNullOrWhiteSpace(narratorNames))
+                if (book == null)
                 {
-                    return string.Empty;
+                    yield break;
                 }
 
-                return narratorNames
-                    .Replace(" & ", ", ", StringComparison.OrdinalIgnoreCase)
-                    .Replace(" and ", ", ", StringComparison.OrdinalIgnoreCase)
-                    .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(NormalizePersonNameForMatch)
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-                    .Aggregate(string.Empty, (current, next) => string.IsNullOrEmpty(current) ? next : $"{current}|{next}");
+                if (!string.IsNullOrWhiteSpace(book.SeriesName))
+                {
+                    yield return book.SeriesName;
+                }
+
+                foreach (var link in book.SeriesLinks ?? Enumerable.Empty<SeriesBookLink>())
+                {
+                    var name = link?.Series?.Value?.Title;
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        yield return name;
+                    }
+                }
             }
 
-            private bool IsAuthorAsNarrator(string narrator, string authorName)
+            private bool IsTitleOwnedSeriesTitle(string title, Book book)
             {
-                if (string.IsNullOrWhiteSpace(narrator) || string.IsNullOrWhiteSpace(authorName))
+                var titleTokens = TokenizeForLeftoverGateSequence(title);
+                return titleTokens.Count > 0 && GetBookSeriesNames(book).Any(seriesName =>
                 {
-                    return false;
-                }
-
-                var normalizedNarrator = NormalizePersonNameForMatch(narrator);
-                var normalizedAuthor = NormalizePersonNameForMatch(authorName);
-                if (!string.IsNullOrWhiteSpace(normalizedNarrator) &&
-                    string.Equals(normalizedNarrator, normalizedAuthor, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-
-                // Drop initials to avoid false mismatches (e.g., "J.K. Rowling" → ["rowling"]).
-                var narratorTokens = TokenizeForLeftoverGate(narrator)
-                    .Where(t => !string.IsNullOrWhiteSpace(t) && t.Length > 1)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var authorTokens = TokenizeForLeftoverGate(authorName)
-                    .Where(t => !string.IsNullOrWhiteSpace(t) && t.Length > 1)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                if (narratorTokens.Count == 0 || authorTokens.Count == 0)
-                {
-                    return false;
-                }
-
-                var overlap = authorTokens.Count(t => narratorTokens.Contains(t));
-                if (authorTokens.Count == 1)
-                {
-                    return overlap == 1;
-                }
-
-                // Require full match for 2-token names, majority match for longer names.
-                var required = authorTokens.Count == 2 ? 2 : Math.Max(2, (int)Math.Ceiling(authorTokens.Count * 0.6));
-                return overlap >= required;
-            }
-
-            /// <summary>
-            /// Run a lightweight FTS query, get candidate authors from results, check if any appear
-            /// in tag values. If yes → tags contain author evidence → disable path fallback.
-            /// Mirrors Python's any_fts_author_in_tags().
-            /// </summary>
-            private bool AnyFtsAuthorInTags(
-                List<string> tokens,
-                BookMediaType mediaType,
-                Dictionary<string, List<string>> allTags)
-            {
-                if (tokens == null || tokens.Count == 0 || allTags == null || allTags.Count == 0)
-                {
-                    return false;
-                }
-
-                    var tagValuesLower = new List<string>();
-                    foreach (var kv in allTags)
-                    {
-                        if (IsExcludedFromMatching(kv.Key)) continue;
-                        if (kv.Value == null) continue;
-                        foreach (var v in kv.Value)
-                        {
-                            if (!string.IsNullOrWhiteSpace(v) && v.Length <= 400)
-                            {
-                                tagValuesLower.Add(v.Trim().ToLowerInvariant());
-                            }
-                        }
-                    }
-
-                if (tagValuesLower.Count == 0)
-                {
-                    return false;
-                }
-
-                try
-                {
-                    // Quick FTS to get candidate authors — use title columns only, limit 20
-                    var ftsResults = _editionFtsRepository.SearchWithTwoStep(null, tokens, mediaType, limit: 20);
-                    if (ftsResults == null || ftsResults.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    // Get distinct author names
-                    var candidateAuthors = ftsResults
-                        .Select(r => r.AuthorName)
-                        .Where(n => !string.IsNullOrWhiteSpace(n) && n.Length >= 3)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-
-                    // Check if any candidate author appears in tag values
-                    foreach (var authorName in candidateAuthors)
-                    {
-                        var authorLower = authorName.ToLowerInvariant();
-                        foreach (var tv in tagValuesLower)
-                        {
-                            if (tv.Contains(authorLower, StringComparison.Ordinal))
-                            {
-                                _logger.Debug("[HOLY-GRAIL] FTS candidate author '{0}' found in tags", authorName);
-                                return true;
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "[HOLY-GRAIL] AnyFtsAuthorInTags failed");
-                }
-
-                return false;
+                    var seriesTokens = TokenizeForLeftoverGateSequence(StripTrailingParentheticals(seriesName));
+                    return seriesTokens.Count > 0 && titleTokens.SequenceEqual(seriesTokens, StringComparer.OrdinalIgnoreCase);
+                });
             }
 
             private bool HasSeriesTitlePositionContradiction(
@@ -10193,18 +10122,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return false;
                 }
 
-                var titleTokens = TokenizeForLeftoverGate(candidate.EditionTitle)
-                    .Where(t => !string.IsNullOrWhiteSpace(t) &&
-                                t.Length > 1 &&
-                                t.Any(char.IsLetter) &&
-                                !HolyGrailLeftoverHardNoiseTokens.Contains(t) &&
-                                !HolyGrailLeftoverStructuralTokens.Contains(t))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                if (titleTokens.Count == 0 ||
-                    !GetCandidateSeriesContexts(book).Any(context => titleTokens.SetEquals(context.NameTokens)))
+                if (!IsTitleOwnedSeriesTitle(candidate.EditionTitle, book))
                 {
-                    return false;
+                    var titleTokens = TokenizeForLeftoverGate(candidate.EditionTitle)
+                        .Where(t => !string.IsNullOrWhiteSpace(t) &&
+                                    t.Length > 1 &&
+                                    t.Any(char.IsLetter) &&
+                                    !HolyGrailLeftoverStructuralTokens.Contains(t))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    if (titleTokens.Count == 0 ||
+                        !GetCandidateSeriesContexts(book).Any(context => titleTokens.SetEquals(context.NameTokens)))
+                    {
+                        return false;
+                    }
+
                 }
 
                 return titleEvidence.All(evidence =>
@@ -10435,7 +10367,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         continue;
                     }
 
-                    if (HolyGrailLeftoverHardNoiseTokens.Contains(t) || HolyGrailLeftoverStructuralTokens.Contains(t))
+                    if (HolyGrailLeftoverStructuralTokens.Contains(t))
                     {
                         continue;
                     }
@@ -10509,6 +10441,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 .ToList();
 
             if (seriesNames.Count == 0)
+            {
+                return Array.Empty<EditionTitleEvidence>();
+            }
+
+            // A complete title that is also the series label contains no removable series decoration.
+            var completeTitleTokens = TokenizeForLeftoverGateSequence(candidate.EditionTitle);
+            if (seriesNames.Any(seriesName => completeTitleTokens.SequenceEqual(
+                    TokenizeForLeftoverGateSequence(seriesName), StringComparer.OrdinalIgnoreCase)))
             {
                 return Array.Empty<EditionTitleEvidence>();
             }
@@ -10663,13 +10603,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 .OrderByDescending(a => TokenizeForLeftoverGate(a)
                     .Count(t => !string.IsNullOrWhiteSpace(t) &&
                                 t.Length > 2 &&
-                                !HolyGrailLeftoverHardNoiseTokens.Contains(t) &&
                                 !HolyGrailLeftoverStructuralTokens.Contains(t)))
                 .ToList();
 
             foreach (var alt in alternatives)
             {
-                var evidence = _containmentValidator.GetEditionTitleEvidence(alt, allTags);
+                var evidence = _containmentValidator.GetEditionTitleEvidence(alt, allTags, knownNarrators: SplitNarrators(candidate.NarratorNames));
                 if (evidence != null && evidence.Count > 0)
                 {
                     var eligibleEvidence = evidenceIsEligible == null
@@ -10685,24 +10624,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return Array.Empty<EditionTitleEvidence>();
         }
 
-
-        private bool SeriesNameMatches(string desiredSeriesName, string candidateSeriesName)
-        {
-            if (string.IsNullOrWhiteSpace(desiredSeriesName) || string.IsNullOrWhiteSpace(candidateSeriesName))
-            {
-                return false;
-            }
-
-            var desiredTokens = TokenizeForLeftoverGate(desiredSeriesName).Where(t => !SeriesNameNoiseTokens.Contains(t)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var candidateTokens = TokenizeForLeftoverGate(candidateSeriesName).Where(t => !SeriesNameNoiseTokens.Contains(t)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (desiredTokens.Count == 0 || candidateTokens.Count == 0)
-            {
-                return false;
-            }
-
-            return desiredTokens.IsSubsetOf(candidateTokens) || candidateTokens.IsSubsetOf(desiredTokens);
-        }
 
         private bool TryNormalizeSeriesName(string raw, out string seriesName)
         {
@@ -10837,43 +10758,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         private List<GroupPhysicalField> BuildCandidateRelativeGroupFields(
             IReadOnlyList<Dictionary<string, List<string>>> groupMemberTags,
-            IReadOnlyCollection<string> authorNamesToConsume)
+            IEnumerable<IReadOnlyList<string>> authorsToConsume)
         {
             if (groupMemberTags == null || groupMemberTags.Count < 2)
             {
                 return new List<GroupPhysicalField>();
             }
 
-            var authorNames = (authorNamesToConsume ?? Array.Empty<string>())
-                .Where(name => !string.IsNullOrWhiteSpace(name))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderByDescending(name => name.Length)
-                .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
             var members = new List<Dictionary<string, List<GroupPhysicalFieldValue>>>();
-
-            string ConsumeAuthors(string value)
-            {
-                var residual = value;
-                foreach (var authorName in authorNames)
-                {
-                    while (TryFindStagedIdentitySpan(residual, authorName, out var start, out var end))
-                    {
-                        var before = residual;
-                        residual = Regex.Replace(
-                                before.Remove(start, end - start).Insert(start, " "),
-                                @"\s+",
-                                " ")
-                            .Trim(' ', ',', ';', '-', '_', '&');
-                        if (string.Equals(before, residual, StringComparison.Ordinal))
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                return residual;
-            }
 
             foreach (var memberTags in groupMemberTags)
             {
@@ -10883,48 +10775,26 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var physicalFields = new Dictionary<string, List<GroupPhysicalFieldValue>>(StringComparer.OrdinalIgnoreCase);
-                foreach (var pair in memberTags)
+                foreach (var occurrence in ConsumeAuthorEvidence(memberTags, authorsToConsume, "group", null))
                 {
-                    if (string.IsNullOrWhiteSpace(pair.Key) ||
-                        IsExcludedFromMatching(pair.Key) ||
-                        pair.Value == null)
+                    if (TokenizeForLeftoverGateSequence(occurrence.ResidualValue).Count == 0)
                     {
                         continue;
                     }
 
-                    foreach (var rawValue in pair.Value)
+                    if (!physicalFields.TryGetValue(occurrence.Field, out var values))
                     {
-                        var originalValue = rawValue?.Trim();
-                        if (string.IsNullOrWhiteSpace(originalValue) || originalValue.Length >= 5000)
-                        {
-                            continue;
-                        }
+                        values = new List<GroupPhysicalFieldValue>();
+                        physicalFields[occurrence.Field] = values;
+                    }
 
-                        if (TagCanonicalizer.IsCanonicalAliasBackedByRawSource(pair.Key, originalValue, memberTags))
+                    if (!values.Any(value => string.Equals(value.OriginalValue, occurrence.OriginalValue, StringComparison.Ordinal)))
+                    {
+                        values.Add(new GroupPhysicalFieldValue
                         {
-                            continue;
-                        }
-
-                        var residualValue = ConsumeAuthors(originalValue);
-                        if (TokenizeForLeftoverGateSequence(residualValue).Count == 0)
-                        {
-                            continue;
-                        }
-
-                        if (!physicalFields.TryGetValue(pair.Key, out var values))
-                        {
-                            values = new List<GroupPhysicalFieldValue>();
-                            physicalFields[pair.Key] = values;
-                        }
-
-                        if (!values.Any(value => string.Equals(value.OriginalValue, originalValue, StringComparison.Ordinal)))
-                        {
-                            values.Add(new GroupPhysicalFieldValue
-                            {
-                                OriginalValue = originalValue,
-                                ResidualValue = residualValue
-                            });
-                        }
+                            OriginalValue = occurrence.OriginalValue,
+                            ResidualValue = occurrence.ResidualValue
+                        });
                     }
                 }
 
@@ -11258,7 +11128,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             public bool DurationCompatible { get; set; }
             public bool DurationConflict { get; set; }
             public bool YearExact { get; set; }
-            public bool BookTitleIsOwnedSeriesTitle { get; set; }
 
             public int CorroborationTier =>
                 (DetailFields.Count > 0 ? 2 : 0) +
@@ -11320,47 +11189,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return null;
             }
 
-            bool BookTitleIsOwnedSeriesTitle(EditionFtsMatch candidate)
-            {
-                if (candidate == null || string.IsNullOrWhiteSpace(candidate.BookTitle))
-                {
-                    return false;
-                }
-
-                var book = TryGetBookCached(candidate.BookId, booksById);
-                if (book == null)
-                {
-                    return false;
-                }
-
-                var titleTokens = TokenizeForLeftoverGateSequence(candidate.BookTitle);
-                if (titleTokens.Count == 0)
-                {
-                    return false;
-                }
-
-                var ownedSeriesNames = new List<string>();
-                if (!string.IsNullOrWhiteSpace(book.SeriesName))
-                {
-                    ownedSeriesNames.Add(book.SeriesName);
-                }
-
-                if (book.SeriesLinks?.Any() == true)
-                {
-                    ownedSeriesNames.AddRange(book.SeriesLinks
-                        .Select(link => link?.Series?.Value?.Title)
-                        .Where(value => !string.IsNullOrWhiteSpace(value)));
-                }
-
-                return ownedSeriesNames.Any(seriesName =>
-                {
-                    var seriesTokens = TokenizeForLeftoverGateSequence(
-                        StripTrailingParentheticals(seriesName));
-                    return seriesTokens.Count > 0 &&
-                           titleTokens.SequenceEqual(seriesTokens, StringComparer.OrdinalIgnoreCase);
-                });
-            }
-
             var votesByWork = keyedCandidates
                 .GroupBy(item => item.WorkKey, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(
@@ -11369,12 +11197,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     {
                         WorkKey = group.Key,
                         BookIds = group.Select(item => item.Candidate.BookId).ToHashSet(),
-                        Candidates = group.Select(item => item.Candidate).ToList(),
-                        BookTitleIsOwnedSeriesTitle = group.Any(item => BookTitleIsOwnedSeriesTitle(item.Candidate))
+                        Candidates = group.Select(item => item.Candidate).ToList()
                     },
                     StringComparer.OrdinalIgnoreCase);
             var titleReservedFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var seriesTitleDominatedWorks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             EditionFtsFieldHit FindFieldHit(EditionFtsMatch candidate, string fieldKey)
             {
@@ -11489,37 +11315,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     .Select(representation => representation.WorkKey)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                foreach (var seriesRepresentation in bestByWork.Where(representation =>
-                             votesByWork[representation.WorkKey].BookTitleIsOwnedSeriesTitle))
-                {
-                    var displacingWorks = bestByWork
-                        .Where(representation =>
-                            !votesByWork[representation.WorkKey].BookTitleIsOwnedSeriesTitle &&
-                            !representation.ConsumedFieldIndexes.SetEquals(seriesRepresentation.ConsumedFieldIndexes))
-                        .Select(representation => representation.WorkKey)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    if (displacingWorks.Count == 0 ||
-                        !seriesTitleDominatedWorks.Add(seriesRepresentation.WorkKey))
-                    {
-                        continue;
-                    }
-
-                    RecordTrace(
-                        "fts_stage2_series_title_dominated",
-                        phase,
-                        votesByWork[seriesRepresentation.WorkKey].Representative,
-                        detail: "A generic candidate whose Book title is its own series cannot outvote a different Book title represented in the same physical field.",
-                        filePath: filePath,
-                        data: new Dictionary<string, string>
-                        {
-                            ["field"] = fieldKey,
-                            ["residual"] = residualValue,
-                            ["seriesTitleWorkKey"] = seriesRepresentation.WorkKey,
-                            ["specificWorkKeys"] = string.Join(" | ", displacingWorks)
-                        });
-                }
-
                 if (maximalWorks.Count > 1)
                 {
                     RecordTrace(
@@ -11602,22 +11397,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 return foundStrictSuperset;
-            }
-
-            bool SameGroupPositions(
-                StagedGroupFieldRepresentation left,
-                StagedGroupFieldRepresentation right)
-            {
-                if (left?.ConsumedMemberIndexes == null ||
-                    right?.ConsumedMemberIndexes == null ||
-                    left.ConsumedMemberIndexes.Count != right.ConsumedMemberIndexes.Count)
-                {
-                    return false;
-                }
-
-                return left.ConsumedMemberIndexes
-                    .Select((indexes, index) => indexes.SetEquals(right.ConsumedMemberIndexes[index]))
-                    .All(equal => equal);
             }
 
             string PhysicalFieldName(string fieldKey)
@@ -11717,36 +11496,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                foreach (var seriesRepresentation in bestByWork.Where(representation =>
-                             votesByWork[representation.WorkKey].BookTitleIsOwnedSeriesTitle))
-                {
-                    var displacingWorks = bestByWork
-                        .Where(representation =>
-                            !votesByWork[representation.WorkKey].BookTitleIsOwnedSeriesTitle &&
-                            !SameGroupPositions(seriesRepresentation, representation))
-                        .Select(representation => representation.WorkKey)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    if (displacingWorks.Count == 0 ||
-                        !seriesTitleDominatedWorks.Add(seriesRepresentation.WorkKey))
-                    {
-                        continue;
-                    }
-
-                    RecordTrace(
-                        "fts_stage2_series_title_dominated",
-                        phase,
-                        votesByWork[seriesRepresentation.WorkKey].Representative,
-                        detail: "A generic candidate whose Book title is its own series cannot outvote a different Book title represented throughout the same physical group field.",
-                        filePath: filePath,
-                        data: new Dictionary<string, string>
-                        {
-                            ["field"] = groupField.FieldName,
-                            ["seriesTitleWorkKey"] = seriesRepresentation.WorkKey,
-                            ["specificWorkKeys"] = string.Join(" | ", displacingWorks)
-                        });
-                }
-
                 if (maximalWorks.Count > 1)
                 {
                     RecordTrace(
@@ -11804,8 +11553,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var titleEligibleWorks = votesByWork.Values
-                .Where(work => work.TitleFields.Count > 0 &&
-                               !seriesTitleDominatedWorks.Contains(work.WorkKey))
+                .Where(work => work.TitleFields.Count > 0)
                 .Select(work => work.WorkKey)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var fieldQuery in fieldQueries.Where(query => query != null))
@@ -11941,7 +11689,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 .Where(work =>
                     work.TitleFields.Count > 0 &&
                     work.DirectBookTitleFields.Count == 0 &&
-                    !seriesTitleDominatedWorks.Contains(work.WorkKey) &&
                     (work.DetailFields.Count > 0 || work.DurationCompatible || work.YearExact))
                 .ToList();
             if (corroboratedProjectionOnlyWorks.Count > 0)
@@ -11970,8 +11717,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var eligibleWorks = votesByWork.Values
-                .Where(work => work.DirectBookTitleFields.Count > 0 &&
-                               !seriesTitleDominatedWorks.Contains(work.WorkKey))
+                .Where(work => work.DirectBookTitleFields.Count > 0)
                 .ToList();
             if (eligibleWorks.Count == 0)
             {
@@ -12059,10 +11805,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             public int End { get; set; }
         }
 
-        private List<EditionFtsFieldQuery> BuildStagedFtsFieldQueries(
+        private List<ResidualTagOccurrence> ConsumeAuthorEvidence(
             IDictionary<string, List<string>> tags,
-            IReadOnlyList<BookFtsMatch> recalledBooks,
-            IReadOnlyCollection<string> authorNamesToConsume,
+            IEnumerable<IReadOnlyList<string>> authorsToConsume,
             string phase,
             string filePath)
         {
@@ -12108,58 +11853,58 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
             }
 
-            void ConsumeAllAuthorOccurrences(string expected)
+            // Spend the cleanest physical credit so tag order cannot consume a name from a title first.
+            foreach (var identityNames in authorsToConsume)
             {
-                if (string.IsNullOrWhiteSpace(expected))
+                var preparedNames = identityNames.Select(AuthorNameMatcher.PrepareName).ToList();
+                var authorSpan = occurrences.SelectMany(occurrence =>
                 {
-                    return;
-                }
-
-                foreach (var occurrence in occurrences)
-                {
-                    while (TryFindStagedIdentitySpan(
-                               occurrence.ResidualValue,
-                               expected,
-                               out var start,
-                               out var end))
-                    {
-                        var before = occurrence.ResidualValue;
-                        var after = Regex.Replace(
-                                before.Remove(start, end - start).Insert(start, " "),
-                                @"\s+",
-                                " ")
-                            .Trim(' ', ',', ';', '-', '_');
-                        if (string.Equals(before, after, StringComparison.Ordinal))
+                    var value = occurrence.ResidualValue;
+                    var spans = ReleaseTitleMatchScorer.TokenizeWithSpans(value);
+                    return preparedNames.SelectMany(name => AuthorNameMatcher.FindNameSpans(value, spans, name))
+                        .Where(span => AuthorNameMatcher.IsCoherentNameSpan(value, spans, span))
+                        .Select(span => new
                         {
-                            break;
-                        }
-
-                        occurrence.ResidualValue = after;
-                        RecordTrace(
-                            "fts_context_consumed",
-                            phase,
-                            detail: "Consumed a proven author occurrence before Stage 2 FTS.",
-                            filePath: filePath,
-                            data: new Dictionary<string, string>
-                            {
-                                ["role"] = "author",
-                                ["expected"] = expected,
-                                ["field"] = occurrence.Field,
-                                ["valueIndex"] = occurrence.ValueIndex.ToString(CultureInfo.InvariantCulture),
-                                ["observed"] = before,
-                                ["residual"] = after
-                            });
-                    }
+                            Occurrence = occurrence,
+                            Start = spans[span.Start].Start,
+                            End = spans[span.End].End,
+                            RemainingTokens = spans.Count - (span.End - span.Start + 1)
+                        });
+                }).OrderBy(span => span.RemainingTokens)
+                    .ThenBy(span => span.Occurrence.ResidualValue, StringComparer.Ordinal)
+                    .ThenBy(span => span.Occurrence.Field, StringComparer.Ordinal)
+                    .ThenBy(span => span.Occurrence.ValueIndex)
+                    .FirstOrDefault();
+                if (authorSpan == null)
+                {
+                    continue;
                 }
+
+                var occurrence = authorSpan.Occurrence;
+                var before = occurrence.ResidualValue;
+                occurrence.ResidualValue = Regex.Replace(before.Remove(authorSpan.Start, authorSpan.End - authorSpan.Start).Insert(authorSpan.Start, " "), @"\s+", " ")
+                    .Trim(' ', ',', ';', '-', '_');
+                RecordTrace("fts_context_consumed", phase,
+                    detail: "Consumed one author token span from the cleanest credit; subsequent roles use the residual text.", filePath: filePath,
+                    data: new Dictionary<string, string>
+                    {
+                        ["role"] = "author",
+                        ["field"] = occurrence.Field,
+                        ["valueIndex"] = occurrence.ValueIndex.ToString(CultureInfo.InvariantCulture),
+                        ["observed"] = before,
+                        ["residual"] = occurrence.ResidualValue
+                    });
             }
 
-            foreach (var authorName in (authorNamesToConsume ?? Array.Empty<string>())
-                         .Where(name => !string.IsNullOrWhiteSpace(name))
-                         .Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                ConsumeAllAuthorOccurrences(authorName);
-            }
+            return occurrences;
+        }
 
+        private List<EditionFtsFieldQuery> BuildStagedFtsFieldQueries(
+            IReadOnlyList<ResidualTagOccurrence> occurrences,
+            IReadOnlyList<BookFtsMatch> recalledBooks,
+            string phase,
+            string filePath)
+        {
             var retainedSeries = recalledBooks
                 .Where(book => book != null && !string.IsNullOrWhiteSpace(book.SeriesName))
                 .Select(book => book.SeriesName)
@@ -12183,8 +11928,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 .Select(occurrence => new
                 {
                     Occurrence = occurrence,
-                    Terms = TokenizeText(occurrence.ResidualValue)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                    Terms = StringSuperNormalizer.GetFtsQueryTerms(occurrence.ResidualValue)
                         .ToList()
                 })
                 .Where(item => item.Terms.Count > 0)
@@ -12305,125 +12049,26 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private List<string> TokenizeForHolyGrail(Dictionary<string, List<string>> tags)
         {
             var allText = string.Join(" ", tags.Values.SelectMany(v => v));
-            return TokenizeText(allText);
-        }
-
-        /// <summary>
-        /// Tokenize path components for fallback.
-        /// </summary>
-        private List<string> TokenizePathForHolyGrail(string filePath)
-        {
-            if (string.IsNullOrWhiteSpace(filePath)) return new List<string>();
-
-            var parts = new List<string>();
-
-            // Add filename without extension
-            var fileName = Path.GetFileNameWithoutExtension(filePath);
-            if (!string.IsNullOrWhiteSpace(fileName)) parts.Add(fileName);
-
-            // Add directory names (book folder, author folder). Prefer resolving author folder via root folders
-            // so /Author/Series/Book/file layouts don't treat "Series" as the author.
-            try
-            {
-                var dir = Path.GetDirectoryName(filePath);
-                if (!string.IsNullOrWhiteSpace(dir))
-                {
-                    var di = new DirectoryInfo(dir);
-                    if (di.Exists)
-                    {
-                        parts.Add(di.Name); // Book folder
-
-                        var firstFolderUnderRoot = GetFirstFolderUnderRoot(filePath);
-                        var folderName = !string.IsNullOrWhiteSpace(firstFolderUnderRoot) ? Path.GetFileName(firstFolderUnderRoot) : null;
-                        if (!string.IsNullOrWhiteSpace(folderName))
-                        {
-                            parts.Add(folderName);
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            return TokenizeText(string.Join(" ", parts));
-        }
-
-        /// <summary>
-        /// Core tokenization: lowercase alphanumeric, deduplicate preserving order.
-        /// Now with diacritic and possessive normalization for robust matching.
-        /// </summary>
-        private List<string> TokenizeText(string text)
-        {
-            return Services.BookImportUnitGroupingService.TokenizeText(text);
-        }
-
-        /// <summary>
-        /// Find author by last name (most distinctive part) per blueprint.
-        /// </summary>
-        private Author FindAuthorByLastName(string artistName)
-        {
-            if (string.IsNullOrWhiteSpace(artistName)) return null;
-
-            // Per blueprint: search by last name (most distinctive part)
-            var parts = artistName.Replace(".", " ").Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var meaningfulParts = parts.Where(p => p.Length > 2).ToList();
-
-            var allAuthors = _authorService.GetAllAuthors() ?? new List<Author>();
-            if (allAuthors.Count == 0)
-            {
-                return null;
-            }
-
-            // Try parts from end (last name first) to start
-            foreach (var part in parts.Reverse())
-            {
-                if (part.Length <= 2) continue; // Skip initials
-
-                var authors = allAuthors
-                    .Where(a => a.Name != null && a.Name.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0)
-                    .ToList();
-
-                if (authors.Count == 1)
-                {
-                    return authors[0];
-                }
-                else if (authors.Count > 1)
-                {
-                    // Multiple matches - try to find exact match on full name
-                    var exactMatch = authors.FirstOrDefault(a =>
-                        a.Name.Equals(artistName, StringComparison.OrdinalIgnoreCase));
-                    if (exactMatch != null) return exactMatch;
-
-                    // Try to narrow down by requiring all meaningful parts of the artist name.
-                    if (meaningfulParts.Count > 1)
-                    {
-                        var narrowed = authors
-                            .Where(a => meaningfulParts.All(p => a.Name?.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0))
-                            .ToList();
-
-                        if (narrowed.Count == 1)
-                        {
-                            return narrowed[0];
-                        }
-                    }
-
-                    // Ambiguous; do not arbitrarily pick an author (can cause wrong imports).
-                    return null;
-                }
-            }
-
-            return null;
+            return StringSuperNormalizer.GetFtsQueryTerms(allText).ToList();
         }
 
         /// <summary>
         /// Find author from path by checking first folder under root.
+        /// A unique complete folder match is required before it can become trusted author scope.
         /// </summary>
         private Author FindAuthorFromPath(string filePath)
         {
             try
             {
                 var firstFolderUnderRoot = GetFirstFolderUnderRoot(filePath);
-                var folderName = !string.IsNullOrWhiteSpace(firstFolderUnderRoot) ? Path.GetFileName(firstFolderUnderRoot) : null;
-                return FindAuthorByLastName(folderName);
+                if (string.IsNullOrWhiteSpace(firstFolderUnderRoot) || _authorFolderMatchingService == null)
+                {
+                    return null;
+                }
+
+                return _authorService.GetCandidates(Path.GetFileName(firstFolderUnderRoot))
+                    .Where(author => author != null && _authorFolderMatchingService.ValidateFolderMatchesAuthor(firstFolderUnderRoot, author.Name))
+                    .ExclusiveOrDefault();
             }
             catch
             {
@@ -12462,7 +12107,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     EditionId = match.EditionId,
                     MatchedVia = match.MatchedVia,
                     Provenance = match.Provenance?.Clone(),
-                    IdentityProof = match.IdentityProof
+                    IdentityProof = match.IdentityProof,
+                    AlternativeCopyEdition = match.AlternativeCopyEdition
                 };
             var effectivePathFallbackUsed = pathFallbackUsed;
             if (effectivePathFallbackUsed != true &&
@@ -12546,7 +12192,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return result;
             }
 
-            var edition = TryGetEdition(match.EditionId);
+            var edition = match.AlternativeCopyEdition ?? TryGetEdition(match.EditionId);
             var authorMatched = $"{match.AuthorName} (ID:{match.AuthorId})";
             var bookMatched = $"{match.BookTitle} (ID:{match.BookId})";
             var editionMatched = edition != null ? $"{edition.Title} (ID:{edition.Id})" : null;
@@ -12616,14 +12262,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
         }
 
-        private Dictionary<string, List<string>> BuildAuthorEvidenceTags(string authorName, IDictionary<string, List<string>> tags)
+        private Dictionary<string, List<string>> BuildAuthorEvidenceTags(
+            string authorName,
+            IDictionary<string, List<string>> tags,
+            IEnumerable<string> knownTitles = null)
         {
-            return ExactMatchEvidenceBuilder.BuildAuthorEvidenceTags(authorName, tags, _containmentValidator);
+            return ExactMatchEvidenceBuilder.BuildAuthorEvidenceTags(authorName, tags, _containmentValidator, knownTitles);
         }
 
         private Dictionary<string, List<string>> BuildRawAuthorEvidenceTags(
             string authorName,
-            IDictionary<string, List<string>> tags)
+            IDictionary<string, List<string>> tags,
+            IEnumerable<string> knownTitles = null)
         {
             var evidence = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrWhiteSpace(authorName) || tags == null || _containmentValidator == null)
@@ -12639,7 +12289,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     {
                         [field.Key] = new List<string> { value }
                     };
-                    if (!_containmentValidator.ValidateAuthorInTags(authorName, singleField))
+                    if (!_containmentValidator.ValidateAuthorInTags(authorName, singleField, knownTitles))
                     {
                         continue;
                     }
@@ -12769,12 +12419,31 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             IDictionary<string, List<string>> tags,
             Book candidateBook,
             Func<int, List<Book>> authorCatalogLoader = null,
-            bool includeDurationGatedNearExact = false)
+            bool includeDurationGatedNearExact = false,
+            IEnumerable<string> knownNarrators = null)
         {
-            var ordinaryEvidence = _containmentValidator?.GetEditionTitleEvidence(title, tags, includeDurationGatedNearExact);
+            var ordinaryEvidence = _containmentValidator?.GetEditionTitleEvidence(title, tags, includeDurationGatedNearExact, knownNarrators);
             if (ordinaryEvidence?.Count > 0)
             {
                 return ordinaryEvidence;
+            }
+
+            if (candidateBook != null)
+            {
+                foreach (var baseTitle in ReleaseTitleMatchScorer.GetSeriesMetadataBaseTitles(new[] { title }, candidateBook.SeriesName, candidateBook.SeriesPosition))
+                {
+                    if (!TokenizeForLeftoverGateSequence(baseTitle).SequenceEqual(
+                            TokenizeForLeftoverGateSequence(candidateBook.Title), StringComparer.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var seriesEvidence = _containmentValidator?.GetEditionTitleEvidence(baseTitle, tags, includeDurationGatedNearExact, knownNarrators);
+                    if (seriesEvidence?.Count > 0)
+                    {
+                        return seriesEvidence;
+                    }
+                }
             }
 
             return GetNumberEquivalentTitleEvidence(title, editionLanguage, tags, candidateBook, authorCatalogLoader);
@@ -12911,7 +12580,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             var edition = TryGetEdition(match.EditionId);
             var evidence = !string.IsNullOrWhiteSpace(edition?.Title)
-                ? _containmentValidator.GetEditionTitleEvidence(edition.Title, tags)
+                ? _containmentValidator.GetEditionTitleEvidence(edition.Title, tags, knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(edition))
                 : Array.Empty<EditionTitleEvidence>();
 
             if ((evidence == null || evidence.Count == 0) && edition != null &&
@@ -12937,7 +12606,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                              .Where(value => !string.IsNullOrWhiteSpace(value))
                              .Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    evidence = _containmentValidator.GetEditionTitleEvidence(provenTitle, tags);
+                    evidence = _containmentValidator.GetEditionTitleEvidence(provenTitle, tags, knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(edition));
                     if (evidence?.Count > 0)
                     {
                         break;
@@ -12947,7 +12616,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             if ((evidence == null || evidence.Count == 0) && !string.IsNullOrWhiteSpace(match.BookTitle))
             {
-                evidence = _containmentValidator.GetEditionTitleEvidence(match.BookTitle, tags);
+                evidence = _containmentValidator.GetEditionTitleEvidence(match.BookTitle, tags, knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(edition));
             }
 
             return evidence ?? Array.Empty<EditionTitleEvidence>();
@@ -13126,7 +12795,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             IReadOnlyCollection<IdentifierEvidenceCandidate> winningEvidence,
             IDictionary<string, List<string>> matchableTags,
             int? restrictToAuthorId,
-            out string failureCode)
+            out string failureCode,
+            Func<int, List<Book>> authorCatalogLoader = null)
         {
             failureCode = null;
             if (edition?.Book == null || _containmentValidator == null)
@@ -13162,6 +12832,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var book = edition.Book;
+            // Identifiers select editions; use the work title only when the edition has no title.
+            var candidateTitles = !string.IsNullOrWhiteSpace(edition.Title)
+                ? new[] { edition.Title }
+                : new[] { book.Title };
             if (book.Author == null && _authorService != null)
             {
                 try
@@ -13200,7 +12874,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     .Where(name => !string.IsNullOrWhiteSpace(name))
                     .Select(name => name.Trim())
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault(name => _containmentValidator.ValidateAuthorInTags(name, proofTags));
+                    .FirstOrDefault(name => _containmentValidator.ValidateAuthorInTags(name, proofTags, candidateTitles));
                 if (provenAuthorName == null)
                 {
                     failureCode = "IDENTIFIER_AUTHOR_PROOF_FAILED";
@@ -13212,17 +12886,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             IReadOnlyList<EditionTitleEvidence> titleEvidence = Array.Empty<EditionTitleEvidence>();
             // Identifiers select editions; a generic work title cannot prove a specific volume.
             // Retain work-title fallback only when the edition has no title, without numeric relaxation.
-            var candidateTitles = !string.IsNullOrWhiteSpace(edition.Title)
-                ? new[] { edition.Title }
-                : new[] { book.Title };
             foreach (var title in candidateTitles
                          .Where(title => !string.IsNullOrWhiteSpace(title))
                          .Select(title => title.Trim())
                          .Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 var evidence = string.IsNullOrWhiteSpace(edition.Title)
-                    ? _containmentValidator.GetEditionTitleEvidence(title, proofTags)
-                    : GetCandidateEditionTitleEvidence(title, edition.Language, proofTags, book);
+                    ? _containmentValidator.GetEditionTitleEvidence(title, proofTags, knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(edition))
+                    : GetCandidateEditionTitleEvidence(title, edition.Language, proofTags, book, authorCatalogLoader, knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(edition));
                 if (evidence?.Count > 0)
                 {
                     provenTitle = title;
@@ -13323,7 +12994,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
             else
             {
-                foreach (var authorEvidence in BuildRawAuthorEvidenceTags(candidateProof?.AuthorName, candidateProof?.Tags))
+                foreach (var authorEvidence in BuildRawAuthorEvidenceTags(candidateProof?.AuthorName, candidateProof?.Tags, new[] { candidateProof?.Title }))
                 {
                     foreach (var value in authorEvidence.Value ?? new List<string>())
                     {

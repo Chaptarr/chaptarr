@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using Chaptarr.Api.V1.RootFolders;
+using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
@@ -11,6 +13,7 @@ using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.RootFolders
@@ -25,6 +28,7 @@ namespace Chaptarr.Core.Test.RootFolders
             protected override object Invoke(MethodInfo method, object[] args) => Handler(method, args);
         }
 
+        private IDiskProvider _disk;
         private RootFolder _stored;
         private RootFolderService _service;
 
@@ -66,7 +70,7 @@ namespace Chaptarr.Core.Test.RootFolders
                 }
             });
 
-            var disk = Proxy<IDiskProvider>((method, args) => method.Name switch
+            _disk = Proxy<IDiskProvider>((method, args) => method.Name switch
             {
                 nameof(IDiskProvider.FolderExists) => true,
                 nameof(IDiskProvider.FolderWritable) => true,
@@ -78,7 +82,7 @@ namespace Chaptarr.Core.Test.RootFolders
             _service = new RootFolderService(
                 repository,
                 Proxy<IIngestQueueRepository>((method, args) => null),
-                disk,
+                _disk,
                 Proxy<IManageCommandQueue>((method, args) => null),
                 LogManager.GetCurrentClassLogger());
         }
@@ -174,6 +178,116 @@ namespace Chaptarr.Core.Test.RootFolders
 
             Assert.That(_stored.AudiobookSettings, Is.EqualTo(settingsJson));
             Assert.That(_stored.EbookSettings, Is.EqualTo(settingsJson));
+        }
+
+        [TestCase(false, BookMediaType.Audiobook)]
+        [TestCase(true, BookMediaType.Audiobook)]
+        [TestCase(false, BookMediaType.Ebook)]
+        [TestCase(true, BookMediaType.Ebook)]
+        [NonParallelizable]
+        public void persisted_root_choices_should_survive_api_read_modify_write(bool postgres, BookMediaType side)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var roots = new RootFolderRepository(database, Proxy<IEventAggregator>((method, args) => null));
+                var service = new RootFolderService(roots, Proxy<IIngestQueueRepository>((method, args) => null),
+                    _disk, Proxy<IManageCommandQueue>((method, args) => null), LogManager.GetCurrentClassLogger());
+                var choices = new (bool? Monitored, MonitorTypes? Initial, NewItemMonitorTypes? Future)[]
+                {
+                    (false, null, NewItemMonitorTypes.None),
+                    (true, null, NewItemMonitorTypes.New),
+                    (null, MonitorTypes.All, NewItemMonitorTypes.All),
+                    (true, MonitorTypes.None, null),
+                    (null, null, null),
+                    (false, MonitorTypes.None, NewItemMonitorTypes.None),
+                    (true, MonitorTypes.All, NewItemMonitorTypes.All),
+                    (true, MonitorTypes.Missing, NewItemMonitorTypes.New),
+                    (false, MonitorTypes.Existing, NewItemMonitorTypes.None)
+                };
+                var rootIndex = 0;
+                foreach (var type in new[] { FolderType.Mixed, side == BookMediaType.Audiobook ? FolderType.Audiobook : FolderType.Ebook })
+                {
+                    foreach (var choice in choices)
+                    {
+                        var root = new RootFolder { Name = "Configured root", Path = Path.Combine(@"C:\Library".AsOsAgnostic(), (++rootIndex).ToString()), FolderType = type };
+                        var settings = new MediaTypeSettings { QualityProfileId = 2, MetadataProfileId = 3,
+                            Monitored = choice.Monitored, MonitorExistingMode = choice.Initial, MonitorNewItems = choice.Future };
+                        if (side == BookMediaType.Audiobook) root.SetAudiobookSettings(settings);
+                        else root.SetEbookSettings(settings);
+                        roots.Insert(root);
+                        var saved = roots.Get(root.Id);
+                        var response = JsonSerializer.Serialize(saved.ToResource(), STJson.GetSerializerSettings());
+                        var request = JsonSerializer.Deserialize<RootFolderResource>(response, STJson.GetSerializerSettings());
+                        request.Name = "Updated root";
+                        service.Update(request.ToModel());
+                        var updated = roots.Get(root.Id);
+                        var actual = side == BookMediaType.Audiobook ? updated.GetAudiobookSettings() : updated.GetEbookSettings();
+                        var resolved = new RootFolderSettingsResolver(null).ResolveSettings(updated, side);
+                        Assert.Multiple(() =>
+                        {
+                            Assert.That(actual.Monitored, Is.EqualTo(choice.Monitored));
+                            Assert.That(actual.MonitorExistingMode, Is.EqualTo(choice.Initial));
+                            Assert.That(actual.MonitorNewItems, Is.EqualTo(choice.Future));
+                            Assert.That(resolved.IsConfigured, Is.True);
+                            Assert.That(resolved.MonitorExistingMode, Is.EqualTo(choice.Initial));
+                            Assert.That(actual.QualityProfileId, Is.EqualTo(2));
+                            Assert.That(actual.MetadataProfileId, Is.EqualTo(3));
+                            Assert.That(updated.Name, Is.EqualTo("Updated root"));
+                            var opposite = side == BookMediaType.Audiobook ? updated.GetEbookSettings() : updated.GetAudiobookSettings();
+                            Assert.That(opposite?.Monitored, Is.Null);
+                            Assert.That(opposite?.MonitorExistingMode, Is.Null);
+                            Assert.That(opposite?.MonitorNewItems, Is.Null);
+                            Assert.That(opposite?.QualityProfileId, Is.Null);
+                            Assert.That(opposite?.MetadataProfileId, Is.Null);
+                        });
+                    }
+                }
+            });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        [NonParallelizable]
+        public void persisted_legacy_root_inputs_should_use_the_existing_conversion(bool postgres, bool structured)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var roots = new RootFolderRepository(database, Proxy<IEventAggregator>((method, args) => null));
+                var service = new RootFolderService(roots, Proxy<IIngestQueueRepository>((method, args) => null),
+                    _disk, Proxy<IManageCommandQueue>((method, args) => null), LogManager.GetCurrentClassLogger());
+                foreach (var side in new[] { "audiobook", "ebook" })
+                {
+                    foreach (var existing in new[] { 0, 1, 2 })
+                    {
+                        foreach (var future in new[] { false, true })
+                        {
+                            var fields = structured
+                                ? $",\"{side}\":{{\"qualityProfileId\":2,\"metadataProfileId\":3,\"monitorExisting\":{existing},\"monitorFuture\":{future.ToString().ToLowerInvariant()}}}"
+                                : $",\"{side}QualityProfileId\":2,\"{side}MetadataProfileId\":3,\"{side}MonitorExisting\":{existing},\"{side}MonitorFuture\":{future.ToString().ToLowerInvariant()}";
+                            var type = side == "audiobook" ? FolderType.Audiobook : FolderType.Ebook;
+                            var root = DeserializeRoot(type, fields);
+                            root.Path = Path.Combine(root.Path, $"{side}-{existing}-{future}");
+                            roots.Insert(root);
+                            var response = JsonSerializer.Serialize(roots.Get(root.Id).ToResource(), STJson.GetSerializerSettings());
+                            var request = JsonSerializer.Deserialize<RootFolderResource>(response, STJson.GetSerializerSettings());
+                            service.Update(request.ToModel());
+                            var updated = roots.Get(root.Id);
+                            var settings = side == "audiobook" ? updated.GetAudiobookSettings() : updated.GetEbookSettings();
+                            var expectedInitial = existing == 1 ? MonitorTypes.All : existing == 2 || future ? MonitorTypes.None : (MonitorTypes?)null;
+                            var expectedFuture = existing == 1 ? NewItemMonitorTypes.All : future ? NewItemMonitorTypes.New : existing == 2 ? NewItemMonitorTypes.None : (NewItemMonitorTypes?)null;
+                            Assert.Multiple(() =>
+                            {
+                                Assert.That(settings.Monitored, Is.EqualTo(existing != 0 || future));
+                                Assert.That(settings.MonitorExistingMode, Is.EqualTo(expectedInitial));
+                                Assert.That(settings.MonitorNewItems, Is.EqualTo(expectedFuture));
+                                Assert.That(side == "audiobook" ? updated.GetEbookSettings() : updated.GetAudiobookSettings(), Is.Null);
+                            });
+                        }
+                    }
+                }
+            });
         }
     }
 }

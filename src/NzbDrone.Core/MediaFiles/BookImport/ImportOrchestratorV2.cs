@@ -126,24 +126,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             _booksMatched = 0;
             _filesImported = 0;
             var result = new OrchestratorImportResult();
-            var manualRootScan = commandId.HasValue &&
-                                 IsManualCommand(commandId.Value);
             var scanScope = new IngestQueueScanScope(path, forceStagePaths);
 
             try
             {
-                if (commandId.HasValue)
-                {
-                    // Ensure per-command result reporting doesn't reuse stale import_results rows.
-                    _ingestQueue.BeginSession(commandId.Value);
-
-                    // Manual rescans should retry items previously marked as unmapped/failed.
-                    if (manualRootScan && !scanScope.IsExact)
-                    {
-                        _ingestQueue.RequeueFailedOrUnmappedUnderPath(path);
-                    }
-                }
-
                 _logger.Debug("Starting thin root-folder import orchestration for path: {0}", path);
                 LogMemorySnapshot("[ORCHESTRATOR] start path='{0}'", path);
 
@@ -172,17 +158,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     stageResult.SeenFilePaths.Count,
                     stageResult.SkippedKnownUnchangedCount);
 
-                // Scheduled scans retry only previously-Failed files that were actually observed on disk now.
-                // Unmapped rows remain manual-retry-only, and missing Failed paths are not resurrected.
-                var requeuedFailed = RequeueObservedFailuresForScheduledRootScan(
-                    manualRootScan,
-                    rootFolder,
-                    stageResult.SeenFilePaths);
-                if (requeuedFailed > 0)
-                {
-                    _logger.Debug("[ORCHESTRATOR] Re-queued {0} previously-Failed files observed during scheduled scan", requeuedFailed);
-                }
-
                     await discoveryTask;
                     LogMemorySnapshot("[ORCHESTRATOR] after discovery path='{0}'", path);
 
@@ -196,90 +171,47 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         LogMemorySnapshot("[ORCHESTRATOR] after author-ready ingest wait path='{0}'", path);
                     }
 
-                    // Stage 4: Collect results from database. A specific-file scan invokes the
-                    // orchestrator once per folder while reusing the same command id, so the raw
-                    // command-scoped result set is cumulative. Keep true root scans command-wide,
-                    // but scope forced-path retries to the exact files processed by this call.
-                    var importResults = _ingestQueue.GetImportResults(commandId);
-                    var rawImportResultCount = importResults.Count;
-                    var resultScopePaths = BuildResultScopePathSet(forceStagePaths);
-                    if (resultScopePaths != null)
-                    {
-                        importResults = importResults
-                            .Where(r => !string.IsNullOrWhiteSpace(r?.Path) && resultScopePaths.Contains(r.Path))
-                            .ToList();
-                    }
+                    // Summaries belong to observed paths, not retained command history.
+                    var importResults = _ingestQueue.GetImportResults(result.ScannedFilePaths);
 
-                    LogMemorySnapshot("[ORCHESTRATOR] after loading import results path='{0}' results={1} rawResults={2} scoped={3}",
-                        path,
-                        importResults.Count,
-                        rawImportResultCount,
-                        resultScopePaths != null);
-                
-                // Convert to OrchestratorImportResult format
-                foreach (var importResult in importResults)
+                // Outcomes and cleanup receipts must not depend on optional display metadata.
+                result.StagingResults = importResults;
+                result.UnmappedFiles = importResults.Where(item => item.Outcome == ImportOutcome.Unmapped)
+                    .Select(item => new UnmappedFile { FilePath = item.Path, Reason = item.ErrorMessage ?? "No matching book found" }).ToList();
+                result.FailedFiles = importResults.Where(item => item.Outcome == ImportOutcome.Failed)
+                    .Select(item => new FailedFile { FilePath = item.Path, Reason = item.ErrorMessage ?? "IMPORT_APPLY_FAILED" }).ToList();
+                result.Errors.AddRange(result.FailedFiles.Select(item => $"{item.FilePath}: {item.Reason}"));
+
+                try
                 {
-                    switch (importResult.Outcome)
+                    var imported = importResults.Where(item => item.Outcome == ImportOutcome.Imported).ToList();
+                    var importedBooks = _bookService.GetExistingBooks(imported.Where(item => item.BookId.HasValue)
+                        .Select(item => item.BookId.Value)).ToDictionary(book => book.Id);
+                    var importedAuthors = _authorService.GetExistingAuthors(imported.Where(item => item.AuthorId.HasValue)
+                        .Select(item => item.AuthorId.Value).Concat(importedBooks.Values.Select(book => book.AuthorId)).Distinct())
+                        .ToDictionary(author => author.Id);
+                    foreach (var item in imported)
                     {
-                        case ImportOutcome.Imported:
-                            if (importResult.BookId.HasValue)
-                            {
-                                // Get book details for imported file
-                                var book = _bookService.GetBook(importResult.BookId.Value);
-                                if (book != null)
-                                {
-                                    result.ImportedFiles.Add(new ImportedFile
-                                    {
-                                        FilePath = importResult.Path,
-                                        BookId = book.Id,
-                                        BookTitle = book.Title,
-                                        AuthorName = book.Author?.Name ?? "Unknown"
-                                    });
-                                }
-                            }
-                            break;
-                            
-                        case ImportOutcome.Unmapped:
-                            result.UnmappedFiles.Add(new UnmappedFile
-                            {
-                                FilePath = importResult.Path,
-                                Reason = importResult.ErrorMessage ?? "No matching book found"
-                            });
-                            break;
-                            
-                        case ImportOutcome.Failed:
+                        if (item.BookId.HasValue && importedBooks.TryGetValue(item.BookId.Value, out var book))
                         {
-                            var failureReason = importResult.ErrorMessage ?? "IMPORT_APPLY_FAILED";
-                            result.Errors.Add($"{importResult.Path}: {failureReason}");
-                            result.FailedFiles.Add(new FailedFile
+                            result.ImportedFiles.Add(new ImportedFile
                             {
-                                FilePath = importResult.Path,
-                                Reason = failureReason
+                                FilePath = item.Path,
+                                BookId = book.Id,
+                                BookTitle = book.Title,
+                                AuthorName = importedAuthors.TryGetValue(book.AuthorId, out var author) ? author.Name : "Unknown"
                             });
-                            break;
-                        }
-
-                        case ImportOutcome.AlreadyLinked:
-                            // Identity was already satisfied; do not count it as a new import.
-                            break;
-
-                        case ImportOutcome.Ignored:
-                            // Intentionally ignored items (e.g., out-of-scope for current root folder type)
-                            // do not appear as imported/unmapped/errors.
-                            break;
-                    }
-                    
-                    // Track newly added authors
-                    if (importResult.AuthorId.HasValue && importResult.Outcome == ImportOutcome.Imported)
-                    {
-                        var author = _authorService.GetAuthor(importResult.AuthorId.Value);
-                        if (author != null && !result.AddedAuthors.Contains(author.Name))
-                        {
-                            result.AddedAuthors.Add(author.Name);
                         }
                     }
+
+                    result.AddedAuthors = imported.Where(item => item.AuthorId.HasValue && importedAuthors.ContainsKey(item.AuthorId.Value))
+                        .Select(item => importedAuthors[item.AuthorId.Value].Name).Distinct().ToList();
                 }
-                
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Import outcomes preserved, but book/author names could not be loaded for the scan summary");
+                }
+
                 _logger.Debug("Import orchestration completed in {0}ms - Imported: {1}, Unmapped: {2}, Errors: {3}",
                     stopwatch.ElapsedMilliseconds, 
                     result.ImportedFiles.Count, 
@@ -1102,22 +1034,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
         }
 
-        private static HashSet<string> BuildResultScopePathSet(IReadOnlyCollection<string> forceStagePaths)
-        {
-            if (forceStagePaths == null || forceStagePaths.Count == 0)
-            {
-                return null;
-            }
-
-            var paths = forceStagePaths
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .ToList();
-
-            return paths.Count == 0
-                ? null
-                : new HashSet<string>(paths, PathEqualityComparer.Instance);
-        }
-
         private void LogMemorySnapshot(string message, params object[] args)
         {
             if (!_logger.IsDebugEnabled)
@@ -1152,27 +1068,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 return false;
             }
-        }
-
-        private int RequeueObservedFailuresForScheduledRootScan(
-            bool manualRootScan,
-            RootFolder rootFolder,
-            IEnumerable<string> observedPaths)
-        {
-            if (manualRootScan)
-            {
-                return 0;
-            }
-
-            var observedEligiblePaths = (observedPaths ?? Enumerable.Empty<string>())
-                .Where(filePath => !string.IsNullOrWhiteSpace(filePath))
-                .Where(filePath => rootFolder == null ||
-                                   rootFolder.FolderType == FolderType.Mixed ||
-                                   IsFileValidForRootFolderType(filePath, rootFolder))
-                .Distinct(PathEqualityComparer.Instance)
-                .ToList();
-
-            return _ingestQueue.RequeueFailedPaths(observedEligiblePaths);
         }
 
         private async Task<StageFilesResult> StageFilesAsync(
@@ -1251,6 +1146,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             LogMemorySnapshot("[STAGE] before known file stat load path='{0}'", path);
             var knownFilesByPath = LoadKnownFilesByPath(path);
             LogMemorySnapshot("[STAGE] after known file stat load path='{0}' known={1}", path, knownFilesByPath.Count);
+            var manualScan = commandId.HasValue && IsManualCommand(commandId.Value);
             var forceStagePathSet = forceStagePaths == null || forceStagePaths.Count == 0
                 ? new HashSet<string>(PathEqualityComparer.Instance)
                 : new HashSet<string>(forceStagePaths.Where(p => !string.IsNullOrWhiteSpace(p)), PathEqualityComparer.Instance);
@@ -1263,6 +1159,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var batchSize = initialBatchSize;
 
             var stagedCount = 0;
+            var manualUnmappedRetries = 0;
+            var scheduledApplyRetries = 0;
             var stagingItems = new List<IngestQueueItem>(batchSize);
             var batchUnitKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var batchAuthorFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1405,6 +1303,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         continue;
                     }
 
+                    // Retry intent comes from durable library state, never from scratch history.
+                    var retryUnmapped = knownFile?.EditionId == 0 &&
+                        (manualScan || knownFile.MatchDetails?.StartsWith("APPLY_FAILED:", StringComparison.Ordinal) == true);
+                    if (retryUnmapped)
+                    {
+                        if (manualScan) { manualUnmappedRetries++; }
+                        else { scheduledApplyRetries++; }
+                    }
+
+                    forceStage |= retryUnmapped;
                     if (!ShouldStageFile(fi, knownFile, forceStage, filter))
                     {
                         result.SkippedKnownUnchangedCount++;
@@ -1453,8 +1361,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         string.Join(", ", missingForcedPaths));
                 }
 
-                _logger.Debug("[STAGE] Staged {0} files to ingest queue (streaming) in {1}ms; saw {2} files, skipped {3} known unchanged (totals so far: authors={4}, units={5})",
-                    stagedCount, stopwatch.ElapsedMilliseconds, result.SeenFilePaths.Count, result.SkippedKnownUnchangedCount, _authorFoldersTotal, _bookFoldersTotal);
+                _logger.Info("[STAGE] Staged {0} files in {1}ms; saw {2}, skipped {3} unchanged; manual unmatched retries: {4}, scheduled apply-failure retries: {5}",
+                    stagedCount, stopwatch.ElapsedMilliseconds, result.SeenFilePaths.Count, result.SkippedKnownUnchangedCount, manualUnmappedRetries, scheduledApplyRetries);
 
                 result.CleanupSafe = !enumerationHadErrors;
                 return result;

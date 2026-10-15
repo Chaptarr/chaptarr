@@ -9,6 +9,7 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Queue;
@@ -443,6 +444,10 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 OnProcess?.Invoke();
                 return Task.FromResult(new ProcessedDecisions(new List<DownloadDecision>(), new List<DownloadDecision>(), new List<DownloadDecision>()));
             }
+
+            public Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions, int? downloadClientId) => ProcessDecisions(decisions);
+
+            public Task ProcessSelectedDecisions(List<RemoteBook> selected, int? downloadClientId = null) => Task.CompletedTask;
 
             public Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId)
             {

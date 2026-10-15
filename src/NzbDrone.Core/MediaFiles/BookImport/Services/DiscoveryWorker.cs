@@ -2002,40 +2002,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
             private static bool IsDiscOnlyFolderName(string folderName)
             {
-                if (string.IsNullOrWhiteSpace(folderName)) return false;
-                var name = folderName.Trim();
-
-                // Common disc folder names: CD1, CD01, Disc 2, Disk_03, etc.
-                // Deliberately excludes "Part" because it appears frequently in real book titles.
-                var lowered = name.ToLowerInvariant()
-                    .Replace('_', ' ')
-                    .Replace('-', ' ')
-                    .Replace('.', ' ')
-                    .Trim();
-
-                var pieces = lowered.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                if (pieces.Length == 1)
-                {
-                    // e.g., "cd1", "disc02"
-                    if ((lowered.StartsWith("cd") || lowered.StartsWith("disc") || lowered.StartsWith("disk")) && lowered.Length > 2)
-                    {
-                        var digits = new string(lowered.SkipWhile(c => !char.IsDigit(c)).ToArray());
-                        return digits.Length > 0 && digits.All(char.IsDigit);
-                    }
-                    return false;
-                }
-
-                if (pieces.Length == 2)
-                {
-                    var head = pieces[0];
-                    var tail = pieces[1];
-                    if ((head == "cd" || head == "disc" || head == "disk") && tail.All(char.IsDigit))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
+                return BookCoalescingHelper.IsDiscOnlyFolderName(folderName);
             }
 
             private string GetBookFolder(string filePath)

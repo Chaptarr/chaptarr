@@ -5,6 +5,8 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
@@ -308,15 +310,22 @@ namespace Chaptarr.Core.Test.Housekeeping
         [Test]
         public void expired_estimate_budget_should_fail_without_returning_a_partial_total()
         {
-            var (subject, disk, books) = CreateEstimateSubject(new[] { 101, 102 });
+            using var factory = new LogFactory();
+            var target = new MemoryTarget { Layout = "${level}|${message}" };
+            var logging = new LoggingConfiguration();
+            logging.AddRule(LogLevel.Warn, LogLevel.Fatal, target);
+            factory.Configuration = logging;
+            var (subject, disk, books) = CreateEstimateSubject(new[] { 101, 102 }, factory.GetLogger(nameof(CleanupOrphanedBookCovers)));
 
             Assert.Throws<TimeoutException>(() => subject.GetLibraryCleanupEstimate(CancellationToken.None, TimeSpan.Zero));
+            Assert.That(target.Logs, Has.Count.EqualTo(1));
+            Assert.That(target.Logs.Single(), Does.StartWith("Warn|").And.Contain("time budget"));
             Assert.That(disk.SizedDirectories, Is.Empty);
             Assert.That(disk.DeletedDirectories, Is.Empty);
             Assert.That(books.LibraryBookIdCalls, Is.Zero);
         }
 
-        private static (CleanupOrphanedBookCovers Subject, DiskProviderProxy Disk, BookServiceProxy Books) CreateEstimateSubject(IEnumerable<int> ids)
+        private static (CleanupOrphanedBookCovers Subject, DiskProviderProxy Disk, BookServiceProxy Books) CreateEstimateSubject(IEnumerable<int> ids, Logger logger = null)
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = @"C:\config".AsOsAgnostic();
@@ -327,7 +336,7 @@ namespace Chaptarr.Core.Test.Housekeeping
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
             var books = (BookServiceProxy)(object)bookService;
             var subject = new CleanupOrphanedBookCovers(bookService, diskProvider, appFolder,
-                LogManager.GetCurrentClassLogger(), NewConfig(CoverDownloadScope.LibraryBooks), NewCovers(diskProvider, appFolder));
+                logger ?? LogManager.GetCurrentClassLogger(), NewConfig(CoverDownloadScope.LibraryBooks), NewCovers(diskProvider, appFolder));
             return (subject, disk, books);
         }
 

@@ -223,17 +223,18 @@ namespace NzbDrone.Core.Notifications
                 OldFiles = message.OldFiles,
             };
 
-            foreach (var notification in _notificationFactory.OnReleaseImportEnabled())
+            var notifications = downloadMessage.OldFiles.Empty()
+                ? _notificationFactory.OnReleaseImportEnabled()
+                : _notificationFactory.OnUpgradeEnabled();
+
+            foreach (var notification in notifications)
             {
                 try
                 {
                     if (ShouldHandleAuthor(notification.Definition, author))
                     {
-                        if (downloadMessage.OldFiles.Empty() || ((NotificationDefinition)notification.Definition).OnUpgrade)
-                        {
-                            notification.OnReleaseImport(downloadMessage);
-                            _notificationStatusService.RecordSuccess(notification.Definition.Id);
-                        }
+                        notification.OnReleaseImport(downloadMessage);
+                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
                     }
                 }
                 catch (Exception ex)
@@ -451,6 +452,11 @@ namespace NzbDrone.Core.Notifications
 
         public void Handle(BookImportIncompleteEvent message)
         {
+            if (message.PersistedHistory != null)
+            {
+                return;
+            }
+
             // TODO: Build out this message so that we can pass on what failed and what was successful
             var downloadMessage = new BookDownloadMessage
             {

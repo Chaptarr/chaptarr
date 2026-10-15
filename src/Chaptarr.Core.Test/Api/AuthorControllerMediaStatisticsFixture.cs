@@ -6,21 +6,28 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.AuthorStats;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
+using NzbDrone.SignalR;
 
 namespace Chaptarr.Core.Test.Api
 {
     [TestFixture]
     public class AuthorControllerMediaStatisticsFixture
     {
+        private const int AuthorId = 12;
+        private static readonly string AudiobookRootPath = @"C:\audiobooks".AsOsAgnostic();
+        private static readonly string EbookRootPath = @"C:\ebooks".AsOsAgnostic();
         [TestCase(false)]
         [TestCase(true)]
         public void get_author_resource_should_leave_shared_relationships_unloaded(bool useFacade)
@@ -116,6 +123,108 @@ namespace Chaptarr.Core.Test.Api
             });
         }
 
+        [TestCase("audiobook")]
+        [TestCase("ebook")]
+        public void scoped_author_update_should_preserve_the_other_gate_and_skip_author_wide_sync(string mediaType)
+        {
+            var author = CreateAuthor(syncAcrossFormats: true, audiobookMonitored: false, ebookMonitored: false);
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var authorServiceProxy = (AuthorServiceProxy)(object)authorService;
+            authorServiceProxy.Author = author;
+            var commandQueue = DispatchProxy.Create<IManageCommandQueue, CommandQueueProxy>();
+            var commandQueueProxy = (CommandQueueProxy)(object)commandQueue;
+            var controller = BuildController(authorService, BuildBookService(), commandQueue,
+                BuildRootFolderService());
+            var facadeContext = new ReadarrFacadeContext("hc", mediaType, $"/readarr/hc/{mediaType}");
+            var httpContext = new DefaultHttpContext();
+            httpContext.Items[ReadarrFacadeContext.ItemKey] = facadeContext;
+            controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+            var resource = author.ToResource(facadeContext);
+            resource.Monitored = true;
+
+            var result = controller.UpdateAuthor(resource);
+
+            Assert.That(result.Result, Is.TypeOf<AcceptedAtActionResult>());
+            Assert.Multiple(() =>
+            {
+                Assert.That(authorServiceProxy.UpdatedAuthor.SyncMonitoredAcrossFormats, Is.True);
+                Assert.That(authorServiceProxy.UpdatedAuthor.AudiobookMonitored, Is.EqualTo(mediaType == "audiobook"));
+                Assert.That(authorServiceProxy.UpdatedAuthor.EbookMonitored, Is.EqualTo(mediaType == "ebook"));
+                Assert.That(commandQueueProxy.Commands, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void unscoped_author_update_should_keep_author_wide_sync_reconciliation()
+        {
+            var author = CreateAuthor(syncAcrossFormats: false, audiobookMonitored: true, ebookMonitored: true);
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var authorServiceProxy = (AuthorServiceProxy)(object)authorService;
+            authorServiceProxy.Author = author;
+            var commandQueue = DispatchProxy.Create<IManageCommandQueue, CommandQueueProxy>();
+            var commandQueueProxy = (CommandQueueProxy)(object)commandQueue;
+            var controller = BuildController(authorService, BuildBookService(), commandQueue,
+                BuildRootFolderService());
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+            var result = controller.UpdateAuthor(new AuthorResource
+            {
+                Id = AuthorId,
+                AuthorName = author.Name,
+                ForeignAuthorId = "hc:123",
+                Monitored = true,
+                AudiobookMonitored = true,
+                EbookMonitored = true,
+                AudiobookRootFolderPath = AudiobookRootPath,
+                EbookRootFolderPath = EbookRootPath,
+                SyncMonitoredAcrossFormats = true
+            });
+
+            Assert.That(result.Result, Is.TypeOf<AcceptedAtActionResult>());
+            Assert.Multiple(() =>
+            {
+                Assert.That(authorServiceProxy.UpdatedAuthor.SyncMonitoredAcrossFormats, Is.True);
+                Assert.That(authorServiceProxy.UpdatedAuthor.EbookMonitored, Is.True);
+                Assert.That(authorServiceProxy.UpdatedAuthor.AudiobookMonitored, Is.True);
+                Assert.That(commandQueueProxy.Commands, Has.Count.EqualTo(1));
+                Assert.That(commandQueueProxy.Commands[0], Is.TypeOf<BulkSyncFormatMonitoringCommand>());
+                Assert.That(((BulkSyncFormatMonitoringCommand)commandQueueProxy.Commands[0]).AuthorIds,
+                    Is.EqualTo(new[] { AuthorId }));
+            });
+        }
+
+        private static Author CreateAuthor(bool syncAcrossFormats, bool audiobookMonitored, bool ebookMonitored)
+        {
+            return new Author
+            {
+                Id = AuthorId,
+                Name = "Test Author",
+                NameLastFirst = "Author, Test",
+                HardcoverAuthorId = "hc:123",
+                AudiobookMonitored = audiobookMonitored,
+                EbookMonitored = ebookMonitored,
+                SyncMonitoredAcrossFormats = syncAcrossFormats,
+                AudiobookRootFolderPath = AudiobookRootPath,
+                EbookRootFolderPath = EbookRootPath
+            };
+        }
+
+        private static IBookService BuildBookService()
+        {
+            return DispatchProxy.Create<IBookService, BookServiceProxy>();
+        }
+
+        private static IRootFolderService BuildRootFolderService()
+        {
+            var rootFolderService = DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>();
+            ((RootFolderServiceProxy)(object)rootFolderService).RootFolders.AddRange(new[]
+            {
+                new RootFolder { Path = AudiobookRootPath, FolderType = FolderType.Audiobook },
+                new RootFolder { Path = EbookRootPath, FolderType = FolderType.Ebook }
+            });
+            return rootFolderService;
+        }
+
         private static AuthorStatistics Statistics(int authorId, int books, int files, long size)
         {
             return new AuthorStatistics
@@ -129,19 +238,23 @@ namespace Chaptarr.Core.Test.Api
             };
         }
 
-        private static AuthorController BuildController(IAuthorService authorService, IBookService bookService)
+        private static AuthorController BuildController(
+            IAuthorService authorService,
+            IBookService bookService,
+            IManageCommandQueue commandQueue = null,
+            IRootFolderService rootFolderService = null)
         {
             var statisticsService = DispatchProxy.Create<IAuthorStatisticsService, AuthorStatisticsServiceProxy>();
             return new AuthorController(
-                signalRBroadcaster: null,
+                signalRBroadcaster: DispatchProxy.Create<IBroadcastSignalRMessage, SignalRProxy>(),
                 authorService: authorService,
                 bookService: bookService,
                 bookMonitoredService: null,
                 authorLibraryService: null,
                 authorStatisticsService: statisticsService,
                 coverMapper: DispatchProxy.Create<IMapCoversToLocal, CoversToLocalProxy>(),
-                commandQueueManager: null,
-                rootFolderService: null,
+                commandQueueManager: commandQueue,
+                rootFolderService: rootFolderService,
                 eventAggregator: null,
                 appFolderInfo: null,
                 fileNameBuilder: DispatchProxy.Create<IBuildFileNames, FileNameBuilderProxy>(),
@@ -169,8 +282,16 @@ namespace Chaptarr.Core.Test.Api
                     return Author;
                 }
 
+                if (targetMethod?.Name == nameof(IAuthorService.UpdateAuthor))
+                {
+                    UpdatedAuthor = (Author)args[0];
+                    return UpdatedAuthor;
+                }
+
                 throw new System.NotImplementedException(targetMethod?.Name);
             }
+
+            public Author UpdatedAuthor { get; private set; }
         }
 
         private class BookServiceProxy : DispatchProxy
@@ -224,6 +345,50 @@ namespace Chaptarr.Core.Test.Api
                 if (targetMethod?.Name == nameof(IMapCoversToLocal.ConvertToLocalUrls))
                 {
                     return null;
+                }
+
+                throw new System.NotImplementedException(targetMethod?.Name);
+            }
+        }
+
+        private class CommandQueueProxy : DispatchProxy
+        {
+            public List<Command> Commands { get; } = new List<Command>();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IManageCommandQueue.Push) && args?[0] is Command command)
+                {
+                    Commands.Add(command);
+                    return new CommandModel { Body = command, Name = command.Name, Status = CommandStatus.Queued };
+                }
+
+                throw new System.NotImplementedException(targetMethod?.Name);
+            }
+        }
+
+        private class RootFolderServiceProxy : DispatchProxy
+        {
+            public List<RootFolder> RootFolders { get; } = new List<RootFolder>();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IRootFolderService.All))
+                {
+                    return RootFolders;
+                }
+
+                throw new System.NotImplementedException(targetMethod?.Name);
+            }
+        }
+
+        private class SignalRProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == "get_IsConnected")
+                {
+                    return false;
                 }
 
                 throw new System.NotImplementedException(targetMethod?.Name);

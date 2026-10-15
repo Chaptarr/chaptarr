@@ -29,21 +29,13 @@ namespace NzbDrone.Core.HealthCheck.Checks
 
         public override HealthCheck Check()
         {
-            // Only enabled (automatic add) import lists can create items that need to land in a root folder.
-            var importLists = _importListFactory.All().Where(l => l.Enable).ToList();
+            var importLists = _importListFactory.All();
             var missingRootFolders = new Dictionary<string, List<ImportListDefinition>>();
+            var comparer = OsInfo.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
             foreach (var importList in importLists)
             {
-                var rootFolderPaths = GetRootFolderPaths(importList).ToList();
-
-                if (!rootFolderPaths.Any())
-                {
-                    AddMissingRootFolder(missingRootFolders, string.Empty, importList);
-                    continue;
-                }
-
-                foreach (var rootFolderPath in rootFolderPaths)
+                foreach (var rootFolderPath in importList.GetCreationRootFolderPaths().Distinct(comparer))
                 {
                     if (SafeFolderExists(rootFolderPath))
                     {
@@ -67,42 +59,6 @@ namespace NzbDrone.Core.HealthCheck.Checks
             }
 
             return new HealthCheck(GetType());
-        }
-
-        private static IEnumerable<string> GetRootFolderPaths(ImportListDefinition importList)
-        {
-            if (importList == null)
-            {
-                return Enumerable.Empty<string>();
-            }
-
-            var paths = new List<string>();
-
-            AddPath(paths, importList.RootFolderPath);
-
-            if (importList.Settings is IMediaTypeRootFolderSettings mediaSettings)
-            {
-                // Newer import lists store per-media root folders in their settings.
-                AddPath(paths, mediaSettings.AudiobookRootFolderPath);
-                AddPath(paths, mediaSettings.EbookRootFolderPath);
-            }
-
-            var comparer = OsInfo.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-
-            return paths
-                .Select(p => p?.Trim())
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .Distinct(comparer);
-        }
-
-        private static void AddPath(List<string> paths, string value)
-        {
-            if (paths == null || string.IsNullOrWhiteSpace(value))
-            {
-                return;
-            }
-
-            paths.Add(value);
         }
 
         private bool SafeFolderExists(string path)

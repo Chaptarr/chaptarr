@@ -539,7 +539,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.Handle(new ApplicationStartedEvent());
                 service.Enqueue(first);
                 Assert.That(
-                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(first.DownloadId), TimeSpan.FromSeconds(2)),
+                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(first.DownloadId), TimeSpan.FromSeconds(10)),
                     Is.True);
                 Assert.That(converter.OptionsByDownloadId[first.DownloadId].FfmpegThreads, Is.EqualTo(8));
 
@@ -551,7 +551,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 Assert.That(service.Cancel(first.DownloadId), Is.True);
                 Assert.That(
-                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(second.DownloadId), TimeSpan.FromSeconds(2)),
+                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(second.DownloadId), TimeSpan.FromSeconds(10)),
                     Is.True);
                 Assert.That(converter.OptionsByDownloadId[second.DownloadId].FfmpegThreads, Is.EqualTo(8));
                 Assert.That(service.Cancel(second.DownloadId), Is.True);

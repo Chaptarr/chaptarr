@@ -52,11 +52,11 @@ namespace Chaptarr.Core.Test.Books
         private sealed class StubHistoryService : IHistoryService
         {
             public List<EntityHistory> GetByBook(int bookId, EntityHistoryEventType? eventType) => new List<EntityHistory>();
+            public List<EntityHistory> GetAcquisitionHistory(IEnumerable<int> bookIds) => throw new NotImplementedException();
             public void UpdateMany(IList<EntityHistory> items) { }
 
             public NzbDrone.Core.Datastore.PagingSpec<EntityHistory> Paged(NzbDrone.Core.Datastore.PagingSpec<EntityHistory> pagingSpec) => throw new NotImplementedException();
             public NzbDrone.Core.Datastore.PagingSpec<EntityHistory> Paged(NzbDrone.Core.Datastore.PagingSpec<EntityHistory> pagingSpec, BookMediaType? mediaType) => throw new NotImplementedException();
-            public EntityHistory MostRecentForBook(int bookId) => throw new NotImplementedException();
             public EntityHistory MostRecentForDownloadId(string downloadId) => throw new NotImplementedException();
             public EntityHistory Get(int historyId) => throw new NotImplementedException();
             public List<EntityHistory> GetByAuthor(int authorId, EntityHistoryEventType? eventType) => throw new NotImplementedException();

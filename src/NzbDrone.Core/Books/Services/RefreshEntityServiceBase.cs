@@ -29,6 +29,7 @@ namespace NzbDrone.Core.Books
                 UpToDate = new List<TChild>();
                 Added = new List<TChild>();
                 Updated = new List<TChild>();
+                Matched = new List<Tuple<TChild, TChild>>();
                 Merged = new List<Tuple<TChild, TChild>>();
                 Deleted = new List<TChild>();
             }
@@ -36,6 +37,7 @@ namespace NzbDrone.Core.Books
             public List<TChild> UpToDate { get; set; }
             public List<TChild> Added { get; set; }
             public List<TChild> Updated { get; set; }
+            public List<Tuple<TChild, TChild>> Matched { get; set; }
             public List<Tuple<TChild, TChild>> Merged { get; set; }
             public List<TChild> Deleted { get; set; }
 
@@ -244,6 +246,7 @@ namespace NzbDrone.Core.Books
                     // during a single refresh pass.
                     localChildren.Remove(existingChild);
 
+                    sortedChildren.Matched.Add(Tuple.Create(existingChild, remoteChild));
                     PrepareExistingChild(existingChild, remoteChild, entity);
 
                     if (AreChildrenUpToDate(existingChild, remoteChild))

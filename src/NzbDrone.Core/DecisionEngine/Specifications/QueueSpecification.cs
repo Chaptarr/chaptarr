@@ -52,11 +52,15 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             foreach (var queueItem in matchingBook)
             {
                 var remoteBook = queueItem.RemoteBook;
+                if (remoteBook?.AlternativeCopies == true)
+                {
+                    remoteBook = remoteBook.ForBooks(remoteBook.Books.Where(book => subjectBookIds.Contains(book.Id)));
+                }
                 var queuedSourceQuality = remoteBook?.ParsedBookInfo?.Quality ?? queueItem.Quality;
                 var candidateSourceQuality = subject.ParsedBookInfo.Quality;
-                var queuedEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, queuedSourceQuality);
-                var candidateEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, candidateSourceQuality);
-                var qualityProfile = subject.Author.GetQualityProfileForQuality(candidateSourceQuality.Quality);
+                var qualityProfile = subject.GetQualityProfile();
+                var queuedEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(qualityProfile, queuedSourceQuality);
+                var candidateEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(qualityProfile, candidateSourceQuality);
 
                 // To avoid a race make sure it's not FailedPending (failed awaiting removal/search).
                 // Failed items (already searching for a replacement) won't be part of the queue since
@@ -128,6 +132,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         private static List<int> GetQueueBookIds(Queue.Queue queueItem)
         {
+            if (queueItem?.RemoteBook?.AlternativeCopies == true && queueItem.Book?.Id > 0)
+            {
+                return new List<int> { queueItem.Book.Id };
+            }
+
             if (queueItem?.TargetBookIds?.Any() == true)
             {
                 return queueItem.TargetBookIds

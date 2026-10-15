@@ -43,7 +43,7 @@ namespace NzbDrone.Core.ImportLists
 
         protected override List<ImportListDefinition> Active()
         {
-            return base.Active().Where(c => c.Enable).ToList();
+            return base.Active().Where(c => c.Enable && DualMediaImportListActions.ValidateCreationSettings(c).Count == 0).ToList();
         }
 
         public override void SetProviderCharacteristics(IImportList provider, ImportListDefinition definition)
@@ -82,6 +82,8 @@ namespace NzbDrone.Core.ImportLists
             {
                 existing = _importListRepository.Find(definition.Id);
             }
+
+            definition?.PreserveMonitoringOptions(existing);
 
             TryUpdateHardcoverCachedIdentity(definition, existing);
             base.Update(definition);

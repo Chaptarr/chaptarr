@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Utilities;
 using NLog;
@@ -51,18 +51,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         /// Checks each field individually, not a concatenated blob
         /// </summary>
         bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags);
+        bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags, IEnumerable<string> knownTitles);
 
         /// <summary>
         /// Validates that an edition title returned from V5 is contained in the tags
         /// Checks each field individually, not a concatenated blob
         /// </summary>
-        bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags);
+        bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags, IEnumerable<string> knownNarrators = null);
 
         /// <summary>
         /// Returns the tag field(s) that caused an edition title to be considered contained.
         /// Used for higher-level validation (e.g., leftover-token checks) against the same evidence field.
 	        /// </summary>
-	        IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false);
+	        IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false, IEnumerable<string> knownNarrators = null);
 	    }
 
 	    public class ContainmentValidator : IContainmentValidator
@@ -74,58 +75,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	        // ineligible for edition-title evidence (defense-in-depth against non-standard comment fields).
 	        internal const int MaxTitleEvidenceValueLength = 400;
 	        
-        // Roman numerals (conservative)
-        private static readonly Regex RomanRegex = new Regex(@"^(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        
-        // Common surname particles that should be preserved as part of the last name
-        private static readonly HashSet<string> SurnameParticles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "de", "del", "della", "di", "da", "von", "van", "der", "den", "ten", "ter",
-            "la", "le", "les", "du", "des", "dos", "das", "do", "zu", "zur", "zum",
-            "mac", "mc", "o", "al", "el", "ibn", "bin", "bint", "abu", "um"
-        };
-        
-        // Common short words that should NOT be treated as initial clusters
-        private static readonly HashSet<string> CommonShortWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            // Articles and prepositions
-            "a", "an", "as", "at", "by", "do", "go", "he", "i", "if", "in", "is", "it", 
-            "me", "my", "no", "of", "on", "or", "so", "to", "up", "us", "we",
-            // Common abbreviations that aren't initials
-            "jr", "sr", "dr", "mr", "ms", "st", "co", "vs", "etc", "inc", "ltd"
-        };
-
-	        // Tokens that commonly appear in trailing parenthetical metadata but are not expected to exist verbatim in tags.
-	        // Example: "(Narrated by Stephen Fry)" should match if "Stephen Fry" is present in ANY tag field, even if
-	        // the literal words "narrated"/"by" are not.
-	        private static readonly HashSet<string> TrailingParentheticalNoiseTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-	        {
-	            "narrated", "narrator", "narrators", "by", "read", "performed", "performer", "with"
-	        };
-	        
-	        // Parenthetical phrases that are common "metadata noise" and are allowed to be absent from embedded tags.
-	        // Example: "(Unabridged)" or "(A Novel)".
-	        private static readonly HashSet<string> TrailingParentheticalGenericNoiseTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-	        {
-	            "a", "an", "the",
-	            "novel", "audiobook", "audio",
-	            "unabridged", "abridged",
-	            "complete", "special", "deluxe", "expanded", "illustrated", "anniversary",
-	            "collector", "collectors", "collection",
-	            "edition"
-	        };
-	        
-	        // Structural tokens that often appear in series/volume parentheticals, and should not be required
-	        // unless the group is otherwise evidenced in tags.
-	        private static readonly HashSet<string> TrailingParentheticalStructuralTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-	        {
-	            "book", "books",
-	            "vol", "volume", "volumes",
-	            "part", "parts", "pt",
-	            "season", "seasons",
-	            "episode", "episodes"
-	        };
-
 	        private static bool IsExcludedFromEditionTitleEvidenceKey(string key)
 	        {
 	            // Single source of truth — same exclusion as FTS and V5 query.
@@ -164,6 +113,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
         public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags)
         {
+            return ValidateAuthorInTags(authorName, allTags, null);
+        }
+
+        public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags, IEnumerable<string> knownTitles)
+        {
             if (string.IsNullOrWhiteSpace(authorName))
             {
                 _logger.Warn("[CONTAINMENT] Cannot validate empty author name");
@@ -177,15 +131,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             _logger.Trace("[CONTAINMENT] === Validating author '{0}' ===", authorName);
+            var expectedName = AuthorNameMatcher.PrepareName(authorName);
+            var titleTokens = (knownTitles ?? Enumerable.Empty<string>())
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(ReleaseTitleMatchScorer.Tokenize)
+                .Where(tokens => tokens.Count > 0)
+                .ToList();
             
-            // Parse author name into words
-            var authorWords = ParseIntoWords(authorName);
-            if (_logger.IsTraceEnabled)
-            {
-                _logger.Trace("[CONTAINMENT] Author parsed into words: [{0}]",
-                    string.Join(", ", authorWords.Select(w => $"'{w.Word}'({w.Type})")));
-            }
-
             // Check each match-eligible field individually. Callers do not all receive the
             // same pre-filtered dictionary, so the shared exclusion policy must be enforced
             // at this boundary rather than relying on every route to remember it.
@@ -202,11 +155,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     if (string.IsNullOrWhiteSpace(fieldValue))
                         continue;
 
-                    if (CheckWordContainment(authorWords, fieldValue, tagField.Key))
+                    var fieldTokens = ReleaseTitleMatchScorer.TokenizeWithSpans(fieldValue);
+                    var exactTitleSpans = new List<(int Start, int End)>();
+                    if (titleTokens.Count > 0)
                     {
-                            _logger.Trace("[CONTAINMENT] Author '{0}' MATCHED in field '{1}' = '{2}'",
-                                authorName, tagField.Key,
-                                fieldValue.Length > 100 ? fieldValue.Substring(0, 100) + "..." : fieldValue);
+                        var fieldWords = fieldTokens.Select(token => token.Value).ToList();
+                        exactTitleSpans.AddRange(titleTokens.SelectMany(title =>
+                            ReleaseTitleMatchScorer.FindExactTitleSpans(fieldWords, title)).Distinct());
+                    }
+                    if (AuthorNameMatcher.ContainsAuthorName(expectedName, fieldValue, fieldTokens, exactTitleSpans))
+                    {
+                        _logger.Trace("[CONTAINMENT] Author '{0}' MATCHED in field '{1}' = '{2}'",
+                            authorName, tagField.Key,
+                            fieldValue.Length > 100 ? fieldValue.Substring(0, 100) + "..." : fieldValue);
                         return true;
                     }
                 }
@@ -223,8 +184,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return false;
         }
 
-        public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags)
+        public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags, IEnumerable<string> knownNarrators = null)
         {
+            editionTitle = ReleaseNarratorEvidenceExtractor.RemoveKnownNarratorNotes(editionTitle, knownNarrators);
             if (string.IsNullOrWhiteSpace(editionTitle))
             {
                 _logger.Warn("[CONTAINMENT] Cannot validate empty edition title");
@@ -335,8 +297,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return false;
         }
 
-        public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false)
+        public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false, IEnumerable<string> knownNarrators = null)
         {
+            editionTitle = ReleaseNarratorEvidenceExtractor.RemoveKnownNarratorNotes(editionTitle, knownNarrators);
             var evidence = new List<EditionTitleEvidence>();
 
             if (string.IsNullOrWhiteSpace(editionTitle) || allTags == null || !allTags.Any())
@@ -712,9 +675,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	                return false;
 	            }
 
-	            // 2) Parenthetical groups must be either ignorable metadata noise OR evidenced elsewhere in tags.
-	            // This prevents matching titles like "Never Come Back (Nora McTavish, Book 2)" when tags contain only
-	            // "Never Come Back" and provide no series/narrator evidence.
+	            // Catalog parenthetical content needs observed evidence; vocabulary alone cannot establish it.
 	            var evidenceTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 	            foreach (var kv in allTags)
 	            {
@@ -739,38 +700,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	                }
 
 	                evidenceTags[kv.Key] = values;
-	            }
-
-	            var evidenceTokenSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-	            foreach (var kv in evidenceTags)
-	            {
-	                foreach (var v in kv.Value)
-	                {
-	                    var norm = NormalizeForWordExtraction(v).ToLowerInvariant();
-	                    foreach (var tok in ExtractTokensAsList(norm))
-	                    {
-	                        evidenceTokenSet.Add(tok);
-	                    }
-	                }
-	            }
-
-	            bool GroupIsIgnorable(List<string> groupTokens)
-	            {
-	                if (groupTokens == null || groupTokens.Count == 0)
-	                {
-	                    return true;
-	                }
-
-	                foreach (var t in groupTokens)
-	                {
-	                    if (!TrailingParentheticalGenericNoiseTokens.Contains(t) &&
-	                        !TrailingParentheticalNoiseTokens.Contains(t))
-	                    {
-	                        return false;
-	                    }
-	                }
-
-	                return true;
 	            }
 
 	            bool GroupTokensContainedInAnySingleField(List<string> groupTokens)
@@ -807,68 +736,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	                    continue;
 	                }
 
-	                if (GroupIsIgnorable(groupTokens))
+
+	                // A parenthetical must have ordered evidence in one field, preserving credit and position boundaries.
+	                if (!GroupTokensContainedInAnySingleField(groupTokens))
 	                {
-	                    continue;
-	                }
-
-	                var isNarratorGroup = groupTokens.Any(t => TrailingParentheticalNoiseTokens.Contains(t));
-	                if (isNarratorGroup)
-	                {
-	                    var narratorTokens = groupTokens
-	                        .Where(t => !TrailingParentheticalNoiseTokens.Contains(t) &&
-	                                    !TrailingParentheticalGenericNoiseTokens.Contains(t))
-	                        .ToList();
-
-	                    if (narratorTokens.Count == 0)
-	                    {
-	                        continue;
-	                    }
-
-	                    var narratorName = string.Join(" ", narratorTokens);
-	                    if (!ValidateAuthorInTags(narratorName, evidenceTags))
-	                    {
-	                        return false;
-	                    }
-
-	                    continue;
-	                }
-
-	                // Non-narrator parenthetical: require meaningful tokens to exist in tags somewhere.
-	                // Structural tokens like "Book"/"Volume" are treated as optional.
-	                var requiredTokens = groupTokens
-	                    .Where(t => !TrailingParentheticalGenericNoiseTokens.Contains(t) &&
-	                                !TrailingParentheticalStructuralTokens.Contains(t))
-	                    .ToList();
-
-	                if (requiredTokens.Count == 0)
-	                {
-	                    continue;
-	                }
-
-	                // If the only required tokens are numeric, demand the original group (including structural words)
-	                // to be contained within a single tag field, otherwise it is too easy to "prove" using TRACKNUMBER.
-	                var requiredAllNumeric = requiredTokens.All(t => t.All(char.IsDigit));
-	                if (requiredAllNumeric)
-	                {
-	                    var strictGroupTokens = groupTokens
-	                        .Where(t => !TrailingParentheticalGenericNoiseTokens.Contains(t))
-	                        .ToList();
-
-	                    if (!GroupTokensContainedInAnySingleField(strictGroupTokens))
-	                    {
-	                        return false;
-	                    }
-
-	                    continue;
-	                }
-
-	                foreach (var t in requiredTokens)
-	                {
-	                    if (!evidenceTokenSet.Contains(t))
-	                    {
-	                        return false;
-	                    }
+	                    return false;
 	                }
 	            }
 
@@ -907,238 +779,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 out _);
         }
 
-        private List<AuthorWord> ParseIntoWords(string authorName)
-        {
-            var normalized = NormalizeForWordExtraction(authorName);
-            var words = UnicodeComparisonNormalizer.WordSpans(normalized).ToList();
-            var result = new List<AuthorWord>();
-
-            for (int i = 0; i < words.Count; i++)
-            {
-                var word = words[i].Value.ToLowerInvariant();
-                var type = word.EnumerateRunes().Count() == 1 ? WordType.Initial : WordType.Full;
-                
-                // Check if this is a surname particle
-                if (SurnameParticles.Contains(word))
-                {
-                    type = WordType.Particle;
-                }
-                
-                result.Add(new AuthorWord 
-                { 
-                    Word = word, 
-                    Type = type,
-                    Position = i
-                });
-            }
-
-            // Create initial clusters for consecutive initials (not including particles)
-            for (int i = 0; i < result.Count - 1; i++)
-            {
-                if (result[i].Type == WordType.Initial && result[i + 1].Type == WordType.Initial)
-                {
-                    var cluster = result[i].Word + result[i + 1].Word;
-                    result.Add(new AuthorWord 
-                    { 
-                        Word = cluster, 
-                        Type = WordType.InitialCluster,
-                        Position = i
-                    });
-                }
-            }
-
-            return result;
-        }
-
-        private bool CheckWordContainment(List<AuthorWord> authorWords, string fieldValue, string fieldName)
-        {
-            var fieldWords = ExtractFieldWords(fieldValue);
-            var fieldWordSet = new HashSet<string>(fieldWords, StringComparer.OrdinalIgnoreCase);
-            
-            // Separate word types, excluding particles
-            var authorInitials = authorWords.Where(w => w.Type == WordType.Initial).ToList();
-            var authorFullWords = authorWords.Where(w => w.Type == WordType.Full).ToList();
-            var authorParticles = authorWords.Where(w => w.Type == WordType.Particle).ToList();
-
-            // Identify first and last name
-            string firstName = null;
-            string lastName = null;
-            
-            if (authorFullWords.Any())
-            {
-                // Get first full word (skipping particles at the beginning)
-                firstName = authorFullWords.First().Word;
-                
-                // Get last full word, potentially with particle prefix
-                if (authorFullWords.Count > 1)
-                {
-                    var lastFullWord = authorFullWords.Last();
-                    lastName = lastFullWord.Word;
-                    
-                    // Check if there's a particle before the last name
-                    var particleBeforeLastName = authorWords
-                        .Where(w => w.Type == WordType.Particle && w.Position == lastFullWord.Position - 1)
-                        .FirstOrDefault();
-                        
-                    if (particleBeforeLastName != null)
-                    {
-                        // Include the particle as part of the last name
-                        lastName = particleBeforeLastName.Word + " " + lastName;
-                    }
-                }
-            }
-
-            _logger.Trace("[CONTAINMENT] Field '{0}': Looking for first='{1}', last='{2}'", 
-                fieldName, firstName ?? "(none)", lastName ?? "(none)");
-
-            // Check first name requirement
-            if (!string.IsNullOrEmpty(firstName) && !fieldWordSet.Contains(firstName))
-            {
-                _logger.Trace("[CONTAINMENT] Field '{0}' missing first name '{1}'", fieldName, firstName);
-                return false;
-            }
-
-            // Check last name requirement (with potential particle)
-            if (!string.IsNullOrEmpty(lastName))
-            {
-                // Try exact match first (for compound last names with particles)
-                var lastNameFound = false;
-                
-                if (lastName.Contains(" "))
-                {
-                    // Check if the compound last name exists as consecutive words in the field
-                    var parts = lastName.Split(' ');
-                    if (parts.All(part => fieldWordSet.Contains(part)))
-                    {
-                        lastNameFound = true;
-                        _logger.Trace("[CONTAINMENT] Found compound last name parts: {0}", lastName);
-                    }
-                }
-                else if (fieldWordSet.Contains(lastName))
-                {
-                    lastNameFound = true;
-                }
-                
-                if (!lastNameFound)
-                {
-                    _logger.Trace("[CONTAINMENT] Field '{0}' missing last name '{1}'", fieldName, lastName);
-                    return false;
-                }
-            }
-
-            // Handle initials based on position
-            if (authorInitials.Any())
-            {
-                var initialGroups = GroupConsecutiveInitials(authorWords);
-                
-                for (int groupIndex = 0; groupIndex < initialGroups.Count; groupIndex++)
-                {
-                    var group = initialGroups[groupIndex];
-                    var groupPosition = group.First().Position;
-                    
-                    // Determine if this initial group is required based on position
-                    bool isRequired = false;
-                    
-                    // First initial group is required if it's at the start
-                    if (groupIndex == 0 && groupPosition == 0)
-                    {
-                        isRequired = true;
-                    }
-                    // Last initial group is required if it's at the end
-                    else if (groupIndex == initialGroups.Count - 1 && 
-                             group.Last().Position == authorWords.Count - 1)
-                    {
-                        isRequired = true;
-                    }
-                    // Middle initials are optional
-                    
-                    if (!isRequired)
-                    {
-                        _logger.Trace("[CONTAINMENT] Initial group [{0}] at position {1} is optional", 
-                            string.Join("", group.Select(w => w.Word)), groupPosition);
-                        continue;
-                    }
-                    
-                    // Check if required initials are present
-                    bool groupMatched = false;
-                    
-                    // Check if the cluster exists
-                    var clusterForm = string.Join("", group.Select(w => w.Word));
-                    if (fieldWordSet.Contains(clusterForm))
-                    {
-                        _logger.Trace("[CONTAINMENT] Found initial cluster '{0}' in field", clusterForm);
-                        groupMatched = true;
-                    }
-                    // Check if all initials in group exist separately
-                    else if (group.All(w => fieldWordSet.Contains(w.Word)))
-                    {
-                        _logger.Trace("[CONTAINMENT] Found initials [{0}] separately in field", 
-                            string.Join(", ", group.Select(w => w.Word)));
-                        groupMatched = true;
-                    }
-                    
-                    if (!groupMatched)
-                    {
-                        _logger.Trace("[CONTAINMENT] Required initial group [{0}] at position {1} not found", 
-                            string.Join("", group.Select(w => w.Word)), groupPosition);
-                        return false;
-                    }
-                }
-            }
-
-            _logger.Trace("[CONTAINMENT] Field '{0}' contains required author components", fieldName);
-            return true;
-        }
-
-        private List<string> ExtractFieldWords(string text)
-        {
-            var normalized = NormalizeForWordExtraction(text);
-            var words = UnicodeComparisonNormalizer.WordSpans(normalized).ToList();
-            var result = words.Select(word => word.Value).ToList();
-            var initials = words.Where(word => word.Value.EnumerateRunes().Count() == 1 &&
-                Rune.IsLetter(Rune.GetRuneAt(word.Value, 0))).ToList();
-            for (var index = 0; index + 1 < initials.Count; index++)
-            {
-                if (initials[index + 1].Index - initials[index].Index - initials[index].Length <= 2)
-                {
-                    result.Add(initials[index].Value + initials[index + 1].Value);
-                    if (index + 2 < initials.Count &&
-                        initials[index + 2].Index - initials[index + 1].Index - initials[index + 1].Length <= 2)
-                    {
-                        result.Add(initials[index].Value + initials[index + 1].Value + initials[index + 2].Value);
-                    }
-                }
-            }
-
-            return result.Distinct().ToList();
-        }
-
-        private List<List<AuthorWord>> GroupConsecutiveInitials(List<AuthorWord> words)
-        {
-            var groups = new List<List<AuthorWord>>();
-            List<AuthorWord> currentGroup = null;
-
-            for (int i = 0; i < words.Count; i++)
-            {
-                if (words[i].Type == WordType.Initial)
-                {
-                    if (currentGroup == null)
-                    {
-                        currentGroup = new List<AuthorWord>();
-                        groups.Add(currentGroup);
-                    }
-                    currentGroup.Add(words[i]);
-                }
-                else if (words[i].Type == WordType.Full)
-                {
-                    currentGroup = null;
-                }
-                // Skip cluster types in grouping
-            }
-
-            return groups;
-        }
-
         private string NormalizeForWordExtraction(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -1153,7 +793,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             text = Regex.Replace(text, @"[\u00AB\u00BB\u201C\u201D\u201E\u201F\uFF02]", "\"");
 
             // CRITICAL: Possessive normalization - convert 's to s (merge with word)
-            // This matches FTS tokenizer behavior in FileMatchingService.TokenizeText
+            // Keep tag tokens aligned with the shared comparison tokenizer.
             // "Housemaid's" → "Housemaids", "Philosopher's" → "Philosophers"
             // Does NOT affect: Can't, O'Brien, ma'am (not word-final 's)
             text = Regex.Replace(text, @"'s\b", "s");
@@ -1170,19 +810,5 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return text;
         }
 
-        private enum WordType
-        {
-            Initial,        // Single letter
-            Full,           // Multi-letter word  
-            InitialCluster, // Combined initials like "jk"
-            Particle        // Surname particles like "de", "van", etc.
-        }
-
-        private class AuthorWord
-        {
-            public string Word { get; set; }
-            public WordType Type { get; set; }
-            public int Position { get; set; } // Position in the original word sequence
-        }
     }
 }

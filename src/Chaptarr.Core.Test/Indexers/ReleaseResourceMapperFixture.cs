@@ -14,6 +14,50 @@ namespace Chaptarr.Core.Test.Indexers
     [TestFixture]
     public class ReleaseResourceMapperFixture
     {
+        [TestCase(NzbDrone.Core.Books.BookMediaType.Audiobook, "Scott Brick")]
+        [TestCase(NzbDrone.Core.Books.BookMediaType.Ebook, null)]
+        public void raw_narrator_fields_should_display_only_known_audio_target_names(NzbDrone.Core.Books.BookMediaType media, string expected)
+        {
+            var book = new NzbDrone.Core.Books.Book
+            {
+                MediaType = media, AnyEditionOk = false,
+                Editions = new System.Collections.Generic.List<NzbDrone.Core.Books.Edition>
+                {
+                    new NzbDrone.Core.Books.Edition { ReadingFormatId = 2, ManualAdd = true, NarratorNames = new System.Collections.Generic.List<string> { "Scott Brick" } }
+                }
+            };
+            var remote = new RemoteBook
+            {
+                Books = new System.Collections.Generic.List<NzbDrone.Core.Books.Book> { book },
+                Release = new ReleaseInfo { Title = "Dune", NarratorEvidenceFields = new System.Collections.Generic.List<string> { "Private tracker text: lu par Scott Brick; other text" } },
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(media == NzbDrone.Core.Books.BookMediaType.Audiobook ? Quality.MP3 : Quality.EPUB) }
+            };
+            var resource = new DownloadDecision(remote).ToResource();
+            var json = System.Text.Json.JsonSerializer.Serialize(resource);
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Narrator, Is.EqualTo(expected));
+                Assert.That(json, Does.Not.Contain("NarratorEvidenceFields"));
+                Assert.That(json, Does.Not.Contain("Private tracker text"));
+            });
+        }
+
+        [Test]
+        public void raw_narrator_fields_should_display_known_same_row_names_without_a_pin()
+        {
+            var remote = new RemoteBook
+            {
+                Books = new System.Collections.Generic.List<Book>
+                {
+                    new Book { MediaType = BookMediaType.Audiobook, AnyEditionOk = true,
+                        Editions = new System.Collections.Generic.List<Edition> { new Edition { ReadingFormatId = 2, NarratorNames = new System.Collections.Generic.List<string> { "Scott Brick" } } } }
+                },
+                Release = new ReleaseInfo { Title = "Dune", NarratorEvidenceFields = new System.Collections.Generic.List<string> { "Lu par Scott Brick; private text" } },
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.MP3) }
+            };
+            Assert.That(new DownloadDecision(remote).ToResource().Narrator, Is.EqualTo("Scott Brick"));
+        }
+
         [Test]
         public void structured_mam_author_mismatch_should_flow_to_interactive_search_rejection_reason()
         {
@@ -370,5 +414,67 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(resource.BookTitle, Is.EqualTo("Home On The Range"));
             Assert.That(resource.MatchedTitle, Is.Null);
         }
+
+        private sealed class MappingController : ReleaseControllerBase
+        {
+            public ReleaseResource Map(DownloadDecision decision) => MapDecision(decision, 4);
+        }
+
+        [TestCase(BookMediaType.Ebook, "m4b", 232)] [TestCase(BookMediaType.Audiobook, "epub", 132)]
+        [TestCase(BookMediaType.Ebook, "unknown", 232)] [TestCase(BookMediaType.Audiobook, "unknown", 132)]
+        [TestCase(null, "epub", 232)] [TestCase(null, "m4b", 132)]
+        public void quality_weight_should_use_the_resolved_target_profile(BookMediaType? media, string format, int expectedWeight)
+        {
+            var quality = format == "epub" ? Quality.EPUB : format == "m4b" ? Quality.M4B : Quality.Unknown;
+            var remote = new RemoteBook
+            {
+                Author = WeightProfiles(quality),
+                Books = media.HasValue ? new System.Collections.Generic.List<Book> { new() { MediaType = media.Value } } : new System.Collections.Generic.List<Book>(),
+                Release = new ReleaseInfo { Title = "Paper Lanterns" },
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(quality, new Revision(2, 3)) }
+            };
+            var resource = new MappingController().Map(new DownloadDecision(remote));
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.QualityWeight, Is.EqualTo(expectedWeight));
+                Assert.That(resource.Quality.Quality, Is.EqualTo(quality));
+                Assert.That(resource.ReleaseWeight, Is.EqualTo(4));
+                Assert.That(resource.Rank, Is.EqualTo(5));
+                Assert.That(resource.IsPreferredChoice, Is.False);
+            });
+        }
+
+        [TestCase(false)] [TestCase(true)]
+        public void unresolved_media_should_not_borrow_a_profile_quality_weight(bool mixed)
+        {
+            var remote = new RemoteBook
+            {
+                Author = WeightProfiles(Quality.Unknown),
+                Books = mixed ? new System.Collections.Generic.List<Book> { new() { MediaType = BookMediaType.Audiobook }, new() { MediaType = BookMediaType.Ebook } } : new System.Collections.Generic.List<Book>(),
+                Release = new ReleaseInfo { Title = "The Ebook Handbook" },
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.Unknown, new Revision(2, 3)) }
+            };
+            Assert.That(new MappingController().Map(new DownloadDecision(remote)).QualityWeight, Is.EqualTo(32));
+        }
+
+        private static Author WeightProfiles(Quality quality) => new()
+        {
+            AudiobookQualityProfileId = 2,
+            AudiobookQualityProfile = new NzbDrone.Core.Profiles.Qualities.QualityProfile
+            {
+                Id = 2, Items = new System.Collections.Generic.List<NzbDrone.Core.Profiles.Qualities.QualityProfileQualityItem>
+                {
+                    new() { Quality = Quality.FLAC }, new() { Quality = quality }
+                }
+            },
+            EbookQualityProfileId = 3,
+            EbookQualityProfile = new NzbDrone.Core.Profiles.Qualities.QualityProfile
+            {
+                Id = 3, Items = new System.Collections.Generic.List<NzbDrone.Core.Profiles.Qualities.QualityProfileQualityItem>
+                {
+                    new() { Quality = Quality.PDF }, new() { Quality = Quality.FLAC }, new() { Quality = quality }
+                }
+            }
+        };
     }
 }

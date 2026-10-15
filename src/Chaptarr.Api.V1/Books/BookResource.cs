@@ -65,7 +65,19 @@ namespace Chaptarr.Api.V1.Books
         // Narrator info
         public string MediaType { get; set; }
         public string InstanceCombinedId { get; set; }
-        public string Narrator { get; set; }
+        private string _narrator;
+        public string Narrator
+        {
+            get => _narrator;
+            set
+            {
+                _narrator = value;
+                NarratorSpecified = true;
+            }
+        }
+
+        // An omitted PUT field is not an explicit request to clear the stored narrator.
+        internal bool NarratorSpecified { get; private set; }
         // For client-side search/filtering: all narrator names available across editions (even when Narrator display is hidden).
         public List<string> AvailableNarrators { get; set; }
         // Narrator names for the monitored edition (used for "Full Cast" tooltips and per-edition display).
@@ -239,7 +251,7 @@ namespace Chaptarr.Api.V1.Books
                 AddOptions = model.AddOptions,
                 RemoteCover = string.Empty,
                 Grabbed = false,
-                Narrator = GetNarratorDisplay(model, selectedEdition),
+                Narrator = GetNarratorDisplay(model, selectedEdition, hasFiles),
                 AvailableNarrators = GetAvailableNarrators(model),
                 NarratorNames = GetNarratorNamesForDisplay(model, selectedEdition),
                 Duration = GetDuration(model, selectedEdition),
@@ -256,7 +268,6 @@ namespace Chaptarr.Api.V1.Books
             if (model.MediaType == BookMediaType.Audiobook && !(hasFiles || hasPinnedEdition))
             {
                 // Hide narrator fields when not eligible
-                resource.Narrator = null;
                 resource.NarratorNames = new List<string>();
             }
 
@@ -415,8 +426,13 @@ namespace Chaptarr.Api.V1.Books
                 return normalized;
             }
 
-                private static string GetNarratorDisplay(Book book, Edition edition)
+                private static string GetNarratorDisplay(Book book, Edition edition, bool? hasFiles = null)
                 {
+                    if (hasFiles == false && book.MediaType == BookMediaType.Audiobook && book.AnyEditionOk)
+                    {
+                        return null;
+                    }
+
                     var narrators = GetNarratorNamesForDisplay(book, edition);
                     if (narrators.Count > 0)
                     {
@@ -725,7 +741,7 @@ namespace Chaptarr.Api.V1.Books
                 TitleSlug = resource.TitleSlug,
                 Title = resource.Title,
                 // CleanTitle is used for matching and must use the same normalization as Parser/BookRepository lookups.
-                CleanTitle = (resource.Title ?? string.Empty).CleanBookTitle().CleanAuthorName(),
+                CleanTitle = NzbDrone.Core.Books.Extensions.StringSuperNormalizer.ComputeBookComparisonKey(resource.Title),
                 ReleaseDate = resource.ReleaseDate,
                 Ratings = resource.Ratings ?? new Ratings(),
                 AudiobookMonitored = resource.AudiobookMonitored ?? (mediaType == BookMediaType.Audiobook && resource.Monitored),
@@ -981,10 +997,8 @@ namespace Chaptarr.Api.V1.Books
 
                 // ForeignBookId is deprecated
                 book.TitleSlug = resource.TitleSlug;
-                // The book title is owned by metadata refresh, not user edits/monitor toggles.
-                // Do not overwrite it from the API resource (which may carry an edition-specific title).
-                book.ReleaseDate = resource.ReleaseDate;
-                book.Ratings = resource.Ratings ?? new Ratings();
+                // Existing metadata and duration writers own the stored book values.
+                // The resource may project edition or file values that must not be copied back.
             // Native clients may address each side explicitly. Readarr-compatible clients address
             // only the selected facade side through the legacy Monitored field.
             if (facadeContext?.MediaType == "audiobook")
@@ -1015,10 +1029,15 @@ namespace Chaptarr.Api.V1.Books
                     book.EbookMonitored = resource.Monitored;
                 }
             }
+            // Round-tripped display metadata does not express a manual narrator choice.
+            var shouldUpdateNarrator = resource.NarratorSpecified && !string.Equals(resource.Narrator,
+                GetNarratorDisplay(book, SelectMonitoredEdition(book.Editions), book.HasFiles), StringComparison.Ordinal);
             book.AnyEditionOk = resource.AnyEditionOk;
             book.AddOptions = resource.AddOptions;
-            book.Narrator = resource.Narrator;
-            book.DurationMinutes = resource.DurationMinutes.HasValue ? (int?)resource.DurationMinutes.Value : null;
+            if (shouldUpdateNarrator)
+            {
+                book.Narrator = resource.Narrator;
+            }
 
                 // Readarr/Seerr compatibility: Readarr sends editions in PUT /book to update monitored edition.
                 if (resource.Editions != null && resource.Editions.Any())

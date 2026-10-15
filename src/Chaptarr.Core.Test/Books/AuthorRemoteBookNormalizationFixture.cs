@@ -34,6 +34,12 @@ namespace Chaptarr.Core.Test.Books
                 LastProfileIds[mediaType] = profileId;
                 return FilterOverride != null ? FilterOverride(input, profileId) : books;
             }
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                FilterBooks(input, profileId, requestedNarrationIds, null);
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                FilterBooks(input, profileId);
         }
 
         private sealed class StubImportListExclusionService : IImportListExclusionService
@@ -58,6 +64,7 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => throw new NotImplementedException();
@@ -68,6 +75,7 @@ namespace Chaptarr.Core.Test.Books
             public ImportListExclusion FindByForeignId(string foreignId) => throw new NotImplementedException();
             public ImportListExclusion Update(ImportListExclusion importListExclusion) => throw new NotImplementedException();
 
+            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds)
             {
                 var idSet = new HashSet<string>(foreignIds ?? new List<string>(), StringComparer.OrdinalIgnoreCase);

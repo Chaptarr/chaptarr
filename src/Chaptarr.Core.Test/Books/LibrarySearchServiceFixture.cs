@@ -2,7 +2,6 @@ using System;
 using System.Data;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using NLog;
@@ -10,6 +9,8 @@ using NLog.Config;
 using NLog.Targets;
 using Npgsql;
 using NUnit.Framework;
+using Chaptarr.Core.Test.Common;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Datastore;
@@ -28,33 +29,6 @@ namespace Chaptarr.Core.Test.Books
         private string _databaseName;
         private LibrarySearchService _service;
         private Action<IDbCommand> _observeCommand;
-
-        private class CommandObserver : DispatchProxy
-        {
-            public object Target { get; set; }
-            public Action<IDbCommand> Observe { get; set; }
-
-            public static T Wrap<T>(T target, Action<IDbCommand> observe)
-                where T : class
-            {
-                var proxy = Create<T, CommandObserver>();
-                var state = (CommandObserver)(object)proxy;
-                state.Target = target;
-                state.Observe = observe;
-                return proxy;
-            }
-
-            protected override object Invoke(MethodInfo method, object[] args)
-            {
-                if (Target is IDbCommand command && method.Name == nameof(IDbCommand.ExecuteReader))
-                {
-                    Observe(command);
-                }
-
-                var result = method.Invoke(Target, args);
-                return result is IDbCommand created ? Wrap(created, Observe) : result;
-            }
-        }
 
         public LibrarySearchServiceFixture(bool postgres)
         {
@@ -108,7 +82,7 @@ namespace Chaptarr.Core.Test.Books
         {
             IDbConnection connection = _postgres ? new NpgsqlConnection(_connectionString) : new SqliteConnection(_connectionString);
             connection.Open();
-            return _observeCommand == null ? connection : CommandObserver.Wrap(connection, _observeCommand);
+            return _observeCommand == null ? connection : CommandObserver.Wrap<IDbConnection>(connection, _observeCommand);
         }
 
         [Test]
@@ -242,9 +216,38 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(books[0].LocalEbookBooks, Has.Count.EqualTo(1));
         }
 
+        [Test]
+        public void folded_author_header_should_preserve_existing_routes_and_native_updates()
+        {
+            DualDatabaseFixture.Run(_postgres, database =>
+            {
+                var logger = LogManager.GetCurrentClassLogger();
+                var events = InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null);
+                var authors = new AuthorRepository(database, events, logger);
+                var original = authors.Insert(new Author { Name = "Søren Kierkegaard", CleanName = "sorenkierkegaard", SortName = "Kept Raw Alias", TitleSlug = "123456", Path = "/native-header", Added = DateTime.UtcNow });
+                var other = authors.Insert(new Author { Name = "Other Reader", CleanName = "otherreader", SortName = "Second Alias", TitleSlug = "654321", Path = "/native-other", Added = DateTime.UtcNow });
+                var service = new LibrarySearchService(database, logger);
+                Assert.That(service.Search("Soren", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
+                Assert.That(service.Search("Søren", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
+                Assert.That(service.Search("Kept Raw", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
+                Assert.That(service.Search("123", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
+                Assert.That(service.Search("kegaard", 10).Authors.Select(row => row.Id),
+                    Is.EqualTo(_postgres ? new[] { original.Id } : Array.Empty<int>()));
+                Assert.That(service.Search("zzqqmissing", 10).Authors, Is.Empty);
+                Assert.That(service.Search("%", 10).Authors, Is.Empty);
+                original.Name = "Ælfric Reader";
+                authors.SetFields(original, row => row.Name);
+                Assert.That(service.Search("Soren", 10).Authors, Is.Empty);
+                Assert.That(service.Search("Aelfric", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
+                Assert.That(service.Search("Other", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { other.Id }));
+                authors.Delete(original.Id);
+                Assert.That(service.Search("Aelfric", 10).Authors, Is.Empty);
+            });
+        }
+
         private void Seed(IDbConnection connection)
         {
-            var authorColumns = new[] { "Name", "SortName", "TitleSlug", "Images", "SelectedPosterHash", "HardcoverAuthorId", "GoodreadsAuthorId", "OpenLibraryAuthorId", "GoogleBooksAuthorId", "AudnexusAuthorId" };
+            var authorColumns = new[] { "Name", "SearchName", "SortName", "TitleSlug", "Images", "SelectedPosterHash", "HardcoverAuthorId", "GoodreadsAuthorId", "OpenLibraryAuthorId", "GoogleBooksAuthorId", "AudnexusAuthorId" };
             var bookColumns = new[] { "Title", "TitleSlug", "Images", "BaseBookId", "HardcoverBookId", "GoodreadsBookId", "GoodreadsWorkId", "OpenLibraryWorkId", "GoogleBooksId", "ASIN", "AudibleASIN", "Narrator", "SeriesName" };
             var boolean = _postgres ? "BOOLEAN DEFAULT TRUE" : "INTEGER DEFAULT 1";
             connection.Execute($"CREATE TABLE \"Authors\" (\"Id\" INTEGER PRIMARY KEY, {string.Join(", ", authorColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
@@ -272,7 +275,7 @@ namespace Chaptarr.Core.Test.Books
             for (var i = 0; i < titles.Length; i++)
             {
                 var id = i + 1;
-                connection.Execute("INSERT INTO \"Authors\" (\"Id\", \"Name\", \"SortName\", \"TitleSlug\") VALUES (@Id, @Name, @Name, @Name);", new { Id = id, Name = names[i] });
+                connection.Execute("INSERT INTO \"Authors\" (\"Id\", \"Name\", \"SearchName\", \"SortName\", \"TitleSlug\") VALUES (@Id, @Name, @SearchName, @Name, @Name);", new { Id = id, Name = names[i], SearchName = StringSuperNormalizer.NormalizeForFts(names[i]) });
                 connection.Execute("INSERT INTO \"Books\" (\"Id\", \"AuthorId\", \"Title\", \"TitleSlug\", \"MediaType\", \"HardcoverBookId\") VALUES (@Id, @AuthorId, @Title, @Title, @MediaType, @ProviderId);",
                     new { Id = id, AuthorId = i == 1 ? 1 : id, Title = titles[i], MediaType = i == 1 ? 1 : 0, ProviderId = i < 2 ? "1708426" : null });
                 var editions = i < 2 ? new[] { titles[i], "The 7½ Deaths of Evelyn Hardcastle", "The 7 ½ Deaths of Evelyn Hardcastle" }

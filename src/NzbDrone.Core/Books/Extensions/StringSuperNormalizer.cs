@@ -1,5 +1,9 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.Utilities;
+using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.Books.Extensions
 {
@@ -13,7 +17,7 @@ namespace NzbDrone.Core.Books.Extensions
 
         // Regex for possessive normalization: matches 's at word boundary
         // Covers: ' (U+0027 straight), ' (U+2019 right curly), ' (U+2018 left curly)
-        private static readonly Regex PossessiveRegex = new Regex("['\\u2018\\u2019]s\\b", RegexOptions.Compiled);
+        private static readonly Regex PossessiveRegex = new Regex("['\\u2018\\u2019]s\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
         /// Normalizes text for FTS matching:
@@ -36,6 +40,28 @@ namespace NzbDrone.Core.Books.Extensions
             text = PossessiveRegex.Replace(text, "s");
 
             return UnicodeComparisonNormalizer.NormalizeText(text);
+        }
+
+        public static string ComputeBookComparisonKey(string title)
+        {
+            return (title ?? string.Empty).CleanBookTitle().CleanAuthorName();
+        }
+
+        internal static string NormalizeNarratorsForFts(IEnumerable<string> names)
+        {
+            return NormalizeForFts(string.Join(" ", names?.Where(name => !string.IsNullOrWhiteSpace(name)) ?? Enumerable.Empty<string>()));
+        }
+
+        internal static IEnumerable<string> GetFtsQueryTerms(string text, bool preserveFtsConnectors = true)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Enumerable.Empty<string>();
+            }
+
+            return UnicodeComparisonNormalizer.WordSpans(NormalizeForFts(text), preserveFtsConnectors)
+                .Select(word => word.Value)
+                .Distinct(StringComparer.Ordinal);
         }
 
         /// <summary>

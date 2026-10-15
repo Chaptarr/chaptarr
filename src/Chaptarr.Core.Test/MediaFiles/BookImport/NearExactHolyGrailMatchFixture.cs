@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,7 +17,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class NearExactHolyGrailMatchFixture
     {
-        private sealed class StubEditionFtsRepository : IEditionFtsRepository
+        private sealed class StubEditionFtsRepository : StagedEditionFtsStub
         {
             private readonly List<EditionFtsMatch> _results;
 
@@ -25,9 +26,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 _results = results.ToList();
             }
 
-            public bool FtsTableExists() => true;
-            public void RebuildIndex() { }
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20) => _results.Take(limit).ToList();
+            public override bool FtsTableExists() => true;
+            public override void RebuildIndex() { }
+            protected override List<EditionFtsMatch> SelectEditions(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit) => _results.Take(limit).ToList();
         }
 
         private class AuthorServiceProxy : DispatchProxy

@@ -43,6 +43,8 @@ namespace NzbDrone.Core.Parser.Model
         public bool IsInitialImport { get; set; }
         public bool IsManualImport { get; set; }
         public MatchProvenance MatchProvenance { get; set; }
+        public Dictionary<int, int> AlternativeCopyIncompatibleEditionIds { get; set; }
+        public DateTime? AlternativeCopyGrabDate { get; set; }
 
         // Manual import suggestion metadata (V5 match) - must not cause DB side effects during suggestion generation.
         public string SuggestedForeignAuthorId { get; set; }

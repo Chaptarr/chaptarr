@@ -160,7 +160,8 @@ namespace Chaptarr.Core.Test.CustomFormats
         [TestCase("George Orwell - 1984")]
         public void generic_release_title_tokens_should_not_be_extracted_as_narrators(string title)
         {
-            Assert.That(PreferredNarratorMatcher.ExtractNarratorFromFields(new[] { title }), Is.Null);
+            Assert.That(ReleaseNarratorEvidenceExtractor.Extract(new CustomFormatInput
+            { AudioProductionFields = new List<string> { title } }).Names, Is.Empty);
         }
 
         [Test]
@@ -409,7 +410,7 @@ namespace Chaptarr.Core.Test.CustomFormats
         }
 
         [Test]
-        public void structured_narrator_list_should_resolve_abbreviated_summary_count()
+        public void structured_narrator_list_should_not_assume_unresolved_free_text_is_a_complete_cast()
         {
             var completeTarget = PreferredNarratorMatcher.BuildTarget(new Book
             {
@@ -442,8 +443,14 @@ namespace Chaptarr.Core.Test.CustomFormats
                 }
             });
 
-            Assert.That(completeTarget.HasUnresolvedNames, Is.False);
+            Assert.That(completeTarget.HasUnresolvedNames, Is.True);
             Assert.That(unresolvedTarget.HasUnresolvedNames, Is.True);
+            var input = new CustomFormatInput { MediaType = BookMediaType.Audiobook, Narrator = "Annie Ellicott; Jeff Hays; Patrick Warburton" };
+            PreferredNarratorMatcher.ApplyTarget(input, completeTarget);
+            var match = PreferredNarratorMatcher.Evaluate(input);
+            Assert.That(match.Any, Is.True);
+            Assert.That(match.Majority, Is.True);
+            Assert.That(match.Complete, Is.False);
         }
 
         [Test]
@@ -729,7 +736,7 @@ namespace Chaptarr.Core.Test.CustomFormats
             Assert.That(result, Is.False);
         }
 
-        [TestCase(null, "Dune - Narrated by Brian Herbert")]
+        [TestCase(null, "Dune [Brian Herbert]")]
         [TestCase("Brian Herbert", "Dune - Brian Herbert")]
         public void plain_narrator_name_should_allow_explicit_self_narration(string narrator, string title)
         {
@@ -798,10 +805,22 @@ namespace Chaptarr.Core.Test.CustomFormats
             var result = spec.IsSatisfiedBy(new CustomFormatInput
             {
                 MediaType = BookMediaType.Audiobook,
+                PreferredNarratorNames = new List<string> { "Mary-Louise Parker" },
                 AudioProductionFields = new List<string> { "Book Title - Narrated by Mary-Louise Parker - M4B" }
             });
 
             Assert.That(result, Is.True);
+        }
+
+        [Test]
+        public void narrator_regex_should_not_invent_a_person_from_an_unknown_credit_label()
+        {
+            var spec = new NarratorSpecification { Value = @"^Mary[-\s]+Louise\s+Parker$" };
+            Assert.That(spec.IsSatisfiedBy(new CustomFormatInput
+            {
+                MediaType = BookMediaType.Audiobook,
+                AudioProductionFields = new List<string> { "Book Title - Narrated by Mary-Louise Parker - M4B" }
+            }), Is.False);
         }
 
         [Test]
@@ -1361,6 +1380,51 @@ namespace Chaptarr.Core.Test.CustomFormats
                 Assert.That(ebookMatches.Select(format => format.Id), Is.EquivalentTo(new[] { 11, 12 }));
                 Assert.That(unknownMatches.Select(format => format.Id), Is.EquivalentTo(new[] { 12 }));
             });
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        [TestCase(null)]
+        public void title_words_should_not_override_target_media_in_release_or_history_formats(BookMediaType? mediaType)
+        {
+            var audio = new CustomFormat { Id = 10, Name = "Audio", AppliesTo = CustomFormatMediaType.Audiobook, Specifications = new List<ICustomFormatSpecification>() };
+            var ebook = new CustomFormat { Id = 11, Name = "Ebook", AppliesTo = CustomFormatMediaType.Ebook, Specifications = new List<ICustomFormatSpecification>() };
+            var both = new CustomFormat { Id = 12, Name = "Both", AppliesTo = CustomFormatMediaType.Both, Specifications = new List<ICustomFormatSpecification>() };
+            var service = CreateCalculationService(audio, ebook, both);
+            var book = mediaType.HasValue ? new Book { MediaType = mediaType.Value } : null;
+            var expected = mediaType.HasValue ? new[] { mediaType == BookMediaType.Audiobook ? 10 : 11, 12 } : new[] { 12 };
+            var remoteBook = new RemoteBook
+            {
+                Books = book == null ? new List<Book>() : new List<Book> { book },
+                Release = new ReleaseInfo { Title = "The Ebook Handbook" },
+                ParsedBookInfo = new ParsedBookInfo
+                {
+                    ReleaseTitle = "The Ebook Handbook",
+                    Quality = new QualityModel(Quality.Unknown)
+                }
+            };
+            var history = new EntityHistory
+            {
+                Book = book,
+                SourceTitle = "The Ebook Handbook",
+                Quality = new QualityModel(Quality.Unknown),
+                Data = new Dictionary<string, string>()
+            };
+
+            Assert.That(service.ParseCustomFormat(remoteBook, 0).Select(format => format.Id), Is.EquivalentTo(expected));
+            Assert.That(service.ParseCustomFormat(history, new Author { Name = "Test Writer" }).Select(format => format.Id), Is.EquivalentTo(expected));
+        }
+
+        [Test]
+        public void blocklist_without_quality_evidence_should_not_infer_media_from_title()
+        {
+            var service = CreateCalculationService(
+                new CustomFormat { Id = 10, Name = "Audio", AppliesTo = CustomFormatMediaType.Audiobook, Specifications = new List<ICustomFormatSpecification>() },
+                new CustomFormat { Id = 11, Name = "Ebook", AppliesTo = CustomFormatMediaType.Ebook, Specifications = new List<ICustomFormatSpecification>() },
+                new CustomFormat { Id = 12, Name = "Both", AppliesTo = CustomFormatMediaType.Both, Specifications = new List<ICustomFormatSpecification>() });
+            var blocklist = new Blocklist { SourceTitle = "The Ebook Handbook", Quality = new QualityModel(Quality.Unknown) };
+
+            Assert.That(service.ParseCustomFormat(blocklist, new Author { Name = "Test Writer" }).Select(format => format.Id), Is.EquivalentTo(new[] { 12 }));
         }
 
         [Test]

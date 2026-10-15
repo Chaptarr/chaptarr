@@ -45,15 +45,12 @@ namespace Chaptarr.Core.Test.Api
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
             public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
-            public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
-            public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public List<Book> FindAllByProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public Book FindByISBN(string isbn) => throw new NotImplementedException();
             public Book FindByASIN(string asin) => throw new NotImplementedException();
-            public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => Deletes.Add((bookId, deleteFiles, addImportListExclusion, applyToBothFormats));
             public List<Book> GetAllBooks() => throw new NotImplementedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
@@ -74,7 +71,6 @@ namespace Chaptarr.Core.Test.Api
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
             public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
-            public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
             public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
         }
@@ -90,6 +86,7 @@ namespace Chaptarr.Core.Test.Api
 
             public List<AuthorStatistics> AuthorStatistics() => throw new NotImplementedException();
             public AuthorStatistics AuthorStatistics(int authorId) => _getStats?.Invoke(authorId) ?? new AuthorStatistics();
+            public List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds) => authorIds.Select(AuthorStatistics).ToList();
             public List<AuthorStatistics> AuthorStatistics(string mediaType) => throw new NotImplementedException();
             public AuthorStatistics AuthorStatistics(int authorId, string mediaType) => throw new NotImplementedException();
             public void InvalidateAuthorCache(int authorId) => throw new NotImplementedException();

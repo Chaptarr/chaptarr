@@ -78,14 +78,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             new Regex(@"\b(\d+)\s*Hours?\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)
         };
 
-        // Compiled regex patterns for narrator extraction
-        private static readonly List<Regex> NarratorPatterns = new List<Regex>
-        {
-            new Regex(@"(?:Narrated by|Read by|Voice by)\s+([^,;]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            new Regex(@"Narrator:\s*([^,;]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            new Regex(@"([^-]+)\s*-\s*Narrator", RegexOptions.IgnoreCase | RegexOptions.Compiled)
-        };
-
         // GraphicAudio detection patterns - use comprehensive list from AudioProductionConstants
         private static readonly Regex GraphicAudioPattern = new Regex(
             $@"\b(?:{string.Join("|", AudioProductionConstants.GraphicAudioIndicators.Select(Regex.Escape))})\b",
@@ -231,7 +223,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             var mediaInfo = ParseMediaInfo(torrent);
             var duration = ExtractDuration(torrent, mediaInfo);
             var isGraphicAudio = IsGraphicAudio(torrent);
-            var narrator = ExtractNarrator(torrent, isGraphicAudio);
+            var narrator = ExtractNarrator(torrent);
 
             // MAM_TRACE: Log metadata extraction for each torrent
             var logger = NLog.LogManager.GetCurrentClassLogger();
@@ -244,6 +236,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             var tags = torrent.Value<string>("tags");
             var description = torrent.Value<string>("description");
             var narratorInfo = torrent.Value<string>("narrator_info");
+            var narratorEvidenceFields = new[] { tags, description }.Select(CleanMetadataText)
+                .Where(field => !string.IsNullOrWhiteSpace(field)).Distinct(StringComparer.Ordinal).ToList();
 
             logger.Trace("MAM_SOURCE_TAGS: '{0}'", tags ?? "EMPTY");
             logger.Trace("MAM_SOURCE_NARRATOR_INFO: '{0}'", narratorInfo ?? "EMPTY");
@@ -286,6 +280,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 // Set enhanced metadata properties
                 Duration = duration,
                 Narrator = narrator,
+                NarratorEvidenceFields = narratorEvidenceFields.Count > 0 ? narratorEvidenceFields : null,
                 IsGraphicAudio = isGraphicAudio,
                 Codec = codec,
                 FileType = fileType,
@@ -772,18 +767,10 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             return CleanMetadataText(title) ?? title;
         }
 
-        private string ExtractNarrator(JToken torrent, bool isGraphicAudio = false)
+        private string ExtractNarrator(JToken torrent)
         {
             try
             {
-                // If this is GraphicAudio, return "GraphicAudio" as the narrator
-                if (isGraphicAudio)
-                {
-                    return "GraphicAudio";
-                }
-
-                // Priority order: narrator_info → tags → description
-
                 // Check narrator_info field first (most reliable)
                 var narratorInfo = torrent.Value<string>("narrator_info");
                 if (!string.IsNullOrWhiteSpace(narratorInfo))
@@ -799,16 +786,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                                 .Select(CleanNarratorName)
                                 .Where(n => !string.IsNullOrWhiteSpace(n))
                                 .ToList();
-                            if (narrators.Count == 1)
-                            {
-                                return narrators[0];
-                            }
-                            else if (narrators.Count > 1)
-                            {
-                                // Multiple narrators
-                                return string.Join(", ", narrators.Take(2)) +
-                                       (narrators.Count > 2 ? $" +{narrators.Count - 2}" : "");
-                            }
+                            return narrators.Count > 0 ? string.Join(", ", narrators) : null;
                         }
                     }
                     catch (JsonException)
@@ -822,36 +800,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                     }
                 }
 
-                // Fallback to regex extraction from tags and description
-                var searchFields = new List<string>();
 
-                var tags = torrent.Value<string>("tags");
-                if (!string.IsNullOrWhiteSpace(tags))
-                {
-                    searchFields.Add(CleanMetadataText(tags));
-                }
-
-                var description = torrent.Value<string>("description");
-                if (!string.IsNullOrWhiteSpace(description))
-                {
-                    searchFields.Add(CleanMetadataText(description));
-                }
-
-                foreach (var field in searchFields)
-                {
-                    foreach (var pattern in NarratorPatterns)
-                    {
-                        var match = pattern.Match(field);
-                        if (match.Success && match.Groups.Count >= 2)
-                        {
-                            var narrator = CleanNarratorName(match.Groups[1].Value);
-                            if (!string.IsNullOrWhiteSpace(narrator))
-                            {
-                                return narrator;
-                            }
-                        }
-                    }
-                }
             }
             catch (Exception)
             {
@@ -873,36 +822,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             if (IsProseOrTechnicalText(narrator))
             {
                 return null;
-            }
-
-            // Remove common prefixes if they slipped through
-            narrator = Regex.Replace(narrator, @"^(?:Narrated by|Read by|Voice by)\s*", "", RegexOptions.IgnoreCase);
-
-            // Remove parenthetical info like "(Narrator)"
-            narrator = Regex.Replace(narrator, @"\s*\([^)]*\)\s*", " ");
-
-            // Handle multiple narrators - if comma separated, take first narrator + count
-            if (narrator.Contains(","))
-            {
-                var narrators = narrator.Split(',').Select(n => n.Trim()).Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
-                if (narrators.Length > 1)
-                {
-                    return narrators.Length > 2 ? $"{narrators[0]} +{narrators.Length - 1}" : $"{narrators[0]}, {narrators[1]}";
-                }
-
-                narrator = narrators.FirstOrDefault()?.Trim();
-            }
-
-            // Handle "and" separated narrators
-            if (narrator.Contains(" and "))
-            {
-                var narrators = narrator.Split(new[] { " and " }, StringSplitOptions.RemoveEmptyEntries).Select(n => n.Trim()).ToArray();
-                if (narrators.Length > 1)
-                {
-                    return narrators.Length > 2 ? $"{narrators[0]} +{narrators.Length - 1}" : $"{narrators[0]}, {narrators[1]}";
-                }
-
-                narrator = narrators.FirstOrDefault()?.Trim();
             }
 
             // Final cleanup

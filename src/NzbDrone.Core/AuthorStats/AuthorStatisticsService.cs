@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Common.Cache;
@@ -13,6 +14,7 @@ namespace NzbDrone.Core.AuthorStats
     {
         List<AuthorStatistics> AuthorStatistics();
         AuthorStatistics AuthorStatistics(int authorId);
+        List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds);
         List<AuthorStatistics> AuthorStatistics(string mediaType);
         AuthorStatistics AuthorStatistics(int authorId, string mediaType);
         void InvalidateAuthorCache(int authorId);
@@ -70,6 +72,26 @@ namespace NzbDrone.Core.AuthorStats
             }
 
             return MapAuthorStatistics(statistics);
+        }
+
+        public List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds)
+        {
+            var ids = authorIds?.Distinct().ToArray() ?? Array.Empty<int>();
+            var statisticsByAuthor = ids.ToDictionary(id => id, id => _cache.Find(id.ToString()));
+            var missingIds = ids.Where(id => statisticsByAuthor[id] == null).ToArray();
+            if (missingIds.Length > 0)
+            {
+                var fetched = _authorStatisticsRepository.AuthorStatistics(missingIds).ToLookup(statistics => statistics.AuthorId);
+                foreach (var id in missingIds)
+                {
+                    var statistics = fetched[id].ToList();
+                    _cache.Set(id.ToString(), statistics);
+                    statisticsByAuthor[id] = statistics;
+                }
+            }
+
+            return ids.Where(id => statisticsByAuthor[id].Count > 0)
+                .Select(id => MapAuthorStatistics(statisticsByAuthor[id])).ToList();
         }
 
         public List<AuthorStatistics> AuthorStatistics(string mediaType)

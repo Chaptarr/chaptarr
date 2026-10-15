@@ -92,6 +92,7 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public Author GetAuthor(int authorId) => throw new NotImplementedException();
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByName(string title)
@@ -99,7 +100,6 @@ namespace Chaptarr.Core.Test.Books
                 FindByNameCalls++;
                 return _findByName;
             }
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
@@ -107,6 +107,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
 	            public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
 	            public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+	            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
 	            public Author UpdateAuthor(Author author)
                 {
                     UpdatedAuthor = author;

@@ -105,6 +105,22 @@ namespace NzbDrone.Core.Books
             return selected2;
         }
 
+        internal static List<Edition> EnsureWorkRepresentative(BookMediaType mediaType, IEnumerable<Edition> originalEditions, List<Edition> filteredEditions)
+        {
+            // Work preservation needs a usable representative without inventing edition intent.
+            // Eligible editions resume ordinary selection as soon as they are available.
+            if (SelectByNativeFormatThenRatings(filteredEditions, mediaType) == null)
+            {
+                var representative = SelectByNativeFormatThenRatings(originalEditions, mediaType);
+                if (representative != null)
+                {
+                    filteredEditions.Add(representative);
+                }
+            }
+
+            return filteredEditions;
+        }
+
         /// <summary>
         /// Returns the retained edition set for refresh/add.
         /// Shapes an already-filtered edition set into the retained edition set for add/refresh.
@@ -236,7 +252,8 @@ namespace NzbDrone.Core.Books
             var changed = false;
             foreach (var edition in list)
             {
-                var shouldMonitor = edition.Id == selected.Id;
+                // Unsaved editions share ID zero but remain separate choices until insertion.
+                var shouldMonitor = ReferenceEquals(edition, selected);
                 if (edition.Monitored != shouldMonitor)
                 {
                     edition.Monitored = shouldMonitor;

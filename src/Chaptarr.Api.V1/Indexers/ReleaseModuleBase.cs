@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Chaptarr.Http.REST;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Download;
 
 namespace Chaptarr.Api.V1.Indexers
 {
@@ -43,7 +44,7 @@ namespace Chaptarr.Api.V1.Indexers
 
             if (decision.RemoteBook.Author != null)
             {
-                var qualityProfile = decision.RemoteBook.Author.GetQualityProfileForQuality(release.Quality.Quality);
+                var qualityProfile = decision.RemoteBook.GetQualityProfile();
                 if (qualityProfile != null)
                 {
                     release.QualityWeight = qualityProfile.GetIndex(release.Quality.Quality).Index * 100;

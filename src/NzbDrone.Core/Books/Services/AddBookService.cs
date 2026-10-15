@@ -11,6 +11,7 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Core.MetadataSource.BookInfo;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Books.Calibre;
@@ -137,6 +138,11 @@ namespace NzbDrone.Core.Books
                 return await RequestBookThroughAuthorCatalog(book);
             }
 
+            if (GetRequestedNarration(book) != null)
+            {
+                return CompleteRequestedNarration(book, dbBook) ?? await RequestBookThroughAuthorCatalog(book);
+            }
+
             if (GetInitialBookPolicy(book).HasValue)
             {
                 var existing = FindExistingAuthorForAdd(book);
@@ -148,11 +154,21 @@ namespace NzbDrone.Core.Books
                     return await RequestBookThroughAuthorCatalog(book);
                 }
 
-                RemoveMatchingImportListExclusions(dbBook);
-                return CompleteScopedBookRequest(dbBook, book.AddOptions?.SearchForNewBook == true);
+                return CompleteScopedBookRequest(dbBook, book.AddOptions?.SearchForNewBook == true,
+                    book.Author?.AddOptions?.Monitor != MonitorTypes.None);
             }
 
+            var monitorRequested = book.IsMonitored();
+            var searchRequested = book.AddOptions?.SearchForNewBook == true;
             book.UseDbFieldsFrom(dbBook);
+            var storedEditions = dbBook.Editions ?? _editionService.GetEditionsByBook(dbBook.Id);
+            if (!EditionPinPolicy.CanAutomationSelectEdition(dbBook, storedEditions))
+            {
+                book.Editions = storedEditions;
+            }
+
+            book.AddOptions ??= new AddBookOptions();
+            book.AddOptions.SearchForNewBook |= searchRequested;
 
             // Some clients post IDs-only payloads even when the book already exists locally.
             // Ensure we never Upsert NULL Title/Edition titles.
@@ -172,8 +188,6 @@ namespace NzbDrone.Core.Books
                     }
                 }
             }
-
-            RemoveMatchingImportListExclusions(book);
 
             // Note it's a manual addition so it's not deleted on next refresh
             book.AddOptions.AddType = BookAddType.Manual;
@@ -275,11 +289,10 @@ namespace NzbDrone.Core.Books
                     }
                 }
                 
-                if (book.AddOptions?.SearchForNewBook == true ||
+                if (monitorRequested || book.AddOptions?.SearchForNewBook == true ||
                     isSpecificBookIntentForExistingAuthor ||
                     isAllBooksIntentForExistingAuthor)
                 {
-                    dbAuthor = EnsureMediaTypeMonitoringForRequestedBook(dbAuthor, bookMediaType);
                     book.Author = dbAuthor;
                     book.AuthorId = dbAuthor.Id;
                     book.SetMonitored(true);
@@ -318,6 +331,7 @@ namespace NzbDrone.Core.Books
 
             // Persist the book to the database (editions will be available in DB now)
             _bookService.AddBook(book, doRefresh);
+            RemoveMatchingImportListExclusions(book);
 
             if (isAllBooksIntentForExistingAuthor)
             {
@@ -414,16 +428,9 @@ namespace NzbDrone.Core.Books
             return book;
         }
 
-        private Author EnsureMediaTypeMonitoringForRequestedBook(Author author, BookMediaType mediaType)
-        {
-            var mediaTypeName = mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
-            _authorService.EnsureMediaTypeMonitoring(author.Id, mediaTypeName);
-            return _authorService.GetAuthor(author.Id) ?? author;
-        }
-
         private async Task<Book> RequestBookThroughAuthorCatalog(Book requestedBook)
         {
-            var workProviderId = ResolveRequestedWorkProviderId(requestedBook);
+            var workProviderId = ResolveRequestedWorkProviderId(requestedBook, out var metadata);
             if (string.IsNullOrWhiteSpace(workProviderId))
             {
                 throw new ValidationException(new[]
@@ -433,6 +440,33 @@ namespace NzbDrone.Core.Books
             }
 
             var authorProviderId = GetAuthorProviderId(requestedBook.Author);
+            if (metadata == null)
+            {
+                try
+                {
+                    metadata = _bookInfo.GetWorkInfo(workProviderId, requestedBook.MediaType,
+                        AuthorIdentity.NormalizeWorkLookupAuthorHint(workProviderId, authorProviderId));
+                }
+                catch (BookNotFoundException)
+                {
+                    // Not-ready metadata retains the existing durable author-catalog request.
+                }
+                catch (BookInfoException ex)
+                {
+                    _logger.Warn(ex, "Primary metadata for requested work {0} is unavailable; retaining the author-catalog request", workProviderId);
+                }
+            }
+
+            var primary = metadata == null ? null : BookIdentity.GetRequestedWorkPrimaryAuthor(metadata, workProviderId, requestedBook.MediaType);
+            if (metadata != null && primary == null)
+            {
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure("ForeignBookId", "Cannot add book: metadata does not establish the requested work and media type's primary author.")
+                });
+            }
+
+            authorProviderId = primary == null ? authorProviderId : AuthorIdentity.GetPreferredProviderId(primary);
             if (string.IsNullOrWhiteSpace(authorProviderId))
             {
                 throw new ValidationException(new[]
@@ -449,9 +483,12 @@ namespace NzbDrone.Core.Books
             // authoritative author blob is normalized. Waiting until after import
             // would let the exclusion remove the requested work and strand the
             // pending request forever.
-            RemoveMatchingImportListExclusions(requestedBook);
+            RemoveMatchingImportListExclusions(requestedBook, primary);
 
             var config = BuildRequestedBookMonitoringConfig(requestedBook, requestedIds, searchRequested);
+            if (primary != null && (!string.IsNullOrWhiteSpace(primary.Name) ||
+                !AuthorIdentity.MatchesByProviderIdIntersection(requestedBook.Author, primary)))
+                config.AuthorName = primary.Name;
             var author = await _authorLibraryService.AddAuthorAsync(authorProviderId, config);
             if (author?.Id < 0)
             {
@@ -471,13 +508,18 @@ namespace NzbDrone.Core.Books
                 throw new InvalidOperationException($"Requested work {workProviderId} was not found after importing author {authorProviderId}.");
             }
 
-            if (GetInitialBookPolicy(requestedBook).HasValue)
+            if (GetRequestedNarration(requestedBook) != null)
             {
-                RemoveMatchingImportListExclusions(localBook);
-                return CompleteScopedBookRequest(localBook, searchRequested);
+                return CompleteRequestedNarration(requestedBook, localBook)
+                    ?? throw new ValidationException(new[] { new ValidationFailure("Edition", "The requested narration is missing from the authoritative audiobook catalog.") });
             }
 
-            author = EnsureMediaTypeMonitoringForRequestedBook(author, mediaType);
+            if (GetInitialBookPolicy(requestedBook).HasValue)
+            {
+                return CompleteScopedBookRequest(localBook, searchRequested,
+                    requestedBook.Author?.AddOptions?.Monitor != MonitorTypes.None);
+            }
+
             localBook.Author = author;
             localBook.SetMonitored(true);
             localBook.Monitored = true;
@@ -497,11 +539,11 @@ namespace NzbDrone.Core.Books
             return localBook;
         }
 
-        private void RemoveMatchingImportListExclusions(Book book)
+        private void RemoveMatchingImportListExclusions(Book book, Author author = null)
         {
             var lookupIds = ImportListExclusionBookMatcher.GetLookupIds(book);
             // Provider IDs can have one author exclusion per media side, so include all known aliases in the plural lookup.
-            lookupIds.AddRange(AuthorIdentity.GetProviderIdentityTokenList(book.Author));
+            lookupIds.AddRange(AuthorIdentity.GetProviderIdentityTokenList(author ?? book.Author));
 
             var matchingExclusions = _importListExclusionService.FindByForeignId(
                 lookupIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
@@ -537,15 +579,20 @@ namespace NzbDrone.Core.Books
             return new MonitoringConfig
             {
                 IsManualAddition = true,
+                AudiobookNarrations = GetRequestedNarration(book) is Edition narration
+                    ? new List<RequestedNarration> { new() { WorkProviderId = requestedIds[0],
+                        EditionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(narration),
+                        NarratorNames = BookEditionIdentity.GetNarratorNames(narration), RequiresEdition = true, Search = searchRequested } }
+                    : null,
                 AuthorName = author.Name,
                 CreateAudiobook = isAudiobook,
                 CreateEbook = !isAudiobook,
-                AudiobookMonitored = isAudiobook && !initialPolicy.HasValue ? true : author.AudiobookMonitored,
+                AudiobookMonitored = author.AudiobookMonitored,
                 AudiobookMonitorNewItems = author.AudiobookMonitorNewItems,
                 AudiobookMonitorExistingMode = isAudiobook && requestedIds?.Any() == true
                     ? initialMonitorMode
                     : null,
-                EbookMonitored = !isAudiobook && !initialPolicy.HasValue ? true : author.EbookMonitored,
+                EbookMonitored = author.EbookMonitored,
                 EbookMonitorNewItems = author.EbookMonitorNewItems,
                 EbookMonitorExistingMode = !isAudiobook && requestedIds?.Any() == true
                     ? initialMonitorMode
@@ -570,6 +617,45 @@ namespace NzbDrone.Core.Books
             };
         }
 
+        private static Edition GetRequestedNarration(Book book) => book.MediaType == BookMediaType.Audiobook
+            ? book.Editions?.SingleOrDefault(edition => edition.Monitored && edition.ManualAdd && BookEditionIdentity.IsNarratedAudiobookEdition(edition))
+            : null;
+
+        private Book CompleteRequestedNarration(Book request, Book source)
+        {
+            var requested = GetRequestedNarration(request);
+            var editionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(requested);
+            var narratorNames = BookEditionIdentity.GetNarratorNames(requested);
+            // Narration intent can be fulfilled by another catalog edition of the same work.
+            // Load every compatible pocket together before the shared writer applies pin/copy policy.
+            var workLookups = BookIdentity.GetStableWorkProviderIdentityTokens(source)
+                .Select(id => (Scope: "work", Provider: id.Substring(0, id.IndexOf(':')), Id: id));
+            var bookIds = _bookService.FindBookIdsByProviderIds(workLookups).Values
+                .SelectMany(ids => ids).Append(source.Id).Distinct();
+            var matches = BookEditionIdentity.OrderRequestedNarrationEditions(_bookService.GetBooksForLookup(bookIds)
+                .Where(book => book.AuthorId == source.AuthorId && book.MediaType == source.MediaType &&
+                    (book.Id == source.Id || BookIdentity.MatchesByStableWorkProviderId(book, source)))
+                .SelectMany(book => book.Editions ?? Enumerable.Empty<Edition>())
+                .Where(edition => BookEditionIdentity.IsNarratedAudiobookEdition(edition) &&
+                    BookEditionIdentity.MatchesRequestedNarration(edition, editionProviderId, narratorNames))
+                .DistinctBy(edition => edition.Id)).ToList();
+            if (matches.Count == 0)
+            {
+                return null;
+            }
+
+            if (matches.Count > 1 && !matches.All(edition => BookEditionIdentity.HasSameNarration(edition, requested)))
+            {
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure("Edition", "The requested narration is missing or ambiguous in the authoritative audiobook catalog.")
+                });
+            }
+
+            var target = _bookService.AddWantedEdition(matches[0].BookId, matches[0].Id);
+            return CompleteScopedBookRequest(target, request.AddOptions?.SearchForNewBook == true, monitorRequested: true);
+        }
+
         private static MonitorTypes? GetInitialBookPolicy(Book book)
         {
             return book.MediaType == BookMediaType.Audiobook
@@ -577,12 +663,16 @@ namespace NzbDrone.Core.Books
                 : book.Author?.AddOptions?.EbookMonitor;
         }
 
-        private Book CompleteScopedBookRequest(Book book, bool searchRequested)
+        private Book CompleteScopedBookRequest(Book book, bool searchRequested, bool monitorRequested)
         {
             var mediaType = book.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook";
             // A request selects its matching sibling rows when format sync is enabled.
-            _authorService.EnsureMediaTypeMonitoring(book.AuthorId, mediaType);
-            _bookService.MonitorRequestedBooks(new[] { book.Id }, mediaType);
+            // The independent author-side gate remains unchanged.
+            if (monitorRequested)
+            {
+                _bookService.MonitorRequestedBooks(new[] { book.Id }, mediaType);
+            }
+
             var author = _authorService.GetAuthor(book.AuthorId);
 
             // Request preservation survives the initial scan; it does not pin an edition.
@@ -599,7 +689,9 @@ namespace NzbDrone.Core.Books
                 _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: CommandTrigger.Manual);
             }
 
-            return _bookService.GetBook(book.Id);
+            var saved = _bookService.GetBook(book.Id);
+            RemoveMatchingImportListExclusions(saved);
+            return saved;
         }
 
         private Book ResolveLocalRequestedBook(int authorId, string workProviderId, BookMediaType mediaType)
@@ -619,16 +711,12 @@ namespace NzbDrone.Core.Books
                 .Select(group => group.First())
                 .ToList();
 
-            if (matches.Count > 1)
-            {
-                throw new InvalidOperationException($"Requested work {workProviderId} resolves to multiple local {mediaType} books.");
-            }
-
-            return matches.SingleOrDefault();
+            return BookIdentity.SelectRequestedBook(matches);
         }
 
-        private string ResolveRequestedWorkProviderId(Book book)
+        private string ResolveRequestedWorkProviderId(Book book, out Tuple<string, Book, List<Author>> metadata)
         {
+            metadata = null;
             foreach (var providerId in BookEditionIdentity.GetCanonicalWorkProviderIds(book)
                          .Concat(book?.RemoteProviderIds ?? Enumerable.Empty<string>()))
             {
@@ -646,7 +734,16 @@ namespace NzbDrone.Core.Books
                 return null;
             }
 
-            var resolvedBook = _bookInfo.GetEditionInfo(editionProviderId, book.MediaType)?.Item2;
+            metadata = _bookInfo.GetEditionInfo(editionProviderId, book.MediaType);
+            var resolvedBook = metadata?.Item2;
+            if (resolvedBook?.MediaType != book.MediaType || resolvedBook.Editions?.Any(edition =>
+                    BookEditionIdentity.EditionMatchesProviderId(edition, editionProviderId)) != true)
+            {
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure("Edition", "Cannot add book: metadata does not establish the requested edition and media type.")
+                });
+            }
             return BookEditionIdentity.GetCanonicalWorkProviderIds(resolvedBook)
                 .Concat(resolvedBook?.RemoteProviderIds ?? Enumerable.Empty<string>())
                 .Select(providerId => TryCanonicalizeWorkId(providerId))
@@ -901,7 +998,8 @@ namespace NzbDrone.Core.Books
             }
 
             var retainedEditions = SelectRetainedEditionsForAdd(book, book.Editions);
-            var selectedEdition = SelectRequestedEditionForAdd(retainedEditions, requestedEditionProviderIds, book.MediaType)
+            var selectedEdition = EditionPinPolicy.GetProtectedEditions(book, retainedEditions).FirstOrDefault()
+                                  ?? SelectRequestedEditionForAdd(retainedEditions, requestedEditionProviderIds, book.MediaType)
                                   ?? _editionSelector.SelectBestEdition(retainedEditions, book.MediaType);
 
             if (!retainedEditions.Any() || selectedEdition == null)
@@ -1004,6 +1102,12 @@ namespace NzbDrone.Core.Books
                 .Where(e => e != null && e.Monitored)
                 .OrderBy(e => e.Id)
                 .FirstOrDefault();
+
+            if (BookEditionIdentity.IsExplicitEditionProviderId(requested?.ForeignEditionId) &&
+                !ProviderIdHelper.TryNormalize(BookEditionIdentity.NormalizeEditionLookupId(requested.ForeignEditionId), null, out _))
+            {
+                return Array.Empty<string>();
+            }
 
             return BookEditionIdentity.GetEditionProviderIds(requested);
         }

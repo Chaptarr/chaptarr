@@ -46,6 +46,8 @@ namespace Chaptarr.Core.Test.Books
             public IEnumerable<Author> All() => _authors.Values;
             public IEnumerable<Author> Get(IEnumerable<int> ids) => ids?.Select(id => Get(id)).Where(author => author != null).ToList() ?? new List<Author>();
 
+            public Author Update(Author model, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public Author Update(Author model)
             {
                 LastUpdatedAuthor = model;
@@ -80,8 +82,8 @@ namespace Chaptarr.Core.Test.Books
             public Author SingleOrDefault() => throw new NotImplementedException();
             public PagingSpec<Author> GetPaged(PagingSpec<Author> pagingSpec) => throw new NotImplementedException();
 
+            public List<Author> FindExisting(IEnumerable<int> ids) => throw new NotImplementedException();
             public bool AuthorPathExists(string path) => throw new NotImplementedException();
-            public Author FindByName(string cleanName) => throw new NotImplementedException();
             public Author FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
             public Author FindByHardcoverId(string hardcoverId) => throw new NotImplementedException();
             public Author FindByAudnexusId(string audnexusId) => throw new NotImplementedException();
@@ -151,7 +153,7 @@ namespace Chaptarr.Core.Test.Books
                 logger: LogManager.GetCurrentClassLogger(),
                 importListExclusionService: null,
                 deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => null),
-                bookService: new Lazy<IBookService>(() => null));
+                bookService: new Lazy<IBookService>(() => null), mainDatabase: Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMainDatabase>((_, _) => throw new NotImplementedException()));
         }
 
         [Test]
@@ -432,75 +434,6 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                 Assert.That(author.EbookRootFolderPath, Is.EqualTo("/ebooks/manual"));
                 Assert.That(repository.LastUpdatedAuthor, Is.Not.Null);
-            });
-        }
-
-        [TestCase("audiobook", null)]
-        [TestCase("audiobook", 0)]
-        [TestCase("ebook", null)]
-        [TestCase("ebook", 0)]
-        public void ensure_media_type_monitoring_should_set_only_requested_side(string mediaType, int? existingMode)
-        {
-            var isAudiobook = mediaType == "audiobook";
-            var author = new Author
-            {
-                Id = 6,
-                Name = "Scoped Author",
-                AudiobookMonitored = isAudiobook
-                    ? (existingMode.HasValue ? existingMode.Value != 0 : (bool?)null)
-                    : null,
-                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
-                EbookMonitored = isAudiobook
-                    ? null
-                    : (existingMode.HasValue ? existingMode.Value != 0 : (bool?)null),
-                EbookMonitorNewItems = NewItemMonitorTypes.None,
-                AudiobookRootFolderPath = "/audiobooks",
-                EbookRootFolderPath = "/ebooks",
-                SyncMonitoredAcrossFormats = true
-            };
-            var repository = new StubAuthorRepository(new Dictionary<int, Author> { { author.Id, author } });
-            var service = BuildService(repository, new StubRootFolderService());
-
-            service.EnsureMediaTypeMonitoring(author.Id, mediaType);
-
-            Assert.Multiple(() =>
-            {
-                Assert.That(
-                    isAudiobook
-                        ? repository.LastUpdatedAuthor.AudiobookMonitored
-                        : repository.LastUpdatedAuthor.EbookMonitored,
-                    Is.True);
-                Assert.That(
-                    isAudiobook
-                        ? repository.LastUpdatedAuthor.EbookMonitored
-                        : repository.LastUpdatedAuthor.AudiobookMonitored,
-                    Is.Null);
-                Assert.That(repository.LastUpdatedAuthor.SyncMonitoredAcrossFormats, Is.True);
-                Assert.That(repository.LastUpdatedAuthor.Monitored, Is.True);
-            });
-        }
-
-        [TestCase(true)]
-        [TestCase(false)]
-        public void ensure_media_type_monitoring_should_preserve_or_enable_existing_gate(bool existingMode)
-        {
-            var author = new Author
-            {
-                Id = 7,
-                Name = "Already Configured Author",
-                AudiobookMonitored = existingMode,
-                EbookMonitored = false
-            };
-            var repository = new StubAuthorRepository(new Dictionary<int, Author> { { author.Id, author } });
-            var service = BuildService(repository);
-
-            service.EnsureMediaTypeMonitoring(author.Id, "audiobook");
-
-            Assert.Multiple(() =>
-            {
-                Assert.That(author.AudiobookMonitored, Is.True);
-                Assert.That(author.EbookMonitored, Is.False);
-                Assert.That(repository.LastUpdatedAuthor, Is.EqualTo(existingMode ? null : author));
             });
         }
     }

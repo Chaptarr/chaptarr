@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Chaptarr.Http;
 using Chaptarr.Http.Extensions;
 using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using Microsoft.AspNetCore.Mvc;
+using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Datastore;
@@ -27,6 +29,7 @@ namespace Chaptarr.Api.V1.Queue
     public class QueueController : RestControllerWithSignalR<QueueResource, NzbDrone.Core.Queue.Queue>,
                                IHandle<QueueUpdatedEvent>, IHandle<PendingReleasesUpdatedEvent>
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly IQueueService _queueService;
         private readonly IPendingReleaseService _pendingReleaseService;
 
@@ -96,7 +99,7 @@ namespace Chaptarr.Api.V1.Queue
 
             if (pendingRelease != null)
             {
-                Remove(pendingRelease);
+                Remove(pendingRelease, blocklist);
 
                 return;
             }
@@ -120,13 +123,21 @@ namespace Chaptarr.Api.V1.Queue
         [HttpDelete("bulk")]
         public object RemoveMany([FromBody] QueueBulkResource resource, [FromQuery] bool removeFromClient = true, [FromQuery] bool blocklist = false, [FromQuery] bool skipRedownload = false, [FromQuery] bool changeCategory = false)
         {
+            var stopwatch = Stopwatch.StartNew();
+            var pendingById = _pendingReleaseService.GetPendingQueue().ToLookup(item => item.Id);
             var trackedDownloadIds = new List<string>();
             var pendingToRemove = new List<NzbDrone.Core.Queue.Queue>();
             var trackedToRemove = new List<TrackedDownload>();
 
-            foreach (var id in resource.Ids)
+            foreach (var id in resource.Ids.Distinct())
             {
-                var pendingRelease = _pendingReleaseService.FindPendingQueueItem(id);
+                var matches = pendingById[id].Take(2).ToList();
+                if (matches.Count > 1)
+                {
+                    throw new ModelConflictException(typeof(NzbDrone.Core.Queue.Queue), id, "matches multiple pending items; no item was selected");
+                }
+
+                var pendingRelease = matches.FirstOrDefault();
 
                 if (pendingRelease != null)
                 {
@@ -142,9 +153,18 @@ namespace Chaptarr.Api.V1.Queue
                 }
             }
 
-            foreach (var pendingRelease in pendingToRemove.DistinctBy(p => p.Id))
+            var successfulPendingCount = 0;
+            try
             {
-                Remove(pendingRelease);
+                foreach (var pendingRelease in pendingToRemove)
+                {
+                    BlockPendingRelease(pendingRelease, blocklist);
+                    successfulPendingCount++;
+                }
+            }
+            finally
+            {
+                _pendingReleaseService.RemovePendingQueueItems(pendingToRemove.Take(successfulPendingCount));
             }
 
             foreach (var trackedDownload in trackedToRemove.DistinctBy(t => t.DownloadItem.DownloadId))
@@ -158,6 +178,7 @@ namespace Chaptarr.Api.V1.Queue
             }
 
             _trackedDownloadService.StopTracking(trackedDownloadIds);
+            Logger.Debug("Removed {0} pending queue items and {1} tracked downloads for {2} requested IDs in {3} ms", pendingToRemove.Count, trackedDownloadIds.Count, resource.Ids.Count, stopwatch.ElapsedMilliseconds);
 
             return new { };
         }
@@ -303,10 +324,23 @@ namespace Chaptarr.Api.V1.Queue
             }
         }
 
-        private void Remove(NzbDrone.Core.Queue.Queue pendingRelease)
+        private void Remove(NzbDrone.Core.Queue.Queue pendingRelease, bool blocklist)
         {
-            _blocklistService.Block(pendingRelease.RemoteBook, "Pending release manually blocklisted");
-            _pendingReleaseService.RemovePendingQueueItems(pendingRelease.Id);
+            BlockPendingRelease(pendingRelease, blocklist);
+            _pendingReleaseService.RemovePendingQueueItems(new[] { pendingRelease });
+        }
+
+        private void BlockPendingRelease(NzbDrone.Core.Queue.Queue pendingRelease, bool blocklist)
+        {
+            if (blocklist && pendingRelease.Book?.Id > 0)
+            {
+                _blocklistService.Block(pendingRelease.RemoteBook, "Pending release manually blocklisted");
+            }
+
+            else if (blocklist)
+            {
+                Logger.Warn("Ignored blocklist request for unresolved pending queue item {0}: no library book target exists", pendingRelease.Id);
+            }
         }
 
         private TrackedDownload Remove(TrackedDownload trackedDownload, bool removeFromClient, bool blocklist, bool skipRedownload, bool changeCategory)
@@ -335,7 +369,7 @@ namespace Chaptarr.Api.V1.Queue
 
                 if (trackedDownload.RemoteBook != null)
                 {
-                    downloadItem.MediaType = trackedDownload.RemoteBook.GetPreferredMediaType();
+                    downloadItem.MediaType = trackedDownload.RemoteBook.GetMediaType();
                 }
 
                 downloadClient.MarkItemAsImported(downloadItem);

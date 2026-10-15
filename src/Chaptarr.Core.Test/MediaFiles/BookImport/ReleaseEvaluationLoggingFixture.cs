@@ -55,7 +55,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             {
                 Assert.That(memory.Logs, Has.Some.Contains("Trace|ParseBookTitle called with: 'Stephen King - The Stand EPUB'"));
                 Assert.That(memory.Logs, Has.Some.Contains("Trace|Trying to parse quality for 'Stephen King - The Stand EPUB'"));
-                Assert.That(memory.Logs.Any(log => log.Contains("Trace|[CONTAINMENT] Author parsed into words: ['john'(Full), 'gwynne'(Full)]", StringComparison.OrdinalIgnoreCase)), Is.True);
+                Assert.That(memory.Logs, Has.Some.Contains("Trace|[CONTAINMENT] === Validating author 'John Gwynne' ==="));
                 Assert.That(memory.Logs, Has.Some.Contains("Trace|[CONTAINMENT] Author 'John Gwynne' NOT FOUND in any single field"));
                 Assert.That(memory.Logs, Has.Some.Contains("Trace|[CONTAINMENT] Searched 1 fields with 1 total values"));
             });

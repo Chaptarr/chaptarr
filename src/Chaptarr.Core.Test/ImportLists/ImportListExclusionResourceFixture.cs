@@ -148,6 +148,7 @@ namespace Chaptarr.Core.Test.ImportLists
             }
 
             public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
+            public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion importListExclusion) => throw new NotImplementedException();
             public List<ImportListExclusion> All() => _existing;
@@ -156,6 +157,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public void Delete(string foreignId) => throw new NotImplementedException();
             public ImportListExclusion Get(int id) => throw new NotImplementedException();
             public ImportListExclusion FindByForeignId(string foreignId) => throw new NotImplementedException();
+            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => throw new NotImplementedException();
             public ImportListExclusion Update(ImportListExclusion importListExclusion) => throw new NotImplementedException();
         }

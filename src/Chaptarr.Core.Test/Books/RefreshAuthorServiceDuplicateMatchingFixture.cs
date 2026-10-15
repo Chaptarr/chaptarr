@@ -117,6 +117,9 @@ namespace Chaptarr.Core.Test.Books
                 RefreshCallsBooks.AddRange(books);
                 return false;
             }
+
+            public bool RefreshBookInfo(List<Book> books, List<Book> remoteBooks, Author remoteData, bool forceBookRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, BookTitleSlugIndex titleSlugs, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                RefreshBookInfo(books, remoteBooks, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate, titleSlugs);
         }
 
         private sealed class TestableRefreshAuthorService : RefreshAuthorService
@@ -386,8 +389,9 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(match.Item2.Select(b => b.Id), Does.Not.Contain(strictClone.Id));
         }
 
-        [Test]
-        public void should_not_delete_manual_edition_clone_that_shares_work_provider_ids()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_not_delete_manual_edition_clone_that_shares_work_provider_ids(bool wantedNarration)
         {
             var bookService = new StubBookService();
             var mediaFileService = new StubMediaFileService();
@@ -409,10 +413,12 @@ namespace Chaptarr.Core.Test.Books
                 MediaType = BookMediaType.Audiobook,
                 HardcoverBookId = "hc:142593",
                 GoodreadsWorkId = "gr:178409001",
-                AnyEditionOk = true,
+                AnyEditionOk = !wantedNarration,
+                TitleSlug = wantedNarration ? "book_wanted_20" : "book",
+                AddOptions = wantedNarration ? new AddBookOptions { AddType = BookAddType.Manual } : null,
                 Editions = new List<Edition>
                 {
-                    new() { Id = 20, BookId = 2, ManualAdd = true }
+                    new() { Id = 20, BookId = 2, ManualAdd = true, Monitored = true }
                 }
             };
 

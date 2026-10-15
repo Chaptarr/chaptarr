@@ -12,6 +12,7 @@ using NUnit.Framework;
 using NzbDrone.Core.AuthorStats;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Commands;
@@ -27,6 +28,14 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class BookControllerAuthorListFixture
     {
+        private sealed class UnloadedFileList : LazyLoaded<List<BookFile>>
+        {
+            public override void LazyLoad()
+            {
+                throw new AssertionException("A library response must reuse batched statistics instead of lazily reading files per book.");
+            }
+        }
+
         private class ServiceProxy<T> : DispatchProxy where T : class
         {
             public Dictionary<string, Func<MethodInfo, object[], object>> Handlers { get; set; } = new();
@@ -117,6 +126,41 @@ namespace Chaptarr.Core.Test.Api
                 qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
                 logger: LogManager.GetCurrentClassLogger());
+        }
+
+        [TestCase("audiobook")]
+        [TestCase("ebook")]
+        public void library_filter_should_reach_pages_buckets_and_ids_with_the_selected_media(string mediaType)
+        {
+            var calls = new List<string>();
+            object Handle(MethodInfo method, object[] args)
+            {
+                var parameters = method.GetParameters();
+                Assert.That(args[Array.FindIndex(parameters, parameter => parameter.Name == "mediaType")], Is.EqualTo(mediaType));
+                Assert.That(args[Array.FindIndex(parameters, parameter => parameter.Name == "library")], Is.True);
+                calls.Add(method.Name);
+                if (method.Name == nameof(IBookService.GetBooksPaged))
+                {
+                    return new PagedBookResource { Records = new List<Book>() };
+                }
+
+                return method.Name == nameof(IBookService.GetBookIds)
+                    ? new List<int>()
+                    : new BookBucketResource();
+            }
+
+            var controller = CreateController(bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+            {
+                [nameof(IBookService.GetBooksPaged)] = Handle,
+                [nameof(IBookService.GetBookBuckets)] = Handle,
+                [nameof(IBookService.GetBookIds)] = Handle
+            });
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+            Assert.That(controller.GetBooksPaged(mediaType: mediaType, library: true).Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(controller.GetBookBuckets(mediaType: mediaType, library: true).Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(controller.GetBookIds(mediaType: mediaType, library: true).Result, Is.TypeOf<OkObjectResult>());
+            Assert.That(calls, Has.Count.EqualTo(3));
         }
 
         [Test]
@@ -219,10 +263,11 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public void facade_put_should_enable_requested_side_without_changing_other_selections(
+        public void book_put_should_monitor_requested_row_without_enabling_its_author_side(
             [Values("audiobook", "ebook")] string mediaType,
             [Values(false, true)] bool initialScan,
-            [Values(false, true)] bool alreadySelected)
+            [Values(false, true)] bool alreadySelected,
+            [Values(false, true)] bool facade)
         {
             var author = new Author
             {
@@ -263,7 +308,7 @@ namespace Chaptarr.Core.Test.Api
 
             book.SetMonitored(alreadySelected);
 
-            var authorUpdateCount = 0;
+            var authorMutationCount = 0;
             var scopedBookUpdateCount = 0;
             var genericBookUpdateCount = 0;
             var addOptionsWriteCount = 0;
@@ -294,20 +339,14 @@ namespace Chaptarr.Core.Test.Api
                 authorService: Proxy<IAuthorService>(new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
                     [nameof(IAuthorService.GetAuthor)] = (_, _) => author,
-                    [nameof(IAuthorService.EnsureMediaTypeMonitoring)] = (_, args) =>
+                    [nameof(IAuthorService.UpdateAuthor)] = (_, args) =>
                     {
-                        Assert.That(args[0], Is.EqualTo(author.Id));
-                        Assert.That(args[1], Is.EqualTo(mediaType));
-                        if (mediaType == "audiobook")
-                        {
-                            author.AudiobookMonitored = true;
-                        }
-                        else
-                        {
-                            author.EbookMonitored = true;
-                        }
-                        author.Monitored = true;
-                        authorUpdateCount++;
+                        authorMutationCount++;
+                        return args[0];
+                    },
+                    [nameof(IAuthorService.SetMediaTypeMonitoring)] = (_, _) =>
+                    {
+                        authorMutationCount++;
                         return null;
                     }
                 }),
@@ -349,14 +388,20 @@ namespace Chaptarr.Core.Test.Api
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
                 logger: LogManager.GetCurrentClassLogger());
             var httpContext = new DefaultHttpContext();
-            httpContext.Items[ReadarrFacadeContext.ItemKey] =
-                new ReadarrFacadeContext("hc", mediaType, "/" + mediaType);
+            if (facade)
+            {
+                httpContext.Items[ReadarrFacadeContext.ItemKey] =
+                    new ReadarrFacadeContext("hc", mediaType, "/" + mediaType);
+            }
+
             controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
 
             var result = controller.UpdateBookByBody(new BookResource
             {
                 Id = book.Id,
                 Monitored = true,
+                AudiobookMonitored = mediaType == "audiobook" ? true : null,
+                EbookMonitored = mediaType == "ebook" ? true : null,
                 AnyEditionOk = true,
                 TitleSlug = book.TitleSlug,
                 Editions = new List<EditionResource>
@@ -366,7 +411,7 @@ namespace Chaptarr.Core.Test.Api
                         Id = 501,
                         BookId = book.Id,
                         Title = "Piranesi",
-                        ForeignEditionId = "501",
+                        ForeignEditionId = facade ? "501" : "hc:501",
                         Monitored = true
                     }
                 }
@@ -376,15 +421,15 @@ namespace Chaptarr.Core.Test.Api
             var resource = accepted?.Value as BookResource;
             Assert.Multiple(() =>
             {
-                Assert.That(authorUpdateCount, Is.EqualTo(1));
-                Assert.That(scopedBookUpdateCount, Is.EqualTo(1));
-                Assert.That(genericBookUpdateCount, Is.Zero);
-                Assert.That(author.AudiobookMonitored, Is.EqualTo(mediaType == "audiobook"));
-                Assert.That(author.EbookMonitored, Is.EqualTo(mediaType == "ebook"));
+                Assert.That(authorMutationCount, Is.Zero);
+                Assert.That(scopedBookUpdateCount, Is.EqualTo(facade ? 1 : 0));
+                Assert.That(genericBookUpdateCount, Is.EqualTo(facade ? 0 : 1));
+                Assert.That(author.AudiobookMonitored, Is.False);
+                Assert.That(author.EbookMonitored, Is.False);
                 Assert.That(author.SyncMonitoredAcrossFormats, Is.True);
                 Assert.That(book.IsMonitoredForMediaType(mediaType), Is.True);
                 Assert.That(book.IsMonitoredForMediaType(mediaType == "audiobook" ? "ebook" : "audiobook"), Is.False);
-                Assert.That(addOptionsWriteCount, Is.EqualTo(1));
+                Assert.That(addOptionsWriteCount, Is.EqualTo(facade ? 1 : 0));
                 Assert.That(resource?.Monitored, Is.True);
             });
         }
@@ -507,7 +552,7 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public void mixed_author_book_list_should_use_one_global_statistics_lookup()
+        public void mixed_author_book_list_should_use_one_batched_statistics_lookup()
         {
             var books = new List<Book>
             {
@@ -515,13 +560,14 @@ namespace Chaptarr.Core.Test.Api
                 new Book { Id = 20, AuthorId = 43, Title = "Two", MediaType = BookMediaType.Ebook, AnyEditionOk = true }
             };
             var globalCalls = 0;
+            var batchCalls = 0;
             var scopedCalls = 0;
             var controller = CreateController(
                 bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
                 {
                     [nameof(IBookService.GetBooks)] = (_, _) => books
                 },
-                authorStatisticsHandler: (method, _) =>
+                authorStatisticsHandler: (method, args) =>
                 {
                     if (method.ReturnType == typeof(AuthorStatistics))
                     {
@@ -529,7 +575,15 @@ namespace Chaptarr.Core.Test.Api
                         return new AuthorStatistics();
                     }
 
-                    globalCalls++;
+                    if (args.Length == 0)
+                    {
+                        globalCalls++;
+                    }
+                    else
+                    {
+                        batchCalls++;
+                        Assert.That((IEnumerable<int>)args[0], Is.EquivalentTo(new[] { 42, 43 }));
+                    }
                     return new List<AuthorStatistics>
                     {
                         new AuthorStatistics
@@ -558,7 +612,8 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.Multiple(() =>
             {
-                Assert.That(globalCalls, Is.EqualTo(1));
+                Assert.That(globalCalls, Is.Zero);
+                Assert.That(batchCalls, Is.EqualTo(1));
                 Assert.That(scopedCalls, Is.Zero);
                 Assert.That(resources.Select(resource => resource.Statistics?.TotalBookCount), Is.EqualTo(new[] { 1, 1 }));
             });
@@ -616,6 +671,121 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(statisticsCalls, Is.EqualTo(1));
                 Assert.That(resources.Single().Statistics.TotalBookCount, Is.EqualTo(1));
             });
+        }
+
+        [TestCase(false, null)]
+        [TestCase(false, "ebook")]
+        [TestCase(false, "audiobook")]
+        [TestCase(true, null)]
+        [TestCase(true, "ebook")]
+        [TestCase(true, "audiobook")]
+        public void library_list_should_preserve_owned_lean_rows_with_one_statistics_lookup(bool authorScope, string mediaType)
+        {
+            var author = new Author { Id = 42, Name = "Author", SortNameLastFirst = "Author" };
+            var audiobook = mediaType == "audiobook";
+            var books = Enumerable.Range(1, 4).Select(id => new Book
+            {
+                Id = id,
+                AuthorId = author.Id,
+                Title = $"Book {id}",
+                MediaType = audiobook ? BookMediaType.Audiobook : BookMediaType.Ebook,
+                AudiobookMonitored = audiobook ? id == 2 : id == 1,
+                EbookMonitored = audiobook ? id == 1 : id == 2,
+                AnyEditionOk = true,
+                LazyBookFiles = new UnloadedFileList()
+            }).ToList();
+            var statisticsCalls = 0;
+            var statistics = new AuthorStatistics
+            {
+                AuthorId = author.Id,
+                BookStatistics = books.Select(book => new BookStatistics
+                {
+                    AuthorId = author.Id,
+                    BookId = book.Id,
+                    BookFileCount = book.Id == 3 ? 2 : 0,
+                    TotalBookCount = 1
+                }).ToList()
+            };
+            var controller = CreateController(
+                bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IBookService.GetBooksForDisplay)] = (_, _) => books
+                },
+                authorHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IAuthorService.GetAuthor)] = (_, _) => author,
+                    [nameof(IAuthorService.GetAllAuthors)] = (_, _) => new List<Author> { author }
+                },
+                authorStatisticsHandler: (method, _) =>
+                {
+                    statisticsCalls++;
+                    return method.ReturnType == typeof(AuthorStatistics) ? statistics : new List<AuthorStatistics> { statistics };
+                });
+            var resources = controller.GetBooks(authorScope ? author.Id : null, new List<int>(), null, mediaType: mediaType, monitored: true);
+            Assert.That(resources.Select(resource => resource.Id), Is.EqualTo(new[] { 2, 3 }));
+            Assert.That(resources.Single(resource => resource.Id == 3).HasFiles, Is.True);
+            Assert.That(statisticsCalls, Is.EqualTo(1), "Filtering and mapping must reuse one complete statistics batch.");
+        }
+
+        [TestCase("ids")]
+        [TestCase("single")]
+        [TestCase("author")]
+        [TestCase("slug")]
+        public void explicit_library_queries_should_reuse_one_statistics_batch_without_lazy_file_reads(string route)
+        {
+            var books = Enumerable.Range(1, 4).Select(id => new Book
+            {
+                Id = id,
+                AuthorId = 42,
+                Title = $"Book {id}",
+                MediaType = BookMediaType.Ebook,
+                EbookMonitored = id == 2,
+                AudiobookMonitored = id == 1,
+                AnyEditionOk = true,
+                LazyBookFiles = new UnloadedFileList()
+            }).ToList();
+            var statisticsCalls = 0;
+            var controller = CreateController(
+                bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IBookService.GetBook)] = (_, _) => books[2],
+                    [nameof(IBookService.GetBooks)] = (_, _) => books,
+                    [nameof(IBookService.GetBooksByAuthor)] = (_, _) => books
+                },
+                authorStatisticsHandler: (method, _) =>
+                {
+                    statisticsCalls++;
+                    Assert.That(method.ReturnType, Is.EqualTo(typeof(AuthorStatistics)));
+                    return new AuthorStatistics
+                    {
+                        AuthorId = 42,
+                        BookStatistics = books.Select(book => new BookStatistics
+                        {
+                            AuthorId = 42,
+                            BookId = book.Id,
+                            BookFileCount = book.Id == 3 ? 2 : 0
+                        }).ToList()
+                    };
+                });
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            var resources = controller.GetBooks(null, route == "ids" ? new List<int> { 1, 2, 3, 4 } : new List<int>(),
+                route == "single" || route == "author" ? "3" : null,
+                titleSlug: route == "slug" ? "3" : null, includeAllAuthorBooks: route == "author", monitored: true);
+            Assert.That(resources.Select(resource => resource.Id), Is.EqualTo(route == "ids" || route == "author" ? new[] { 2, 3 } : new[] { 3 }));
+            Assert.That(statisticsCalls, Is.EqualTo(1));
+            Assert.That(resources.Single(resource => resource.Id == 3).HasFiles, Is.True);
+        }
+
+        [Test]
+        public void empty_author_book_list_should_not_lookup_statistics()
+        {
+            var controller = CreateController(
+                bookHandlers: new Dictionary<string, Func<MethodInfo, object[], object>>
+                {
+                    [nameof(IBookService.GetBooksForDisplay)] = (_, _) => new List<Book>()
+                },
+                authorStatisticsHandler: (_, _) => throw new AssertionException("An empty author list must not query statistics."));
+            Assert.That(controller.GetBooks(42, new List<int>(), null, monitored: true), Is.Empty);
         }
 
         [Test]

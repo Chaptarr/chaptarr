@@ -1074,6 +1074,29 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<DownloadCompletedEvent>());
         }
 
+        [TestCase(BookMediaType.Audiobook)] [TestCase(BookMediaType.Ebook)]
+        public void alternative_completion_should_satisfy_original_choice_without_finishing_partial_units(BookMediaType media)
+        {
+            var history = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+            var events = new RecordingEventAggregator();
+            var subject = new CompletedDownloadService(events, history, new StubProvideImportItemService("/downloads"),
+                new RecordingDownloadedBooksImportService(), new PassthroughDownloadImportModeResolver(),
+                new StubTrackedDownloadAlreadyImported { Result = false }, NoopFailedDownloadService.Instance,
+                LogManager.GetCurrentClassLogger(), NoopDownloadClientFileSnapshotService.Instance);
+            TrackedDownload Context() => new() { DownloadItem = new DownloadClientItem { DownloadId = "download-1", Title = "Captured alternatives" },
+                RemoteBook = new RemoteBook { AlternativeCopies = true, Author = new Author { Id = 7 },
+                    Books = new List<Book> { new() { Id = 10, AuthorId = 7, AnyEditionOk = false, MediaType = media },
+                        new() { Id = 11, AuthorId = 7, AnyEditionOk = false, MediaType = media } } } };
+            var a = CreateImportedResult(10, 7, "Copy A", media);
+            Assert.That(subject.VerifyImport(Context(), new List<ImportResult> { a }), Is.True);
+            Assert.That(subject.VerifyImport(Context(), new List<ImportResult> { a, new ImportResult(new ImportDecision<LocalBook>(
+                new LocalBook { Book = new Book { Id = 11, AuthorId = 7, MediaType = media } }), "Import failed") }), Is.False);
+            Assert.That(subject.VerifyImport(Context(), new List<ImportResult> { a, new ImportResult(new ImportDecision<LocalBook>(new LocalBook()), "Unresolved unit") }), Is.False);
+            Assert.That(subject.VerifyImport(Context(), new List<ImportResult> { CreateImportedResult(99, 7, "Outside copy", media) }), Is.False);
+            var ordinary = Context(); ordinary.RemoteBook.AlternativeCopies = false;
+            Assert.That(subject.VerifyImport(ordinary, new List<ImportResult> { a }), Is.False);
+        }
+
         private static ImportResult CreateImportedResult(int bookId, int authorId, string title, BookMediaType mediaType = BookMediaType.Audiobook)
         {
             var author = new Author { Id = authorId, Name = "Test Author" };

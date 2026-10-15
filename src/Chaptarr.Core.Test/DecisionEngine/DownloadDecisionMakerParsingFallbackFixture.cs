@@ -65,6 +65,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 };
             }
 
+            public List<List<Book>> GetBooks(IReadOnlyList<ParsedBookInfo> parsedBooks, Author author) => throw new NotImplementedException();
+
             public List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null)
             {
                 return searchCriteria?.Books ?? new List<Book>();
@@ -97,21 +99,18 @@ namespace Chaptarr.Core.Test.DecisionEngine
             }
         }
 
-        private sealed class TestEditionFtsRepository : IEditionFtsRepository, IStagedEditionFtsRepository
+        private sealed class TestEditionFtsRepository : IEditionFtsRepository
         {
             public List<BookFtsMatch> Recalls { get; } = new();
             public List<(BookMediaType MediaType, bool MonitoredOnly, List<string> Tokens)> Requests { get; } = new();
 
+            public void EnsureIndexPopulated() => RebuildIndex();
             public bool FtsTableExists() => true;
 
             public void RebuildIndex()
             {
             }
 
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
-            {
-                throw new AssertionException("RSS must use staged book recall.");
-            }
 
             public List<BookFtsMatch> RecallBooks(
                 int? authorId,
@@ -286,6 +285,81 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
             Assert.That(decision.Approved, Is.True);
             Assert.That(decision.RemoteBook.SearchCriteriaMatch.EvidenceTitle, Is.EqualTo("Harry Potter and the Chamber of Secrets"));
+        }
+
+        [TestCase("J.K. Rowling", "J K Rowling Q MP3 unabridged", false)]
+        [TestCase("Ann Smith", "Mary Ann Smith MP3 unabridged", true)]
+        [TestCase("John Smith", "John Smith MP3 Mary Jones", true)]
+        [TestCase("John Smith", "John Smith MP3 unabridged", true)]
+        [TestCase("John Mobi", "John Mobi", true)]
+        [TestCase("John Mobi", "John Mobi MP3 unabridged", true)]
+        [TestCase("John A. Smith", "John Q. Smith MP3 unabridged", false)]
+        [TestCase("Jennifer L. Armentrout", "Armentrout, Jennifer Q. MP3", false)]
+        [TestCase("Jennifer Q. Armentrout", "Armentrout, Jennifer L. MP3", false)]
+        [TestCase("John Smith", "Pat Smith, John Doe MP3 unabridged", false)]
+        [TestCase("Jane Smith", "Pat Smith, Jane Q MP3 unabridged", false)]
+        public void structured_book_raw_author_occurrence_should_allow_surrounding_words_and_keep_conflicts(string authorName, string rawTitle, bool approved)
+        {
+            var author = new Author { Name = authorName };
+            var book = new Book
+            {
+                Author = author,
+                Title = "The Book Title",
+                Editions = new List<Edition> { new Edition { Monitored = true, Title = "The Book Title" } }
+            };
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = rawTitle,
+                Book = book.Title,
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Approved, Is.EqualTo(approved));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("MP3")]
+        [TestCase("MP3 unabridged")]
+        public void structured_book_without_a_raw_author_credit_must_not_acquire_author_evidence(string rawTitle)
+        {
+            var author = new Author { Name = "John Smith" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "The Book Title",
+                Editions = new List<Edition> { new Edition { Monitored = true, Title = "The Book Title" } }
+            };
+            var release = new ReleaseInfo { Title = rawTitle, Book = book.Title };
+            var match = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, new[] { book }, new[] { book });
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.IsMatch, Is.False);
+        }
+
+        [TestCase("Frank Herbert", "Dune", "Dune by Frank Herbert EPUB", true)]
+        [TestCase("John Smith", "The Book Title", "The Book Title John Smith Collection", true)]
+        [TestCase("Frank Herbert", "Dune", "Dune by Frank Herbert Q EPUB", false)]
+        public void raw_author_after_the_title_should_allow_surrounding_words_and_keep_initial_conflicts(string authorName, string bookTitle, string rawTitle, bool approved)
+        {
+            var author = new Author { Name = authorName };
+            var book = new Book
+            {
+                Author = author,
+                Title = bookTitle,
+                Editions = new List<Edition> { new Edition { Monitored = true, Title = bookTitle } }
+            };
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = rawTitle,
+                Indexer = "Generic",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.Approved, Is.EqualTo(approved));
         }
 
         [Test]
@@ -761,6 +835,63 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(decision.Rejected, Is.True);
             Assert.That(decision.RemoteBook.PackDetection.Verdict, Is.EqualTo(ReleasePackDetectionVerdict.MultipleBooks));
             Assert.That(decision.Rejections.Select(r => r.Reason), Is.EqualTo(new[] { "Release appears to contain multiple books" }));
+        }
+
+        [TestCase("Søren", "søren", "soren", false)]
+        [TestCase("Søren", "søren", "soren", true)]
+        [TestCase("Łukasz", "łukasz", "lukasz", false)]
+        [TestCase("Łukasz", "łukasz", "lukasz", true)]
+        [TestCase("Ælfric", "ælfric", "aelfric", false)]
+        [TestCase("Ælfric", "ælfric", "aelfric", true)]
+        [TestCase("Straße", "straße", "strasse", false)]
+        [TestCase("Straße", "straße", "strasse", true)]
+        [TestCase("Королёв", "королёв", "королев", false)]
+        [TestCase("Королёв", "королёв", "королев", true)]
+        [TestCase("がとう", "がとう", "がとう", false)]
+        [TestCase("𠀀Reader", "𠀀reader", "𠀀reader", true)]
+        public void rss_recall_should_use_shared_fold_and_preserve_raw_release_metadata(string spelling, string originalTerm, string foldedTerm, bool structuredAuthor)
+        {
+            var author = new Author { Id = 7, Name = spelling + " Reader" };
+            var book = new Book { Id = 11, Author = author, AuthorId = author.Id, Title = "Quite Ugly One Evening", MediaType = BookMediaType.Audiobook };
+            var parsingService = new TestParsingService { MappedAuthor = author, MappedBooks = new List<Book> { book } };
+            var ftsRepository = new TestEditionFtsRepository();
+            ftsRepository.Recalls.Add(new BookFtsMatch { BookId = book.Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = book.Title });
+            var report = new TorrentInfo
+            {
+                Title = structuredAuthor ? book.Title : author.Name + " - " + book.Title,
+                Author = structuredAuthor ? author.Name : null,
+                Indexer = "MyAnonaMouse",
+                FileType = "mp3",
+                Categories = new List<int> { 3030 },
+                PublishDate = DateTime.UtcNow
+            };
+            var originalTitle = report.Title;
+            var originalAuthor = report.Author;
+            var maker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(), parsingService,
+                CatalogBookService.Create(parsingService.MappedBooks), ftsRepository,
+                new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                new NoOpReleaseNarratorMetadataEnricher(), (IConfigService)null, LogManager.GetCurrentClassLogger());
+
+            var decision = maker.GetRssDecision(new List<ReleaseInfo> { report }).Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(ftsRepository.Requests, Has.Count.EqualTo(1));
+                Assert.That(ftsRepository.Requests[0].Tokens, Does.Contain(foldedTerm));
+                if (originalTerm != foldedTerm)
+                {
+                    Assert.That(ftsRepository.Requests[0].Tokens, Does.Not.Contain(originalTerm));
+                }
+
+                Assert.That(ftsRepository.Requests[0].MediaType, Is.EqualTo(BookMediaType.Audiobook));
+                Assert.That(ftsRepository.Requests[0].MonitoredOnly, Is.True);
+                Assert.That(parsingService.MappedBookIds, Is.EqualTo(new[] { book.Id }));
+                Assert.That(decision.RemoteBook.Author, Is.SameAs(author));
+                Assert.That(decision.RemoteBook.Books, Is.EqualTo(new[] { book }));
+                Assert.That(report.Title, Is.EqualTo(originalTitle));
+                Assert.That(report.Author, Is.EqualTo(originalAuthor));
+                Assert.That(author.Name, Is.EqualTo(spelling + " Reader"));
+                Assert.That(decision.Rejections, Is.Empty);
+            });
         }
 
         [Test]
@@ -1988,6 +2119,464 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Is.EquivalentTo(new[] { Quality.AZW3, Quality.EPUB, Quality.MOBI }));
         }
 
+        [TestCase("Armentrout, Jennifer L. - Verlockende Angst")]
+        [TestCase("Armentrout, Jennifer L. - Daemonentochter 02 - Verlockende Angst")]
+        [TestCase("Daemonentochter 02 Verlockende Angst Armentrout, Jennifer L")]
+        [TestCase("Armentrout,.Jennifer.L.Dämonentochter.02.Verlockende.Angst.Fantasy")]
+        [TestCase("Jennifer.L.Armentrout.Daemonentochter.02.Verlockende.Angst")]
+        [TestCase("Armentrout, Jennifer L. - Verlockende Angst 7")]
+        [TestCase("Armentrout, Jennifer L. Verlockende Angst 7")]
+        [TestCase("Armentrout,.Jennifer.L.Verlockende.Angst.7")]
+        [TestCase("Verlockende Angst 7 - Armentrout, Jennifer L.")]
+        [TestCase("Verlockende Angst 7 Armentrout, Jennifer L.")]
+        [TestCase("Verlockende Angst 7 - Jennifer L. Armentrout")]
+        [TestCase("Jennifer L. Armentrout - Verlockende Angst 7")]
+        [TestCase("Ⅵ 🌙 Armentrout, Jennifer L. - Verlockende Angst 7")]
+        public void complete_source_author_name_should_reach_release_resource_without_comma_rejection(string releaseTitle)
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = releaseTitle,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            var resource = decision.ToResource();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(identity.HasAuthorIdentityEvidence, Is.True);
+                Assert.That(decision.Approved, Is.True);
+                Assert.That(resource.Rejections, Is.Empty);
+                Assert.That(resource.HasSoftFilters, Is.False);
+                Assert.That(resource.HasHardFilters, Is.False);
+            });
+        }
+
+        [TestCase("Armentrout.Jennifer.L.Daemonentochter.02.Verlockende.Angst")]
+        [TestCase("Jennifer.L.Armentrout.Dämonentochter.02.Verlockende.Angst")]
+        public void screenshot_dot_separated_author_title_forms_should_keep_their_existing_approval(string releaseTitle)
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = releaseTitle,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.ToResource().Rejections, Is.Empty);
+        }
+
+        [TestCase(0, BookMatchingStrictness.Balanced, true)]
+        [TestCase(1, BookMatchingStrictness.Balanced, true)]
+        [TestCase(2, BookMatchingStrictness.Balanced, true)]
+        [TestCase(2, BookMatchingStrictness.Strict, false)]
+        public void comma_author_source_span_should_be_shared_by_rss_and_search_without_weakening_strict_mode(int path, BookMatchingStrictness strictness, bool expectedAccepted)
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = author.Books };
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = book.Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = book.Title });
+            var logger = LogManager.GetCurrentClassLogger();
+            var config = ConfigServiceTestProxy.Create(strictness);
+            var maker = new DownloadDecisionMaker(new IDecisionEngineSpecification[] { new ReleaseTitleMatchSpecification(logger, config) },
+                parsing, CatalogBookService.Create(author.Books), fts, new NoOpCustomFormatCalculationService(),
+                new NoOpRemoteBookAggregationService(), new NoOpReleaseNarratorMetadataEnricher(), config, logger);
+            var reports = new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = "Armentrout, Jennifer L. Verlockende Angst 7",
+                    Indexer = "Generic",
+                    Categories = new List<int> { 7020 },
+                    PublishDate = DateTime.UtcNow
+                }
+            };
+            var decisions = path == 0 ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                AuthorCatalog = author.Books,
+                InteractiveSearch = path == 2
+            });
+            var decision = decisions.Single();
+            var resource = decision.ToResource();
+
+            Assert.That(decision.Approved, Is.EqualTo(expectedAccepted));
+            Assert.That(resource.Rejections.Any(), Is.EqualTo(!expectedAccepted));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void known_author_alias_away_from_title_should_preserve_same_media_sibling_rejection(bool includeSibling)
+        {
+            var author = new Author { Id = 1, Name = "J.K. Rowling", Pseudonyms = new List<string> { "Joanne Rowling" } };
+            var title = "Harry Potter and the Philosopher's Stone";
+            var book = new Book
+            {
+                Id = 1, AuthorId = author.Id, Author = author, MediaType = BookMediaType.Ebook, Title = title,
+                Editions = new List<Edition> { new Edition { Id = 1, Title = title, Monitored = true } }
+            };
+            author.Books = new List<Book> { book };
+            if (includeSibling)
+            {
+                author.Books.Add(new Book
+                {
+                    Id = 2, AuthorId = author.Id, Author = author, MediaType = BookMediaType.Ebook, Title = title + " Study Guide",
+                    Editions = new List<Edition> { new Edition { Id = 2, Title = title + " Study Guide", Monitored = true } }
+                });
+            }
+
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Rowling, Joanne - [Hogwarts] - " + title + (includeSibling ? " Study Guide" : string.Empty),
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            var resource = decision.ToResource();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(identity.HasAuthorIdentityEvidence, Is.True);
+                Assert.That(decision.Approved, Is.EqualTo(!includeSibling));
+                Assert.That(resource.Rejections.Any(), Is.EqualTo(includeSibling));
+            });
+        }
+
+        [TestCase("Armentrout, Jennifer L. - Verlockende Angst 7", "Jennifer Q. Armentrout", "Author mismatch: Jennifer Q. Armentrout")]
+        [TestCase("Armentrout, Jennifer L. - Verlockende Angst 7", "Other Writer", "Author mismatch: Other Writer")]
+        [TestCase("Other Writer - Verlockende Angst 7", null, "Unexplained number adjacent to matched title")]
+        [TestCase("Armentrout, Jennifer L. - Verlockende", null, "Title/Author mismatch")]
+        [TestCase("Armentrout, Jennifer L.", null, "Title/Author mismatch")]
+        public void source_author_name_must_not_bypass_conflicting_author_or_incomplete_title(string releaseTitle, string structuredAuthor, string expectedReason)
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = releaseTitle,
+                Author = structuredAuthor,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+            var resource = decision.ToResource();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(decision.Rejected, Is.True);
+                Assert.That(resource.Rejections, Does.Contain(expectedReason));
+                Assert.That(resource.RejectionDetails.Select(rejection => rejection.Reason), Does.Contain(expectedReason));
+            });
+        }
+
+        [TestCase("Armentrout, Jennifer L.")]
+        [TestCase("Other Writer, Jennifer L. Armentrout")]
+        [TestCase("Jennifer L. Armentrout, Other Writer")]
+        public void structured_author_names_and_comma_contributors_should_keep_their_existing_proof(string structuredAuthor)
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Verlockende Angst 7",
+                Author = structuredAuthor,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.ToResource().Rejections, Is.Empty);
+        }
+
+        [TestCase(BookMediaType.Ebook, false, "Armentrout, Jennifer L. - Verlockende Angst Erwacht")]
+        [TestCase(BookMediaType.Audiobook, true, "Armentrout, Jennifer L. - Verlockende Angst Erwacht")]
+        [TestCase(BookMediaType.Ebook, false, "Armentrout, Jennifer L. - Verlockende Angst 7 - Verlockende Angst Erwacht")]
+        public void comma_author_proof_must_preserve_same_media_better_title_competition(BookMediaType siblingMediaType, bool expectedAccepted, string releaseTitle)
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            author.Books.Add(new Book
+            {
+                Id = 2,
+                AuthorId = author.Id,
+                Author = author,
+                MediaType = siblingMediaType,
+                Title = "Verlockende Angst Erwacht",
+                Editions = new List<Edition> { new Edition { Id = 2, Title = "Verlockende Angst Erwacht", Monitored = true } }
+            });
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = releaseTitle,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+            var resource = decision.ToResource();
+
+            Assert.That(decision.Approved, Is.EqualTo(expectedAccepted));
+            if (releaseTitle.Contains(" 7 ", StringComparison.Ordinal))
+            {
+                Assert.That(decision.RemoteBook.SearchCriteriaMatch.Problems.Select(problem => problem.Code),
+                    Does.Contain(TitleMatchProblemCode.SuspiciousAdjacentNumber).And.Contain(TitleMatchProblemCode.SiblingTitleContradiction));
+            }
+
+            if (expectedAccepted)
+            {
+                Assert.That(resource.Rejections, Is.Empty);
+            }
+            else
+            {
+                Assert.That(resource.Rejections, Does.Contain("Release appears to match a different book by this author"));
+            }
+        }
+
+        [Test]
+        public void comma_author_proof_must_not_erase_a_conflicting_series_position()
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            book.Title = "Covenant";
+            book.Editions[0].Title = book.Title;
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Armentrout, Jennifer L. - Covenant 3",
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.That(decision.ToResource().Rejections, Does.Contain("Series position mismatch"));
+        }
+
+        [Test]
+        public void a_name_inside_the_matched_title_must_not_supply_separate_author_proof()
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            book.Title = author.Name;
+            book.Editions[0].Title = author.Name;
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "Jennifer L. Armentrout 7",
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(identity.HasAuthorIdentityEvidence, Is.False);
+                Assert.That(decision.ToResource().Rejections, Does.Contain("Unexplained number adjacent to matched title"));
+            });
+        }
+
+        [TestCase("John Smith", "Pat Smith, John Doe", false)]
+        [TestCase("Jane Smith", "Pat Smith, Jane Q", false)]
+        [TestCase("John Smith", "Pat.Smith,John.Doe", false)]
+        [TestCase("John Smith", "Pat_Smith,John_Doe", false)]
+        [TestCase("John Smith", "Pat Smith; John Doe", false)]
+        [TestCase("John Smith", "Pat Smith John Doe", false)]
+        [TestCase("John Smith", "Smith.John", true)]
+        [TestCase("John Smith", "Smith, John", true)]
+        [TestCase("John Smith", "John Smith, Jane Doe", true)]
+        [TestCase("John Smith", "Pat Doe, John Smith", true)]
+        [TestCase("Лев Толстой", "Толстой, Лев", true)]
+        [TestCase("Лев Толстой", "Лев Толстой", true)]
+        [TestCase("And Smith", "And Smith", true)]
+        [TestCase("John Smith", "John and Smith", true)]
+        [TestCase("John Smith", "Pat Smith and John Doe", false)]
+        [TestCase("Pat Smith", "Ann and Pat Smith", true)]
+        [TestCase("Ann Smith", "Ann und Pat Smith", true)]
+        [TestCase("Ann Smith", "Ann and Pat Smith", true)]
+        [TestCase("Ann and Pat Smith", "Ann und Pat Smith", false)]
+        [TestCase("Ann and Pat Smith", "Ann and Pat Smith", true)]
+        public void shared_author_proof_should_use_one_complete_name_through_release_resource(string expectedAuthor, string credit, bool expectedAccepted)
+        {
+            var author = new Author { Id = 1, Name = expectedAuthor };
+            var book = new Book
+            {
+                Id = 1, AuthorId = author.Id, Author = author, MediaType = BookMediaType.Ebook, Title = "A Northern Journey",
+                Editions = new List<Edition> { new Edition { Id = 1, Title = "A Northern Journey", Monitored = true } }
+            };
+            author.Books = new List<Book> { book };
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = credit + " - A Northern Journey",
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+            var match = decision.RemoteBook.SearchCriteriaMatch;
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, match);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(match.IsMatch, Is.EqualTo(expectedAccepted));
+                Assert.That(identity.HasAuthorIdentityEvidence, Is.EqualTo(expectedAccepted));
+                Assert.That(decision.Approved, Is.EqualTo(expectedAccepted));
+                Assert.That(decision.ToResource().Rejections.Any(), Is.EqualTo(!expectedAccepted));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void provider_identifier_alias_must_not_supply_a_person_name(bool structured)
+        {
+            var (author, book) = CreateCommaAuthorTarget();
+            author.Aliases = new List<string> { "hc:221618" };
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = "hc:221618 - Verlockende Angst",
+                Author = structured ? "hc:221618" : null,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(identity.HasAuthorIdentityEvidence, Is.False);
+                Assert.That(decision.Approved, Is.False);
+                Assert.That(decision.ToResource().Rejections, Is.Not.Empty);
+            });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void matched_title_must_not_supply_its_own_author_even_with_structured_book(bool structuredBook, bool separateAuthorCredit)
+        {
+            var author = new Author { Id = 1, Name = "John Smith" };
+            var title = "A Journey with John Smith";
+            var book = new Book
+            {
+                Id = 1, AuthorId = author.Id, Author = author, MediaType = BookMediaType.Ebook, Title = title,
+                Editions = new List<Edition> { new Edition { Id = 1, Title = title, Monitored = true } }
+            };
+            author.Books = new List<Book> { book };
+            var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+            {
+                Title = (separateAuthorCredit ? "Smith, John - " : string.Empty) + title,
+                Book = structuredBook ? title : null,
+                Indexer = "Generic",
+                Categories = new List<int> { 7020 },
+                PublishDate = DateTime.UtcNow
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(decision.RemoteBook.SearchCriteriaMatch.IsMatch, Is.EqualTo(separateAuthorCredit));
+                Assert.That(decision.Approved, Is.EqualTo(separateAuthorCredit));
+                Assert.That(decision.ToResource().Rejections.Any(), Is.EqualTo(!separateAuthorCredit));
+            });
+        }
+
+        [TestCase("Jennifer L. Armentrout", "Jennifer Armentrout", true)]
+        [TestCase("Jennifer L. Armentrout", "Jennifer Q. Armentrout", false)]
+        [TestCase("Robert Louis Stevenson", "Robert Stevenson", true)]
+        [TestCase("Robert Louis Stevenson", "Robert Andrew Stevenson", false)]
+        [TestCase("Robert Louis Stevenson", "Robert Q. Stevenson", false)]
+        [TestCase("J K Rowling", "Joanne Rowling", true)]
+        [TestCase("JK Rowling", "J K Rowling", true)]
+        [TestCase("Clive Staples Lewis", "C S Lewis", true)]
+        [TestCase("Clive Staples Lewis", "CS Lewis", false)]
+        [TestCase("John Smith", "James O H N Smith", false)]
+        [TestCase("JOHN SMITH", "James O H N Smith", false)]
+        [TestCase("John Smith", "John Smith's", true)]
+        [TestCase("John Smith", "John Smiths", false)]
+        public void common_author_policy_should_agree_for_raw_and_structured_credits(string expectedAuthor, string credit, bool accepted)
+        {
+            foreach (var structured in new[] { false, true })
+            {
+                foreach (var numbered in new[] { false, true })
+                {
+                    var (author, book) = CreateCommaAuthorTarget();
+                    author.Name = expectedAuthor;
+                    var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+                    {
+                        Title = credit + " - Verlockende Angst" + (numbered ? " 7" : string.Empty),
+                        Author = structured ? credit : null,
+                        Indexer = "Generic",
+                        Categories = new List<int> { 7020 },
+                        PublishDate = DateTime.UtcNow
+                    });
+                    var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(identity.HasAuthorIdentityEvidence, Is.EqualTo(accepted), $"author structured={structured}, numbered={numbered}");
+                        Assert.That(decision.Approved, Is.EqualTo(accepted), $"decision structured={structured}, numbered={numbered}");
+                        Assert.That(decision.ToResource().Rejections.Any(), Is.EqualTo(!accepted));
+                    });
+                }
+            }
+        }
+
+        [TestCase("J K Rowling", "Joanne Rowling", "J Q Rowling", false)]
+        [TestCase("J K Rowling", "Joanne Rowling", "JQ Rowling", false)]
+        [TestCase("J K Rowling", "Joanne Rowling", "Joanne Q. Rowling", false)]
+        [TestCase("J K Rowling", "Joanne Rowling", "Joanne Rowling", true)]
+        [TestCase("Robert Louis Stevenson", "Robert Stevenson", "Robert Q Stevenson", false)]
+        [TestCase("Robert Louis Stevenson", "Robert Stevenson", "Robert Andrew Stevenson", false)]
+        [TestCase("Robert Louis Stevenson", "Robert Stevenson", "Robert Stevenson", true)]
+        public void shortened_known_spelling_must_not_erase_a_conflicting_part(string canonical, string alternate, string credit, bool accepted)
+        {
+            foreach (var structured in new[] { false, true })
+            {
+                var (author, book) = CreateCommaAuthorTarget();
+                author.Name = canonical;
+                author.Pseudonyms = new List<string> { alternate };
+                var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+                {
+                    Title = credit + " - Verlockende Angst", Author = structured ? credit : null,
+                    Indexer = "Generic", Categories = new List<int> { 7020 }, PublishDate = DateTime.UtcNow
+                });
+                Assert.That(decision.Approved, Is.EqualTo(accepted));
+                Assert.That(decision.ToResource().Rejections.Any(), Is.EqualTo(!accepted));
+            }
+        }
+
+        [TestCase("Robert Louis Stevenson", "Robert Stevenson")]
+        [TestCase("J K Rowling", "Robert Galbraith")]
+        public void stored_alternate_names_should_supply_evidence_for_different_full_names(string canonical, string alternate)
+        {
+            foreach (var structured in new[] { false, true })
+            {
+                var (author, book) = CreateCommaAuthorTarget();
+                author.Name = canonical;
+                author.Pseudonyms = new List<string> { alternate };
+                var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
+                {
+                    Title = alternate + " - Verlockende Angst", Author = structured ? alternate : null,
+                    Indexer = "Generic", Categories = new List<int> { 7020 }, PublishDate = DateTime.UtcNow
+                });
+                Assert.That(decision.Approved, Is.True);
+                Assert.That(decision.ToResource().Rejections, Is.Empty);
+            }
+        }
+
+        private static (Author Author, Book Book) CreateCommaAuthorTarget()
+        {
+            var author = new Author { Id = 1, Name = "Jennifer L. Armentrout" };
+            var book = new Book
+            {
+                Id = 1,
+                AuthorId = author.Id,
+                Author = author,
+                MediaType = BookMediaType.Ebook,
+                Title = "Verlockende Angst",
+                SeriesName = "Covenant",
+                SeriesPosition = "2",
+                Editions = new List<Edition> { new Edition { Id = 1, Title = "Verlockende Angst", Language = "deu", Monitored = true } }
+            };
+            author.Books = new List<Book> { book };
+            return (author, book);
+        }
+
         [Test]
         public void should_reject_music_artist_release_without_expected_author_evidence()
         {
@@ -2472,7 +3061,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
 
             Assert.That(decision.Rejected, Is.True);
-            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Unexplained number adjacent to matched title"));
         }
 
         [Test]
@@ -2501,7 +3090,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
 
             Assert.That(decision.Rejected, Is.True);
-            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Title/Author mismatch"));
+            Assert.That(decision.Rejections.Select(r => r.Reason), Has.Some.EqualTo("Unexplained number adjacent to matched title"));
         }
 
         /// <summary>

@@ -346,6 +346,249 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        private static IEnumerable<TestCaseData> SharedGrabTransferCases()
+        {
+            foreach (var postgres in new[] { false, true })
+            foreach (var media in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            foreach (var alternative in new[] { false, true })
+            foreach (var mode in new[] { ImportMode.Copy, ImportMode.Move })
+            foreach (var extras in new[] { "disabled", "default", "custom", "disabled-custom", "disabled-missing-companion" })
+            {
+                if (extras == "disabled-missing-companion" && mode == ImportMode.Move) continue;
+                yield return new TestCaseData(postgres, media, alternative, mode, extras);
+            }
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void profile_disallowed_ebook_alternative_should_not_block_durable_eligible_import(bool postgres, bool alternative)
+        {
+            captured_grab_should_import_only_its_book_files_and_honor_existing_extra_file_settings(postgres, BookMediaType.Ebook, alternative, ImportMode.Copy, "disabled-quality");
+        }
+
+        [TestCaseSource(nameof(SharedGrabTransferCases))]
+        public void captured_grab_should_import_only_its_book_files_and_honor_existing_extra_file_settings(
+            bool postgres, BookMediaType media, bool alternative, ImportMode mode, string extras)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                var temp = Path.Combine(Path.GetTempPath(), "chaptarr-grab-extras-" + Guid.NewGuid().ToString("N"));
+                var source = Path.Combine(temp, "download");
+                var destination = Path.Combine(temp, "library");
+                Directory.CreateDirectory(source); Directory.CreateDirectory(destination);
+                try
+                {
+                    var logger = LogManager.GetCurrentClassLogger();
+                    var noop = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) => null);
+                    var author = new AuthorRepository(database, noop, logger).Insert(new Author { Name = "Test Writer", CleanName = "testwriter",
+                        SortName = "testwriter", TitleSlug = "test-writer", Path = destination, Added = DateTime.UtcNow });
+                    var profile = new NzbDrone.Core.Profiles.Qualities.QualityProfile { Id = 1, Name = "Native formats", UpgradeAllowed = true,
+                        ProfileType = media == BookMediaType.Audiobook ? NzbDrone.Core.Profiles.Qualities.ProfileType.Audiobook : NzbDrone.Core.Profiles.Qualities.ProfileType.Ebook,
+                        Items = (media == BookMediaType.Audiobook ? new[] { NzbDrone.Core.Qualities.Quality.M4B } :
+                            new[] { NzbDrone.Core.Qualities.Quality.PDF, NzbDrone.Core.Qualities.Quality.MOBI, NzbDrone.Core.Qualities.Quality.EPUB })
+                            .Select(quality => new NzbDrone.Core.Profiles.Qualities.QualityProfileQualityItem { Allowed = true, Quality = quality }).ToList() };
+                    if (extras == "disabled-quality") profile.Items.Single(item => item.Quality == NzbDrone.Core.Qualities.Quality.MOBI).Allowed = false;
+                    if (media == BookMediaType.Audiobook) { author.AudiobookQualityProfileId = 1; author.AudiobookQualityProfile = profile; }
+                    else { author.EbookQualityProfileId = 1; author.EbookQualityProfile = profile; }
+                    var books = new BookRepository(database, noop);
+                    var editions = new EditionRepository(database, noop);
+                    Book Seed(string slug)
+                    {
+                        var book = books.Insert(new Book { AuthorId = author.Id, Author = author, Title = "Paper Lanterns", CleanTitle = "paperlanterns",
+                            TitleSlug = slug, MediaType = media, Added = DateTime.UtcNow, AnyEditionOk = false });
+                        var edition = editions.Insert(new Edition { BookId = book.Id, Book = book, Title = book.Title,
+                            ForeignEditionId = "local:" + slug, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Monitored = true,
+                            Narrator = "First Reader", NarratorNames = new() { "First Reader" } });
+                        book.Editions = new() { edition }; return book;
+                    }
+                    var chosen = Seed("chosen"); var other = Seed("other");
+                    var ownPaths = media == BookMediaType.Audiobook
+                        ? Enumerable.Range(1, 3).Select(index => Path.Combine(source, "Book" + index + ".m4b")).ToList()
+                        : new[] { ".epub", ".mobi", ".pdf" }.Select(extension => Path.Combine(source, "Book" + extension)).ToList();
+                    var companion = Path.Combine(source, media == BookMediaType.Audiobook ? "Book1.epub" : "Book.m4b");
+                    var cover = Path.Combine(source, "cover.jpg");
+                    var matchingJpeg = Path.Combine(source, media == BookMediaType.Audiobook ? "Book1.jpg" : "Book.jpg");
+                    foreach (var path in ownPaths.Append(companion).Append(cover).Append(matchingJpeg)
+                        .Where(path => extras != "disabled-missing-companion" || path != companion)) File.WriteAllText(path, Path.GetFileName(path));
+                    var fileSystem = new System.IO.Abstractions.FileSystem();
+                    var transfers = new List<(string Path, string Target, bool Copy, bool Extra)>();
+                    var disk = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDiskProvider>((method, args) => method.Name switch
+                    {
+                        nameof(IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
+                        nameof(IDiskProvider.FileExists) or nameof(IDiskProvider.FileExistsCanonical) => File.Exists((string)args[0]),
+                        nameof(IDiskProvider.GetFileInfo) => fileSystem.FileInfo.FromFileName((string)args[0]),
+                        nameof(IDiskProvider.GetDirectoryInfo) => fileSystem.DirectoryInfo.FromDirectoryName((string)args[0]),
+                        nameof(IDiskProvider.GetFileSize) => new FileInfo((string)args[0]).Length,
+                        nameof(IDiskProvider.FileGetLastWrite) => File.GetLastWriteTimeUtc((string)args[0]),
+                        nameof(IDiskProvider.GetParentFolder) => Path.GetDirectoryName((string)args[0]),
+                        nameof(IDiskProvider.GetFiles) => Directory.GetFiles((string)args[0], "*", (bool)args[1] ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly),
+                        nameof(IDiskProvider.GetFileInfos) => Directory.GetFiles((string)args[0]).Select(path => (IFileInfo)fileSystem.FileInfo.FromFileName(path)).ToList(),
+                        nameof(IDiskProvider.DeleteFolder) => DeleteFolder((string)args[0]),
+                        _ => null
+                    });
+                    object DeleteFolder(string path) { Directory.Delete(path, true); return null; }
+                    var scan = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDiskScanService>((method, args) =>
+                        Directory.GetFiles((string)args[0], "*", SearchOption.AllDirectories).Where(path => MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(path)))
+                            .Select(path => (IFileInfo)fileSystem.FileInfo.FromFileName(path)).ToArray());
+                    var extraExtensions = extras.Contains("custom") ? (media == BookMediaType.Audiobook ? "epub" : "m4b") : "jpg,png,cue,m3u,opf";
+                    var config = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IConfigService>((method, args) => method.Name switch
+                    {
+                        "get_ImportExtraFiles" => !extras.StartsWith("disabled", StringComparison.Ordinal),
+                        "get_ExtraFileExtensions" => extraExtensions,
+                        "get_CopyUsingHardlinks" => false,
+                        "get_DownloadPropersAndRepacks" => NzbDrone.Core.Qualities.ProperDownloadTypes.PreferAndUpgrade,
+                        "get_BookMatchingStrictness" => BookMatchingStrictness.Balanced,
+                        _ => method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null
+                    });
+                    var bookService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) => method.Name switch
+                    {
+                        nameof(IBookService.GetBook) => (int)args[0] == chosen.Id ? chosen : other,
+                        nameof(IBookService.GetExistingBooks) => new List<Book> { chosen, other }.Where(book => ((IEnumerable<int>)args[0]).Contains(book.Id)).ToList(),
+                        _ => null
+                    });
+                    var authorService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IAuthorService>((method, args) => author);
+                    var editionService = new EditionService(editions, noop, logger);
+                    var files = new MediaFileRepository(database, noop);
+                    var mediaFiles = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaFileService>((method, args) =>
+                    {
+                        if (method.Name == nameof(IMediaFileService.ReplaceMany)) { files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1]); return null; }
+                        if (method.Name == nameof(IMediaFileService.GetFilesByBook)) return files.GetFilesByBook((int)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFilesByEdition)) return files.GetFilesByEdition((int)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFileWithPath)) return files.GetFileWithPath((string)args[0]);
+                        throw new InvalidOperationException("Unexpected media operation " + method.Name);
+                    });
+                    var history = new NzbDrone.Core.History.HistoryService(new NzbDrone.Core.History.HistoryRepository(database, noop), logger);
+                    var downloadHistory = new NzbDrone.Core.Download.History.DownloadHistoryService(
+                        new NzbDrone.Core.Download.History.DownloadHistoryRepository(database, noop), history);
+                    var events = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) =>
+                    {
+                        if (args[0] is NzbDrone.Core.MediaFiles.Events.TrackImportedEvent imported) history.Handle(imported);
+                        if (args[0] is NzbDrone.Core.Download.DownloadCompletedEvent completed) downloadHistory.Handle(completed);
+                        return null;
+                    });
+                    var extraRows = new NzbDrone.Core.Extras.Others.OtherExtraFileRepository(database, noop);
+                    var extraWriter = new NzbDrone.Core.Extras.Others.OtherExtraFileService(extraRows, authorService, disk, null, logger);
+                    var transfer = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDiskTransferService>((method, args) =>
+                    {
+                        var copy = (TransferMode)args[2] != TransferMode.Move;
+                        transfers.Add(((string)args[0], (string)args[1], copy, true));
+                        if (copy) File.Copy((string)args[0], (string)args[1], true); else File.Move((string)args[0], (string)args[1], true);
+                        return args[2];
+                    });
+                    var extraService = new NzbDrone.Core.Extras.ExtraService(mediaFiles, editionService, disk, config,
+                        new[] { new NzbDrone.Core.Extras.Others.OtherExtraService(config, disk, transfer, extraWriter,
+                            Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaFileAttributeService>((method, args) => null), logger) }, logger);
+                    var mover = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMoveBookFiles>((method, args) =>
+                    {
+                        var file = (BookFile)args[0]; var local = (LocalBook)args[1]; var copy = method.Name == nameof(IMoveBookFiles.CopyBookFile);
+                        file.Path = Path.Combine(destination, Path.GetFileName(local.Path));
+                        transfers.Add((local.Path, file.Path, copy, false));
+                        if (copy) File.Copy(local.Path, file.Path); else File.Move(local.Path, file.Path);
+                        return file;
+                    });
+                    var dependencies = new Dictionary<Type, object> { [typeof(IMediaFileService)] = mediaFiles, [typeof(IMetadataTagService)] = new StubMetadataTagService(),
+                        [typeof(IMediaInfoExtractor)] = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaInfoExtractor>((method, args) =>
+                            method.Name == nameof(IMediaInfoExtractor.GetDuration) ? TimeSpan.Zero : null),
+                        [typeof(IBookService)] = bookService, [typeof(IAuthorService)] = authorService, [typeof(IEditionService)] = editionService,
+                        [typeof(NzbDrone.Core.Extras.IExtraService)] = extraService, [typeof(IMoveBookFiles)] = mover,
+                        [typeof(NzbDrone.Core.History.IHistoryService)] = history, [typeof(IEventAggregator)] = events, [typeof(Logger)] = logger,
+                        [typeof(IDiskProvider)] = disk, [typeof(IConfigService)] = config };
+                    var constructor = typeof(ImportApprovedBooks).GetConstructors().Single();
+                    var writer = (ImportApprovedBooks)constructor.Invoke(constructor.GetParameters().Select(parameter => dependencies.GetValueOrDefault(parameter.ParameterType)).ToArray());
+                    var submitted = new List<string>();
+                    var matching = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IFileMatchingService>((method, args) =>
+                    {
+                        var input = (DiscoveredFileWithMetadata[])args[0]; submitted.AddRange(input.Select(file => file.Path));
+                        return Task.FromResult(new FileMatchResult
+                        {
+                            MatchedFiles = input.Where(file => ownPaths.Contains(file.Path)).Select(file => new FileMatch { File = file, BookId = chosen.Id,
+                                EditionId = chosen.Editions[0].Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = chosen.Title }).ToArray(),
+                            UnmatchedFiles = input.Where(file => !ownPaths.Contains(file.Path)).Select(file => new UnmatchedFile { File = file, Reason = "Companion" }).ToArray()
+                        });
+                    });
+                    var captured = new Dictionary<int, int> { [chosen.Id] = chosen.Editions[0].Id, [other.Id] = other.Editions[0].Id };
+                    var grabbed = DateTime.UtcNow.AddMinutes(-1);
+                    var client = new DownloadClientItem { DownloadId = "grab", Title = "Captured grab", CanMoveFiles = mode == ImportMode.Move,
+                        Status = DownloadItemStatus.Completed, DownloadClientInfo = new DownloadClientItemClientInfo { Name = "Native test client", Type = "Test" },
+                        FilePaths = ownPaths.Append(companion).Append(cover).Append(matchingJpeg).ToList(), FileListConfidence = DownloadClientFileListConfidence.Authoritative };
+                    var remote = new RemoteBook { Author = author, Books = alternative ? new() { chosen, other } : new() { chosen },
+                        AlternativeCopies = alternative, AlternativeCopyGrabDate = grabbed, TargetEditionIds = captured };
+                    var importer = new DownloadedBooksImportService(disk, scan, matching, new StubMetadataTagService(), writer, bookService, authorService,
+                        editionService, null, null, null, config, history, events, null, null, logger);
+                    var results = importer.ProcessPath(source, mode, author, client, remote);
+                    var expectedCount = media == BookMediaType.Audiobook ? 3 : 1;
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(submitted, Is.EquivalentTo(ownPaths));
+                        Assert.That(results, Has.Count.EqualTo(ownPaths.Count));
+                        Assert.That(results.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(expectedCount));
+                        Assert.That(files.All(), Has.Count.EqualTo(expectedCount));
+                        Assert.That(files.All().All(file => file.EditionId == chosen.Editions[0].Id), Is.True);
+                        Assert.That(files.GetFilesByBook(other.Id), Is.Empty);
+                        Assert.That(transfers.Count(item => !item.Extra), Is.EqualTo(expectedCount));
+                        Assert.That(transfers.Where(item => !item.Extra).All(item => item.Copy == (mode == ImportMode.Copy)), Is.True);
+                        Assert.That(transfers.Any(item => item.Path == cover), Is.False);
+                    });
+                    var savedHistory = history.FindByDownloadId(client.DownloadId);
+                    Assert.That(savedHistory, Has.Count.EqualTo(expectedCount));
+                    Assert.That(savedHistory.All(row => row.BookId == chosen.Id && row.EditionId == chosen.Editions[0].Id), Is.True);
+                    Assert.That(transfers.Count(item => item.Path == companion), Is.Zero);
+                    Assert.That(transfers.Count(item => item.Path == matchingJpeg), Is.EqualTo(extras == "default" ? 1 : 0));
+                    Assert.That(extraRows.All(), Has.Count.EqualTo(extras == "default" ? 1 : 0));
+                    Assert.That(File.Exists(companion), Is.EqualTo(extras != "disabled-missing-companion"));
+                    Assert.That(File.Exists(cover), Is.True);
+                    Assert.That(Directory.Exists(source), Is.True);
+                    Assert.That(File.Exists(Path.Combine(destination, Path.GetFileName(companion))), Is.False);
+                    var tracked = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownload { DownloadItem = client, RemoteBook = remote };
+                    if (extras == "disabled-quality")
+                    {
+                        var immediate = NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportService.AreAllTrackedDownloadItemsImported(tracked, results);
+                        var strictReplay = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger).IsImported(tracked, savedHistory);
+                        var snapshotService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.IDownloadClientFileSnapshotService>((method, args) => null);
+                        var completion = new NzbDrone.Core.Download.CompletedDownloadService(events, history, null, null, null,
+                            new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger), null, logger, snapshotService);
+                        var verified = completion.VerifyImport(tracked, results);
+                        var latest = downloadHistory.GetLatestDownloadHistoryItem(client.DownloadId);
+                        var tracker = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadService(
+                            Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Parser.IParsingService>((method, args) => remote),
+                            new NzbDrone.Common.Cache.CacheManager(), history, noop, downloadHistory,
+                            Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) =>
+                                new List<NzbDrone.Core.CustomFormats.CustomFormat>()), logger, snapshotService);
+                        var restoredDownload = tracker.TrackDownload(new NzbDrone.Core.Download.DownloadClientDefinition { Id = 1 }, client);
+                        TestContext.Progress.WriteLine($"QUALITY_COMPLETION database={database.DatabaseType} alternative={alternative} imported={results.Count(result => result.Result == ImportResultType.Imported)} rejects={string.Join(';', results.Where(result => result.Result != ImportResultType.Imported).Select(result => System.IO.Path.GetExtension(result.ImportDecision.Item.Path) + ':' + string.Join(',', result.ImportDecision.Rejections.Select(rejection => rejection.Category))))} mobiCopied={transfers.Any(transfer => transfer.Path.EndsWith(".mobi", StringComparison.OrdinalIgnoreCase))} historyRows={savedHistory.Count} importedBookIds={string.Join(',', results.Where(result => result.Result == ImportResultType.Imported).Select(result => result.ImportDecision.Item.Book.Id).Distinct())} immediate={immediate} verified={verified} strictReplay={strictReplay} aggregate={latest?.EventType.ToString() ?? "none"} restored={restoredDownload?.State}");
+                        Assert.That(results.Count(result => result.ImportDecision.Rejections.Any(rejection => rejection.IsQualityFilter)), Is.EqualTo(1));
+                        Assert.That(transfers.Any(transfer => transfer.Path.EndsWith(".mobi", StringComparison.OrdinalIgnoreCase)), Is.False);
+                        Assert.That(immediate, Is.True);
+                        Assert.That(verified, Is.True);
+                        Assert.That(strictReplay, Is.EqualTo(!alternative));
+                        Assert.That(latest.EventType, Is.EqualTo(NzbDrone.Core.Download.History.DownloadHistoryEventType.DownloadImported));
+                        Assert.That(restoredDownload.State, Is.EqualTo(NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadState.Imported));
+                        return;
+                    }
+                    Assert.That(NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportService.AreAllTrackedDownloadItemsImported(tracked, results), Is.True);
+                    Assert.That(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger).IsImported(tracked, savedHistory),
+                        Is.EqualTo(!alternative || media == BookMediaType.Audiobook));
+                    var snapshots = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.IDownloadClientFileSnapshotService>((method, args) => null);
+                    var completedService = new NzbDrone.Core.Download.CompletedDownloadService(events, history, null, null, null,
+                        new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger), null, logger, snapshots);
+                    Assert.That(completedService.VerifyImport(tracked, results), Is.True);
+                    Assert.That(downloadHistory.GetLatestDownloadHistoryItem(client.DownloadId).EventType,
+                        Is.EqualTo(NzbDrone.Core.Download.History.DownloadHistoryEventType.DownloadImported));
+                    var freshTracker = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadService(
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Parser.IParsingService>((method, args) => remote),
+                        new NzbDrone.Common.Cache.CacheManager(), history, noop, downloadHistory,
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) =>
+                            new List<NzbDrone.Core.CustomFormats.CustomFormat>()), logger, snapshots);
+                    var restored = freshTracker.TrackDownload(new NzbDrone.Core.Download.DownloadClientDefinition { Id = 1 }, client);
+                    Assert.That(restored.State, Is.EqualTo(NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadState.Imported));
+                    TestContext.Progress.WriteLine($"GRAB_EXTRAS db={database.DatabaseType} media={media} alternative={alternative} mode={mode} extras={extras} nativeFiles={files.All().Count()} history={savedHistory.Count} extraRows={extraRows.All().Count()} companionTransfers={transfers.Count(item => item.Path == companion)}");
+                }
+                finally { if (Directory.Exists(temp)) Directory.Delete(temp, true); }
+            });
+        }
+
         [Test]
         public void should_report_unsupported_files_when_download_folder_has_no_supported_media()
         {

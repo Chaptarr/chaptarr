@@ -11,6 +11,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MetadataSource.Hardcover
 {
@@ -754,15 +755,7 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
 
         private string NormalizeCompact(string value)
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            return new string(value
-                .ToLowerInvariant()
-                .Where(char.IsLetterOrDigit)
-                .ToArray());
+            return UnicodeComparisonNormalizer.NormalizeKey(value);
         }
 
         private int GetAnchorTypePriority(SearchEntityType type)

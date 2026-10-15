@@ -232,6 +232,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         [Test]
@@ -623,8 +626,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(currentEdition.ManualAdd, Is.True);
         }
 
-        [Test]
-        public void should_clone_only_the_selected_edition_for_new_unit_destinations()
+        [TestCase("hc:edition:123")]
+        [TestCase("gr:123-audiobook")]
+        public void should_clone_only_the_selected_edition_for_new_unit_destinations(string foreignEditionId)
         {
             var logger = LogManager.GetCurrentClassLogger();
 
@@ -645,8 +649,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 BookId = canonicalBook.Id,
                 Title = "Dune",
                 TitleSlug = "dune-main",
-                ForeignEditionId = "az:ed:dune-main",
-                AudibleASIN = "B000TEST01"
+                ForeignEditionId = foreignEditionId,
+                Asins = new List<string> { "B000TEST01", "B000TEST02" }
             };
 
             var siblingEdition = new Edition
@@ -685,7 +689,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             Assert.That(destination.Item1, Is.Not.EqualTo(canonicalBook.Id));
             Assert.That(clonedBook.ForeignEditionId, Is.EqualTo(selectedEdition.ForeignEditionId));
-            Assert.That(clonedBook.AudibleASIN, Is.EqualTo(selectedEdition.AudibleASIN));
+            Assert.That(clonedEditions.Single().Asins, Is.EqualTo(selectedEdition.Asins));
+            Assert.That(clonedEditions.Single().Asins, Is.Not.SameAs(selectedEdition.Asins));
             Assert.That(clonedEditions.Select(e => e.ForeignEditionId), Is.EqualTo(new[] { selectedEdition.ForeignEditionId }));
         }
 

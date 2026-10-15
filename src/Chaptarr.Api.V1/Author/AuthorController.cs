@@ -379,6 +379,7 @@ namespace Chaptarr.Api.V1.Author
 
         [RestPostById]
         [ProducesResponseType(typeof(ProviderAmbiguityResource), ProviderAmbiguityHelper.StatusCode)]
+        [ProducesResponseType(typeof(ApiErrorResource), 422)]
         public async Task<ActionResult<AuthorResource>> AddAuthor([FromBody] AuthorResource authorResource, [FromQuery] bool queueIfUnavailable = true)
         {
             var facadeContext = HttpContext.GetReadarrFacadeContext();
@@ -459,6 +460,8 @@ namespace Chaptarr.Api.V1.Author
                 LastSelectedMediaType = lastSelectedMediaType,
                 QueueIfUnavailable = queueIfUnavailable,
                 Tags = authorResource.Tags,
+                AudiobookTags = authorResource.AudiobookTags,
+                EbookTags = authorResource.EbookTags,
                 SearchForMissingBooks = authorResource.AddOptions?.SearchForMissingBooks,
                 RequestedBy = "ApiV1AuthorAdd",
                 AuthorName = authorResource.AuthorName,
@@ -807,26 +810,10 @@ namespace Chaptarr.Api.V1.Author
                     RequestedBy = "UserInterface",
                     CreateAudiobook = bookMediaType == BookMediaType.Audiobook,
                     CreateEbook = bookMediaType == BookMediaType.Ebook,
-                    AuthorName = "Pending Import",
+                    AuthorName = importResource.AuthorName,
                     SearchForMissingBooks = shouldSearchForMissingBooks,
                     LastSelectedMediaType = selectedMediaType
                 };
-
-                switch (authorProvider.ToLowerInvariant())
-                {
-                    case "hc":
-                        config.AuthorName = "Pending Import";
-                        break;
-                    case "gr":
-                        config.AuthorName = "Pending Import";
-                        break;
-                    case "ol":
-                        config.AuthorName = "Pending Import";
-                        break;
-                    case "gb":
-                        config.AuthorName = "Pending Import";
-                        break;
-                }
 
                 if (bookMediaType == BookMediaType.Audiobook)
                 {
@@ -1068,7 +1055,8 @@ namespace Chaptarr.Api.V1.Author
 	            var model = authorResource.ToModel(author, facadeContext);
 	            var updatedAuthor = _authorService.UpdateAuthor(model);
 
-                var shouldReconcile = updatedAuthor.SyncMonitoredAcrossFormats == true &&
+                var shouldReconcile = facadeContext == null &&
+                                      updatedAuthor.SyncMonitoredAcrossFormats == true &&
                                       HasSyncMonitoredAcrossFormatsEligibility(updatedAuthor) &&
                                       (authorResource.SyncMonitoredAcrossFormats == true || !wasSyncEnabled);
 
