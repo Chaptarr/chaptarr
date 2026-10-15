@@ -1,3 +1,4 @@
+import { createMemoryHistory } from 'history';
 import PropTypes from 'prop-types';
 import React, { useState } from 'react';
 import ReactDOM from 'react-dom';
@@ -12,10 +13,18 @@ import SignalRConnector from 'Components/SignalRConnector';
 import FilterWarning from 'InteractiveSearch/FilterWarning';
 import InteractiveSearchRow from 'InteractiveSearch/InteractiveSearchRow';
 import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
+import AddNewAuthorSearchResultConnector from 'Search/Author/AddNewAuthorSearchResultConnector';
+import AddNewBookSearchResultConnector from 'Search/Book/AddNewBookSearchResultConnector';
+import AddNewSeriesModal from 'Search/Series/AddNewSeriesModal';
+import { set } from 'Store/Actions/baseActions';
 import { defaultState as releaseState, grabRelease, reducers as releaseReducer, setAuthorSearchResults, setBypassFilters } from 'Store/Actions/releaseActions';
+import { addBook } from 'Store/Actions/searchActions';
+import createAppStore from 'Store/createAppStore';
 import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import getNewBook from 'Utilities/Book/getNewBook';
 import { fetchTranslations } from 'Utilities/String/translate';
 
+import '../src/polyfills';
 import 'Styles/globals.css';
 import '../src/index.css';
 
@@ -235,4 +244,123 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
   }
   const Component = view === 'detail' ? Detail : Index;
   ReactDOM.render(<Provider store={store}><Component {...props} /></Provider>, document.getElementById('root'));
+};
+
+// Seed the existing search card and connected modal; submit through the actual store thunk.
+window.renderAddAuthorFixture = async(mediaType, family = 'author', capturedResult = null) => {
+  await fetchTranslations();
+  ReactDOM.unmountComponentAtNode(document.getElementById('root'));
+  localStorage.clear();
+  const store = createAppStore(createMemoryHistory());
+  const qualityProfiles = [
+    { id: 11, name: 'Audio Default', profileType: 1 }, { id: 12, name: 'None', profileType: 1 },
+    { id: 13, name: 'Ebook Default', profileType: 2 }, { id: 14, name: 'None', profileType: 2 }
+  ];
+  const metadataProfiles = [
+    { id: 21, name: 'Audio Metadata Default', profileType: 1 }, { id: 22, name: 'Audio Metadata Override', profileType: 1 },
+    { id: 23, name: 'Ebook Metadata Default', profileType: 2 }, { id: 24, name: 'Ebook Metadata Override', profileType: 2 },
+    { id: 25, name: 'None', profileType: 1 }
+  ];
+  const roots = [
+    { id: 1, name: 'Audio', path: '/fixture/audio', folderType: 1, isEffectiveDefaultAudiobook: true,
+      audiobookQualityProfileId: 11, audiobookMetadataProfileId: 21, audiobookMonitored: false,
+      audiobookMonitorExistingMode: 'all', audiobookMonitorNewItems: 'new', audiobookTags: [41] },
+    { id: 2, name: 'Ebook', path: '/fixture/ebook', folderType: 2, isEffectiveDefaultEbook: true,
+      ebookQualityProfileId: 13, ebookMetadataProfileId: 23, ebookMonitored: true,
+      ebookMonitorExistingMode: 'missing', ebookMonitorNewItems: 'none', ebookTags: [42] }
+  ];
+  roots.push({ ...roots[0], id: 3, name: 'Audio alternate', path: '/fixture/audio-alt', isEffectiveDefaultAudiobook: false });
+  roots.push({ ...roots[1], id: 4, name: 'Ebook alternate', path: '/fixture/ebook-alt', isEffectiveDefaultEbook: false });
+  if (family === 'series') {
+    Object.assign(roots[2], { audiobookQualityProfileId: 12, audiobookMetadataProfileId: 22,
+      audiobookMonitored: true, audiobookMonitorExistingMode: 'missing', audiobookMonitorNewItems: 'none', audiobookTags: [] });
+    Object.assign(roots[3], { ebookQualityProfileId: 14, ebookMetadataProfileId: 24,
+      ebookMonitored: false, ebookMonitorExistingMode: 'none', ebookMonitorNewItems: 'all', ebookTags: [43] });
+  }
+  store.dispatch(set({ section: 'app', dimensions: { width: innerWidth, height: innerHeight, isSmallScreen: innerWidth <= 768 } }));
+  store.dispatch(set({ section: 'settings.ui', item: { theme: 'light', addNewDefaultMediaType: mediaType } }));
+  store.dispatch(set({ section: 'settings.rootFolders', isPopulated: true, items: roots }));
+  store.dispatch(set({ section: 'settings.qualityProfiles', isPopulated: true, items: qualityProfiles }));
+  store.dispatch(set({ section: 'settings.metadataProfiles', isPopulated: true, items: metadataProfiles }));
+  store.dispatch(set({ section: 'tags', isPopulated: true, items: [{ id: 41, label: 'Root Audio' }, { id: 42, label: 'Root Ebook' }, { id: 43, label: 'Chosen Tag' }] }));
+  store.dispatch(set({ section: 'system.status', item: { isWindows: false } }));
+  window.addAuthorFixture = { qualityProfiles, metadataProfiles, roots };
+  window.readAddAuthorFixtureState = () => store.getState().search;
+  if (family === 'captured-author' || family === 'captured-book') {
+    const Result = family === 'captured-author' ? AddNewAuthorSearchResultConnector : AddNewBookSearchResultConnector;
+    ReactDOM.render(
+      <Provider store={store}>
+        <ApplyTheme>
+          <Result {...capturedResult} />
+        </ApplyTheme>
+      </Provider>, document.getElementById('root')
+    );
+    return;
+  }
+  if (family === 'series') {
+    window.reopenAddSeriesFixture = () => ReactDOM.render(
+      <Provider store={store}>
+        <ApplyTheme>
+          <AddNewSeriesModal
+            isOpen={true}
+            foreignSeriesId="hc:8300"
+            title="Selected Search Series"
+            workCount={1}
+            primaryWorkCount={1}
+            onModalClose={() => ReactDOM.unmountComponentAtNode(document.getElementById('root'))}
+          />
+        </ApplyTheme>
+      </Provider>, document.getElementById('root')
+    );
+    window.reopenAddSeriesFixture();
+    return;
+  }
+
+  ReactDOM.render(
+    <Provider store={store}>
+      <ApplyTheme>
+        <AddNewAuthorSearchResultConnector
+          foreignAuthorId="gr:fixture-selected-author"
+          titleSlug="selected-search-writer"
+          authorName="Selected Search Writer"
+          status="continuing"
+          overview="Synthetic selected provider-search result"
+          ratings={{ votes: 0, value: 0 }}
+          folder="Selected Search Writer"
+          images={[]}
+          links={[]}
+        />
+      </ApplyTheme>
+    </Provider>, document.getElementById('root')
+  );
+};
+
+window.renderAddSeriesFixture = (mediaType) => window.renderAddAuthorFixture(mediaType, 'series');
+
+window.getBookModalMetadataPayload = (mediaType, profileId, legacyFallback = false, throughAction = false) => {
+  const book = {
+    id: 88,
+    localBookId: 88,
+    foreignBookId: 'hc:8100',
+    title: 'Selected Search Book',
+    author: { foreignAuthorId: 'hc:8000', audiobookMetadataProfileId: 93, ebookMetadataProfileId: 94 },
+    editions: [{ foreignEditionId: 'hc:edition:8200-audiobook', title: 'Selected Search Book', monitored: true, manualAdd: false }]
+  };
+  const payload = {
+    foreignAuthorId: 'hc:8000',
+    audiobookRootFolderPath: '/fixture/audio', ebookRootFolderPath: '/fixture/ebook',
+    audiobookQualityProfileId: 11, ebookQualityProfileId: 13,
+    audiobookMetadataProfileId: legacyFallback ? undefined : profileId,
+    ebookMetadataProfileId: legacyFallback ? undefined : profileId,
+    metadataProfileId: 73, monitor: 'specificBook',
+    audiobookMonitored: false, ebookMonitored: false,
+    audiobookMonitorNewItems: 'none', ebookMonitorNewItems: 'none',
+    audiobookTags: [], ebookTags: [], searchForNewBook: true
+  };
+  if (throughAction) {
+    const store = createAppStore(createMemoryHistory());
+    store.dispatch(addBook({ ...payload, book, foreignBookId: book.foreignBookId, mediaType }));
+    return;
+  }
+  return getNewBook(book, payload, mediaType);
 };

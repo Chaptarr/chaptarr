@@ -437,6 +437,7 @@ export const actionHandlers = handleThunks({
 
       const audiobookV1Payload = {
         foreignAuthorId,
+        authorName: payload.authorName,
         mediaType: 'audiobook',
         rootFolder: audiobookRoot || '',
         qualityProfileId: audiobookProfile || 0,
@@ -453,6 +454,7 @@ export const actionHandlers = handleThunks({
 
       const ebookV1Payload = {
         foreignAuthorId,
+        authorName: payload.authorName,
         mediaType: 'ebook',
         rootFolder: ebookRoot || '',
         qualityProfileId: ebookProfile || 0,
@@ -756,6 +758,7 @@ export const actionHandlers = handleThunks({
 
     const v1Payload = {
       foreignAuthorId,
+      authorName: payload.authorName,
       mediaType,
       rootFolder: rootFolder || '',
       qualityProfileId,

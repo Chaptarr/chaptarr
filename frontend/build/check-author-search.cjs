@@ -1,5 +1,6 @@
 /* Render the real grouped search UI; every browser request is intercepted locally. */
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -64,6 +65,539 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
   return { bookId, title, mediaType: 'audiobook', status, releases, hiddenReleases };
 }
 
+async function setAddAuthorCheckbox(page, name, value) {
+  const input = page.locator(`input[name="${name}"]`);
+  if (await input.isChecked() !== value) {
+    await input.locator('..').click();
+  }
+  assert.equal(await input.isChecked(), value, 'The visible incumbent checkbox must reflect the selected boolean');
+}
+
+async function selectAddAuthorMonitor(page, label, index, optionLabel) {
+  const group = page.locator('#portal-root [class*="FormGroup-group"]').filter({
+    has: page.locator('[class*="FormLabel-label"]').filter({ hasText: label })
+  }).nth(index);
+  await group.getByRole('button').first().click();
+  await page.locator('[class*="EnhancedSelectInput-optionsContainer"]:visible').getByText(optionLabel, { exact: true }).click();
+}
+
+const modalChoices = {
+  audiobook: {
+    defaults: { root: '/fixture/audio', quality: 11, metadata: 21, monitored: false, monitor: 'all', newItems: 'new', tags: [41] },
+    overrides: { root: '/fixture/audio-alt', quality: 12, metadata: 22, monitored: true, monitor: 'existing', newItems: 'none', tags: [43] }
+  },
+  ebook: {
+    defaults: { root: '/fixture/ebook', quality: 13, metadata: 23, monitored: true, monitor: 'missing', newItems: 'none', tags: [42] },
+    overrides: { root: '/fixture/ebook-alt', quality: 14, metadata: 24, monitored: false, monitor: 'none', newItems: 'all', tags: [] }
+  }
+};
+
+async function openCapturedSearchResult(page, capture, kind, mediaType) {
+  const selected = { ...capture[kind], searchProvider: capture.provider };
+  await page.evaluate(({ mode, family, result }) => window.renderAddAuthorFixture(mode, family, result), {
+    mode: mediaType, family: `captured-${kind}`, result: selected
+  });
+  const prefix = kind === 'author' ? 'AddNewAuthorSearchResult' : 'AddNewBookSearchResult';
+  await page.locator(`[class*="${prefix}-underlay"]`).click();
+}
+
+async function checkAddAuthorPayloads(page, importRequests, capture = null) {
+  const choices = modalChoices;
+  const selectedAuthor = capture?.author || { foreignAuthorId: 'gr:fixture-selected-author', authorName: 'Selected Search Writer' };
+  const modalReceipts = [];
+  const failures = [];
+  for (const mediaType of ['audiobook', 'ebook', 'both']) {
+    for (const overrides of capture ? [true] : [false, true]) {
+      const start = importRequests.length;
+      if (capture) {
+        await openCapturedSearchResult(page, capture, 'author', mediaType);
+      } else {
+        await page.evaluate((mode) => window.renderAddAuthorFixture(mode), mediaType);
+        await page.locator('[class*="AddNewAuthorSearchResult-underlay"]').click();
+      }
+      await page.getByText(selectedAuthor.authorName, { exact: true }).last().waitFor();
+      const sides = mediaType === 'both' ? ['audiobook', 'ebook'] : [mediaType];
+      for (const side of sides) {
+        const selection = choices[side].overrides;
+        await page.locator(`select[name="${side}QualityProfileId"] option[value="${selection.quality}"]`).waitFor({ state: 'attached' });
+        await page.locator(`select[name="${side}MetadataProfileId"] option[value="${selection.metadata}"]`).waitFor({ state: 'attached' });
+        assert.equal(await page.locator(`select[name="${side}MetadataProfileId"] option[value="25"]`).count(), 0, 'The existing author flow excludes a metadata profile named None');
+        if (overrides) {
+          await page.locator('[class*="RootFolderSelectInputSelectedValue-path"]').filter({ hasText: choices[side].defaults.root }).first().click();
+          await page.locator('[class*="RootFolderSelectInputOption-value"]').filter({ hasText: selection.root }).click();
+          await setAddAuthorCheckbox(page, `${side}Monitored`, selection.monitored);
+          const sideIndex = sides.indexOf(side);
+          const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
+          await selectAddAuthorMonitor(page, strings.InitialBookMonitoring, sideIndex, side === 'audiobook' ? strings.BooksWithFiles : strings.None);
+          await selectAddAuthorMonitor(page, strings.MonitorNewBooks, sideIndex, side === 'audiobook' ? strings.None : strings.AllNewBooks);
+          await page.locator(`select[name="${side}QualityProfileId"]`).selectOption(String(selection.quality));
+          await page.locator(`select[name="${side}MetadataProfileId"]`).selectOption(String(selection.metadata));
+          const tags = page.locator(`input[name="${side}Tags"]`);
+          await tags.focus();
+          await tags.press('Backspace');
+          if (selection.tags.length) {
+            await tags.fill('Chosen');
+            await tags.press('ArrowDown');
+            await tags.press('Enter');
+          }
+        }
+      }
+      if (overrides) {
+        await setAddAuthorCheckbox(page, 'searchForMissingBooks', true);
+      }
+      const selected = await page.evaluate(() => ({ fields: [...document.querySelectorAll('#portal-root select, #portal-root input')].map((input) => ({ name: input.name, value: input.value, checked: input.type === 'checkbox' ? input.checked : undefined })), authorDefaults: window.readAddAuthorFixtureState().authorDefaults }));
+      const labels = { both: 'Add Audiobooks + Ebooks', audiobook: 'Add Audiobooks', ebook: 'Add Ebooks' };
+      const add = page.getByRole('button', { name: labels[mediaType], exact: true });
+      if (capture) {
+        const responses = sides.map((side) => page.waitForResponse((response) => {
+          const request = response.request();
+          return new URL(response.url()).pathname === '/api/v1/author/import' && request.method() === 'POST' && request.postDataJSON().mediaType === side;
+        }));
+        await add.click();
+        await Promise.all(responses);
+      } else {
+        await add.focus();
+        await page.keyboard.press('Enter');
+      }
+      if (!capture) {
+        await page.waitForFunction(() => window.readAddAuthorFixtureState().isQueued && !window.readAddAuthorFixtureState().isAdding);
+      }
+      const posted = importRequests.slice(start);
+      modalReceipts.push({ mediaType, overrides, selected, posted, provenance: capture ? `Captured ${capture.provider} search response; local-library overlay cleared; actual selected search-card/modal/thunk; intercepted POST` : 'Synthetic provider-search card; real connected modal and production store thunk; all requests intercepted locally' });
+      try {
+        assert.equal(posted.length, sides.length);
+        assert.deepEqual(await page.evaluate(() => window.readAddAuthorFixtureState().authorDefaults), selected.authorDefaults, 'Queued submission preserves selected settings');
+        for (let index = 0; index < sides.length; index++) {
+          const side = sides[index];
+          const selection = choices[side][overrides ? 'overrides' : 'defaults'];
+          const expected = {
+            foreignAuthorId: selectedAuthor.foreignAuthorId, authorName: selectedAuthor.authorName, mediaType: side,
+            rootFolder: selection.root, qualityProfileId: selection.quality, metadataProfileId: selection.metadata,
+            monitor: selection.monitor, [`${side}MonitorExistingMode`]: selection.monitor,
+            [`${side}Monitored`]: selection.monitored, [`${side}MonitorNewItems`]: selection.newItems,
+            tags: selection.tags, manualFlag: true, searchForMissingBooks: overrides && index === sides.length - 1
+          };
+          assert.equal(posted[index].method, 'POST');
+          assert.equal(posted[index].pathname, '/api/v1/author/import');
+          assert.deepEqual(posted[index].body, expected, 'Every serialized import field must preserve the real modal choice, numeric IDs, booleans, enum strings, tags and existing per-side request contract');
+          const profileField = selected.fields.find((field) => field.name === `${side}QualityProfileId`);
+          assert.equal(profileField.value, String(selection.quality), 'Native DOM select values are strings before the shared connector parses them');
+        }
+      } catch (error) {
+        failures.push({ mediaType, overrides, error: error.message });
+      }
+    }
+  }
+  if (process.env.CHAPTARR_LAYOUT_ARTIFACTS) {
+    fs.mkdirSync(process.env.CHAPTARR_LAYOUT_ARTIFACTS, { recursive: true });
+    fs.writeFileSync(path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, capture ? `provider-${capture.provider}-author-payloads.json` : 'modal-payloads.json'), JSON.stringify({ modalReceipts, failures }, null, 2));
+    await page.screenshot({ path: path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, capture ? `provider-${capture.provider}-author.png` : 'add-author-both-overrides.png'), fullPage: true });
+  }
+  assert.deepEqual(failures, [], 'All selected Add New fields must survive every import payload');
+}
+
+function checkBookModalMetadata(page) {
+  return page.evaluate(() => {
+    const rows = [];
+    for (const mediaType of ['audiobook', 'ebook']) {
+      for (const profileId of [53, 63]) {
+        rows.push({ mediaType, profileId, payload: window.getBookModalMetadataPayload(mediaType, profileId) });
+      }
+    }
+    rows.push({ mediaType: 'legacy', profileId: 73, payload: window.getBookModalMetadataPayload(undefined, undefined, true) });
+    return rows;
+  }).then((rows) => {
+    for (const { mediaType, profileId, payload } of rows) {
+      assert.equal(payload.id, 0);
+      assert.equal(payload.localBookId, null);
+      assert.equal(payload.addOptions.searchForNewBook, true);
+      assert.equal(payload.editions[0].foreignEditionId, 'hc:edition:8200-audiobook');
+      assert.equal(payload.editions[0].manualAdd, false);
+      if (mediaType === 'legacy') {
+        assert.equal(payload.author.audiobookMetadataProfileId, 73);
+        assert.equal(payload.author.ebookMetadataProfileId, 73);
+      } else {
+        const side = mediaType;
+        const other = side === 'audiobook' ? 'ebook' : 'audiobook';
+        assert.equal(payload.author[`${side}MetadataProfileId`], profileId, 'Selected metadata uses the requested side before native root normalization');
+        assert.equal(payload.author[`${other}MetadataProfileId`], other === 'audiobook' ? 93 : 94, 'An inactive media side retains its original metadata');
+        assert.equal(payload.author[`${side}Monitored`], false);
+        assert.equal(payload.author[`${side}MonitorNewItems`], 'none');
+        assert.deepEqual(payload.author[`${side}Tags`], []);
+      }
+    }
+  });
+}
+
+async function checkAddSeriesPayloads(page, seriesRequests, selectedBooks = [{ foreignBookId: 'hc:8100', foreignAuthorId: 'hc:8000', authorName: 'Selected Search Writer' }]) {
+  const receipts = [];
+  const failures = [];
+  const defaults = {
+    audiobook: { root: '/fixture/audio', quality: 11, metadata: 21, monitored: false, monitor: 'all', newItems: 'new', tags: [41] },
+    ebook: { root: '/fixture/ebook', quality: 13, metadata: 23, monitored: true, monitor: 'missing', newItems: 'none', tags: [42] }
+  };
+  const overrides = {
+    audiobook: { root: '/fixture/audio-alt', quality: 12, metadata: 22, monitored: true, monitor: 'existing', newItems: 'none', tags: [] },
+    ebook: { root: '/fixture/ebook-alt', quality: 14, metadata: 24, monitored: false, monitor: 'none', newItems: 'all', tags: [43] }
+  };
+  const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
+  for (const mediaType of ['audiobook', 'ebook', 'both']) {
+    for (const useOverrides of [false, true]) {
+      const start = seriesRequests.length;
+      await page.evaluate((mode) => window.renderAddSeriesFixture(mode), mediaType);
+      const sides = mediaType === 'both' ? ['audiobook', 'ebook'] : [mediaType];
+      const add = page.getByRole('button', { name: strings.AddSelected, exact: true });
+      await add.waitFor();
+      for (const side of sides) {
+        await page.locator(`select[name="${side}MetadataProfileId"] option[value="${overrides[side].metadata}"]`).waitFor({ state: 'attached' });
+        assert.equal(await page.locator(`select[name="${side}MetadataProfileId"] option[value="25"]`).count(), 0, 'Series follows the existing exclusion of a named None profile');
+        if (useOverrides) {
+          await page.locator('[class*="RootFolderSelectInputSelectedValue-path"]').filter({ hasText: defaults[side].root }).first().click();
+          await page.locator('[class*="RootFolderSelectInputOption-value"]').filter({ hasText: overrides[side].root }).click();
+          await setAddAuthorCheckbox(page, `${side}Monitored`, overrides[side].monitored);
+          await selectAddAuthorMonitor(page, strings.InitialBookMonitoring, sides.indexOf(side), side === 'audiobook' ? strings.BooksWithFiles : strings.None);
+          await selectAddAuthorMonitor(page, strings.MonitorNewBooks, sides.indexOf(side), side === 'audiobook' ? strings.None : strings.AllNewBooks);
+          await page.locator(`select[name="${side}QualityProfileId"]`).selectOption(String(overrides[side].quality));
+          await page.locator(`select[name="${side}MetadataProfileId"]`).selectOption(String(overrides[side].metadata));
+          const tags = page.locator(`input[name="${side}Tags"]`);
+          await tags.focus();
+          await tags.press('Backspace');
+          if (overrides[side].tags.length) {
+            await tags.fill('Chosen');
+            await tags.press('ArrowDown');
+            await tags.press('Enter');
+          }
+        }
+      }
+      const responses = sides.map((side) => page.waitForResponse((response) => {
+        const request = response.request();
+        return new URL(response.url()).pathname === '/api/v1/series/add' &&
+          request.method() === 'POST' && request.postDataJSON().selectedMediaType === side;
+      }));
+      await add.click();
+      await Promise.all(responses);
+      const posted = seriesRequests.slice(start);
+      receipts.push({ mediaType, useOverrides, posted });
+      try {
+        assert.equal(posted.length, sides.length);
+        for (let i = 0; i < sides.length; i++) {
+          const side = sides[i];
+          const chosen = (useOverrides ? overrides : defaults)[side];
+          assert.deepEqual(posted[i].body, {
+            foreignSeriesId: 'hc:8300', selectedMediaType: side,
+            selectedBooks,
+            monitor: chosen.monitor, tags: chosen.tags,
+            [`${side}Monitored`]: chosen.monitored, [`${side}MonitorExistingMode`]: chosen.monitor, [`${side}MonitorNewItems`]: chosen.newItems,
+            [`${side}RootFolderPath`]: chosen.root, [`${side}QualityProfileId`]: chosen.quality, [`${side}MetadataProfileId`]: chosen.metadata
+          });
+        }
+      } catch (error) {
+        failures.push({ mediaType, useOverrides, error: error.message });
+      }
+    }
+  }
+  for (const side of ['audiobook', 'ebook']) {
+    const start = seriesRequests.length;
+    await page.evaluate((mode) => window.renderAddSeriesFixture(mode), side);
+    await page.locator(`select[name="${side}MetadataProfileId"] option[value="${defaults[side].metadata}"]`).waitFor({ state: 'attached' });
+    await page.locator(`select[name="${side}QualityProfileId"]`).selectOption(String(defaults[side].quality));
+    await page.locator(`select[name="${side}MetadataProfileId"]`).selectOption(String(defaults[side].metadata));
+    await setAddAuthorCheckbox(page, `${side}Monitored`, defaults[side].monitored);
+    const tags = page.locator(`input[name="${side}Tags"]`);
+    await tags.fill('Chosen');
+    await tags.press('ArrowDown');
+    await tags.press('Enter');
+    const before = await page.evaluate(() => window.readAddAuthorFixtureState().authorDefaults);
+    await page.locator('[class*="RootFolderSelectInputSelectedValue-path"]').filter({ hasText: defaults[side].root }).first().click();
+    await page.locator('[class*="RootFolderSelectInputOption-value"]').filter({ hasText: overrides[side].root }).click();
+    const after = await page.evaluate(() => window.readAddAuthorFixtureState().authorDefaults);
+    const other = side === 'audiobook' ? 'ebook' : 'audiobook';
+    for (const key of Object.keys(before).filter((field) => field.startsWith(other))) {
+      assert.deepEqual(after[key], before[key], 'Changing a root resets only the chosen media side');
+    }
+    const response = page.waitForResponse((result) => {
+      const request = result.request();
+      return new URL(result.url()).pathname === '/api/v1/series/add' &&
+        request.method() === 'POST' && request.postDataJSON().selectedMediaType === side;
+    });
+    await page.getByRole('button', { name: strings.AddSelected, exact: true }).click();
+    await response;
+    const body = seriesRequests[start]?.body;
+    const chosen = { ...overrides[side], monitor: side === 'audiobook' ? 'missing' : 'none' };
+    receipts.push({ mediaType: side, rootChange: true, before, after, posted: body });
+    try {
+      assert.equal(body[`${side}QualityProfileId`], chosen.quality);
+      assert.equal(body[`${side}MetadataProfileId`], chosen.metadata);
+      assert.equal(body[`${side}Monitored`], chosen.monitored);
+      assert.equal(body.monitor, chosen.monitor);
+      assert.equal(body[`${side}MonitorNewItems`], chosen.newItems);
+      assert.deepEqual(body.tags, chosen.tags);
+    } catch (error) {
+      failures.push({ mediaType: side, rootChange: true, error: error.message });
+    }
+  }
+  if (process.env.CHAPTARR_LAYOUT_ARTIFACTS) {
+    fs.writeFileSync(path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, 'series-modal-payloads.json'), JSON.stringify({ receipts, failures }, null, 2));
+  }
+  assert.deepEqual(failures, [], 'Shared author/series default authority preserves every submitted field');
+}
+
+async function applyCapturedBookChoices(page, sides) {
+  const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
+  for (const side of sides) {
+    const selection = modalChoices[side].overrides;
+    const label = side === 'audiobook' ? strings.AudiobookRootFolder : strings.EbookRootFolder;
+    const group = page.locator('#portal-root [class*="FormGroup-group"]').filter({
+      has: page.locator('[class*="FormLabel-label"]').filter({ hasText: label })
+    });
+    await group.getByRole('button').first().click();
+    await page.locator('[class*="RootFolderSelectInputOption-value"]').filter({ hasText: selection.root }).click();
+    await setAddAuthorCheckbox(page, `${side}Monitored`, selection.monitored);
+    await selectAddAuthorMonitor(page, strings.InitialBookMonitoring, sides.indexOf(side), /^(Only This Book|OnlyThisBook)$/);
+    await selectAddAuthorMonitor(page, strings.MonitorNewBooks, sides.indexOf(side), side === 'audiobook' ? strings.None : strings.AllNewBooks);
+    await page.locator(`select[name="${side}QualityProfileId"] option[value="${selection.quality}"]`).waitFor({ state: 'attached' });
+    await page.locator(`select[name="${side}MetadataProfileId"] option[value="${selection.metadata}"]`).waitFor({ state: 'attached' });
+    await page.locator(`select[name="${side}QualityProfileId"]`).selectOption(String(selection.quality));
+    await page.locator(`select[name="${side}MetadataProfileId"]`).selectOption(String(selection.metadata));
+    const tags = page.locator(`input[name="${side}Tags"]`);
+    await tags.focus();
+    await tags.press('Backspace');
+    if (selection.tags.length) {
+      await tags.fill('Chosen');
+      await tags.press('ArrowDown');
+      await tags.press('Enter');
+    }
+  }
+  await setAddAuthorCheckbox(page, 'searchForNewBook', true);
+}
+
+function assertInactiveAuthorFields(actual, original, mediaType) {
+  for (const suffix of ['RootFolderPath', 'QualityProfileId', 'MetadataProfileId', 'Monitored', 'MonitorNewItems', 'Tags']) {
+    assert.deepEqual(actual[`${mediaType}${suffix}`], original[`${mediaType}${suffix}`]);
+  }
+}
+
+async function checkCapturedProviderPayloads(page, importRequests, bookRequests, seriesRequests) {
+  if (!process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST) {
+    return;
+  }
+  const manifest = JSON.parse(fs.readFileSync(process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST));
+  const bookReceipts = [];
+  const overlays = [];
+  for (const entry of manifest) {
+    for (const kind of ['author', 'book']) {
+      const file = entry[`${kind}Capture`];
+      const captureBytes = fs.readFileSync(file);
+      const captureSha256 = createHash('sha256').update(captureBytes).digest('hex');
+      const raw = JSON.parse(captureBytes);
+      const rows = structuredClone(raw);
+      const clearLocalAuthor = (author) => {
+        if (!author) {
+          return;
+        }
+        author.id = 0;
+        author.folder = '';
+        for (const key of Object.keys(author)) {
+          if (key.endsWith('Path') || ['path', 'qualityProfileId', 'metadataProfileId', 'tags', 'monitored', 'monitorNewItems'].includes(key) || (/^(audiobook|ebook)(QualityProfileId|MetadataProfileId|Tags|Monitored|MonitorNewItems)$/).test(key)) {
+            delete author[key];
+          }
+        }
+      };
+      for (const row of rows) {
+        delete row.existingLocalId;
+        if (row.author) {
+          clearLocalAuthor(row.author);
+        }
+        if (row.book) {
+          row.book.id = 0;
+          row.book.localBookId = null;
+          row.book.localAudiobookBooks = [];
+          row.book.localEbookBooks = [];
+          if (row.book.author) {
+            clearLocalAuthor(row.book.author);
+          }
+        }
+      }
+      const author = rows.find((row) => row.author?.foreignAuthorId === entry.authorId)?.author;
+      const book = rows.find((row) => row.book?.foreignBookId === entry.bookId)?.book;
+      assert.ok(author?.authorName && author.foreignAuthorId, 'A real selected provider author must have its own name and ID');
+      if (kind === 'book') {
+        assert.ok(book && book.author?.foreignAuthorId === author.foreignAuthorId);
+      }
+      const receipt = JSON.parse(fs.readFileSync(entry[`${kind}Receipt`]));
+      const capture = { provider: entry.provider, rows, author, book, term: new URL(receipt.request, 'http://capture.test').searchParams.get('term') };
+      overlays.push({ provider: entry.provider, kind, capture: file, captureSha256, authorName: author.authorName, authorId: author.foreignAuthorId, workId: book?.foreignBookId, localOnlyOverlay: true });
+      if (kind === 'author') {
+        await checkAddAuthorPayloads(page, importRequests, capture);
+      } else {
+        for (const mode of ['audiobook', 'ebook', 'both']) {
+          await openCapturedSearchResult(page, capture, 'book', mode);
+          const sides = mode === 'both' ? ['audiobook', 'ebook'] : [mode];
+          await applyCapturedBookChoices(page, sides);
+          const start = bookRequests.length;
+          const responses = sides.map((side) => page.waitForResponse((response) => {
+            const request = response.request();
+            return new URL(response.url()).pathname === '/api/v1/book' && request.method() === 'POST' && request.postDataJSON().mediaType === side;
+          }));
+          const labels = { audiobook: 'Add Audiobook', ebook: 'Add eBook', both: 'Add Audiobook + eBook' };
+          await page.getByRole('button', { name: labels[mode], exact: true }).click();
+          await Promise.all(responses);
+          const posted = bookRequests.slice(start);
+          assert.equal(posted.length, sides.length);
+          for (let i = 0; i < sides.length; i++) {
+            const side = sides[i];
+            const other = side === 'audiobook' ? 'ebook' : 'audiobook';
+            const body = posted[i].body;
+            const choice = modalChoices[side].overrides;
+            assert.equal(body.foreignBookId, entry.bookId);
+            assert.equal(body.author.foreignAuthorId, entry.authorId);
+            assert.equal(body.author.authorName, capture.book.author.authorName);
+            assert.equal(body.mediaType, side);
+            assert.equal(body.id, 0);
+            assert.equal(body.localBookId, null);
+            assert.equal(body[`${side}Monitored`], true);
+            assert.equal(body[`${other}Monitored`], false);
+            assert.equal(body.addOptions.searchForNewBook, true);
+            assert.equal(body.author[`${side}RootFolderPath`], choice.root);
+            assert.equal(body.author[`${side}QualityProfileId`], choice.quality);
+            assert.equal(body.author[`${side}MetadataProfileId`], choice.metadata);
+            assert.equal(body.author[`${side}Monitored`], choice.monitored);
+            assert.equal(body.author[`${side}MonitorNewItems`], choice.newItems);
+            assert.deepEqual(body.author[`${side}Tags`], choice.tags);
+            assert.equal(body.author.addOptions.monitor, 'specificBook');
+            assert.deepEqual(body.author.addOptions.booksToMonitor, [entry.bookId]);
+            assertInactiveAuthorFields(body.author, capture.book.author, other);
+            assert.deepEqual(body.editions.map((edition) => ({ id: edition.foreignEditionId, names: edition.narratorNames, manualAdd: edition.manualAdd })), capture.book.editions.map((edition) => ({ id: edition.foreignEditionId, names: edition.narratorNames, manualAdd: edition.manualAdd })));
+          }
+          bookReceipts.push({ provider: entry.provider, mode, source: file, posted });
+        }
+      }
+    }
+  }
+  if (process.env.CHAPTARR_LAYOUT_ARTIFACTS) {
+    fs.writeFileSync(path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, 'provider-book-payloads.json'), JSON.stringify({ bookReceipts, overlays }, null, 2));
+  }
+  const audibleEntry = manifest.find((entry) => entry.provider === 'audible');
+  const missingIdBook = JSON.parse(fs.readFileSync(audibleEntry.bookCapture)).find((row) => row.book?.foreignBookId === 'az:B09G7B8XXY')?.book;
+  assert.ok(missingIdBook?.author?.authorName);
+  assert.equal(missingIdBook.author.foreignAuthorId, '');
+  await page.evaluate((book) => window.renderAddAuthorFixture('audiobook', 'captured-book', {
+    ...book, id: 0, localBookId: null, localAudiobookBooks: [], localEbookBooks: []
+  }), missingIdBook);
+  assert.equal(await page.locator('[class*="AddNewBookSearchResult-underlay"]').isDisabled(), true, 'A real provider result without an author ID stays non-addable');
+  const missingIdReceipt = { workId: missingIdBook.foreignBookId, authorName: missingIdBook.author.authorName, authorId: missingIdBook.author.foreignAuthorId, disabled: true };
+  fs.writeFileSync(path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, 'missing-provider-author-id.json'), JSON.stringify(missingIdReceipt, null, 2));
+
+  const goodreadsEntry = manifest.find((entry) => entry.provider === 'goodreads');
+  const goodreadsRows = JSON.parse(fs.readFileSync(goodreadsEntry.bookCapture));
+  const knownBooks = ['gr:113603', 'gr:220778298'].map((id) => {
+    const book = goodreadsRows.find((row) => row.book?.foreignBookId === id)?.book;
+    assert.ok(book?.author?.foreignAuthorId && book.author.authorName);
+    return { foreignBookId: id, foreignAuthorId: book.author.foreignAuthorId, authorName: book.author.authorName, title: book.title };
+  });
+  const seriesBooks = [...knownBooks, { foreignBookId: 'hc:8102', foreignAuthorId: 'hc:8002', title: 'Name Absent Control' }];
+  const selectedBooks = seriesBooks.map(({ foreignBookId, foreignAuthorId, authorName }) => ({ foreignBookId, foreignAuthorId, ...(authorName === undefined ? {} : { authorName }) }));
+  const seriesHandler = (route) => route.fulfill({ json: { foreignSeriesId: 'hc:8300', books: seriesBooks } });
+  await page.route('**/api/v1/series/lookup?*', seriesHandler);
+  await checkAddSeriesPayloads(page, seriesRequests, selectedBooks);
+  await page.unroute('**/api/v1/series/lookup?*', seriesHandler);
+
+}
+
+async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequests) {
+  const receipts = [];
+  const failures = [];
+  const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
+  const defaults = {
+    audiobook: { quality: 11, metadata: 21, monitored: false, monitor: 'all', newItems: 'new', tags: [41] },
+    ebook: { quality: 13, metadata: 23, monitored: true, monitor: 'missing', newItems: 'none', tags: [42] }
+  };
+  const manual = {
+    audiobook: { quality: 12, metadata: 22, monitored: true, monitor: 'existing', newItems: 'none', tags: [] },
+    ebook: { quality: 14, metadata: 24, monitored: false, monitor: 'none', newItems: 'all', tags: [43] }
+  };
+  for (const mode of ['audiobook', 'ebook', 'both']) {
+    await page.evaluate((value) => window.renderAddSeriesFixture(value), mode);
+    const sides = mode === 'both' ? ['audiobook', 'ebook'] : [mode];
+    for (const side of sides) {
+      await page.locator(`select[name="${side}MetadataProfileId"] option[value="${manual[side].metadata}"]`).waitFor({ state: 'attached' });
+      await setAddAuthorCheckbox(page, `${side}Monitored`, manual[side].monitored);
+      await selectAddAuthorMonitor(page, strings.InitialBookMonitoring, sides.indexOf(side), side === 'audiobook' ? strings.BooksWithFiles : strings.None);
+      await selectAddAuthorMonitor(page, strings.MonitorNewBooks, sides.indexOf(side), side === 'audiobook' ? strings.None : strings.AllNewBooks);
+      await page.locator(`select[name="${side}QualityProfileId"]`).selectOption(String(manual[side].quality));
+      await page.locator(`select[name="${side}MetadataProfileId"]`).selectOption(String(manual[side].metadata));
+      const tags = page.locator(`input[name="${side}Tags"]`);
+      await tags.focus();
+      await tags.press('Backspace');
+      if (manual[side].tags.length) {
+        await tags.fill('Chosen');
+        await tags.press('ArrowDown');
+        await tags.press('Enter');
+      }
+    }
+    for (const phase of ['manual', 'reopened']) {
+      if (phase === 'reopened') {
+        await page.locator('#portal-root [class*="ModalContent"]').waitFor({ state: 'detached' });
+        await page.evaluate(() => window.reopenAddSeriesFixture());
+        await page.locator(`select[name="${sides[0]}MetadataProfileId"] option[value="${defaults[sides[0]].metadata}"]`).waitFor({ state: 'attached' });
+      }
+      const start = seriesRequests.length;
+      const responses = sides.map((side) => page.waitForResponse((response) => {
+        const request = response.request();
+        return new URL(response.url()).pathname === '/api/v1/series/add' && request.method() === 'POST' && request.postDataJSON().selectedMediaType === side;
+      }));
+      await page.getByRole('button', { name: strings.AddSelected, exact: true }).click();
+      await Promise.all(responses);
+      const posted = seriesRequests.slice(start);
+      receipts.push({ family: 'series', mode, phase, posted });
+      try {
+        assert.equal(posted.length, sides.length);
+        for (let i = 0; i < sides.length; i++) {
+          const side = sides[i];
+          const chosen = (phase === 'manual' ? manual : defaults)[side];
+          assert.deepEqual(posted[i].body, {
+            foreignSeriesId: 'hc:8300', selectedMediaType: side,
+            selectedBooks: [{ foreignBookId: 'hc:8100', foreignAuthorId: 'hc:8000', authorName: 'Selected Search Writer' }],
+            monitor: chosen.monitor, tags: chosen.tags,
+            [`${side}Monitored`]: chosen.monitored, [`${side}MonitorExistingMode`]: chosen.monitor, [`${side}MonitorNewItems`]: chosen.newItems,
+            [`${side}RootFolderPath`]: `/fixture/${side === 'audiobook' ? 'audio' : 'ebook'}`,
+            [`${side}QualityProfileId`]: chosen.quality, [`${side}MetadataProfileId`]: chosen.metadata
+          });
+        }
+      } catch (error) {
+        failures.push({ family: 'series', mode, phase, error: error.message });
+      }
+    }
+  }
+  for (const mode of ['audiobook', 'ebook', 'both']) {
+    const sides = mode === 'both' ? ['audiobook', 'ebook'] : [mode];
+    const start = bookRequests.length;
+    const responses = sides.map((side) => page.waitForResponse((response) => {
+      const request = response.request();
+      return new URL(response.url()).pathname === '/api/v1/book' && request.method() === 'POST' && request.postDataJSON().mediaType === side;
+    }));
+    await page.evaluate((value) => window.getBookModalMetadataPayload(value, 0, false, true), mode);
+    await Promise.all(responses);
+    const posted = bookRequests.slice(start);
+    receipts.push({ family: 'book-action', mode, posted });
+    try {
+      assert.equal(posted.length, sides.length);
+      for (let i = 0; i < sides.length; i++) {
+        const side = sides[i];
+        const other = side === 'audiobook' ? 'ebook' : 'audiobook';
+        assert.equal(posted[i].body.author[`${side}MetadataProfileId`], 73, 'A zero unset sentinel uses the existing positive generic fallback');
+        assert.equal(posted[i].body.author[`${other}MetadataProfileId`], other === 'audiobook' ? 93 : 94, 'The inactive source side stays unchanged');
+      }
+    } catch (error) {
+      failures.push({ family: 'book-action', mode, error: error.message });
+    }
+  }
+  if (process.env.CHAPTARR_LAYOUT_ARTIFACTS) {
+    fs.writeFileSync(path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, 'reopen-zero-payloads.json'), JSON.stringify({ receipts, failures }, null, 2));
+  }
+  assert.deepEqual(failures, [], 'New modal openings reuse root defaults; existing positive metadata fallback excludes zero');
+}
+
 (async() => {
   const compiler = webpack(config);
   await new Promise((resolve, reject) => compiler.run((error, stats) => {
@@ -84,6 +618,15 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     const page = await browser.newPage();
     const errors = [];
     const releaseRequests = [];
+    const importRequests = [];
+    const seriesRequests = [];
+    const bookRequests = [];
+    const saveProviderWire = () => {
+      if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST && process.env.CHAPTARR_LAYOUT_ARTIFACTS) {
+        fs.mkdirSync(process.env.CHAPTARR_LAYOUT_ARTIFACTS, { recursive: true });
+        fs.writeFileSync(path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, 'provider-wire-incremental.json'), JSON.stringify({ importRequests, bookRequests, seriesRequests }, null, 2));
+      }
+    };
     const authorRequests = [];
     const grabRequests = [];
     const stopRequests = [];
@@ -99,8 +642,16 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     let holdNextBookSearch = false;
     let heldBookRequestResolver = null;
     let failNextStopRequest = false;
-    page.on('pageerror', (error) => errors.push({ type: 'pageerror', message: error.message, stack: error.stack }));
+    page.on('pageerror', (error) => {
+      errors.push({ type: 'pageerror', message: error.message, stack: error.stack });
+      if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST) {
+        console.error(error.stack);
+      }
+    });
     page.on('console', (message) => {
+      if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST && message.type() === 'error') {
+        console.error(message.text());
+      }
       if (message.type() === 'error') {
         const expectedStopError = 'Failed to load resource: the server responded with a status of 503 (Service Unavailable)';
         if (pendingExpectedStopResourceErrorCount > 0 && message.text() === expectedStopError) {
@@ -110,6 +661,11 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
         }
 
         errors.push({ type: 'console', message: message.text() });
+      }
+    });
+    page.on('response', (response) => {
+      if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST && response.status() >= 400) {
+        console.error(`HTTP ${response.status()} ${response.url()}`);
       }
     });
     page.on('requestfailed', (request) => requestFailures.push({ url: request.url(), failure: request.failure()?.errorText }));
@@ -131,6 +687,36 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
       const request = route.request();
       const url = new URL(request.url());
       const pathname = url.pathname;
+      if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST && request.resourceType() === 'image') {
+        return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+      }
+      if (pathname === '/api/v1/book' && request.method() === 'POST') {
+        bookRequests.push({ method: request.method(), pathname, body: request.postDataJSON() });
+        saveProviderWire();
+        return route.fulfill({ status: 202, json: { pendingId: 1, message: 'Book queued for import' } });
+      }
+      if (pathname === '/api/v1/series/lookup') {
+        return route.fulfill({ json: { foreignSeriesId: 'hc:8300', books: [{ foreignBookId: 'hc:8100', foreignAuthorId: 'hc:8000', authorName: 'Selected Search Writer', title: 'Selected Search Book' }] } });
+      }
+      if (pathname === '/api/v1/series/add') {
+        seriesRequests.push({ method: request.method(), pathname, body: request.postDataJSON() });
+        saveProviderWire();
+        return route.fulfill({ json: { success: true, addedAuthors: [], monitoredBooks: [], pendingAuthorImportIds: [1] } });
+      }
+      if (pathname === '/api/v1/author/import') {
+        importRequests.push({ method: request.method(), pathname, body: request.postDataJSON() });
+        saveProviderWire();
+        return route.fulfill({ status: 202, json: { pendingId: 1, message: 'Author queued for import' } });
+      }
+      if (pathname === '/api/v1/rootfolder') {
+        const roots = await page.evaluate(() => window.addAuthorFixture.roots);
+        return route.fulfill({ json: roots });
+      }
+      if (pathname === '/api/v1/qualityprofile' || pathname === '/api/v1/metadataprofile') {
+        const profiles = await page.evaluate((kind) => window.addAuthorFixture[kind], pathname.endsWith('/qualityprofile') ? 'qualityProfiles' : 'metadataProfiles');
+        const mediaType = url.searchParams.get('mediaType');
+        return route.fulfill({ json: profiles.filter((profile) => !mediaType || profile.profileType === (mediaType === 'audiobook' ? 1 : 2)) });
+      }
       if (pathname === '/api/v1/release') {
         const params = Object.fromEntries(url.searchParams);
         if (request.method() === 'DELETE') {
@@ -188,6 +774,9 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
       if (pathname.endsWith('/localization')) {
         return route.fulfill({ json: { Strings: strings } });
       }
+      if (pathname === '/Content/Images/chaptarr-logo.svg') {
+        return route.fulfill({ path: path.join(root, 'frontend/src/Content/Images/chaptarr-logo.svg'), contentType: 'image/svg+xml' });
+      }
       if (pathname === '/fixture.js') {
         return route.fulfill({ path: path.join(output, 'fixture.js'), contentType: 'text/javascript' });
       }
@@ -197,9 +786,15 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
       if (pathname !== '/') {
         return route.fulfill({ status: 404, body: '' });
       }
-      return route.fulfill({ contentType: 'text/html', body: '<!doctype html><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,apiRoot:"/api/v1"};</script><script src="/fixture.js"></script>' });
+      return route.fulfill({ contentType: 'text/html', body: '<!doctype html><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,apiRoot:"/api/v1",apiKey:"fixture"};</script><script src="/fixture.js"></script>' });
     });
     await page.goto('http://author-search.test/');
+    if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST) {
+      await checkCapturedProviderPayloads(page, importRequests, bookRequests, seriesRequests);
+      assert.deepEqual(errors, []);
+      console.log('Captured provider selected Author/Book modal and supplied Series-name payload checks passed.');
+      return;
+    }
     await page.evaluate(() => window.renderAuthorSearchFixture('filter-warning', 0, 0));
     assert.equal(await page.getByText('2 results are available behind bypassable filters.', { exact: true }).count(), 1);
     assert.equal(await page.getByText('Showing 0 of 2 results (2 filtered)', { exact: true }).count(), 0);
@@ -850,6 +1445,13 @@ function makeBookResult(bookId, title, status, releases, hiddenReleases = []) {
     assert.ok(unmountDeleteIndex < unmountAbortIndex, 'Unmount must initiate DELETE before aborting the author GET');
     assert.deepEqual(stopRequests, [{ searchId: unmountSearchId }], 'Unmount should issue only one scoped Stop request');
     heldAuthorRoutes.delete(unmountSearchId);
+
+    await checkAddAuthorPayloads(page, importRequests);
+    await checkBookModalMetadata(page);
+    await checkAddSeriesPayloads(page, seriesRequests);
+    await checkModalReopenAndZeroFallback(page, seriesRequests, bookRequests);
+    await checkCapturedProviderPayloads(page, importRequests, bookRequests, seriesRequests);
+    assert.deepEqual(errors, []);
 
     console.log('Author-search browser check passed: confirmation and media boundaries, scoped grabs, incremental/final merges, explicit Stop acceptance, retry, modal isolation, terminal cancellation, and unmount cleanup.');
   } finally {

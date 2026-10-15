@@ -156,29 +156,14 @@ class QualityProfileSelectInputConnector extends Component {
   // Render
 
   render() {
-    const {
-      className,
-      name,
-      value,
-      values,
-      hasError,
-      hasWarning,
-      ...otherProps
-    } = this.props;
-
     const { isFetching } = this.state;
 
     return (
       <SelectInput
-        className={className}
-        name={name}
-        value={value}
+        {...this.props}
         values={this.getSelectValues()}
-        hasError={hasError}
-        hasWarning={hasWarning}
         onChange={this.onChange}
-        isDisabled={isFetching}
-        {...otherProps}
+        isDisabled={this.props.isDisabled || isFetching}
       />
     );
   }
@@ -191,6 +176,7 @@ QualityProfileSelectInputConnector.propTypes = {
   values: PropTypes.arrayOf(PropTypes.object),
   hasError: PropTypes.bool,
   hasWarning: PropTypes.bool,
+  isDisabled: PropTypes.bool,
   includeNoChange: PropTypes.bool.isRequired,
   includeNoChangeDisabled: PropTypes.bool,
   includeMixed: PropTypes.bool.isRequired,

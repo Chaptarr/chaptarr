@@ -218,6 +218,30 @@ jobs:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-confirm-modal
 
+    - name: Check manual import replacement confirmation
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-manual-import-confirmation
+
+    - name: Check Wanted Authors table and actions
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+        CHAPTARR_LAYOUT_ARTIFACTS: ${{ runner.temp }}/chaptarr-wanted-authors-evidence
+      run: yarn check-wanted-authors
+
+    - name: Upload Wanted Authors evidence
+      if: ${{ !cancelled() && runner.os == 'Linux' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: wanted-authors-evidence
+        path: ${{ runner.temp }}/chaptarr-wanted-authors-evidence/*
+        retention-days: 7
+        if-no-files-found: warn
+
     - name: Check book cover scope and settings
       if: runner.os == 'Linux'
       timeout-minutes: 5
@@ -226,6 +250,9 @@ jobs:
       run: |
         yarn check-book-cover-scope
         yarn check-media-management-cover-scope
+        yarn check-import-lists
+        yarn check-backups
+        yarn check-notification-upgrade
 
     - name: Upload cover settings evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
@@ -303,8 +330,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client
+        sudo sh build-tools/install-postgres-clients.sh
 
     - name: Create databases
       shell: bash
@@ -325,7 +351,7 @@ jobs:
     - name: Test - PostgreSQL persistence
       env:
         CHAPTARR_TEST_POSTGRES_CONNECTION_STRING: "Host=localhost;Port=5432;Database=postgres;Username=chaptarr;Password=chaptarr;Pooling=false"
-      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --filter "FullyQualifiedName~ImportListExclusionServiceFixture|FullyQualifiedName~PendingAuthorImportRepositoryRetryFixture|FullyQualifiedName~MediaFileOwnershipFixture|FullyQualifiedName~SeriesRepositoryMediaTypeLinkingFixture|FullyQualifiedName~AuthorRepositoryAllAuthorPathsFixture|FullyQualifiedName~LibrarySearchServiceFixture|FullyQualifiedName~EditionFtsDeletionMigrationFixture|FullyQualifiedName~NormalizeComparisonKeysMigrationFixture|FullyQualifiedName~EditionFtsRepositoryStagedFixture|FullyQualifiedName~BookRepositoryGetLibraryBookIdsFixture"
+      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release
 
     - name: Smoke - migrate up on fresh PostgreSQL
       shell: bash

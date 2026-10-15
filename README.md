@@ -13,7 +13,7 @@ A book collection manager for audiobooks and eBooks.
 
 <div align="center"><a href='https://ko-fi.com/chaptarr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a></div>
 
-> **Chaptarr is beta software.** It is under active development. Bugs are likely; breaking changes less so, but still possible. Full disclosure: the last data loss event was in July 2025, during pre-alpha, with a tester group of roughly 30 people. Since then we've grown to over 26,000 monthly users with no reported data loss events. Still, follow good backup practice and avoid pointing it at a library you can't afford to lose.
+> **Chaptarr is beta software.** It is under active development. Bugs are likely; breaking changes less so, but still possible. Full disclosure: the last data loss event was in July 2025, during pre-alpha, with a tester group of roughly 30 people. Since then we've grown to over 31,000 monthly users with no reported data loss events. Still, follow good backup practice and avoid pointing it at a library you can't afford to lose.
 
 ## What is Chaptarr?
 
@@ -96,7 +96,11 @@ Environment variables:
 - `Chaptarr__Postgres__LogDb` (default: `chaptarr-log`)
 - `Chaptarr__Postgres__CacheDb` (default: `chaptarr-cache`)
 
-Note: Chaptarr does not create PostgreSQL databases automatically; create the databases and grant the configured user access.
+For a new installation, create the PostgreSQL databases and grant the configured user access before starting Chaptarr.
+
+System > Backup includes the main database and `config.xml` on both SQLite and PostgreSQL. Logs and cache databases are optional and excluded by default. The temporary import queue is not backed up; a restore starts with an empty queue, and the next library scan rechecks files. PostgreSQL backups use `pg_dump` and `pg_restore` from the server's major version. The 64-bit Docker images include clients for PostgreSQL 14–18; other installations need matching client tools on `PATH` or in the standard PostgreSQL installation directory.
+
+A PostgreSQL restore loads and migrates temporary databases before replacing the configured databases at restart. The configured role needs ownership of all three databases and `CREATEDB`; it does not need superuser access. The destination's PostgreSQL connection settings are preserved. Originals remain available until application startup succeeds, including listener binding. External `pg_dump`/`pg_restore` workflows remain available.
 
 ## Building from Source
 Building from source requires the .NET 10 SDK, Node.js, and Yarn. When running Chaptarr natively, install FFmpeg for your operating system and make sure both `ffmpeg` and `ffprobe` are available on the `PATH` used to start Chaptarr. Normal source builds do not bundle them automatically; the official Docker image already includes them.
