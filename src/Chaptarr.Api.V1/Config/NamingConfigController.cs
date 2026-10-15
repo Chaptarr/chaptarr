@@ -30,18 +30,13 @@ namespace Chaptarr.Api.V1.Config
             _filenameValidationService = filenameValidationService;
             _filenameBuilder = filenameBuilder;
 
-            SharedValidator.RuleFor(c => c.StandardBookFormat).ValidBookFormat();
-            SharedValidator.RuleFor(c => c.AuthorFolderFormat).ValidAuthorFolderFormat();
-
-            SharedValidator
-                .RuleFor(c => c.EbookStandardBookFormat)
-                .ValidBookFormat()
-                .When(c => c.EbookStandardBookFormat != null);
-
-            SharedValidator
-                .RuleFor(c => c.EbookAuthorFolderFormat)
-                .ValidAuthorFolderFormat()
-                .When(c => c.EbookAuthorFolderFormat != null);
+            SharedValidator.RuleFor(value => value).Custom((value, context) =>
+            {
+                foreach (var error in NzbDrone.Core.Configuration.ConfigValueValidation.ValidateNaming(value.ToModel()))
+                {
+                    context.AddFailure(error);
+                }
+            });
         }
 
         protected override NamingConfigResource GetResourceById(int id)

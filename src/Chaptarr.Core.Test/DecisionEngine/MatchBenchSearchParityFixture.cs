@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -16,6 +17,8 @@ using NzbDrone.Core.Datastore;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download.Aggregation;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.History;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -81,11 +84,44 @@ namespace Chaptarr.Core.Test.DecisionEngine
             }
         }
 
+        private sealed class RssRecall : IEditionFtsRepository
+        {
+            public List<Book> Catalog { get; init; }
+            public int Calls { get; private set; }
+            public void EnsureIndexPopulated() => RebuildIndex();
+            public bool FtsTableExists() => true;
+            public void RebuildIndex() => throw new NotSupportedException();
+            public List<EditionFtsMatch> RankEditions(IReadOnlyCollection<BookFtsMatch> recalledBooks, IReadOnlyCollection<EditionFtsFieldQuery> queries, BookMediaType mediaType, Action<EditionFtsTraceEvent> trace = null) => throw new NotSupportedException();
+
+            public List<BookFtsMatch> RecallBooks(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, Action<EditionFtsTraceEvent> trace = null, int limit = 20, bool monitoredOnly = false)
+            {
+                Assert.That(authorId, Is.Null, "RSS recall must not force a searched author.");
+                Assert.That(monitoredOnly, Is.True);
+                Calls++;
+                return Catalog.Where(book => book.MediaType == mediaType)
+                    .Select(book => new BookFtsMatch { BookId = book.Id, AuthorId = book.AuthorId, BookTitle = book.Title }).ToList();
+            }
+        }
+
+        private sealed class FailingRssAggregation : IRemoteBookAggregationService
+        {
+            public RemoteBook Augment(RemoteBook remoteBook)
+            {
+                if (remoteBook.Release.Guid == "infrastructure")
+                {
+                    throw new InvalidOperationException("Infrastructure unavailable");
+                }
+
+                return remoteBook;
+            }
+        }
+
         private sealed class TestDelayProfileService : IDelayProfileService
         {
-            public DelayProfile Add(DelayProfile profile) => throw new NotSupportedException();
+            public DelayProfile Add(DelayProfile profile, int? order = null) => throw new NotSupportedException();
             public DelayProfile Update(DelayProfile profile) => throw new NotSupportedException();
             public void Delete(int id) => throw new NotSupportedException();
+            public void Delete(IEnumerable<int> ids) => throw new NotSupportedException();
             public List<DelayProfile> All() => throw new NotSupportedException();
             public DelayProfile Get(int id) => throw new NotSupportedException();
             public List<DelayProfile> AllForTag(int tagId) => throw new NotSupportedException();
@@ -258,6 +294,192 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Assert.That(guard.BlockedRequestCount, Is.EqualTo(1));
                 Assert.That(guard.BlockedRequests.Single(), Is.EqualTo("GET offline.invalid"));
             });
+        }
+
+        [Test]
+        public void rss_runner_should_use_one_unscoped_production_batch_and_prioritize_actual_book_targets()
+        {
+            var (author, target, catalog) = MakeJamesHuntCatalog(BookMediaType.Ebook);
+            var sibling = catalog.Single(book => book.Id == 42407);
+            var otherMedia = MakeBook(42499, author, "Powerless", target.SeriesName, target.SeriesPosition, BookMediaType.Audiobook);
+            catalog.Add(otherMedia);
+            var guard = new Program.OfflineReplayHttpDispatcher();
+            var recall = new RssRecall { Catalog = catalog };
+            var maker = MakeRssDecisionMaker(author, catalog, recall, guard);
+            var rssCalls = 0;
+            var observedMaker = Proxy<IMakeDownloadDecision>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IMakeDownloadDecision.GetRssDecision)));
+                rssCalls++;
+                Assert.That((bool)args[1], Is.False);
+                return maker.GetRssDecision((List<ReleaseInfo>)args[0]);
+            });
+            var preferredDuplicate = MakeRelease("releasereplay", "same-guid", "James Hunt - Powerless (epub)", 1);
+            var reports = new[]
+            {
+                MakeRelease("releasereplay", "same-guid", "James Hunt - Powerless (epub)", 8),
+                MakeRelease("releasereplay", "sibling", "James Hunt - The Final Homestead - EMP Survival in a Powerless World (epub)", 0),
+                preferredDuplicate
+            };
+
+            var replay = RunRssReplay(observedMaker, MakePrioritizer(), guard, reports);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(rssCalls, Is.EqualTo(1));
+                Assert.That(recall.Calls, Is.EqualTo(reports.Length));
+                Assert.That(replay.Complete, Is.True);
+                Assert.That(replay.Decisions.Select(decision => decision.RemoteBook.Release.Guid), Is.EqualTo(new[] { "sibling", "same-guid", "same-guid" }));
+                Assert.That(replay.Decisions.All(decision => decision.Approved && decision.RemoteBook.DownloadAllowed), Is.True);
+                Assert.That(replay.Decisions.All(decision => decision.RemoteBook.ReleaseSource == ReleaseSourceType.Rss), Is.True);
+                Assert.That(replay.Decisions[0].RemoteBook.Books.Single(), Is.SameAs(sibling));
+                Assert.That(replay.Decisions[1].RemoteBook.Books.Single(), Is.SameAs(target));
+                Assert.That(replay.Decisions[1].RemoteBook.Release, Is.SameAs(preferredDuplicate));
+                Assert.That(replay.Decisions[2].RemoteBook.Release, Is.SameAs(reports[0]));
+                Assert.That(replay.Decisions.SelectMany(decision => decision.RemoteBook.Books), Does.Not.Contain(otherMedia));
+            });
+        }
+
+        [Test]
+        public void rss_runner_should_preserve_production_error_omission_and_healthy_neighbors()
+        {
+            var (author, _, catalog) = MakeJamesHuntCatalog(BookMediaType.Ebook);
+            var guard = new Program.OfflineReplayHttpDispatcher();
+            var maker = MakeRssDecisionMaker(author, catalog, new RssRecall { Catalog = catalog }, guard, failAggregation: true);
+            var reports = new[]
+            {
+                MakeRelease("releasereplay", "infrastructure", "James Hunt - Powerless (epub)", 0),
+                MakeRelease("releasereplay", "healthy", "James Hunt - Powerless (epub)", 0)
+            };
+
+            var replay = RunRssReplay(maker, MakePrioritizer(), guard, reports);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(replay.Decisions.Select(decision => decision.RemoteBook.Release.Guid), Is.EqualTo(new[] { "healthy" }));
+                Assert.That(replay.Decisions.Single().Approved, Is.True);
+                Assert.That(replay.Decisions.Single().RemoteBook.ReleaseSource, Is.EqualTo(ReleaseSourceType.Rss));
+                Assert.That(replay.BlockedExternalRequestCount, Is.Zero);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void rss_runner_should_withhold_complete_verdicts_for_missing_input_or_swallowed_http(bool triggerHttp)
+        {
+            var (author, _, catalog) = MakeJamesHuntCatalog(BookMediaType.Ebook);
+            var guard = new Program.OfflineReplayHttpDispatcher();
+            var maker = MakeRssDecisionMaker(author, catalog, new RssRecall { Catalog = catalog }, guard, triggerHttp: triggerHttp);
+
+            var replay = RunRssReplay(maker, MakePrioritizer(), guard,
+                new[] { MakeRelease("releasereplay", "positive", "James Hunt - Powerless (epub)", 0) },
+                hasCompleteSourceData: triggerHttp);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(replay.Decisions.Single().Approved, Is.True);
+                Assert.That(replay.Complete, Is.False);
+                Assert.That(replay.HasCompleteSourceData, Is.EqualTo(triggerHttp));
+                Assert.That(replay.BlockedExternalRequestCount, Is.EqualTo(triggerHttp ? 1 : 0));
+            });
+        }
+
+        private static Program.ProductionSearchDecisionReplay RunRssReplay(
+            IMakeDownloadDecision maker, IPrioritizeDownloadDecision prioritizer,
+            Program.OfflineReplayHttpDispatcher guard, IReadOnlyCollection<ReleaseInfo> reports,
+            bool hasCompleteSourceData = true)
+        {
+            var pending = Proxy<IPendingReleaseService>((method, args) =>
+            {
+                if (method.Name != nameof(IPendingReleaseService.GetPending))
+                {
+                    return null;
+                }
+                if (args.Length > 0)
+                {
+                    args[0] = new Dictionary<(int AuthorId, int BookId), DateTime>();
+                }
+                return new List<ReleaseInfo>();
+            });
+            var processor = new ProcessDownloadDecisions(new Program.ReplayDownloadService(), prioritizer, pending,
+                LogManager.GetCurrentClassLogger());
+            return Program.RunProductionRssDecision(maker, prioritizer, guard, reports, pending, processor, hasCompleteSourceData);
+        }
+
+        [Test]
+        public void rss_replay_should_not_claim_completeness_when_a_report_has_no_outcome()
+        {
+            var maker = Proxy<IMakeDownloadDecision>((_, _) => new List<DownloadDecision>());
+            var report = MakeRelease("releasereplay", "missing", "James Hunt - Powerless (epub)", 0);
+            var replay = RunRssReplay(maker, MakePrioritizer(), new Program.OfflineReplayHttpDispatcher(), new[] { report });
+            Assert.Multiple(() =>
+            {
+                Assert.That(replay.Complete, Is.False);
+                Assert.That(replay.UnaccountedReportCount, Is.EqualTo(1));
+                Assert.That(replay.Processed, Is.Not.Null);
+            });
+        }
+
+        [Test]
+        public void rss_replay_should_process_saved_pending_and_fresh_reports_in_the_same_real_batch()
+        {
+            var (author, target, catalog) = MakeJamesHuntCatalog(BookMediaType.Ebook);
+            var guard = new Program.OfflineReplayHttpDispatcher();
+            var recall = new RssRecall { Catalog = catalog };
+            var maker = MakeRssDecisionMaker(author, catalog, recall, guard);
+            var fresh = MakeRelease("releasereplay", "fresh", "James Hunt - Powerless (epub)", 1);
+            var saved = MakeRelease("releasereplay", "saved", "James Hunt - The Final Homestead - EMP Survival in a Powerless World (epub)", 0);
+            var reads = 0;
+            var pending = Proxy<IPendingReleaseService>((method, args) =>
+            {
+                if (method.Name == nameof(IPendingReleaseService.GetPending))
+                {
+                    if (args.Length > 0)
+                    {
+                        args[0] = new Dictionary<(int AuthorId, int BookId), DateTime>();
+                    }
+                    reads++;
+                    return new List<ReleaseInfo> { saved };
+                }
+                return null;
+            });
+            var downloads = new Program.ReplayDownloadService();
+            var prioritizer = MakePrioritizer();
+            var processor = new ProcessDownloadDecisions(downloads, prioritizer, pending, LogManager.GetCurrentClassLogger());
+            var replay = Program.RunProductionRssDecision(maker, prioritizer, guard, new[] { fresh }, pending, processor);
+            Assert.Multiple(() =>
+            {
+                Assert.That(reads, Is.EqualTo(1));
+                Assert.That(replay.Complete, Is.True);
+                Assert.That(replay.Decisions.Select(d => d.RemoteBook.Release), Is.EquivalentTo(new[] { fresh, saved }));
+                Assert.That(downloads.Planned.Select(b => b.Release), Is.EquivalentTo(new[] { fresh, saved }));
+                Assert.That(replay.Processed.Grabbed, Has.Count.EqualTo(2));
+                Assert.That(guard.BlockedRequestCount, Is.Zero);
+            });
+        }
+
+        private static DownloadDecisionMaker MakeRssDecisionMaker(Author author, List<Book> catalog, RssRecall recall,
+            Program.OfflineReplayHttpDispatcher guard, bool triggerHttp = false, bool failAggregation = false)
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var config = ConfigServiceTestProxy.Create(BookMatchingStrictness.Balanced);
+            var parsing = Proxy<IParsingService>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IParsingService.Map)));
+                var recalledIds = ((IEnumerable<int>)args[2]).ToHashSet();
+                return new RemoteBook { Author = author, Books = catalog.Where(book => recalledIds.Contains(book.Id)).ToList(), ParsedBookInfo = (ParsedBookInfo)args[0] };
+            });
+            var books = Proxy<IBookService>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IBookService.GetBooksByAuthor)));
+                return catalog;
+            });
+            return new DownloadDecisionMaker(
+                new IDecisionEngineSpecification[] { new ReleaseTitleMatchSpecification(logger, config), new MultiBookReleaseSpecification(logger) },
+                parsing, books, recall, new NoOpCustomFormatCalculationService(),
+                failAggregation ? new FailingRssAggregation() : new NoOpRemoteBookAggregationService(),
+                triggerHttp ? new SwallowingHttpNarratorMetadataEnricher(guard) : new NoOpReleaseNarratorMetadataEnricher(),
+                config, logger);
         }
 
         private static BookSearchCriteria MakeCriteria(ReleaseSearchService searchService, Author author, Book target, List<Book> catalog)

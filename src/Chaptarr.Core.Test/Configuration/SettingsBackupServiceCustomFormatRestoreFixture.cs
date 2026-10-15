@@ -402,6 +402,7 @@ namespace Chaptarr.Core.Test.Configuration
                 customFormatService,
                 null,
                 null,
+                null,
                 null);
         }
 

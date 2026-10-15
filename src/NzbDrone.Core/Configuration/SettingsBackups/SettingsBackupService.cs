@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Reflection;
@@ -23,6 +24,8 @@ using NzbDrone.Core.Notifications.AudioBookShelf;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Profiles.Delay;
+using NzbDrone.Core.Profiles.Releases;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.Tags;
@@ -35,11 +38,13 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         private const string BackupFileExtension = ".chaptarr-settings-backup.json";
         private const long MaxBackupEnvelopeBytes = 25L * 1024L * 1024L;
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+        private static readonly StringComparer ProviderNameComparer = StringComparer.InvariantCultureIgnoreCase;
         private static readonly IReadOnlyDictionary<string, Type> CustomFormatSpecificationTypes = BuildCustomFormatSpecificationTypes();
 
         private readonly IAppFolderInfo _appFolderInfo;
         private readonly IDiskProvider _diskProvider;
         private readonly IConfigService _configService;
+        private readonly IConfigFileProvider _configFileProvider;
         private readonly INamingConfigService _namingConfigService;
         private readonly IIndexerFactory _indexerFactory;
         private readonly IDownloadClientFactory _downloadClientFactory;
@@ -50,6 +55,10 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         private readonly ITagService _tagService;
         private readonly IProxyService _proxyService;
         private readonly IRemotePathMappingService _remotePathMappingService;
+        private readonly IDelayProfileService _delayProfileService;
+        private readonly IReleaseProfileService _releaseProfileService;
+        private readonly IQualityDefinitionService _qualityDefinitionService;
+        private readonly MediaManagementPathValidator _mediaPaths;
 
         public SettingsBackupService(IAppFolderInfo appFolderInfo,
                                      IDiskProvider diskProvider,
@@ -63,11 +72,17 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                                      ICustomFormatService customFormatService,
                                      ITagService tagService,
                                      IProxyService proxyService,
-                                     IRemotePathMappingService remotePathMappingService)
+                                     IRemotePathMappingService remotePathMappingService,
+                                     IConfigFileProvider configFileProvider,
+                                     IDelayProfileService delayProfileService = null,
+                                     IReleaseProfileService releaseProfileService = null,
+                                     IQualityDefinitionService qualityDefinitionService = null,
+                                     MediaManagementPathValidator mediaPaths = null)
         {
             _appFolderInfo = appFolderInfo;
             _diskProvider = diskProvider;
             _configService = configService;
+            _configFileProvider = configFileProvider;
             _namingConfigService = namingConfigService;
             _indexerFactory = indexerFactory;
             _downloadClientFactory = downloadClientFactory;
@@ -78,6 +93,10 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             _tagService = tagService;
             _proxyService = proxyService;
             _remotePathMappingService = remotePathMappingService;
+            _delayProfileService = delayProfileService;
+            _releaseProfileService = releaseProfileService;
+            _qualityDefinitionService = qualityDefinitionService;
+            _mediaPaths = mediaPaths;
         }
 
         public List<SettingsBackupLocation> GetLocations()
@@ -130,6 +149,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
         public SettingsBackupResult CreateBackup(SettingsBackupCreateRequest request)
         {
+            var timer = Stopwatch.StartNew();
             if (request == null)
             {
                 throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Request body is required");
@@ -160,6 +180,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             _diskProvider.WriteAllText(targetPath, JsonSerializer.Serialize(envelope, STJson.GetSerializerSettings()));
 
+            Logger.Info("Settings backup completed: {0} categories, {1} bytes in {2} ms", request.Categories.Count, _diskProvider.GetFileSize(targetPath), timer.ElapsedMilliseconds);
             return new SettingsBackupResult
             {
                 Path = targetPath,
@@ -170,6 +191,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
         public SettingsBackupRestoreResult RestoreBackup(SettingsBackupRestoreRequest request)
         {
+            var timer = Stopwatch.StartNew();
             if (request == null)
             {
                 throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Request body is required");
@@ -229,96 +251,239 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             }
 
             var result = new SettingsBackupRestoreResult();
+            result.Warnings.AddRange(ValidateRestore(package, categoriesToApply, _diskProvider, _mediaPaths));
             AddLegacySectionWarnings(package, categoriesToApply, result);
 
-            // Tag + CustomFormat mapping is needed for other categories.
-            var tagIdMap = RestoreTags(package, categoriesToApply, request.Mode, result);
-            var customFormatIdMap = RestoreCustomFormats(package, categoriesToApply, request.Mode, result);
-
-            if (categoriesToApply.Contains(SettingsBackupCategory.Profiles))
+            var steps = new List<(string Category, string Name, Action Apply)>();
+            void Add(SettingsBackupCategory category, string name, Action apply)
             {
-                if (request.Mode == SettingsBackupRestoreMode.Overwrite)
-                {
-                    result.Warnings.Add("Profiles are currently restored via merge/upsert; overwrite does not delete existing profiles.");
-                }
-
-                RestoreProfiles(package, customFormatIdMap, request.Mode, result);
-                result.Applied.Add("Profiles");
+                if (categoriesToApply.Contains(category)) steps.Add((CategoryName(category), name, apply));
             }
-
-            if (categoriesToApply.Contains(SettingsBackupCategory.MediaManagement))
+            Dictionary<int, int> tagIdMap = new(), customFormatIdMap = new(), proxyIdMap = new(), downloadClientIdMap = new();
+            Add(SettingsBackupCategory.Indexers, "search settings", () => RestoreIndexerSettings(package, result));
+            Add(SettingsBackupCategory.DownloadClients, "download settings", () => RestoreDownloadClientSettings(package, result));
+            Add(SettingsBackupCategory.UiSettings, "preferences", () => RestoreUiSettings(package, result));
+            if (package.Tags?.Count > 0 && categoriesToApply.Overlaps(new[] { SettingsBackupCategory.Indexers, SettingsBackupCategory.DownloadClients, SettingsBackupCategory.Connections, SettingsBackupCategory.Profiles }))
             {
-                RestoreMediaManagement(package, result);
-                result.Applied.Add("Media Management");
+                steps.Add(("Tags", "tags", () => tagIdMap = RestoreTags(package, categoriesToApply, request.Mode, result)));
             }
-
-            if (categoriesToApply.Contains(SettingsBackupCategory.MetadataServer))
-            {
-                RestoreMetadataServer(package, result);
-                result.Applied.Add("Metadata Server");
-            }
-
-            Dictionary<int, int> proxyIdMap = null;
+            Add(SettingsBackupCategory.Profiles, "custom formats", () => customFormatIdMap = RestoreCustomFormats(package, categoriesToApply, request.Mode, result));
+            Add(SettingsBackupCategory.Profiles, "metadata profiles", () => RestoreMetadataProfiles(package, result));
+            Add(SettingsBackupCategory.Profiles, "quality profiles", () => RestoreQualityProfiles(package, customFormatIdMap));
+            Add(SettingsBackupCategory.MediaManagement, "media management settings", () => RestoreMediaManagement(package, result));
+            Add(SettingsBackupCategory.MetadataServer, "metadata server settings", () => RestoreMetadataServer(package, result));
             if (categoriesToApply.Contains(SettingsBackupCategory.Proxies))
             {
-                proxyIdMap = RestoreProxies(package, request.Mode, result);
-                RestoreProxySettings(package, proxyIdMap, categoriesToApply, result);
-                result.Applied.Add("Proxy Settings");
+                Add(SettingsBackupCategory.Proxies, "proxy definitions", () => proxyIdMap = RestoreProxies(package, request.Mode, result));
+                Add(SettingsBackupCategory.Proxies, "proxy settings", () => RestoreProxySettings(package, proxyIdMap, categoriesToApply, result));
             }
-            else if (categoriesToApply.Contains(SettingsBackupCategory.Indexers))
+            else
             {
-                // Best-effort: if we aren't restoring proxies, try to map backup proxy IDs to existing proxies by name.
-                // If mapping fails, proxy references will be cleared during indexer restore to avoid broken IDs.
-                proxyIdMap = BuildProxyIdMapFromExisting(package);
+                Add(SettingsBackupCategory.Indexers, "proxy references", () => proxyIdMap = BuildProxyIdMapFromExisting(package));
             }
-
-            if (categoriesToApply.Contains(SettingsBackupCategory.Hardcover))
-            {
-                RestoreHardcover(package, result);
-                result.Applied.Add("Hardcover");
-            }
-
-            Dictionary<int, int> downloadClientIdMap = null;
+            Add(SettingsBackupCategory.Hardcover, "Hardcover settings", () => RestoreHardcover(package, result));
             if (categoriesToApply.Contains(SettingsBackupCategory.DownloadClients))
             {
-                downloadClientIdMap = RestoreDownloadClients(package, categoriesToApply, tagIdMap, request.Mode, result);
+                Add(SettingsBackupCategory.DownloadClients, "client definitions", () => downloadClientIdMap = RestoreDownloadClients(package, categoriesToApply, tagIdMap, request.Mode, result));
             }
-            else if (categoriesToApply.Contains(SettingsBackupCategory.Indexers))
+            else if (categoriesToApply.Contains(SettingsBackupCategory.Indexers) || categoriesToApply.Contains(SettingsBackupCategory.RemotePathMappings))
             {
-                // Best-effort: if we aren't restoring download clients, try to map backup download client IDs to existing clients.
-                // If mapping fails, references will be cleared during indexer restore to avoid broken IDs.
-                downloadClientIdMap = BuildDownloadClientIdMapFromExisting(package);
+                var category = categoriesToApply.Contains(SettingsBackupCategory.Indexers) ? SettingsBackupCategory.Indexers : SettingsBackupCategory.RemotePathMappings;
+                Add(category, "download client references", () => downloadClientIdMap = BuildDownloadClientIdMapFromExisting(package));
             }
+            Add(SettingsBackupCategory.Indexers, "indexer definitions", () => RestoreIndexers(package, tagIdMap, downloadClientIdMap, proxyIdMap,
+                request.Mode, result, categoriesToApply.Contains(SettingsBackupCategory.Profiles) && package.ReleaseProfiles != null && request.Mode == SettingsBackupRestoreMode.Overwrite));
+            Add(SettingsBackupCategory.Profiles, "delay profiles", () => RestoreDelayProfiles(package, tagIdMap, request.Mode, result));
+            Add(SettingsBackupCategory.Profiles, "release profiles", () => RestoreReleaseProfiles(package, tagIdMap, request.Mode, result));
+            Add(SettingsBackupCategory.Profiles, "quality sizes", () => RestoreQualitySizes(package, result));
+            Add(SettingsBackupCategory.Connections, "connections", () => RestoreConnections(package, tagIdMap, request.Mode, result));
+            Add(SettingsBackupCategory.RemotePathMappings, "remote path mappings", () => RestoreRemotePathMappings(package, downloadClientIdMap, request.Mode, result));
 
-            if (categoriesToApply.Contains(SettingsBackupCategory.Indexers))
+            if (categoriesToApply.Contains(SettingsBackupCategory.Profiles) && request.Mode == SettingsBackupRestoreMode.Overwrite)
             {
-                RestoreIndexers(
-                    package,
-                    tagIdMap,
-                    downloadClientIdMap ?? new Dictionary<int, int>(),
-                    proxyIdMap ?? new Dictionary<int, int>(),
-                    request.Mode,
-                    result);
-                result.Applied.Add("Indexers");
+                result.Warnings.Add("Quality and metadata profiles are merged by name. Overwrite replaces custom formats, delay and release profiles; existing custom-format scores are removed. Quality size limits are updated.");
             }
-
-            if (categoriesToApply.Contains(SettingsBackupCategory.Connections))
+            Logger.Info("Settings restore started: {0}, mode {1}", string.Join(", ", categoriesToApply.OrderBy(category => category).Select(CategoryName)), request.Mode);
+            for (var index = 0; index < steps.Count; index++)
             {
-                RestoreConnections(package, tagIdMap, request.Mode, result);
-                result.Applied.Add("Connections");
-            }
-
-            if (categoriesToApply.Contains(SettingsBackupCategory.RemotePathMappings))
-            {
-                if (downloadClientIdMap == null)
+                try
                 {
-                    downloadClientIdMap = BuildDownloadClientIdMapFromExisting(package);
+                    steps[index].Apply();
                 }
-
-                RestoreRemotePathMappings(package, downloadClientIdMap, request.Mode, result);
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    var completed = new List<string>();
+                    var partial = new List<string>();
+                    var unattempted = new List<string>();
+                    foreach (var group in steps.Select((step, position) => (step.Category, step.Name, Position: position)).GroupBy(step => step.Category))
+                    {
+                        if (group.All(step => step.Position < index)) completed.Add(group.Key);
+                        else if (group.All(step => step.Position > index)) unattempted.Add(group.Key);
+                        else
+                        {
+                            var done = group.Where(step => step.Position < index).Select(step => step.Name).ToList();
+                            var pending = group.Where(step => step.Position > index).Select(step => step.Name).ToList();
+                            var failed = group.SingleOrDefault(step => step.Position == index);
+                            partial.Add(group.Key + ": " + (done.Count > 0 ? string.Join(", ", done) + " completed; " : "") +
+                                (failed.Name != null ? "failed at " + failed.Name + " (may be partially changed); " : "") +
+                                (pending.Count > 0 ? string.Join(", ", pending) + " not attempted" : ""));
+                        }
+                    }
+                    string Items(List<string> items) => items.Count == 0 ? "none" : string.Join("; ", items);
+                    var message = $"Settings restore stopped at {steps[index].Category}: {steps[index].Name} ({ex.GetType().Name}). " +
+                        $"Changes were not rolled back.\nCompleted categories: {Items(completed)}.\nPartly applied categories: {Items(partial)}.\nNot attempted categories: {Items(unattempted)}.";
+                    // Provider/database exceptions can contain credentials; report location and error type, not raw values.
+                    Logger.Error("{0}", message);
+                    throw new NzbDroneClientException(HttpStatusCode.InternalServerError, message);
+                }
             }
+            result.Applied = result.Applied.Concat(steps.Select(step => step.Category)).Distinct().ToList();
 
+            Logger.Info("Settings restore completed: {0} categories, {1} warnings, {2} bytes in {3} ms", categoriesToApply.Count, result.Warnings.Count, fileSize, timer.ElapsedMilliseconds);
             return result;
+        }
+
+        private static string CategoryName(SettingsBackupCategory category) => category switch
+        {
+            SettingsBackupCategory.DownloadClients => "Download Clients",
+            SettingsBackupCategory.MediaManagement => "Media Management",
+            SettingsBackupCategory.MetadataServer => "Metadata Server",
+            SettingsBackupCategory.RemotePathMappings => "Remote Path Mappings",
+            SettingsBackupCategory.UiSettings => "Interface Preferences",
+            SettingsBackupCategory.Proxies => "Proxy Settings",
+            _ => category.ToString()
+        };
+
+        internal static List<string> ValidateRestore(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categories, IDiskProvider diskProvider = null, MediaManagementPathValidator mediaPaths = null)
+        {
+            var errors = new List<string>();
+            var warnings = new List<string>();
+            void Check(string section, object settings)
+            {
+                errors.AddRange(ConfigValueValidation.Validate(settings).Select(error => $"{section}.{error.PropertyName}: {error.ErrorMessage}"));
+            }
+            void Provider(string section, string name, string contract, JsonElement settings)
+            {
+                if (ProviderConfigTypeCache.Find(contract) == null)
+                {
+                    warnings.Add($"Skipped {section.ToLowerInvariant()} '{name}': provider type '{contract}' is not supported by this version.");
+                    return;
+                }
+                var config = DeserializeProviderSettings(contract, settings);
+                if (config == null)
+                {
+                    errors.Add($"{section} '{name}': unsupported provider settings.");
+                    return;
+                }
+                errors.AddRange(config.Validate().Errors.Select(error => $"{section} '{name}'.{error.PropertyName}: {error.ErrorMessage}"));
+            }
+            if (categories.Contains(SettingsBackupCategory.MetadataServer) && package.MetadataServerUrl.IsNotNullOrWhiteSpace() && !package.MetadataServerUrl.IsValidHttpUrl())
+            {
+                errors.Add("Metadata server URL: enter a valid absolute URL.");
+            }
+            if (categories.Contains(SettingsBackupCategory.UiSettings))
+            {
+                Check("Interface preferences", package.UiSettings);
+            }
+            if (categories.Contains(SettingsBackupCategory.MediaManagement))
+            {
+                NormalizeLegacyConversionSettings(package.MediaManagement);
+                Check("Media management", package.MediaManagement);
+                if (package.MediaManagement != null && mediaPaths != null)
+                {
+                    errors.AddRange(mediaPaths.Validate(new MediaManagementPathSettings
+                    {
+                        RecycleBin = package.MediaManagement.RecycleBin, ChmodFolder = package.MediaManagement.ChmodFolder
+                    }).Errors.Select(error => $"Media management.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+                if (package.MediaManagement?.NamingConfig != null)
+                {
+                    errors.AddRange(ConfigValueValidation.ValidateNaming(package.MediaManagement.NamingConfig).Select(error => $"Naming.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.Indexers))
+            {
+                Check("Indexers", package.IndexerSettings);
+                foreach (var item in package.Indexers)
+                {
+                    Provider("Indexer", item.Name, item.ConfigContract, item.Settings);
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.DownloadClients))
+            {
+                Check("Download clients", package.DownloadClientSettings);
+                foreach (var item in package.DownloadClients)
+                {
+                    Provider("Download client", item.Name, item.ConfigContract, item.Settings);
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.Connections))
+            {
+                foreach (var item in package.Connections)
+                {
+                    Provider("Connection", item.Name, item.ConfigContract, item.Settings);
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.Profiles))
+            {
+                foreach (var format in package.CustomFormats ?? new())
+                {
+                    var converted = FromBackup(format, new SettingsBackupRestoreResult());
+                    errors.AddRange(converted.Specifications.SelectMany(specification => specification.Validate().Errors)
+                        .Select(error => $"Custom format '{format.Name}'.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+                foreach (var profile in package.QualityProfiles)
+                {
+                    errors.AddRange(new QualityProfileValidator().Validate(CloneQualityProfile(profile, null)).Errors.Select(error => $"Quality profile '{profile.Name}'.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+                foreach (var profile in package.DelayProfiles ?? new())
+                {
+                    errors.AddRange(ConfigValueValidation.ValidateDelayProfile(profile).Select(error => $"Delay profile {profile.Id}.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+                foreach (var profile in package.ReleaseProfiles ?? new())
+                {
+                    errors.AddRange(ConfigValueValidation.ValidateReleaseProfile(profile).Select(error => $"Release profile {profile.Id}.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.Profiles))
+            {
+                foreach (var profile in package.MetadataProfiles.Where(profile => !string.Equals(profile.Name, "None", StringComparison.OrdinalIgnoreCase)))
+                {
+                    errors.AddRange(ConfigValueValidation.ValidateMetadataProfile(profile).Select(error => $"Metadata profile '{profile.Name}'.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.Proxies))
+            {
+                Check("Proxy settings", package.ProxySettings);
+                foreach (var proxy in package.Proxies)
+                {
+                    errors.AddRange(ConfigValueValidation.ValidateProxy(new ProxyDefinition { Name = proxy.Name, Hostname = proxy.Hostname, Port = proxy.Port, ProxyType = proxy.ProxyType })
+                        .Select(error => $"Proxy '{proxy.Name}'.{error.PropertyName}: {error.ErrorMessage}"));
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.RemotePathMappings))
+            {
+                foreach (var mapping in package.RemotePathMappings)
+                {
+                    try
+                    {
+                        RemotePathMappingService.ValidateMapping(new(), new RemotePathMapping
+                        {
+                            DownloadClientId = mapping.DownloadClientId, Host = mapping.Host,
+                            RemotePath = mapping.RemotePath, LocalPath = mapping.LocalPath
+                        }, diskProvider, checkDuplicates: false);
+                    }
+                    catch (FluentValidation.ValidationException ex)
+                    {
+                        errors.AddRange(ex.Errors.Select(error => $"Remote path mapping '{mapping.Host}: {mapping.RemotePath}'.{error.PropertyName}: {error.ErrorMessage}"));
+                    }
+                }
+            }
+            if (errors.Count > 0)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "No settings were restored. Correct these backup values: " + string.Join("; ", errors));
+            }
+            return warnings;
         }
 
         internal static void AddLegacySectionWarnings(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categoriesToApply, SettingsBackupRestoreResult result)
@@ -342,10 +507,13 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 Categories = categories.ToList()
             };
 
+            var indexers = categories.Contains(SettingsBackupCategory.Indexers) || categories.Contains(SettingsBackupCategory.Profiles)
+                ? _indexerFactory.All() : new List<IndexerDefinition>();
             // Always include tags when any selected category can reference tags.
             if (categories.Contains(SettingsBackupCategory.Indexers) ||
                 categories.Contains(SettingsBackupCategory.DownloadClients) ||
-                categories.Contains(SettingsBackupCategory.Connections))
+                categories.Contains(SettingsBackupCategory.Connections) ||
+                categories.Contains(SettingsBackupCategory.Profiles))
             {
                 package.Tags = _tagService.All()
                     .Select(t => new TagBackup { Id = t.Id, Label = t.Label })
@@ -356,7 +524,6 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             if (categories.Contains(SettingsBackupCategory.Indexers))
             {
-                var indexers = _indexerFactory.All();
                 package.Indexers = indexers.Select(ToBackup).ToList();
                 package.Counts["indexers"] = package.Indexers.Count;
             }
@@ -404,6 +571,13 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 package.CustomFormats = _customFormatService.All().Select(ToBackup).ToList();
                 package.QualityProfiles = _qualityProfileService.All().Select(ToBackup).ToList();
                 package.MetadataProfiles = _metadataProfileService.All();
+                package.DelayProfiles = _delayProfileService.All();
+                package.ReleaseProfiles = _releaseProfileService.All();
+                package.QualityDefinitions = _qualityDefinitionService.All();
+                package.IndexerNames = indexers.ToDictionary(indexer => indexer.Id, indexer => indexer.Name);
+                package.Counts["delayProfiles"] = package.DelayProfiles.Count;
+                package.Counts["releaseProfiles"] = package.ReleaseProfiles.Count;
+                package.Counts["qualityDefinitions"] = package.QualityDefinitions.Count;
 
                 package.Counts["customFormats"] = package.CustomFormats.Count;
                 package.Counts["qualityProfiles"] = package.QualityProfiles.Count;
@@ -415,6 +589,15 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 package.MediaManagement = new MediaManagementBackup
                 {
                     AutoUnmonitorPreviouslyDownloadedBooks = _configService.AutoUnmonitorPreviouslyDownloadedBooks,
+                    WriteAudioTags = _configService.WriteAudioTags,
+                    ScrubAudioTags = _configService.ScrubAudioTags,
+                    WriteBookTags = _configService.WriteBookTags,
+                    UpdateCovers = _configService.UpdateCovers,
+                    EmbedMetadata = _configService.EmbedMetadata,
+                    CoverDownloadScope = _configService.CoverDownloadScope,
+                    BookMatchingStrictness = _configService.BookMatchingStrictness,
+                    UsePathAsTagsFallback = _configService.UsePathAsTagsFallback,
+                    AutoAddMissingAuthorsFromCompletedDownloads = _configService.AutoAddMissingAuthorsFromCompletedDownloads,
                     RecycleBin = _configService.RecycleBin,
                     RecycleBinCleanupDays = _configService.RecycleBinCleanupDays,
                     DownloadPropersAndRepacks = _configService.DownloadPropersAndRepacks,
@@ -466,6 +649,48 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 };
 
                 package.Counts["hardcover"] = 1;
+            }
+
+            if (categories.Contains(SettingsBackupCategory.Indexers))
+            {
+                package.IndexerSettings = new IndexerSettingsBackup
+                {
+                    Retention = _configService.Retention,
+                    RssSyncInterval = _configService.RssSyncInterval,
+                    MaximumSize = _configService.MaximumSize,
+                    MinimumAge = _configService.MinimumAge
+                };
+            }
+
+            if (categories.Contains(SettingsBackupCategory.DownloadClients))
+            {
+                package.DownloadClientSettings = new DownloadClientSettingsBackup
+                {
+                    DownloadClientWorkingFolders = _configService.DownloadClientWorkingFolders,
+                    DownloadClientHistoryLimit = _configService.DownloadClientHistoryLimit,
+                    EnableCompletedDownloadHandling = _configService.EnableCompletedDownloadHandling,
+                    AutoRedownloadFailed = _configService.AutoRedownloadFailed,
+                    AutoRedownloadFailedFromInteractiveSearch = _configService.AutoRedownloadFailedFromInteractiveSearch
+                };
+            }
+
+            if (categories.Contains(SettingsBackupCategory.UiSettings))
+            {
+                package.UiSettings = new UiSettingsBackup
+                {
+                    FirstDayOfWeek = _configService.FirstDayOfWeek,
+                    CalendarWeekColumnHeader = _configService.CalendarWeekColumnHeader,
+                    ShortDateFormat = _configService.ShortDateFormat,
+                    LongDateFormat = _configService.LongDateFormat,
+                    TimeFormat = _configService.TimeFormat,
+                    ShowRelativeDates = _configService.ShowRelativeDates,
+                    EnableColorImpairedMode = _configService.EnableColorImpairedMode,
+                    UILanguage = _configService.UILanguage,
+                    Theme = _configFileProvider.Theme,
+                    AddNewDefaultMediaType = _configService.AddNewDefaultMediaType
+                };
+
+                package.Counts["uiSettings"] = 1;
             }
 
             return package;
@@ -543,6 +768,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 OnBookFileDelete = definition.OnBookFileDelete,
                 OnBookFileDeleteForUpgrade = definition.OnBookFileDeleteForUpgrade,
                 OnHealthIssue = definition.OnHealthIssue,
+                IncludeHealthWarnings = definition.IncludeHealthWarnings,
                 OnHealthRestored = definition.OnHealthRestored,
                 OnDownloadFailure = definition.OnDownloadFailure,
                 OnImportFailure = definition.OnImportFailure,
@@ -645,7 +871,8 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             if (!categoriesToApply.Contains(SettingsBackupCategory.Indexers) &&
                 !categoriesToApply.Contains(SettingsBackupCategory.DownloadClients) &&
-                !categoriesToApply.Contains(SettingsBackupCategory.Connections))
+                !categoriesToApply.Contains(SettingsBackupCategory.Connections) &&
+                !categoriesToApply.Contains(SettingsBackupCategory.Profiles))
             {
                 return map;
             }
@@ -877,8 +1104,118 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 .ToDictionary(t => t.Name, t => t, StringComparer.OrdinalIgnoreCase);
         }
 
-        private void RestoreProfiles(SettingsBackupPackage package, Dictionary<int, int> customFormatIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
+        private void RestoreDelayProfiles(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
         {
+            if (package.DelayProfiles != null)
+            {
+                var current = _delayProfileService.All();
+                if (mode == SettingsBackupRestoreMode.Overwrite)
+                {
+                    _delayProfileService.Delete(current.Where(profile => profile.Id != 1).Select(profile => profile.Id).ToList());
+                    current.RemoveAll(profile => profile.Id != 1);
+                }
+                foreach (var saved in package.DelayProfiles.OrderBy(profile => profile.Order))
+                {
+                    var tags = saved.Tags.Select(tag => tagIdMap.GetValueOrDefault(tag)).Where(tag => tag > 0).ToHashSet();
+                    if (tags.Count != saved.Tags.Count || (saved.Id != 1 && tags.Count == 0))
+                    {
+                        result.Warnings.Add($"Skipped delay profile {saved.Id}: one or more tags were not restored.");
+                        continue;
+                    }
+                    var existing = current.FirstOrDefault(profile => profile.Tags.SetEquals(tags));
+                    if (existing == null && current.Any(profile => profile.Tags.Overlaps(tags)))
+                    {
+                        var labels = package.Tags.Where(tag => saved.Tags.Contains(tag.Id)).Select(tag => tag.Label);
+                        result.Warnings.Add($"Skipped delay profile for tags {string.Join(", ", labels)}: its tags overlap an existing delay profile.");
+                        continue;
+                    }
+                    saved.Tags = tags;
+                    if (existing != null)
+                    {
+                        saved.Id = existing.Id;
+                        saved.Order = mode == SettingsBackupRestoreMode.Merge ? existing.Order : saved.Order;
+                        _delayProfileService.Update(saved);
+                        current.Remove(existing);
+                        current.Add(saved);
+                    }
+                    else
+                    {
+                        saved.Id = 0;
+                        var restored = _delayProfileService.Add(saved, mode == SettingsBackupRestoreMode.Overwrite ? saved.Order : current.Where(profile => profile.Id != 1).Select(profile => profile.Order).DefaultIfEmpty(-1).Max() + 1);
+                        current.Add(restored);
+                    }
+                }
+                if (mode == SettingsBackupRestoreMode.Merge && package.DelayProfiles.Count > 0)
+                {
+                    result.Applied.Add("Delay profiles: existing priority order kept; new profiles appended in backup order");
+                }
+            }
+        }
+
+        private void RestoreReleaseProfiles(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
+        {
+            if (package.ReleaseProfiles != null)
+            {
+                var current = _releaseProfileService.All();
+                var indexers = _indexerFactory.All().GroupBy(indexer => indexer.Name, ProviderNameComparer)
+                    .ToDictionary(group => group.Key, group => group.Min(indexer => indexer.Id), ProviderNameComparer);
+                if (mode == SettingsBackupRestoreMode.Overwrite)
+                {
+                    _releaseProfileService.Delete(current.Select(profile => profile.Id).ToList());
+                    current.Clear();
+                }
+                foreach (var saved in package.ReleaseProfiles)
+                {
+                    var tags = saved.Tags.Select(tag => tagIdMap.GetValueOrDefault(tag)).Where(tag => tag > 0).ToHashSet();
+                    var indexerId = 0;
+                    if (tags.Count != saved.Tags.Count || (saved.IndexerId != 0 &&
+                        (!package.IndexerNames.TryGetValue(saved.IndexerId, out var name) || !indexers.TryGetValue(name, out indexerId))))
+                    {
+                        result.Warnings.Add($"Skipped release profile {saved.Id}: its tags or indexer '{package.IndexerNames.GetValueOrDefault(saved.IndexerId)}' were not restored.");
+                        continue;
+                    }
+                    var existing = current.FirstOrDefault(profile => profile.IndexerId == indexerId && profile.Tags.SetEquals(tags) &&
+                        profile.Required.ToHashSet(StringComparer.InvariantCultureIgnoreCase).SetEquals(saved.Required) && profile.Ignored.ToHashSet(StringComparer.InvariantCultureIgnoreCase).SetEquals(saved.Ignored));
+                    saved.Tags = tags;
+                    saved.IndexerId = indexerId;
+                    saved.Id = existing?.Id ?? 0;
+                    if (existing != null)
+                    {
+                        _releaseProfileService.Update(saved);
+                        current.Remove(existing);
+                        current.Add(saved);
+                    }
+                    else
+                    {
+                        current.Add(_releaseProfileService.Add(saved));
+                    }
+                }
+            }
+        }
+
+        private void RestoreQualitySizes(SettingsBackupPackage package, SettingsBackupRestoreResult result)
+        {
+            if (package.QualityDefinitions != null)
+            {
+                var current = _qualityDefinitionService.All().ToDictionary(definition => definition.Quality);
+                var updates = new List<QualityDefinition>();
+                foreach (var saved in package.QualityDefinitions)
+                {
+                    if (!current.TryGetValue(saved.Quality, out var definition))
+                    {
+                        result.Warnings.Add($"Skipped unknown quality '{saved.Quality}' from the backup.");
+                        continue;
+                    }
+                    saved.Id = definition.Id;
+                    updates.Add(saved);
+                }
+                _qualityDefinitionService.UpdateMany(updates);
+            }
+        }
+
+        private void RestoreMetadataProfiles(SettingsBackupPackage package, SettingsBackupRestoreResult result)
+        {
+            var metadataProfiles = _metadataProfileService.All();
             foreach (var profile in package.MetadataProfiles ?? new List<MetadataProfile>())
             {
                 if (profile == null || profile.Name.IsNullOrWhiteSpace())
@@ -904,13 +1241,13 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     Ignored = profile.Ignored ?? new List<string>()
                 };
 
-                if (restored.Name == MetadataProfileService.NONE_PROFILE_NAME)
+                if (string.Equals(restored.Name, MetadataProfileService.NONE_PROFILE_NAME, StringComparison.OrdinalIgnoreCase))
                 {
                     result.Warnings.Add("Skipping built-in metadata profile 'None' (cannot be modified)");
                     continue;
                 }
 
-                var existing = _metadataProfileService.All().FirstOrDefault(p => p.Name == restored.Name && p.ProfileType == restored.ProfileType);
+                var existing = metadataProfiles.FirstOrDefault(p => p.Name == restored.Name && p.ProfileType == restored.ProfileType);
                 if (existing != null)
                 {
                     restored.Id = existing.Id;
@@ -918,11 +1255,15 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     continue;
                 }
 
-                _metadataProfileService.Add(restored);
+                metadataProfiles.Add(_metadataProfileService.Add(restored));
             }
 
-            var qualityProfileIdMap = new Dictionary<int, int>();
+        }
 
+        private void RestoreQualityProfiles(SettingsBackupPackage package, Dictionary<int, int> customFormatIdMap)
+        {
+            var qualityProfiles = _qualityProfileService.All();
+            var customFormats = _customFormatService.All();
             foreach (var profile in package.QualityProfiles ?? new List<QualityProfileBackup>())
             {
                 if (profile == null || profile.Name.IsNullOrWhiteSpace())
@@ -931,22 +1272,98 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 }
 
                 var restored = CloneQualityProfile(profile, customFormatIdMap);
-                QualityProfileService.ReconcileCustomFormatMembership(restored, _customFormatService.All());
+                QualityProfileService.ReconcileCustomFormatMembership(restored, customFormats);
 
-                var existing = _qualityProfileService.All().FirstOrDefault(p => p.Name == restored.Name && p.ProfileType == restored.ProfileType);
+                var existing = qualityProfiles.FirstOrDefault(p => p.Name == restored.Name && p.ProfileType == restored.ProfileType);
                 if (existing != null)
                 {
                     restored.Id = existing.Id;
                     _qualityProfileService.Update(restored);
-                    qualityProfileIdMap[profile.EffectiveOriginalId] = existing.Id;
                     continue;
                 }
 
                 restored.Id = 0;
-                var created = _qualityProfileService.Add(restored);
-                qualityProfileIdMap[profile.EffectiveOriginalId] = created.Id;
+                qualityProfiles.Add(_qualityProfileService.Add(restored));
             }
 
+        }
+
+        private void RestoreIndexerSettings(SettingsBackupPackage package, SettingsBackupRestoreResult result)
+        {
+            var settings = package.IndexerSettings;
+            if (settings == null)
+            {
+                return;
+            }
+            _configService.SaveConfigDictionary(new Dictionary<string, object>
+            {
+                [nameof(IConfigService.Retention)] = settings.Retention,
+                [nameof(IConfigService.RssSyncInterval)] = settings.RssSyncInterval,
+                [nameof(IConfigService.MaximumSize)] = settings.MaximumSize,
+                [nameof(IConfigService.MinimumAge)] = settings.MinimumAge
+            });
+        }
+
+        private void RestoreDownloadClientSettings(SettingsBackupPackage package, SettingsBackupRestoreResult result)
+        {
+            var settings = package.DownloadClientSettings;
+            if (settings == null)
+            {
+                return;
+            }
+            _configService.SaveConfigDictionary(new Dictionary<string, object>
+            {
+                [nameof(IConfigService.DownloadClientWorkingFolders)] = settings.DownloadClientWorkingFolders,
+                [nameof(IConfigService.DownloadClientHistoryLimit)] = settings.DownloadClientHistoryLimit,
+                [nameof(IConfigService.EnableCompletedDownloadHandling)] = settings.EnableCompletedDownloadHandling,
+                [nameof(IConfigService.AutoRedownloadFailed)] = settings.AutoRedownloadFailed,
+                [nameof(IConfigService.AutoRedownloadFailedFromInteractiveSearch)] = settings.AutoRedownloadFailedFromInteractiveSearch
+            });
+        }
+
+        private void RestoreUiSettings(SettingsBackupPackage package, SettingsBackupRestoreResult result)
+        {
+            var settings = package.UiSettings;
+            if (settings == null)
+            {
+                result.Warnings.Add("No interface preferences present in backup");
+                return;
+            }
+
+            // Older backups omit the theme; preserve the destination's choice in that case.
+            if (!string.IsNullOrWhiteSpace(settings.Theme))
+            {
+                _configFileProvider.SaveConfigDictionary(new Dictionary<string, object>
+                {
+                    [nameof(IConfigFileProvider.Theme)] = settings.Theme
+                });
+            }
+
+            _configService.SaveConfigDictionary(new Dictionary<string, object>
+            {
+                [nameof(IConfigService.FirstDayOfWeek)] = settings.FirstDayOfWeek,
+                [nameof(IConfigService.CalendarWeekColumnHeader)] = settings.CalendarWeekColumnHeader,
+                [nameof(IConfigService.ShortDateFormat)] = settings.ShortDateFormat,
+                [nameof(IConfigService.LongDateFormat)] = settings.LongDateFormat,
+                [nameof(IConfigService.TimeFormat)] = settings.TimeFormat,
+                [nameof(IConfigService.ShowRelativeDates)] = settings.ShowRelativeDates,
+                [nameof(IConfigService.EnableColorImpairedMode)] = settings.EnableColorImpairedMode,
+                [nameof(IConfigService.UILanguage)] = settings.UILanguage,
+                [nameof(IConfigService.AddNewDefaultMediaType)] = settings.AddNewDefaultMediaType
+            });
+        }
+
+        private static void NormalizeLegacyConversionSettings(MediaManagementBackup settings)
+        {
+            if (settings == null) return;
+            if (settings.AudiobookConversionConcurrentConversions == 0)
+                settings.AudiobookConversionConcurrentConversions = settings.AudiobookConversionConcurrentDownloads > 0 ? settings.AudiobookConversionConcurrentDownloads : 1;
+            if (settings.AudiobookConversionMaxCpuThreads == 0)
+                settings.AudiobookConversionMaxCpuThreads = Math.Max(settings.AudiobookConversionConcurrentConversions, settings.AudiobookConversionThreads > 0 ? settings.AudiobookConversionThreads : 4);
+            if (settings.AudiobookConversionMaxBitrate == 0) settings.AudiobookConversionMaxBitrate = 64;
+            if (string.IsNullOrWhiteSpace(settings.AudiobookConversionAudioChannels)) settings.AudiobookConversionAudioChannels = "source";
+            if (string.IsNullOrWhiteSpace(settings.AudiobookConversionTagMode)) settings.AudiobookConversionTagMode = ConversionTagModes.Preserve;
+            if (string.IsNullOrWhiteSpace(settings.EbookConversionTargetFormat)) settings.EbookConversionTargetFormat = "epub";
         }
 
         private void RestoreMediaManagement(SettingsBackupPackage package, SettingsBackupRestoreResult result)
@@ -958,7 +1375,49 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             }
 
             var mm = package.MediaManagement;
+            NormalizeLegacyConversionSettings(mm);
+            if (mm.WriteAudioTags.HasValue)
+            {
+                _configService.WriteAudioTags = mm.WriteAudioTags.Value;
+            }
+            if (mm.ScrubAudioTags.HasValue)
+            {
+                _configService.ScrubAudioTags = mm.ScrubAudioTags.Value;
+            }
+            if (mm.WriteBookTags.HasValue)
+            {
+                _configService.WriteBookTags = mm.WriteBookTags.Value;
+            }
+            if (mm.UpdateCovers.HasValue)
+            {
+                _configService.UpdateCovers = mm.UpdateCovers.Value;
+            }
+            if (mm.EmbedMetadata.HasValue)
+            {
+                _configService.EmbedMetadata = mm.EmbedMetadata.Value;
+            }
+
             _configService.AutoUnmonitorPreviouslyDownloadedBooks = mm.AutoUnmonitorPreviouslyDownloadedBooks;
+            // Older backups omit these fields and must preserve the destination's settings.
+            if (mm.CoverDownloadScope.HasValue)
+            {
+                _configService.CoverDownloadScope = mm.CoverDownloadScope.Value;
+            }
+
+            if (mm.BookMatchingStrictness.HasValue)
+            {
+                _configService.BookMatchingStrictness = mm.BookMatchingStrictness.Value;
+            }
+
+            if (mm.UsePathAsTagsFallback.HasValue)
+            {
+                _configService.UsePathAsTagsFallback = mm.UsePathAsTagsFallback.Value;
+            }
+
+            if (mm.AutoAddMissingAuthorsFromCompletedDownloads.HasValue)
+            {
+                _configService.AutoAddMissingAuthorsFromCompletedDownloads = mm.AutoAddMissingAuthorsFromCompletedDownloads.Value;
+            }
             _configService.RecycleBin = mm.RecycleBin ?? string.Empty;
             _configService.RecycleBinCleanupDays = mm.RecycleBinCleanupDays;
             _configService.DownloadPropersAndRepacks = mm.DownloadPropersAndRepacks;
@@ -978,18 +1437,14 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             _configService.CopyUsingHardlinks = mm.CopyUsingHardlinks;
             _configService.ImportExtraFiles = mm.ImportExtraFiles;
             _configService.ExtraFileExtensions = mm.ExtraFileExtensions ?? string.Empty;
-            var audiobookConversionConcurrentConversions = mm.AudiobookConversionConcurrentConversions > 0
-                ? mm.AudiobookConversionConcurrentConversions
-                : (mm.AudiobookConversionConcurrentDownloads > 0 ? mm.AudiobookConversionConcurrentDownloads : 1);
-            var audiobookConversionMaxCpuThreads = mm.AudiobookConversionMaxCpuThreads > 0 ? mm.AudiobookConversionMaxCpuThreads : (mm.AudiobookConversionThreads > 0 ? mm.AudiobookConversionThreads : 4);
-            _configService.AudiobookConversionConcurrentConversions = audiobookConversionConcurrentConversions;
-            _configService.AudiobookConversionMaxBitrate = mm.AudiobookConversionMaxBitrate > 0 ? mm.AudiobookConversionMaxBitrate : 64;
-            _configService.AudiobookConversionMaxCpuThreads = Math.Max(audiobookConversionConcurrentConversions, audiobookConversionMaxCpuThreads);
+            _configService.AudiobookConversionConcurrentConversions = mm.AudiobookConversionConcurrentConversions;
+            _configService.AudiobookConversionMaxBitrate = mm.AudiobookConversionMaxBitrate;
+            _configService.AudiobookConversionMaxCpuThreads = mm.AudiobookConversionMaxCpuThreads;
             _configService.AudiobookConversionNoUpscale = mm.AudiobookConversionNoUpscale;
-            _configService.AudiobookConversionAudioChannels = string.IsNullOrWhiteSpace(mm.AudiobookConversionAudioChannels) ? "source" : mm.AudiobookConversionAudioChannels;
-            _configService.AudiobookConversionTagMode = string.IsNullOrWhiteSpace(mm.AudiobookConversionTagMode) ? ConversionTagModes.Preserve : mm.AudiobookConversionTagMode;
+            _configService.AudiobookConversionAudioChannels = mm.AudiobookConversionAudioChannels;
+            _configService.AudiobookConversionTagMode = mm.AudiobookConversionTagMode;
             _configService.EbookConversionEnabled = mm.EbookConversionEnabled;
-            _configService.EbookConversionTargetFormat = string.IsNullOrWhiteSpace(mm.EbookConversionTargetFormat) ? "epub" : mm.EbookConversionTargetFormat;
+            _configService.EbookConversionTargetFormat = mm.EbookConversionTargetFormat;
 
             if (mm.NamingConfig != null)
             {
@@ -1266,6 +1721,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 }
             }
 
+            var clientsByName = _downloadClientFactory.All().Where(client => client.Name.IsNotNullOrWhiteSpace()).ToLookup(client => client.Name, ProviderNameComparer);
             var existingLookup = mode == SettingsBackupRestoreMode.Merge
                 ? _remotePathMappingService.All()
                 : new List<RemotePathMapping>();
@@ -1278,7 +1734,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     continue;
                 }
 
-                var downloadClientId = ResolveRemotePathMappingDownloadClientId(backup, downloadClientIdMap);
+                var downloadClientId = ResolveRemotePathMappingDownloadClientId(backup, downloadClientIdMap, clientsByName);
                 if (!downloadClientId.HasValue)
                 {
                     var clientLabel = backup.DownloadClientName.IsNotNullOrWhiteSpace()
@@ -1316,7 +1772,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             result.Applied.Add("Remote Path Mappings");
         }
 
-        private int? ResolveRemotePathMappingDownloadClientId(RemotePathMappingBackup backup, Dictionary<int, int> downloadClientIdMap)
+        private static int? ResolveRemotePathMappingDownloadClientId(RemotePathMappingBackup backup, Dictionary<int, int> downloadClientIdMap, ILookup<string, DownloadClientDefinition> clientsByName)
         {
             if (backup.DownloadClientId <= 0)
             {
@@ -1330,8 +1786,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             if (backup.DownloadClientName.IsNotNullOrWhiteSpace())
             {
-                var existing = _downloadClientFactory.All()
-                    .FirstOrDefault(d => string.Equals(d.Name, backup.DownloadClientName, StringComparison.OrdinalIgnoreCase));
+                var existing = clientsByName[backup.DownloadClientName].FirstOrDefault();
 
                 if (existing != null)
                 {
@@ -1419,18 +1874,33 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             return map;
         }
 
-        private void RestoreIndexers(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, Dictionary<int, int> downloadClientIdMap, Dictionary<int, int> proxyIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
+        private void RestoreIndexers(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, Dictionary<int, int> downloadClientIdMap, Dictionary<int, int> proxyIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result, bool replaceReleaseProfiles = false)
         {
             var clearedDownloadClientRefs = 0;
             var clearedProxyRefs = 0;
             var resetLegacyMamWedgePreferences = 0;
+            var existingIndexers = _indexerFactory.All();
 
             if (mode == SettingsBackupRestoreMode.Overwrite)
             {
-                var existing = _indexerFactory.All().Select(i => i.Id).ToList();
-                if (existing.Count > 0)
+                var restoredNames = (package.Indexers ?? new()).Select(indexer => indexer.Name).ToHashSet(ProviderNameComparer);
+                var references = replaceReleaseProfiles || existingIndexers.Count == 0
+                    ? new Dictionary<int, List<int>>()
+                    : _releaseProfileService.All().GroupBy(profile => profile.IndexerId)
+                        .ToDictionary(group => group.Key, group => group.Select(profile => profile.Id).ToList());
+                var removedIndexers = existingIndexers.Where(indexer => !restoredNames.Contains(indexer.Name)).ToList();
+                var removed = removedIndexers.Select(indexer => indexer.Id).ToHashSet();
+                foreach (var indexer in removedIndexers)
                 {
-                    _indexerFactory.Delete(existing);
+                    if (references.TryGetValue(indexer.Id, out var profiles))
+                    {
+                        result.Warnings.Add($"Deleted indexer '{indexer.Name}': release profile(s) {string.Join(", ", profiles)} still reference it and will no longer apply to any indexer.");
+                    }
+                }
+                if (removed.Count > 0)
+                {
+                    _indexerFactory.Delete(removed.ToList());
+                    existingIndexers.RemoveAll(indexer => removed.Contains(indexer.Id));
                 }
             }
 
@@ -1457,19 +1927,16 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     clearedProxyRefs++;
                 }
 
-                if (mode == SettingsBackupRestoreMode.Merge)
+                var existing = existingIndexers.FirstOrDefault(indexer => ProviderNameComparer.Equals(indexer.Name, restored.Name));
+                if (existing != null)
                 {
-                    var existing = _indexerFactory.All().FirstOrDefault(d => d.Implementation == restored.Implementation && d.Name == restored.Name);
-                    if (existing != null)
-                    {
-                        restored.Id = existing.Id;
-                        _indexerFactory.Update(restored);
-                        continue;
-                    }
+                    restored.Id = existing.Id;
+                    _indexerFactory.Update(restored);
+                    continue;
                 }
 
                 restored.Id = 0;
-                _indexerFactory.Create(restored);
+                existingIndexers.Add(_indexerFactory.Create(restored));
             }
 
             if (clearedDownloadClientRefs > 0)
@@ -1533,6 +2000,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     if (existing != null)
                     {
                         restored.Id = existing.Id;
+                        restored.IncludeHealthWarnings = backup.IncludeHealthWarnings ?? existing.IncludeHealthWarnings;
                         _notificationFactory.Update(restored);
                         continue;
                     }
@@ -1677,6 +2145,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 OnBookFileDelete = backup.OnBookFileDelete,
                 OnBookFileDeleteForUpgrade = backup.OnBookFileDeleteForUpgrade,
                 OnHealthIssue = backup.OnHealthIssue,
+                IncludeHealthWarnings = backup.IncludeHealthWarnings ?? new NotificationDefinition().IncludeHealthWarnings,
                 OnHealthRestored = backup.OnHealthRestored,
                 OnDownloadFailure = backup.OnDownloadFailure,
                 OnImportFailure = backup.OnImportFailure,

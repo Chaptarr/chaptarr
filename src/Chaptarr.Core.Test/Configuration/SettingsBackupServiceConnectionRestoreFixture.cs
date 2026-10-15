@@ -60,6 +60,24 @@ namespace Chaptarr.Core.Test.Configuration
             Assert.That(result.Warnings, Has.Some.Contains("Cleared AudioBookShelf library mappings"));
         }
 
+        [Test]
+        public void an_older_backup_without_health_warnings_should_preserve_the_existing_connection_choice()
+        {
+            var factory = CreateNotificationFactory(out var proxy);
+            proxy.Definitions.Add(new NotificationDefinition
+            {
+                Id = 42,
+                Name = "AudioBookShelf",
+                Implementation = "AudioBookShelf",
+                IncludeHealthWarnings = true,
+                Settings = new AudioBookShelfSettings()
+            });
+            var package = BuildPackageWithAudioBookShelfConnection();
+            Assert.That(package.Connections.Single().IncludeHealthWarnings, Is.Null);
+            InvokeRestoreConnections(CreateService(factory), package, SettingsBackupRestoreMode.Merge, new SettingsBackupRestoreResult());
+            Assert.That(proxy.Definitions.Single().IncludeHealthWarnings, Is.True);
+        }
+
         private static SettingsBackupService CreateService(INotificationFactory notificationFactory)
         {
             return new SettingsBackupService(
@@ -70,6 +88,7 @@ namespace Chaptarr.Core.Test.Configuration
                 null,
                 null,
                 notificationFactory,
+                null,
                 null,
                 null,
                 null,

@@ -22,12 +22,13 @@ namespace Chaptarr.Api.V1.Configuration
             _proxyService = proxyService;
             _proxyTestService = proxyTestService;
 
-            SharedValidator.RuleFor(x => x.Name).NotEmpty();
-            SharedValidator.RuleFor(x => x.Hostname).NotEmpty();
-            SharedValidator.RuleFor(x => x.Port).InclusiveBetween(1, 65535);
-            SharedValidator.RuleFor(x => x.Type)
-                .Must(x => Enum.IsDefined(typeof(ProxyType), x))
-                .WithMessage("Proxy type must be Http, Socks4, or Socks5");
+            SharedValidator.RuleFor(value => value).Custom((value, context) =>
+            {
+                foreach (var error in NzbDrone.Core.Configuration.ConfigValueValidation.ValidateProxy(MapToModel(value)))
+                {
+                    context.AddFailure(error);
+                }
+            });
         }
 
         protected override ProxyResource GetResourceById(int id)
@@ -125,7 +126,6 @@ namespace Chaptarr.Api.V1.Configuration
         private ProxyDefinition MapToModel(ProxyResource resource)
         {
             EnsureValidProxyType(resource.Type);
-
             return new ProxyDefinition
             {
                 Name = resource.Name,

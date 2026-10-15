@@ -123,7 +123,7 @@ namespace Chaptarr.Api.V1.Config
                            .WithMessage("Proxy type must be Http, Socks4, or Socks5");
 
             SharedValidator.RuleFor(c => c.BackupFolder).IsValidPath().When(c => Path.IsPathRooted(c.BackupFolder));
-            SharedValidator.RuleFor(c => c.BackupInterval).InclusiveBetween(1, 7);
+            SharedValidator.RuleFor(c => c.BackupInterval).InclusiveBetween(0, 7);
             SharedValidator.RuleFor(c => c.BackupRetention).InclusiveBetween(1, 90);
         }
 

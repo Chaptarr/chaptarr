@@ -56,9 +56,10 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
         private sealed class TestDelayProfileService : IDelayProfileService
         {
-            public DelayProfile Add(DelayProfile profile) => throw new NotSupportedException();
+            public DelayProfile Add(DelayProfile profile, int? order = null) => throw new NotSupportedException();
             public DelayProfile Update(DelayProfile profile) => throw new NotSupportedException();
             public void Delete(int id) => throw new NotSupportedException();
+            public void Delete(IEnumerable<int> ids) => throw new NotSupportedException();
             public List<DelayProfile> All() => throw new NotSupportedException();
             public DelayProfile Get(int id) => throw new NotSupportedException();
             public List<DelayProfile> AllForTag(int tagId) => throw new NotSupportedException();

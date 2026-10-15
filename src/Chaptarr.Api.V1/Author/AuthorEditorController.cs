@@ -178,21 +178,29 @@ namespace Chaptarr.Api.V1.Author
 
                 if (resource.Tags != null)
                 {
-                    var newTags = resource.Tags;
-                    var applyTags = resource.ApplyTags;
+                    var audiobookTags = new HashSet<int>(author.GetTagsForMediaType(BookMediaType.Audiobook));
+                    var ebookTags = new HashSet<int>(author.GetTagsForMediaType(BookMediaType.Ebook));
 
-                    switch (applyTags)
+                    foreach (var tags in new[] { audiobookTags, ebookTags })
                     {
-                        case ApplyTags.Add:
-                            newTags.ForEach(t => author.Tags.Add(t));
-                            break;
-                        case ApplyTags.Remove:
-                            newTags.ForEach(t => author.Tags.Remove(t));
-                            break;
-                        case ApplyTags.Replace:
-                            author.Tags = new HashSet<int>(newTags);
-                            break;
+                        switch (resource.ApplyTags)
+                        {
+                            case ApplyTags.Add:
+                                tags.UnionWith(resource.Tags);
+                                break;
+                            case ApplyTags.Remove:
+                                tags.ExceptWith(resource.Tags);
+                                break;
+                            case ApplyTags.Replace:
+                                tags.Clear();
+                                tags.UnionWith(resource.Tags);
+                                break;
+                        }
                     }
+
+                    author.AudiobookTags = audiobookTags;
+                    author.EbookTags = ebookTags;
+                    author.Tags = audiobookTags.Concat(ebookTags).ToHashSet();
                 }
             }
 

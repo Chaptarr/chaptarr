@@ -1,5 +1,11 @@
 using System;
 using System.Reflection;
+using System.Collections.Generic;
+using FluentValidation;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Config;
 using Chaptarr.Http.REST;
@@ -110,6 +116,41 @@ namespace Chaptarr.Core.Test.Configuration
             submitted.ProxyPort = 8080;
 
             Assert.That(HostConfigController.LegacyProxyFieldsChanged(submitted, current), Is.True);
+        }
+
+        [TestCase(-1, false)]
+        [TestCase(0, true)]
+        [TestCase(7, true)]
+        [TestCase(8, false)]
+        public void api_validation_must_accept_schedule_off_and_reject_out_of_range_intervals(int interval, bool valid)
+        {
+            var controller = CreateController();
+            var resource = CreateResource();
+            resource.Id = 1;
+            resource.BackupInterval = interval;
+            if (valid) Assert.DoesNotThrow(() => ValidateRequest(controller, nameof(HostConfigController.SaveHostConfig), resource));
+            else Assert.Throws<ValidationException>(() => ValidateRequest(controller, nameof(HostConfigController.SaveHostConfig), resource));
+        }
+
+        [TestCase(1, "RssSyncInterval", "0 to disable or between 10 and 120 minutes")]
+        [TestCase(-1, "Retention", "greater than or equal to 0")]
+        public void settings_api_must_use_shared_validation_and_specific_messages(int value, string property, string message)
+        {
+            var controller = new IndexerConfigController(Throwing<IConfigService>());
+            var resource = new IndexerConfigResource { Id = 1, RssSyncInterval = 15 };
+            typeof(IndexerConfigResource).GetProperty(property).SetValue(resource, value);
+            var error = Assert.Throws<ValidationException>(() => ValidateRequest(controller, nameof(IndexerConfigController.SaveConfig), resource));
+            Assert.That(error.Errors, Has.Some.Matches<FluentValidation.Results.ValidationFailure>(failure => failure.PropertyName == property && failure.ErrorMessage.Contains(message)));
+        }
+
+        private static void ValidateRequest(Controller controller, string actionName, object resource)
+        {
+            var http = new DefaultHttpContext();
+            http.Request.Method = "PUT";
+            var descriptor = new ControllerActionDescriptor { MethodInfo = controller.GetType().GetMethod(actionName) };
+            var action = new ActionContext(http, new RouteData(), descriptor);
+            controller.ControllerContext = new ControllerContext(action);
+            controller.OnActionExecuting(new ActionExecutingContext(action, new List<IFilterMetadata>(), new Dictionary<string, object> { ["resource"] = resource }, controller));
         }
 
         private static HostConfigController CreateController(IProxyTestService proxyTestService = null)

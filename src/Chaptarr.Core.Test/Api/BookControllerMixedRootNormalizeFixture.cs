@@ -491,6 +491,47 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(mediaType == BookMediaType.Audiobook ? resource.Author.AudiobookMetadataProfileId : resource.Author.EbookMetadataProfileId, Is.EqualTo(mediaType == BookMediaType.Audiobook ? 20 : 21));
         }
 
+        [TestCase(BookMediaType.Audiobook, 53)]
+        [TestCase(BookMediaType.Ebook, 53)]
+        [TestCase(BookMediaType.Audiobook, 63)]
+        [TestCase(BookMediaType.Ebook, 63)]
+        public void explicit_media_metadata_should_survive_root_defaults_and_configured_opposite_side(BookMediaType mediaType, int selectedMetadataProfileId)
+        {
+            var root = BuildMixedRoot(defaultSync: false);
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { root }));
+            var audio = mediaType == BookMediaType.Audiobook;
+            var resource = new BookResource
+            {
+                MediaType = audio ? "audiobook" : "ebook",
+                Author = new AuthorResource
+                {
+                    AudiobookRootFolderPath = root.Path,
+                    EbookRootFolderPath = root.Path,
+                    AudiobookQualityProfileId = 10,
+                    EbookQualityProfileId = 11,
+                    AudiobookMetadataProfileId = audio ? selectedMetadataProfileId : 99,
+                    EbookMetadataProfileId = audio ? 99 : selectedMetadataProfileId,
+                    AudiobookMonitored = false,
+                    EbookMonitored = false,
+                    AudiobookTags = new HashSet<int>(),
+                    EbookTags = new HashSet<int> { 7 }
+                }
+            };
+
+            controller.Normalize(resource, wantAudiobook: audio, wantEbook: !audio);
+            var model = resource.ToModel();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(audio ? model.Author.AudiobookMetadataProfileId : model.Author.EbookMetadataProfileId, Is.EqualTo(selectedMetadataProfileId));
+                Assert.That(audio ? model.Author.EbookMetadataProfileId : model.Author.AudiobookMetadataProfileId, Is.EqualTo(99));
+                Assert.That(model.Author.AudiobookMonitored, Is.False);
+                Assert.That(model.Author.EbookMonitored, Is.False);
+                Assert.That(model.Author.AudiobookTags, Is.Empty);
+                Assert.That(model.Author.EbookTags, Is.EquivalentTo(new[] { 7 }));
+            });
+        }
+
         private static RootFolder BuildMixedRoot(bool defaultSync)
         {
             var root = new RootFolder

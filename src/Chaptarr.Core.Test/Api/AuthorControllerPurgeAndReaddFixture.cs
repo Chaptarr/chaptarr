@@ -69,7 +69,8 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public async Task import_author_should_use_the_requested_media_type_as_the_initial_view()
+        public async Task import_author_should_use_the_requested_media_type_as_the_initial_view(
+            [Values("audiobook", "ebook")] string mediaType, [Values("Selected Search Author", null)] string authorName)
         {
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             var libraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
@@ -79,7 +80,7 @@ namespace Chaptarr.Core.Test.Api
             ((RootFolderServiceProxy)(object)rootFolderService).RootFolders.Add(new RootFolder
             {
                 Path = "/ebooks",
-                FolderType = FolderType.Ebook
+                FolderType = FolderType.Mixed
             });
 
             var controller = new AuthorController(
@@ -107,20 +108,18 @@ namespace Chaptarr.Core.Test.Api
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
                 authorFolderAsRootFolderValidator: new AuthorFolderAsRootFolderValidator(null));
 
-            var result = await controller.ImportAuthor(new AuthorImportResource
-            {
-                ForeignAuthorId = "hc:123",
-                MediaType = "ebook",
-                RootFolder = "/ebooks",
-                QualityProfileId = 1,
-                MetadataProfileId = 1,
-                Monitor = "none"
-            });
+            var result = await controller.ImportAuthor(System.Text.Json.JsonSerializer.Deserialize<AuthorImportResource>(
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    foreignAuthorId = "hc:123", authorName, mediaType, rootFolder = "/ebooks",
+                    qualityProfileId = 1, metadataProfileId = 1, monitor = "none"
+                })));
 
             Assert.Multiple(() =>
             {
                 Assert.That(result.Result, Is.TypeOf<AcceptedResult>());
-                Assert.That(libraryProxy.LastConfig.LastSelectedMediaType, Is.EqualTo("ebook"));
+                Assert.That(libraryProxy.LastConfig.LastSelectedMediaType, Is.EqualTo(mediaType));
+                Assert.That(libraryProxy.LastConfig.AuthorName, Is.EqualTo(authorName));
             });
         }
 

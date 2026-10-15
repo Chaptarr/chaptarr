@@ -70,7 +70,8 @@ namespace Chaptarr.Core.Test.Configuration
                 null,
                 null,
                 null,
-                remotePathMappingService);
+                remotePathMappingService,
+                null);
             var package = new SettingsBackupPackage
             {
                 RemotePathMappings = new List<RemotePathMappingBackup>
