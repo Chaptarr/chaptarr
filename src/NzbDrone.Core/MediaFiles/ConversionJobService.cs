@@ -475,14 +475,14 @@ namespace NzbDrone.Core.MediaFiles
                     return;
                 }
 
-                var threadPlan = GetThreadPlan(request.ConversionInputFiles.Count, active.TokenBudget);
+                var threadPlan = GetThreadPlan(request.Sources.Count, active.TokenBudget);
                 using var heartbeat = new Timer(_ => TouchHeartbeat(job), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
                 try
                 {
                     Directory.CreateDirectory(request.WorkFolder);
                     var result = _conversionService.ConvertToM4b(
-                        request.ConversionInputFiles.ToArray(),
+                        request.Sources.Select(source => source.Path).ToArray(),
                         request.OutputPath,
                         new ConversionOptions
                         {
@@ -727,8 +727,6 @@ namespace NzbDrone.Core.MediaFiles
                 request.WorkRoot.IsNullOrWhiteSpace() ||
                 request.WorkFolder.IsNullOrWhiteSpace() ||
                 request.OutputPath.IsNullOrWhiteSpace() ||
-                request.ConversionInputFiles == null ||
-                request.ConversionInputFiles.Count == 0 ||
                 request.Sources == null ||
                 request.Sources.Count == 0 ||
                 request.Sources.Any(source => source?.Path.IsNullOrWhiteSpace() != false) ||

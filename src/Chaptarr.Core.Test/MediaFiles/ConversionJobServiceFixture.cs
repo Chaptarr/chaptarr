@@ -64,12 +64,14 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class TokenRecordingConversionService : IM4bConversionService
         {
             public ConcurrentDictionary<string, ConversionOptions> OptionsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public ConcurrentDictionary<string, string[]> InputsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
             public ManualResetEventSlim Release { get; } = new(false);
 
             public ConversionResult ConvertToM4b(string[] inputFiles, string outputFile, ConversionOptions options = null)
             {
                 var workFolder = Directory.GetParent(Path.GetDirectoryName(outputFile));
                 var downloadId = workFolder?.Name ?? outputFile;
+                InputsByDownloadId[downloadId] = inputFiles;
                 OptionsByDownloadId[downloadId] = options;
 
                 WaitHandle.WaitAny(new[] { options.CancellationToken.WaitHandle, Release.WaitHandle });
@@ -182,7 +184,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                     WorkRoot = workRoot,
                     WorkFolder = workFolder,
                     OutputPath = outputPath,
-                    ConversionInputFiles = new List<string> { sourcePath },
                     Sources = new List<ConversionArtifactSource> { source },
                     TargetQualityId = 12,
                     TargetQualityName = "M4B",
@@ -567,6 +568,36 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        [Test]
+        public void recovered_job_should_rebuild_staging_from_original_sources_instead_of_legacy_temporary_paths()
+        {
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-job-legacy-staging-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            var request = CreateRequest(tempDir, "legacy-staging");
+            var repository = CreateRepository(Path.Combine(tempDir, "jobs.db"));
+            var job = CreatePersistedJob(request, ConversionJobStatus.Converting, DateTime.UtcNow.AddMinutes(-5));
+            var json = System.Text.Json.Nodes.JsonNode.Parse(job.RequestJson);
+            json["ConversionInputFiles"] = new System.Text.Json.Nodes.JsonArray(Path.Combine(request.WorkFolder, "provider-chapters", "missing.mp3"));
+            job.RequestJson = json.ToJsonString();
+            repository.Insert(job);
+            var converter = new TokenRecordingConversionService();
+            var service = CreateService(repository, converter);
+            try
+            {
+                service.Handle(new ApplicationStartedEvent());
+                Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(10)), Is.True);
+                Assert.That(converter.InputsByDownloadId[request.DownloadId], Is.EqualTo(request.Sources.Select(source => source.Path)));
+                converter.Release.Set();
+                Assert.That(SpinWait.SpinUntil(() => repository.FindByDownloadId(request.DownloadId).Status == ConversionJobStatus.ReadyToImport, TimeSpan.FromSeconds(10)), Is.True);
+            }
+            finally
+            {
+                service.Handle(new ApplicationShutdownRequested());
+                SqliteConnection.ClearAllPools();
+                Directory.Delete(tempDir, true);
+            }
+        }
+
         private static ConversionJobRequest CreateRequest(string tempDir, string downloadId)
         {
             var sourcePath = Path.Combine(tempDir, $"{downloadId}.mp3");
@@ -583,7 +614,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 WorkRoot = workRoot,
                 WorkFolder = workFolder,
                 OutputPath = Path.Combine(workFolder, "book.m4b"),
-                ConversionInputFiles = new List<string> { sourcePath },
                 Sources = new List<ConversionArtifactSource>
                 {
                     new()
@@ -622,7 +652,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
         }
 
-        private static ConversionJobService CreateService(
+        internal static ConversionJobService CreateService(
             IConversionJobRepository repository,
             IM4bConversionService converter,
             int concurrentConversions = 1,
@@ -650,7 +680,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
 
-        private static ConversionJobRepository CreateRepository(string databasePath)
+        internal static ConversionJobRepository CreateRepository(string databasePath)
         {
             var connectionString = new SqliteConnectionStringBuilder
             {

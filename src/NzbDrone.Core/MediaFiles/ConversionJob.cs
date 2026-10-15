@@ -43,7 +43,6 @@ namespace NzbDrone.Core.MediaFiles
         public string WorkRoot { get; set; }
         public string WorkFolder { get; set; }
         public string OutputPath { get; set; }
-        public List<string> ConversionInputFiles { get; set; } = new();
         public List<ConversionArtifactSource> Sources { get; set; } = new();
         public int TargetQualityId { get; set; }
         public string TargetQualityName { get; set; }

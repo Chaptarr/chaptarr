@@ -2571,7 +2571,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_stage_matched_provider_chapters_when_source_duration_matches()
+        public void should_pass_matched_provider_chapters_to_converter_without_staging_in_import()
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-provider-chapters-{Guid.NewGuid():N}");
             var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
@@ -2644,12 +2644,9 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 Assert.That(conversion.ConvertCalls, Is.EqualTo(1));
                 Assert.That(conversion.LastInputFiles, Has.Length.EqualTo(2));
-                Assert.That(conversion.LastInputFiles[0], Is.Not.EqualTo(part1));
-                Assert.That(Path.GetDirectoryName(conversion.LastInputFiles[0]), Does.EndWith("provider-chapters"));
-
-                var chaptersPath = Path.Combine(Path.GetDirectoryName(conversion.LastInputFiles[0]), "chapters.txt");
-                Assert.That(File.Exists(chaptersPath), Is.True);
-                var chaptersTxt = File.ReadAllText(chaptersPath);
+                Assert.That(conversion.LastInputFiles, Is.EqualTo(new[] { part1, part2 }));
+                Assert.That(Directory.Exists(Path.Combine(conversion.LastOptions.TempDirectory, "provider-chapters")), Is.False);
+                var chaptersTxt = conversion.LastOptions.TagOptions.ChaptersTxtContent;
                 Assert.That(chaptersTxt, Does.Contain("## total-length 00:20:00.000"));
                 Assert.That(chaptersTxt, Does.Contain("00:00:00.000 Opening"));
                 Assert.That(chaptersTxt, Does.Contain("00:05:00.000 Chapter 1"));
@@ -3170,8 +3167,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        [Test]
-        public void completed_download_conversion_should_enqueue_and_return_pending_without_running_converter()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void completed_download_conversion_should_enqueue_and_return_pending_without_running_converter(bool providerChapters)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-detached-{Guid.NewGuid():N}");
             var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-detached-destination-{Guid.NewGuid():N}");
@@ -3184,12 +3182,24 @@ namespace Chaptarr.Core.Test.MediaFiles
             try
             {
                 var (_, author, book, edition) = CreateAudiobookConversionGraph(91);
+                var mediaInfo = new StubMediaInfoExtractor();
+                if (providerChapters)
+                {
+                    mediaInfo.Durations[sourcePath] = TimeSpan.FromMinutes(20);
+                    edition.DurationSeconds = 1200;
+                    edition.Chapters = new List<EditionChapter>
+                    {
+                        new() { Title = "Opening", StartOffsetMs = 0, LengthMs = 600000 },
+                        new() { Title = "Closing", StartOffsetMs = 600000, LengthMs = 600000 }
+                    };
+                }
+
                 var conversion = new SuccessfulM4bConversionService();
                 var jobs = new RecordingConversionJobService();
                 var service = new ImportApprovedBooks(
                     new StubMediaFileService(),
                     new StubMetadataTagService(),
-                    Proxy<IMediaInfoExtractor>(),
+                    mediaInfo,
                     Proxy<IAuthorService>(),
                     Proxy<IBookService>(),
                     CreateEditionService(new List<Edition> { edition }),
@@ -3230,6 +3240,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(conversion.ConvertCalls, Is.Zero);
                 Assert.That(jobs.Request, Is.Not.Null);
                 Assert.That(jobs.Request.DownloadId, Is.EqualTo("detached-conversion-download"));
+                Assert.That(jobs.Request.Sources.Select(source => source.Path), Is.EqualTo(new[] { sourcePath }));
+                Assert.That(Directory.Exists(Path.Combine(jobs.Request.WorkFolder, "provider-chapters")), Is.False);
+                if (providerChapters)
+                {
+                    Assert.That(jobs.Request.TagOptions.ChaptersTxtContent, Does.Contain("Opening"));
+                }
             }
             finally
             {

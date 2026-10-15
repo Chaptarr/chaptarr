@@ -1702,8 +1702,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     CleanupConversionWorkFolder(workRoot);
                     Directory.CreateDirectory(workFolder);
-                    var conversionInputFiles = TryCreateProviderChapterSidecarInputs(workFolder, inputFiles, tagOptions, book);
-                    ConversionTagProposalBuilder.RefreshManifestJson(tagOptions, bookDecisions.Select(d => d.Item));
 
                     if (useDetachedJob)
                     {
@@ -1722,7 +1720,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             WorkRoot = workRoot,
                             WorkFolder = workFolder,
                             OutputPath = outputPath,
-                            ConversionInputFiles = conversionInputFiles.ToList(),
                             Sources = sources.Select(source => new ConversionArtifactSource
                             {
                                 Path = source.Path,
@@ -1755,7 +1752,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         conversionSlotAcquired = true;
                         _conversionTrackingService?.Progress(downloadClientItem.DownloadId, 1m, "Converting to M4B");
 
-                        result = _m4bConversionService.ConvertToM4b(conversionInputFiles, outputPath, new ConversionOptions
+                        result = _m4bConversionService.ConvertToM4b(inputFiles, outputPath, new ConversionOptions
                         {
                             TempDirectory = workFolder,
                             AudioBitrate = audioBitrate,
@@ -2292,44 +2289,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     .Replace('\n', ' ')
                     .Replace('\t', ' ')
                     .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
-            }
-
-            private string[] TryCreateProviderChapterSidecarInputs(string workFolder, string[] inputFiles, ConversionTagOptions tagOptions, Book book)
-            {
-                if (tagOptions?.ChaptersTxtContent.IsNullOrWhiteSpace() != false)
-                {
-                    return inputFiles;
-                }
-
-                try
-                {
-                    var stageFolder = Path.Combine(workFolder, "provider-chapters");
-                    Directory.CreateDirectory(stageFolder);
-                    File.WriteAllText(Path.Combine(stageFolder, "chapters.txt"), tagOptions.ChaptersTxtContent, Encoding.UTF8);
-
-                    var stagedInputs = new string[inputFiles.Length];
-                    for (var index = 0; index < inputFiles.Length; index++)
-                    {
-                        var extension = Path.GetExtension(inputFiles[index]);
-                        if (extension.IsNullOrWhiteSpace())
-                        {
-                            extension = ".audio";
-                        }
-
-                        var stagedPath = Path.Combine(stageFolder, (index + 1).ToString("D4", CultureInfo.InvariantCulture) + extension);
-                        File.CreateSymbolicLink(stagedPath, inputFiles[index]);
-                        stagedInputs[index] = stagedPath;
-                    }
-
-                    return stagedInputs;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "[CONVERSION] Unable to stage provider chapters for '{0}'. Falling back to source/filename chapters.", book?.Title ?? "unknown book");
-                    tagOptions.ChaptersTxtContent = null;
-                    tagOptions.ProviderChapterCount = null;
-                    return inputFiles;
-                }
             }
 
             private void PublishConversionFailed(LocalBook source, IEnumerable<string> inputFiles, Book book, Author author, QualityModel targetQuality, string outputPath, string error, DownloadClientItem downloadClientItem)
