@@ -40,6 +40,7 @@ import Tasks from 'System/Tasks/Tasks';
 import Updates from 'System/Updates/Updates';
 import UnmappedFilesTableConnector from 'UnmappedFiles/UnmappedFilesTableConnector';
 import getPathWithUrlBase from 'Utilities/getPathWithUrlBase';
+import AuthorsConnector from 'Wanted/Authors/AuthorsConnector';
 import CutoffUnmetConnector from 'Wanted/CutoffUnmet/CutoffUnmetConnector';
 import MissingConnector from 'Wanted/Missing/MissingConnector';
 
@@ -169,6 +170,11 @@ function AppRoutes(props) {
       {/*
         Wanted
       */}
+
+        <Route
+          path="/wanted/authors"
+          component={AuthorsConnector}
+        />
 
       <Route
         path="/wanted/missing"

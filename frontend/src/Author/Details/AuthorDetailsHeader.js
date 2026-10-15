@@ -36,8 +36,7 @@ class AuthorDetailsHeader extends Component {
 
     this._isMounted = false;
     this.state = {
-      overviewHeight: 0,
-      titleWidth: 0
+      overviewHeight: 0
     };
   }
 
@@ -55,12 +54,6 @@ class AuthorDetailsHeader extends Component {
   onOverviewMeasure = ({ height }) => {
     if (this._isMounted) {
       this.setState({ overviewHeight: height });
-    }
-  };
-
-  onTitleMeasure = ({ width }) => {
-    if (this._isMounted) {
-      this.setState({ titleWidth: width });
     }
   };
 
@@ -111,14 +104,12 @@ class AuthorDetailsHeader extends Component {
     } = statistics;
 
     const {
-      overviewHeight,
-      titleWidth
+      overviewHeight
     } = this.state;
 
     const statusDetails = getAuthorStatusDetails(status);
 
     const fanartUrl = getCoverImageUrl(findImage(images, 'fanart'), 'fanart', width || window.innerWidth);
-    const marqueeWidth = titleWidth - (isSmallScreen ? 85 : 160);
 
     let bookFilesCountMessage = translate('BookFilesCountMessage');
 
@@ -155,10 +146,7 @@ class AuthorDetailsHeader extends Component {
           />
 
           <div className={styles.info}>
-            <Measure
-              className={styles.titleRow}
-              onMeasure={this.onTitleMeasure}
-            >
+            <div className={styles.titleRow}>
               <div className={styles.titleContainer}>
                 <div className={styles.toggleMonitoredContainer}>
                   <MonitorToggleButton
@@ -172,7 +160,7 @@ class AuthorDetailsHeader extends Component {
                   />
                 </div>
 
-                <div className={styles.title} style={{ width: marqueeWidth }}>
+                <div className={styles.title}>
                   <Marquee text={authorName} />
                 </div>
 
@@ -186,14 +174,14 @@ class AuthorDetailsHeader extends Component {
                             size={20}
                           />
                         }
-                        title={translate('AlternateTitles')}
+                        title={translate('AlternateSpellings')}
                         body={<AuthorAlternateTitles alternateTitles={alternateTitles} />}
                         position={tooltipPositions.BOTTOM}
                       />
                     </div>
                 }
               </div>
-            </Measure>
+            </div>
 
             <div className={styles.details}>
               <div>

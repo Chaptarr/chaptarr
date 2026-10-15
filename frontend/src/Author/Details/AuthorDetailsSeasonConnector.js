@@ -12,6 +12,7 @@ import createClientSideCollectionSelector from 'Store/Selectors/createClientSide
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import isLibraryBook from 'Utilities/Book/isLibraryBook';
 import AuthorDetailsSeason from './AuthorDetailsSeason';
 
 function createMapStateToProps() {
@@ -94,17 +95,7 @@ function createMapStateToProps() {
       // Apply hide unmonitored/missing filter ONLY if not searching
       // When searching, show all results regardless of monitored/missing status
       if (hideUnmonitoredMissing && (!filterValue || typeof filterValue !== 'string' || !filterValue.trim()) && booksInGroup.length > 0) {
-        booksInGroup = booksInGroup.filter(book => {
-          // Show the book if:
-          // 1. It's monitored for the current media type, OR
-          // 2. It has files (not missing)
-          // Hide only if: unmonitored AND missing
-          const isMonitored = effectiveMediaType === 'audiobook' 
-            ? book.audiobookMonitored 
-            : book.ebookMonitored;
-          const hasFiles = book.statistics && book.statistics.bookFileCount > 0;
-          return isMonitored || hasFiles;
-        });
+        booksInGroup = booksInGroup.filter((book) => isLibraryBook(book));
       }
 
       // Apply sorting to the filtered books using the sort predicates

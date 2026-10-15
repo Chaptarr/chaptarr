@@ -66,7 +66,7 @@ const COLUMNS = [
   },
   {
     name: 'enableAutomaticAdd',
-    label: () => translate('AutoAdd'),
+    label: () => translate('ImportListEnabled'),
     isSortable: true,
     isVisible: true,
   },

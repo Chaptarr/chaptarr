@@ -15,6 +15,7 @@ import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds, sizes } from 'Helpers/Props';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import SettingsBackupCategoryPicker, {
   getDefaultSettingsBackupCategories,
@@ -185,23 +186,20 @@ class SettingsRestoreModal extends Component {
       this.setState({
         isRestoring: false,
         restoreResult: data || { applied: [translate('SettingsRestoreDefaultApplied')] }
-      }, () => {
-        // Settings restore can change large parts of app state (profiles, indexers, metadata server URL, etc.).
-        // Refresh the UI so the Quickstart page doesn't look stale/failed after a successful restore.
-        location.reload();
       });
     });
 
     request.request.fail((xhr) => {
-      let errorMessage = translate('SettingsRestoreFailed');
-      if (xhr?.responseJSON?.message) {
-        errorMessage = xhr.responseJSON.message;
-      }
+      const errorMessage = getErrorMessage(xhr, translate('SettingsRestoreFailed'));
       this.setState({ isRestoring: false, restoreError: errorMessage });
     });
   };
 
   onModalClose = () => {
+    if (this.state.isRestoring) {
+      return;
+    }
+    const restored = !!this.state.restoreResult;
     this.setState({
       rootFolder: '/config',
       files: [],
@@ -216,6 +214,9 @@ class SettingsRestoreModal extends Component {
     });
 
     this.props.onModalClose();
+    if (restored) {
+      location.reload();
+    }
   };
 
   render() {
@@ -377,6 +378,7 @@ class SettingsRestoreModal extends Component {
           <ModalFooter>
             <Button
               onPress={this.onModalClose}
+              isDisabled={isRestoring}
               kind={kinds.DEFAULT}
             >
               {translate('Close')}
@@ -385,7 +387,7 @@ class SettingsRestoreModal extends Component {
             <SpinnerButton
               kind={kinds.PRIMARY}
               onPress={this.onRestorePress}
-              isDisabled={isRestoring}
+              isDisabled={isRestoring || !!restoreResult}
               isSpinning={isRestoring}
             >
               {translate('Restore')}

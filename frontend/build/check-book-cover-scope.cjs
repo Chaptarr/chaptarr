@@ -4,9 +4,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const webpack = require('webpack');
+const darkTheme = require('../src/Styles/Themes/dark');
 const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
+const themeVariables = Object.entries(darkTheme).map(([key, value]) => `--${key}:${value}`).join(';');
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'chaptarr-book-cover-scope-'));
 const config = require('./webpack.config')({ production: true });
 
@@ -38,6 +40,7 @@ for (const rule of config.module.rules) {
     const forbiddenRequests = [];
     const errors = [];
     const bookImages = [];
+    const bookEdits = [];
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="250"><rect width="200" height="250" fill="#226688"/></svg>';
     const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
     page.on('pageerror', (error) => errors.push(error.message));
@@ -60,11 +63,19 @@ for (const rule of config.module.rules) {
         const css = fs.readdirSync(path.join(output, 'Content')).find((name) => name.endsWith('.css'));
         return route.fulfill({ path: path.join(output, 'Content', css), contentType: 'text/css' });
       }
+      if (pathname === '/api/v1/book/12' && route.request().method() === 'PUT') {
+        const payload = route.request().postDataJSON();
+        bookEdits.push(payload);
+        return route.fulfill({ json: payload });
+      }
       if (pathname.endsWith('/localization')) {
         return route.fulfill({ json: { Strings: strings } });
       }
       if (pathname.startsWith('/MediaCover/') || pathname.startsWith('/MediaCoverProxy/') || url.hostname === 'images.example') {
         bookImages.push({ host: url.hostname, path: pathname });
+        if (pathname === '/MediaCoverProxy/book/33/unavailable.jpg') {
+          return route.fulfill({ status: 404, body: '' });
+        }
         return route.fulfill({ contentType: 'image/svg+xml', body: svg });
       }
       if (pathname !== '/') {
@@ -72,7 +83,7 @@ for (const rule of config.module.rules) {
       }
       return route.fulfill({
         contentType: 'text/html',
-        body: '<!doctype html><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={urlBase:"",apiRoot:"/api/v1",isProduction:true};</script><script src="/fixture.js"></script>'
+        body: `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><style>:root{${themeVariables}}body{margin:0;background:var(--pageBackground)}</style><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={urlBase:"",apiRoot:"/api/v1",isProduction:true};</script><script src="/fixture.js"></script>`
       });
     });
     await page.goto('http://book-cover-scope.test/');
@@ -131,6 +142,56 @@ for (const rule of config.module.rules) {
     await page.waitForFunction(() => document.querySelector('#root img')?.naturalWidth > 0);
     assert.deepEqual(bookImages, [{ host: 'book-cover-scope.test', path: '/MediaCoverProxy/book/32/uncached.jpg' }], 'uncached All Books covers use the book route without a direct provider request');
     assert.deepEqual(forbiddenRequests, [], 'switching scope must not start persistent cover downloads from display');
+    const unavailableCover = {
+      coverType: 'cover',
+      url: null,
+      temporaryUrl: '/MediaCoverProxy/book/33/unavailable.jpg',
+      remoteUrl: 'https://images.example/error.jpg'
+    };
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      bookImages.length = 0;
+      await page.evaluate((image) => window.renderBookCoverFixture('details', image), unavailableCover);
+      await page.waitForFunction(() => {
+        const cover = document.querySelector('#root img');
+        return cover?.src.startsWith('data:image/png;') && cover.naturalWidth > 0;
+      });
+      assert.deepEqual(bookImages, [{ host: 'book-cover-scope.test', path: '/MediaCoverProxy/book/33/unavailable.jpg' }], 'an exhausted proxy shows the existing placeholder without fetching a remote URL');
+      if (width < 768) {
+        assert.equal(await page.locator('#root img').isVisible(), false, 'mobile keeps the existing compact details header without a cover column');
+      } else {
+        const bounds = await page.locator('#root img').boundingBox();
+        assert.ok(bounds.width > 0 && bounds.x >= 0 && bounds.x + bounds.width <= width, `details placeholder fits the ${width}px viewport`);
+      }
+      const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+      assert.ok(scrollWidth <= width, `details header must not overflow the ${width}px viewport`);
+      await page.screenshot({ path: path.join(os.tmpdir(), `chaptarr-cover-fallback-${width}.png`) });
+    }
+    const editCases = [];
+    for (const mediaType of ['audiobook', 'ebook']) {
+      for (const monitored of [true, false]) {
+        const requestCount = bookEdits.length;
+        await page.evaluate((input) => window.renderEditBookFixture(input.mediaType, input.monitored), { mediaType, monitored });
+        const checkbox = page.locator('input[name="monitored"]');
+        assert.equal(await checkbox.isChecked(), monitored);
+        await checkbox.setChecked(!monitored, { force: true });
+        assert.equal(await checkbox.isChecked(), !monitored);
+        const saved = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/book/12' && response.request().method() === 'PUT');
+        await page.getByRole('button', { name: strings.Save, exact: true }).click();
+        await saved;
+        assert.equal(bookEdits.length, requestCount + 1, 'one existing book save request');
+        const payload = bookEdits.at(-1);
+        const otherMedia = mediaType === 'audiobook' ? 'ebook' : 'audiobook';
+        assert.equal(payload.monitored, !monitored);
+        assert.equal(payload[`${otherMedia}Monitored`], !monitored, 'opposite media flag remains unchanged');
+        assert.equal(payload.anyEditionOk, true);
+        assert.deepEqual(payload.editions, []);
+        assert.equal(payload.mediaType, mediaType);
+        editCases.push({ mediaType, before: monitored, selected: !monitored, explicitSideValue: payload[`${mediaType}Monitored`] });
+      }
+    }
+    console.log(`Edit Book checkbox payloads: ${JSON.stringify(editCases)}`);
+    assert.ok(editCases.every((item) => item.explicitSideValue === item.selected), 'the selected checkbox must reach the authoritative per-media field for every direction and media');
     assert.deepEqual(errors, []);
     console.log('Book cover scope browser fixture passed.');
   } finally {

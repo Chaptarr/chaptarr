@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import SelectInput from 'Components/Form/SelectInput';
 import Icon from 'Components/Icon';
@@ -206,6 +207,12 @@ class InteractiveImportModalContent extends Component {
       .map((x) => x.book)
       .value();
 
+    // Metadata-only selections have no local book IDs to query for replacement confirmation.
+    if (booksImported.length === 0) {
+      this.onConfirmImportPress();
+      return;
+    }
+
     this.setState({
       booksImported,
       isConfirmImportModalOpen: true
@@ -289,6 +296,7 @@ class InteractiveImportModalContent extends Component {
       importMode,
       mediaManagementSettings,
       interactiveImportErrorMessage,
+      pathFallbackSaveError,
       onSortPress,
       onPathFallbackChange,
       onModalClose
@@ -359,6 +367,12 @@ class InteractiveImportModalContent extends Component {
         </ModalHeader>
 
         <ModalBody scrollDirection={scrollDirections.BOTH}>
+          {
+            pathFallbackSaveError &&
+              <Alert kind={kinds.DANGER} role="alert">
+                {getErrorMessage(pathFallbackSaveError, translate('UnableToSaveMediaManagementSettings'))}
+              </Alert>
+          }
           <div className={styles.filterContainer}>
             <div className={styles.filterMenus}>
               {
@@ -628,6 +642,7 @@ InteractiveImportModalContent.propTypes = {
   sortKey: PropTypes.string,
   sortDirection: PropTypes.string,
   mediaManagementSettings: PropTypes.object.isRequired,
+  pathFallbackSaveError: PropTypes.object,
   interactiveImportErrorMessage: PropTypes.string,
   onSortPress: PropTypes.func.isRequired,
   onFilterExistingFilesChange: PropTypes.func.isRequired,

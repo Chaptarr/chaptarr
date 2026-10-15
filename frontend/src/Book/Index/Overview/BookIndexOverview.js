@@ -137,6 +137,7 @@ class BookIndexOverview extends Component {
       ebookMonitored,
       titleSlug,
       nextAiring,
+      releaseDate,
       statistics,
       images,
       posterWidth,
@@ -160,10 +161,8 @@ class BookIndexOverview extends Component {
     } = this.props;
 
     const {
-      bookCount,
       sizeOnDisk,
-      bookFileCount,
-      totalBookCount
+      bookFileCount
     } = statistics;
 
     const {
@@ -228,9 +227,8 @@ class BookIndexOverview extends Component {
 
             <BookIndexProgressBar
               monitored={audiobookMonitored || ebookMonitored}
-              bookCount={bookCount}
               bookFileCount={bookFileCount}
-              totalBookCount={totalBookCount}
+              releaseDate={releaseDate}
               posterWidth={posterWidth}
               detailedProgressBar={overviewOptions.detailedProgressBar}
             />
@@ -290,6 +288,7 @@ class BookIndexOverview extends Component {
               </Link>
 
               <BookIndexOverviewInfo
+                releaseDate={releaseDate}
                 height={overviewHeight}
                 audiobookMonitored={audiobookMonitored}
                 ebookMonitored={ebookMonitored}
@@ -333,6 +332,7 @@ BookIndexOverview.propTypes = {
   ebookMonitored: PropTypes.bool,
   titleSlug: PropTypes.string.isRequired,
   nextAiring: PropTypes.string,
+  releaseDate: PropTypes.string,
   statistics: PropTypes.object.isRequired,
   images: PropTypes.arrayOf(PropTypes.object).isRequired,
   posterWidth: PropTypes.number.isRequired,

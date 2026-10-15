@@ -23,6 +23,7 @@ import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
 import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import isLibraryBook from 'Utilities/Book/isLibraryBook';
 import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
 import translate from 'Utilities/String/translate';
@@ -339,13 +340,7 @@ function createMapStateToProps() {
           });
         } else if (hideUnmonitoredMissing && visibleBooks.length > 0) {
           // When showing "Monitored", hide only if unmonitored AND missing.
-          visibleBooks = visibleBooks.filter((book) => {
-            const isMonitored = effectiveMediaType === 'audiobook'
-              ? book.audiobookMonitored
-              : book.ebookMonitored;
-            const hasFiles = book.statistics && book.statistics.bookFileCount > 0;
-            return isMonitored || hasFiles;
-          });
+          visibleBooks = visibleBooks.filter((book) => isLibraryBook(book));
         }
 
         const authorBookFiles = Array.isArray(allBookFileItems)

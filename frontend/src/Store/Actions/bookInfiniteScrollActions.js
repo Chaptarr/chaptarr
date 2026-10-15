@@ -17,7 +17,7 @@ const abortControllers = new Map();
 // Helpers
 //
 
-function buildQueryParams(query, extraParams = {}) {
+export function buildQueryParams(query, extraParams = {}) {
   const params = { ...extraParams };
   params.include = 'author';
 
@@ -54,6 +54,10 @@ function buildQueryParams(query, extraParams = {}) {
 
   if (query?.filters?.wanted !== undefined) {
     params.wanted = query.filters.wanted;
+  }
+
+  if (query?.filters?.library !== undefined) {
+    params.library = query.filters.library;
   }
 
   return params;

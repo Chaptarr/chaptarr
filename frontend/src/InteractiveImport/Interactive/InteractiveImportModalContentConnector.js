@@ -13,7 +13,7 @@ import {
   setInteractiveImportMode,
   setInteractiveImportSort,
   updateInteractiveImportItem } from 'Store/Actions/interactiveImportActions';
-import { fetchMediaManagementSettings, saveMediaManagementSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
+import { fetchMediaManagementSettings, saveMediaManagementSettingsFields } from 'Store/Actions/settingsActions';
 import createClientSideCollectionSelector from 'Store/Selectors/createClientSideCollectionSelector';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import InteractiveImportModalContent from './InteractiveImportModalContent';
@@ -44,8 +44,7 @@ const mapDispatchToProps = {
   saveInteractiveImportItem,
   executeCommand,
   fetchMediaManagementSettings,
-  setMediaManagementSettingsValue,
-  saveMediaManagementSettings
+  saveMediaManagementSettings: saveMediaManagementSettingsFields
 };
 
 class InteractiveImportModalContentConnector extends Component {
@@ -58,6 +57,7 @@ class InteractiveImportModalContentConnector extends Component {
 
     this.state = {
       interactiveImportErrorMessage: null,
+      pathFallbackSaveError: null,
       filterExistingFiles: props.filterExistingFiles,
       replaceExistingFiles: props.replaceExistingFiles
     };
@@ -177,19 +177,15 @@ class InteractiveImportModalContentConnector extends Component {
       return;
     }
 
-    this.props.setMediaManagementSettingsValue({
-      name: 'usePathAsTagsFallback',
-      value
-    });
-
     const promise = this.props.saveMediaManagementSettings({
       usePathAsTagsFallback: value
     });
 
     if (promise && promise.done) {
       promise.done(() => {
+        this.setState({ pathFallbackSaveError: null });
         this.refetchItems();
-      });
+      }).fail((pathFallbackSaveError) => this.setState({ pathFallbackSaveError }));
     }
   };
 
@@ -228,6 +224,7 @@ class InteractiveImportModalContentConnector extends Component {
           book,
           editionId,
           quality,
+          releaseGroup,
           indexerFlags,
           disableReleaseSwitching
         } = item;
@@ -273,6 +270,7 @@ class InteractiveImportModalContentConnector extends Component {
           foreignEditionTitle: useMetadataSuggestion ? suggestedEditionTitle : undefined,
           selectionSource: useMetadataSuggestion ? 'userMetadataSuggestion' : 'automatic',
           quality,
+          releaseGroup,
           indexerFlags,
           downloadId: this.props.downloadId,
           disableReleaseSwitching
@@ -316,6 +314,7 @@ class InteractiveImportModalContentConnector extends Component {
     return (
       <InteractiveImportModalContent
         {...this.props}
+        pathFallbackSaveError={this.state.pathFallbackSaveError}
         interactiveImportErrorMessage={interactiveImportErrorMessage}
         filterExistingFiles={filterExistingFiles}
         replaceExistingFiles={replaceExistingFiles}
@@ -347,7 +346,6 @@ InteractiveImportModalContentConnector.propTypes = {
   updateInteractiveImportItem: PropTypes.func.isRequired,
   mediaManagementSettings: PropTypes.object.isRequired,
   fetchMediaManagementSettings: PropTypes.func.isRequired,
-  setMediaManagementSettingsValue: PropTypes.func.isRequired,
   saveMediaManagementSettings: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired,
   onImportComplete: PropTypes.func,

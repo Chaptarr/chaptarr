@@ -1,3 +1,4 @@
+import $ from 'jquery';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
@@ -7,6 +8,7 @@ import createSetSettingValueReducer from 'Store/Actions/Creators/Reducers/create
 import { createThunk } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getProviderState from 'Utilities/State/getProviderState';
+import translate from 'Utilities/String/translate';
 import { set, update, updateItem } from '../baseActions';
 
 function normalizeRootFolder(rootFolder) {
@@ -272,12 +274,13 @@ export default {
       } else {
         // Invalid folderType - log error and abort
         console.error('[ROOT FOLDER SAVE] Invalid folderType:', rawData.folderType);
+        const saveError = { message: translate('InvalidRootFolderType') };
         dispatch(set({
           section,
           isSaving: false,
-          saveError: { message: 'Invalid folder type. Please refresh and try again.' }
+          saveError
         }));
-        return;
+        return $.Deferred().reject(saveError).promise();
       }
 
       // Never send deprecated generic or legacy fields
@@ -315,6 +318,7 @@ export default {
           saveError: xhr
         }));
       });
+      return request;
     },
     [CANCEL_SAVE_ROOT_FOLDER]: createCancelSaveProviderHandler(section),
     [DELETE_ROOT_FOLDER]: createRemoveItemHandler(section, '/rootFolder')

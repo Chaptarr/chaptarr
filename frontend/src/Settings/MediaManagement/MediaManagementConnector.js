@@ -69,22 +69,6 @@ class MediaManagementConnector extends Component {
   // Listeners
 
   onInputChange = ({ name, value }) => {
-    if (name === 'bookMatchingStrictness') {
-      this.props.setMediaManagementSettingsValue({ name, value });
-
-      if (value === 'strict') {
-        this.props.setMediaManagementSettingsValue({ name: 'usePathAsTagsFallback', value: false });
-      }
-
-      return;
-    }
-
-    if (name === 'usePathAsTagsFallback' &&
-        this.props.settings?.bookMatchingStrictness?.value === 'strict' &&
-        value) {
-      return;
-    }
-
     this.props.setMediaManagementSettingsValue({ name, value });
   };
 
@@ -94,12 +78,7 @@ class MediaManagementConnector extends Component {
     if (coverDownloadScope?.pending &&
         coverDownloadScope.value === 'libraryBooks' &&
         coverDownloadScope.previousValue === 'allBooks') {
-      this.setState({
-        isCoverDownloadScopeConfirmOpen: true,
-        coverCleanupEstimate: null,
-        isFetchingCoverCleanupEstimate: false,
-        coverCleanupEstimateError: false
-      });
+      this.setState({ isCoverDownloadScopeConfirmOpen: true });
       return;
     }
 
@@ -107,12 +86,10 @@ class MediaManagementConnector extends Component {
   };
 
   onConfirmCoverDownloadScope = () => {
-    this.cancelCoverCleanupEstimate();
     this.setState({ isCoverDownloadScopeConfirmOpen: false }, this.saveSettings);
   };
 
   onCancelCoverDownloadScope = () => {
-    this.cancelCoverCleanupEstimate();
     this.setState({ isCoverDownloadScopeConfirmOpen: false });
   };
 
@@ -141,6 +118,9 @@ class MediaManagementConnector extends Component {
   };
 
   saveSettings = () => {
+    this.cancelCoverCleanupEstimate();
+    this.setState({ coverCleanupEstimate: null, isFetchingCoverCleanupEstimate: false, coverCleanupEstimateError: false });
+
     const coverDownloadScope = this.props.settings?.coverDownloadScope;
     const scopeChanged = coverDownloadScope?.pending && coverDownloadScope.previousValue !== coverDownloadScope.value;
     const mediaManagementSave = this.props.saveMediaManagementSettings();

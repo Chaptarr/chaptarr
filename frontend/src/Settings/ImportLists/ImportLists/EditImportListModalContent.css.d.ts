@@ -9,8 +9,6 @@ interface CssExports {
   'hardcoverInfo': string;
   'hardcoverMediaTypeToggle': string;
   'hardcoverSubsection': string;
-  'hardcoverSubsectionTitle': string;
-  'hideMetadataProfile': string;
   'labelIcon': string;
   'message': string;
 }

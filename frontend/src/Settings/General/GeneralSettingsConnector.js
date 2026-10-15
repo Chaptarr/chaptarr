@@ -6,8 +6,7 @@ import * as commandNames from 'Commands/commandNames';
 import { clearPendingChanges } from 'Store/Actions/baseActions';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { fetchGeneralSettings, saveGeneralSettings, setGeneralSettingsValue } from 'Store/Actions/settingsActions';
-import { restart } from 'Store/Actions/systemActions';
-import { testProxySettings } from 'Store/Actions/systemActions';
+import { restart, testProxySettings } from 'Store/Actions/systemActions';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
@@ -19,12 +18,14 @@ function createMapStateToProps() {
   return createSelector(
     (state) => state.settings.advancedSettings,
     createSettingsSectionSelector(SECTION),
+    (state) => state.settings.general.item,
     createCommandExecutingSelector(commandNames.RESET_API_KEY),
     createSystemStatusSelector(),
-    (advancedSettings, sectionSettings, isResettingApiKey, systemStatus) => {
+    (advancedSettings, sectionSettings, savedSettings, isResettingApiKey, systemStatus) => {
       return {
         advancedSettings,
         isResettingApiKey,
+        savedSettings,
         isWindows: systemStatus.isWindows,
         isWindowsService: systemStatus.isWindows && systemStatus.mode === 'service',
         mode: systemStatus.mode,
@@ -108,13 +109,13 @@ class GeneralSettingsConnector extends Component {
       proxyUsername: settings.proxyUsername?.value || '',
       proxyPassword: settings.proxyPassword?.value || ''
     }).then(() => {
-      this.setState({ 
+      this.setState({
         isTestingProxy: false,
-        proxyTestError: null 
+        proxyTestError: null
       });
     }).catch((error) => {
       const errorMessage = error.message || 'Proxy test failed';
-      this.setState({ 
+      this.setState({
         isTestingProxy: false,
         proxyTestError: {
           status: 400,

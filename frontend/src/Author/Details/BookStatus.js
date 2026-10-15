@@ -105,10 +105,10 @@ function BookStatus(props) {
     <div className={styles.center}>
       <Label
         className={labelStyles.wrapping}
-        title={translate('FutureRelease')}
+        title={translate('NotAvailable')}
         kind={kinds.INFO}
       >
-        {translate('FutureRelease')}
+        {translate('NotAvailable')}
       </Label>
     </div>
   );

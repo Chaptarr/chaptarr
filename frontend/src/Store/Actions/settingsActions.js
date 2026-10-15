@@ -17,7 +17,6 @@ import indexerOptions from './Settings/indexerOptions';
 import indexers from './Settings/indexers';
 import languages from './Settings/languages';
 import mediaManagement from './Settings/mediaManagement';
-import metadata from './Settings/metadata';
 import metadataProfiles from './Settings/metadataProfiles';
 import metadataProvider from './Settings/metadataProvider';
 import naming from './Settings/naming';
@@ -47,7 +46,6 @@ export * from './Settings/indexers';
 export * from './Settings/languages';
 export * from './Settings/metadataProfiles';
 export * from './Settings/mediaManagement';
-export * from './Settings/metadata';
 export * from './Settings/metadataProvider';
 export * from './Settings/naming';
 export * from './Settings/namingExamples';
@@ -88,7 +86,6 @@ export const defaultState = {
   languages: languages.defaultState,
   metadataProfiles: metadataProfiles.defaultState,
   mediaManagement: mediaManagement.defaultState,
-  metadata: metadata.defaultState,
   metadataProvider: metadataProvider.defaultState,
   naming: naming.defaultState,
   namingExamples: namingExamples.defaultState,
@@ -137,7 +134,6 @@ export const actionHandlers = handleThunks({
   ...languages.actionHandlers,
   ...metadataProfiles.actionHandlers,
   ...mediaManagement.actionHandlers,
-  ...metadata.actionHandlers,
   ...metadataProvider.actionHandlers,
   ...naming.actionHandlers,
   ...namingExamples.actionHandlers,
@@ -177,7 +173,6 @@ export const reducers = createHandleActions({
   ...languages.reducers,
   ...metadataProfiles.reducers,
   ...mediaManagement.reducers,
-  ...metadata.reducers,
   ...metadataProvider.reducers,
   ...naming.reducers,
   ...namingExamples.reducers,

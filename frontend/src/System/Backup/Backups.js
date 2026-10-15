@@ -1,7 +1,9 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import PageToolbar from 'Components/Page/Toolbar/PageToolbar';
@@ -49,12 +51,26 @@ class Backups extends Component {
     super(props, context);
 
     this.state = {
-      isRestoreModalOpen: false
+      isRestoreModalOpen: false,
+      isConfirmDeleteModalOpen: false
     };
   }
 
   //
   // Listeners
+
+  onDeleteFailedRestoresPress = () => {
+    this.setState({ isConfirmDeleteModalOpen: true });
+  };
+
+  onDeleteModalClose = () => {
+    this.setState({ isConfirmDeleteModalOpen: false });
+  };
+
+  onConfirmDeletePress = () => {
+    this.onDeleteModalClose();
+    this.props.onDismissFailedRestoresPress();
+  };
 
   onRestorePress = () => {
     this.setState({ isRestoreModalOpen: true });
@@ -75,7 +91,11 @@ class Backups extends Component {
       items,
       backupExecuting,
       onBackupPress,
-      onDeleteBackupPress
+      onDeleteBackupPress,
+      backupStatus,
+      backupStatusError,
+      restoreError,
+      onCancelRestorePress
     } = this.props;
 
     const hasBackups = isPopulated && !!items.length;
@@ -104,6 +124,23 @@ class Backups extends Component {
           <Alert kind={kinds.WARNING}>
             {translate('BackupsContainUnencryptedCredentials')}
           </Alert>
+
+          {backupStatusError && <Alert kind={kinds.WARNING}>{translate('BackupStatusUnavailable')}</Alert>}
+          {backupStatus.scheduleDisabled && <Alert kind={kinds.WARNING}>{translate('ScheduledBackupsDisabled')}</Alert>}
+          {backupStatus.databaseBackupUnavailableReason && <Alert kind={kinds.WARNING}>{translate('BackupToolsUnavailableWarning')}</Alert>}
+          {backupStatus.restoreFailed &&
+            <Alert kind={kinds.WARNING}>
+              {translate('BackupRestoreFailedWarning')}
+              <Button isDisabled={backupStatus.pendingRestore} onPress={this.onDeleteFailedRestoresPress}>
+                {translate('DeleteFailedRestoreFiles')}
+              </Button>
+            </Alert>}
+          {backupStatus.pendingRestore &&
+            <Alert kind={kinds.WARNING}>
+              {translate('BackupRestorePendingWarning')}
+              {backupStatus.canCancelRestore && <Button onPress={onCancelRestorePress}>{translate('CancelRestore')}</Button>}
+            </Alert>}
+          {restoreError && <Alert kind={kinds.DANGER}>{restoreError.responseJSON?.message || translate('BackupRestoreRequestFailed')}</Alert>}
 
           {
             isFetching && !isPopulated &&
@@ -138,7 +175,9 @@ class Backups extends Component {
                         name,
                         path,
                         size,
-                        time
+                        time,
+                        includedComponents,
+                        omittedComponents
                       } = item;
 
                       return (
@@ -150,6 +189,8 @@ class Backups extends Component {
                           path={path}
                           size={size}
                           time={time}
+                          includedComponents={includedComponents}
+                          omittedComponents={omittedComponents}
                           onDeleteBackupPress={onDeleteBackupPress}
                         />
                       );
@@ -159,6 +200,16 @@ class Backups extends Component {
               </Table>
           }
         </PageContentBody>
+
+        <ConfirmModal
+          isOpen={this.state.isConfirmDeleteModalOpen}
+          kind={kinds.DANGER}
+          title={translate('DeleteFailedRestoreFiles')}
+          message={translate('DeleteFailedRestoreFilesMessage')}
+          confirmLabel={translate('Delete')}
+          onConfirm={this.onConfirmDeletePress}
+          onCancel={this.onDeleteModalClose}
+        />
 
         <RestoreBackupModalConnector
           isOpen={this.state.isRestoreModalOpen}
@@ -177,7 +228,12 @@ Backups.propTypes = {
   items: PropTypes.array.isRequired,
   backupExecuting: PropTypes.bool.isRequired,
   onBackupPress: PropTypes.func.isRequired,
-  onDeleteBackupPress: PropTypes.func.isRequired
+  onDeleteBackupPress: PropTypes.func.isRequired,
+  backupStatus: PropTypes.object.isRequired,
+  backupStatusError: PropTypes.object,
+  restoreError: PropTypes.object,
+  onCancelRestorePress: PropTypes.func.isRequired,
+  onDismissFailedRestoresPress: PropTypes.func.isRequired
 };
 
 export default Backups;

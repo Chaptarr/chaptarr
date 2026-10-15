@@ -79,6 +79,15 @@ export const settingsBackupCategoryDefinitions = [
     }
   },
   {
+    key: 'uiSettings',
+    get label() {
+      return translate('SettingsBackupUiSettingsLabel');
+    },
+    get description() {
+      return translate('SettingsBackupUiSettingsDescription');
+    }
+  },
+  {
     key: 'metadataServer',
     get label() {
       return translate('SettingsBackupMetadataServerLabel');

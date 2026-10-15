@@ -42,9 +42,8 @@ class GeneralSettings extends Component {
 
   componentDidUpdate(prevProps) {
     const {
-      settings,
+      savedSettings,
       isSaving,
-      saveError,
       isResettingApiKey
     } = this.props;
 
@@ -53,27 +52,17 @@ class GeneralSettings extends Component {
       return;
     }
 
-    if (isSaving || saveError || !prevProps.isSaving) {
+    if (isSaving || !prevProps.isSaving) {
       return;
     }
 
-    const prevSettings = prevProps.settings;
-
     const pendingRestart = _.some(requiresRestartKeys, (key) => {
-      const setting = settings[key];
-      const prevSetting = prevSettings[key];
-
-      if (!setting || !prevSetting) {
-        return false;
-      }
-
-      const previousValue = prevSetting.previousValue;
-      const value = setting.value;
-
-      return previousValue != null && previousValue !== value;
+      return prevProps.savedSettings[key] != null && prevProps.savedSettings[key] !== savedSettings[key];
     });
 
-    this.setState({ isRestartRequiredModalOpen: pendingRestart });
+    if (pendingRestart) {
+      this.setState({ isRestartRequiredModalOpen: true });
+    }
   }
 
   //
@@ -207,6 +196,7 @@ GeneralSettings.propTypes = {
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
   settings: PropTypes.object.isRequired,
+  savedSettings: PropTypes.object.isRequired,
   isResettingApiKey: PropTypes.bool.isRequired,
   hasSettings: PropTypes.bool.isRequired,
   isWindows: PropTypes.bool.isRequired,

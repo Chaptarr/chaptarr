@@ -4,9 +4,9 @@ import Alert from 'Components/Alert';
 import FieldSet from 'Components/FieldSet';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
+import FormInputButton from 'Components/Form/FormInputButton';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import FormLabel from 'Components/Form/FormLabel';
-import SpinnerButton from 'Components/Link/SpinnerButton';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
@@ -314,7 +314,7 @@ class MediaManagement extends Component {
                 <FieldSet
                   legend={translate('CoverDownloadSettings')}
                 >
-                  <FormGroup size={sizes.MEDIUM}>
+                  <FormGroup size={sizes.MEDIUM} aria-live="polite">
                     <FormLabel>
                       {translate('CoverDownloadScope')}
                     </FormLabel>
@@ -322,7 +322,21 @@ class MediaManagement extends Component {
                     <FormInputGroup
                       type={inputTypes.SELECT}
                       name="coverDownloadScope"
-                      helpText={translate(coverDownloadScope.value === 'libraryBooks' ? 'CoverDownloadScopeLibraryBooksHelpText' : 'CoverDownloadScopeAllBooksHelpText')}
+                      helpTexts={[
+                        translate(coverDownloadScope.value === 'libraryBooks' ? 'CoverDownloadScopeLibraryBooksHelpText' : 'CoverDownloadScopeAllBooksHelpText'),
+                        coverCleanupMessage
+                      ]}
+                      buttons={
+                        <FormInputButton
+                          canSpin={true}
+                          kind={kinds.DEFAULT}
+                          aria-label={translate('CalculateCoverSavings')}
+                          isSpinning={isFetchingCoverCleanupEstimate}
+                          onPress={onCalculateCoverSavings}
+                        >
+                          {translate('CalculateCoverSavings')}
+                        </FormInputButton>
+                      }
                       values={coverDownloadScopeOptions}
                       onChange={onInputChange}
                       {...coverDownloadScope}
@@ -530,14 +544,10 @@ class MediaManagement extends Component {
           message={
             <>
               <p>{translate('CoverDownloadScopeConfirmMessage')}</p>
-              <p aria-live="polite">{coverCleanupMessage}</p>
-              <SpinnerButton
-                aria-label={translate('CalculateCoverSavings')}
-                isSpinning={isFetchingCoverCleanupEstimate}
-                onPress={onCalculateCoverSavings}
-              >
-                {translate('CalculateCoverSavings')}
-              </SpinnerButton>
+              {
+                (coverCleanupEstimate || isFetchingCoverCleanupEstimate || coverCleanupEstimateError) &&
+                  <p aria-live="polite">{coverCleanupMessage}</p>
+              }
             </>
           }
           confirmLabel={translate('Save')}

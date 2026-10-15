@@ -14,6 +14,7 @@ import TableRow from 'Components/Table/TableRow';
 import Popover from 'Components/Tooltip/Popover';
 import { icons, kinds, tooltipPositions } from 'Helpers/Props';
 import formatReadableDuration from 'Utilities/Date/formatReadableDuration';
+import isBefore from 'Utilities/Date/isBefore';
 import translate from 'Utilities/String/translate';
 import BookStatus from './BookStatus';
 import styles from './BookRow.css';
@@ -92,7 +93,7 @@ class BookRow extends Component {
     } = this.props;
 
     const bookFile = bookFiles[0];
-    const isAvailable = !releaseDate || Date.parse(releaseDate) < new Date();
+    const isAvailable = isBefore(releaseDate);
     const hasNarrator = narrator && (typeof narrator !== 'string' || narrator.trim().length > 0);
     const hasFilesForDisplay = (typeof hasFiles === 'boolean') ? hasFiles : bookFiles.length > 0;
     const hasPinnedEdition = (anyEditionOk === false) || (Array.isArray(editions) && editions.some((e) => e?.manualAdd === true));
