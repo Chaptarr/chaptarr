@@ -1662,7 +1662,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
 
                     var estimate = EstimateConversionWorkspace(inputFiles);
-                    if (!HasEnoughConversionWorkspaceSpace(finalDestinationFolder, estimate, out var freeSpaceError))
+                    if (!HasEnoughConversionWorkspaceSpace(finalDestinationFolder, estimate, tagOptions?.ChaptersTxtContent.IsNullOrWhiteSpace() == false, out var freeSpaceError))
                     {
                         _conversionTrackingService?.Fail(downloadClientItem.DownloadId, freeSpaceError);
                         PublishConversionFailed(first, inputFiles, book, author, convertedQuality, outputPath, freeSpaceError, downloadClientItem);
@@ -1671,7 +1671,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     CleanupConversionWorkFolder(workRoot);
                     Directory.CreateDirectory(workFolder);
-                    var conversionInputFiles = TryCreateProviderChapterSidecarInputs(workFolder, inputFiles, tagOptions, book);
+                    var conversionInputFiles = CreateProviderChapterSidecarInputs(workFolder, inputFiles, tagOptions, book);
                     ConversionTagProposalBuilder.RefreshManifestJson(tagOptions, bookDecisions.Select(d => d.Item));
 
                     if (useDetachedJob)
@@ -2282,7 +2282,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
             }
 
-            private string[] TryCreateProviderChapterSidecarInputs(string workFolder, string[] inputFiles, ConversionTagOptions tagOptions, Book book)
+            internal string[] CreateProviderChapterSidecarInputs(string workFolder, string[] inputFiles, ConversionTagOptions tagOptions, Book book, Action<string, string> createSymbolicLink = null)
             {
                 if (tagOptions?.ChaptersTxtContent.IsNullOrWhiteSpace() != false)
                 {
@@ -2291,6 +2291,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 try
                 {
+                    createSymbolicLink ??= (path, target) => File.CreateSymbolicLink(path, target);
                     var stageFolder = Path.Combine(workFolder, "provider-chapters");
                     Directory.CreateDirectory(stageFolder);
                     File.WriteAllText(Path.Combine(stageFolder, "chapters.txt"), tagOptions.ChaptersTxtContent, Encoding.UTF8);
@@ -2305,7 +2306,15 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         }
 
                         var stagedPath = Path.Combine(stageFolder, (index + 1).ToString("D4", CultureInfo.InvariantCulture) + extension);
-                        File.CreateSymbolicLink(stagedPath, inputFiles[index]);
+                        try
+                        {
+                            createSymbolicLink(stagedPath, inputFiles[index]);
+                        }
+                        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is PlatformNotSupportedException)
+                        {
+                            _logger.Debug(ex, "[CONVERSION] Unable to create provider chapter symlink; copying source file instead: {0}", inputFiles[index]);
+                            File.Copy(inputFiles[index], stagedPath);
+                        }
                         stagedInputs[index] = stagedPath;
                     }
 
@@ -2313,10 +2322,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, "[CONVERSION] Unable to stage provider chapters for '{0}'. Falling back to source/filename chapters.", book?.Title ?? "unknown book");
-                    tagOptions.ChaptersTxtContent = null;
-                    tagOptions.ProviderChapterCount = null;
-                    return inputFiles;
+                    throw new IOException($"Unable to stage provider chapters for '{book?.Title ?? "unknown book"}': {ex.Message}", ex);
                 }
             }
 
@@ -2766,7 +2772,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return Math.Min(max, Math.Max(min, value));
             }
 
-            private bool HasEnoughConversionWorkspaceSpace(string destinationFolder, ConversionEstimate estimate, out string error)
+            private bool HasEnoughConversionWorkspaceSpace(string destinationFolder, ConversionEstimate estimate, bool stageProviderChapters, out string error)
             {
                 error = null;
 
@@ -2795,7 +2801,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     var estimatedInputSize = Math.Max(0, estimate?.TotalInputSize ?? 0);
                     var estimatedOutputSize = Math.Max(estimate?.EstimatedOutputSize ?? 0, estimatedInputSize);
                     var minimumFreeSpace = Math.Max(0, _configService.MinimumFreeSpaceWhenImporting).Megabytes();
-                    var requiredFreeSpace = estimatedInputSize + estimatedOutputSize + minimumFreeSpace;
+                    // Provider chapter inputs may need copies on filesystems without symlink support,
+                    // in addition to the converter's temporary files and final output.
+                    var stagingSize = stageProviderChapters ? estimatedInputSize : 0;
+                    var requiredFreeSpace = estimatedInputSize + estimatedOutputSize + stagingSize + minimumFreeSpace;
                     if (freeSpace.Value >= requiredFreeSpace)
                     {
                         return true;
