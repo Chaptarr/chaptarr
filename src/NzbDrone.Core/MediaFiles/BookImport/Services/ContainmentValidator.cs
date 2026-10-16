@@ -379,23 +379,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             // Recompute the base title so the caller can remove the same evidence tokens from the matching field.
-            var remaining = editionTitle.Trim();
-            while (remaining.EndsWith(")", StringComparison.Ordinal))
-            {
-                var open = remaining.LastIndexOf('(');
-                if (open <= 0)
-                {
-                    break;
-                }
-
-                var inside = remaining.Substring(open + 1, remaining.Length - open - 2).Trim();
-                if (string.IsNullOrWhiteSpace(inside))
-                {
-                    break;
-                }
-
-                remaining = remaining.Substring(0, open).TrimEnd();
-            }
+            var remaining = TitleBracketCatalog.BaseTitle(editionTitle);
 
             if (string.IsNullOrWhiteSpace(remaining))
             {
@@ -674,32 +658,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
 	        private bool TryValidateTrailingParentheticals(string editionTitle, IDictionary<string, List<string>> allTags)
 	        {
-	            var remaining = (editionTitle ?? string.Empty).Trim();
-	            if (!remaining.EndsWith(")", StringComparison.Ordinal))
-	            {
-	                return false;
-	            }
-
-            // Peel trailing "(...)" groups from the end.
+            // Peel trailing bracket groups from the end.
             var trailingGroups = new List<string>();
-            while (remaining.EndsWith(")", StringComparison.Ordinal))
-            {
-                var open = remaining.LastIndexOf('(');
-                if (open <= 0)
-                {
-                    break;
-                }
-
-                var inside = remaining.Substring(open + 1, remaining.Length - open - 2).Trim();
-                if (string.IsNullOrWhiteSpace(inside))
-                {
-                    break;
-                }
-
-                trailingGroups.Add(inside);
-                remaining = remaining.Substring(0, open).TrimEnd();
-            }
-
+            var remaining = TitleBracketCatalog.BaseTitle(editionTitle, trailingGroups);
             if (trailingGroups.Count == 0 || string.IsNullOrWhiteSpace(remaining))
             {
                 return false;

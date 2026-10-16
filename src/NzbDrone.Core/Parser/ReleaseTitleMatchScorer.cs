@@ -135,7 +135,7 @@ namespace NzbDrone.Core.Parser
         private static readonly Regex TokenRegex = new Regex(@"\S+", RegexOptions.Compiled);
         private static readonly Regex PossessiveRegex = new Regex(@"['\u2018\u2019]s\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex DecimalPointBetweenDigitsRegex = new Regex(@"(?<=\p{Nd})\.(?=\p{Nd})", RegexOptions.Compiled);
-        private static readonly Regex OptionalQualifierSegmentRegex = new Regex(@"\s*[\(\[（【](?<label>[^\)\]）】]+)[\)\]）】]\s*", RegexOptions.Compiled);
+        private static readonly Regex OptionalQualifierSegmentRegex = new Regex(@"\s*(?:" + TitleBracketCatalog.PairedSegmentPattern + @")\s*", RegexOptions.Compiled);
         private static readonly Regex OptionalArticleSubtitleBoundaryRegex = new Regex(@"[:;\-\u2013\u2014]\s+(?<head>[\p{L}\p{Nd}])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex LeadingWordRegex = new Regex(@"^(?<word>[\p{L}\p{Nd}]+)(?:\s+|$)", RegexOptions.Compiled);
         private static readonly Regex WhitespaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
@@ -1502,8 +1502,7 @@ namespace NzbDrone.Core.Parser
             foreach (Match boundary in Regex.Matches(editionTitle, subtitlePattern).Cast<Match>().Reverse())
             {
                 var subtitle = editionTitle.Substring(boundary.Index + boundary.Length);
-                var isBracketBoundary = boundary.Value.TrimEnd().EndsWith("(", StringComparison.Ordinal) ||
-                                        boundary.Value.TrimEnd().EndsWith("[", StringComparison.Ordinal);
+                var isBracketBoundary = TitleBracketCatalog.Openers.Contains(boundary.Value.TrimEnd()[^1]);
                 if (!string.IsNullOrWhiteSpace(subtitle) &&
                     !Tokenize(subtitle).Any(IsNumericToken) &&
                     !SeriesPositionTokenHelper.HasPositionIdentity(subtitle) && !isBracketBoundary)
@@ -1765,8 +1764,10 @@ namespace NzbDrone.Core.Parser
             yield return ("; ", string.Empty);
             yield return (" \u2013 ", string.Empty);
             yield return (" \u2014 ", string.Empty);
-            yield return (" (", string.Empty);
-            yield return (" [", string.Empty);
+            foreach (var opener in TitleBracketCatalog.Openers)
+            {
+                yield return (" " + opener, string.Empty);
+            }
         }
 
         private static IEnumerable<string> ExpandOptionalQualifierVariants(string title, Book book)

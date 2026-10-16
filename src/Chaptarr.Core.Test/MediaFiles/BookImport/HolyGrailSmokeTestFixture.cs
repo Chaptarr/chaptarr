@@ -672,6 +672,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("Garden (Complete)", "Pat Smith")]
         [TestCase("Garden (Narré par Pat Smith)", "Pat Smith")]
         [TestCase("Garden (Narrated by Pat Smith)", "Pat Smith")]
+        [TestCase("Garden [Narrated by Pat Smith]", "Pat Smith")]
+        [TestCase("Garden 【Narrated by Pat Smith】", "Pat Smith")]
         public void absent_catalog_title_content_must_not_be_invented(string title, string otherTag)
         {
             var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
@@ -685,6 +687,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("Garden (Narrated by Pat Smith)", "Narrated by Pat Smith", null)]
         [TestCase("Garden (Narré par Pat Smith)", "Narré par Pat Smith", null)]
         [TestCase("Garden (Gelesen von Pat Smith)", "Pat Smith", "Pat Smith")]
+        [TestCase("Garden [Narrated by Pat Smith]", "Narrated by Pat Smith", null)]
+        [TestCase("Garden 【Narrated by Pat Smith】", "Narrated by Pat Smith", null)]
         public void complete_parenthetical_or_stored_narrator_credit_must_still_match(string title, string content, string knownNarrator)
         {
             var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
@@ -2579,8 +2583,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
 
-        [Test]
-	        public void should_accept_trailing_parenthetical_when_file_has_matching_evidence()
+        [TestCase("(", ")")]
+        [TestCase("[", "]")]
+        [TestCase("（", "）")]
+        [TestCase("［", "］")]
+        [TestCase("【", "】")]
+	        public void should_accept_trailing_parenthetical_when_file_has_matching_evidence(string open, string close)
 	        {
 	            var logger = LogManager.GetCurrentClassLogger();
 	            var containment = new ContainmentValidator(new TagNormalizer(), logger);
@@ -2592,8 +2600,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 {
                     EditionId = 6895,
                     BookId = 2748,
-                    EditionTitle = "Harry Potter and the Order of the Phoenix (Narrated by Stephen Fry)",
-                    BookTitle = "Harry Potter and the Order of the Phoenix (Narrated by Stephen Fry)",
+                    EditionTitle = $"Harry Potter and the Order of the Phoenix {open}Narrated by Stephen Fry{close}",
+                    BookTitle = $"Harry Potter and the Order of the Phoenix {open}Narrated by Stephen Fry{close}",
                     AuthorId = 25,
                     AuthorName = "J.K. Rowling",
                     NarratorNames = "Stephen Fry",

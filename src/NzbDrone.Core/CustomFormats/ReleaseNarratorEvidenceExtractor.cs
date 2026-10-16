@@ -13,8 +13,7 @@ namespace NzbDrone.Core.CustomFormats
     {
         private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
         private static readonly Regex NarratorNote = new Regex(
-            @"\((?<label>[^()]*)\)|\[(?<label>[^\[\]]*)\]|（(?<label>[^（）]*)）|［(?<label>[^［］]*)］",
-            RegexOptions.Compiled, RegexTimeout);
+            TitleBracketCatalog.PairedSegmentPattern, RegexOptions.Compiled, RegexTimeout);
 
         public static ReleaseNarratorEvidence Extract(CustomFormatInput input, IEnumerable<string> configuredNames = null)
         {

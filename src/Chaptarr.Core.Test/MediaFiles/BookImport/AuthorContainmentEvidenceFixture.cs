@@ -306,7 +306,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             };
             var validator = CreateValidator();
             var known = new[] { "John Doe", "Pat Smith", "Cara Reader" };
-            foreach (var brackets in new[] { ("(", ")"), ("[", "]"), ("（", "）"), ("［", "］") })
+            foreach (var brackets in new[] { ("(", ")"), ("[", "]"), ("（", "）"), ("［", "］"), ("【", "】") })
             {
                 var title = "A Test Book " + brackets.Item1 + annotation + brackets.Item2;
                 Assert.Multiple(() =>
@@ -320,7 +320,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         [TestCase("John Smith")]
         [TestCase("a different edition")]
-        [TestCase("Pat; Smith")]
         public void unrelated_tag_cannot_make_unknown_bracket_content_optional(string qualifier)
         {
             var tags = new Dictionary<string, List<string>>

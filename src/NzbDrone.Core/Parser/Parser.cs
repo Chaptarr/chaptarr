@@ -563,7 +563,7 @@ namespace NzbDrone.Core.Parser
             cleaned = KbpsMetadataRegex.Replace(cleaned, string.Empty);
             cleaned = TrailingPar2VolumeRegex.Replace(cleaned, string.Empty);
             cleaned = TrailingPar2OrNzbRegex.Replace(cleaned, string.Empty);
-            cleaned = TrimDanglingBracketTail(cleaned);
+            cleaned = TitleBracketCatalog.TrimUnclosedTail(cleaned);
             cleaned = RemoveFileExtension(cleaned);
             cleaned = DuplicateSpacesRegex.Replace(cleaned, " ").Trim();
 
@@ -644,30 +644,6 @@ namespace NzbDrone.Core.Parser
             Logger.Trace("Book Parsed. {0}", result);
 
             return result;
-        }
-
-        private static string TrimDanglingBracketTail(string title)
-        {
-            if (title.IsNullOrWhiteSpace())
-            {
-                return title;
-            }
-
-            var lastOpenParen = title.LastIndexOf('(');
-            var lastCloseParen = title.LastIndexOf(')');
-            if (lastOpenParen >= 0 && lastOpenParen > lastCloseParen)
-            {
-                title = title[..lastOpenParen];
-            }
-
-            var lastOpenBracket = title.LastIndexOf('[');
-            var lastCloseBracket = title.LastIndexOf(']');
-            if (lastOpenBracket >= 0 && lastOpenBracket > lastCloseBracket)
-            {
-                title = title[..lastOpenBracket];
-            }
-
-            return title.Trim();
         }
 
         private static bool ValidateBeforeParsing(string title)

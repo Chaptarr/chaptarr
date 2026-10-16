@@ -85,6 +85,9 @@ namespace Chaptarr.Core.Test.Parser
         [TestCase("[Lu par Stephen Fry]", true)]
         [TestCase("（Stephen Fry, Unabridged）", true)]
         [TestCase("［Stephen Fry, arbitrary extra words］", true)]
+        [TestCase("【Stephen Fry】", true)]
+        [TestCase("［Unabridged］", true)]
+        [TestCase("【Unabridged】", true)]
         [TestCase("(Narrated by Jim Dale)", false)]
         [TestCase("(Reprint)", false)]
         [TestCase("(réédition)", false)]
@@ -104,6 +107,33 @@ namespace Chaptarr.Core.Test.Parser
             var result = ReleaseTitleMatchScorer.FindBestMatch("J K Rowling Harry Potter and the Chamber of Secrets M4B", author.Name, new[] { book });
             Assert.That(result?.IsMatch == true, Is.EqualTo(canOmit));
             Assert.That(ReleaseTitleMatchScorer.FindBestMatch($"J K Rowling {book.Editions[0].Title} M4B", author.Name, new[] { book })?.IsMatch, Is.True);
+        }
+
+        [TestCase("Seven and the Swift (International Edition)")]
+        [TestCase("Seven and the Swift: An Epic Romantic Fantasy")]
+        [TestCase("Seven and the Swift: An Epic Romantic Fantasy (Shield of Sparrows Book 3)")]
+        public void seven_and_the_swift_releases_never_go_to_the_dramatized_shield_of_sparrows(string editionTitle)
+        {
+            var author = new Author { Id = 77, Name = "Devney Perry" };
+            Book CreateBook(int id, string title, string seriesName, string seriesPosition, string selectedEditionTitle) => new Book
+            {
+                Id = id, AuthorId = author.Id, Author = author, Title = title, MediaType = BookMediaType.Audiobook,
+                SeriesName = seriesName, SeriesPosition = seriesPosition,
+                Editions = new List<Edition> { new Edition { Id = id, Title = selectedEditionTitle, Monitored = true } }
+            };
+            var seven = CreateBook(1, "Seven and the Swift", "Shield of Sparrows", "3", editionTitle);
+            var generic = CreateBook(2, "Shield of Sparrows", "Shield of Sparrows", "1", "Shield of Sparrows");
+            var dramatized = CreateBook(3, "Shield of Sparrows (Part 1 of 2) [Dramatized Adaptation]", "Shield of Sparrows [Dramatized Adaptation]", "1, Part 1",
+                "Shield of Sparrows (Part 1 of 2) [Dramatized Adaptation]");
+            var catalog = new[] { seven, generic, dramatized };
+            foreach (var release in new[] { "Devney Perry - Seven and the Swift", "Devney Perry - Seven and the Swift (Shield of Sparrows Book 3)" })
+            {
+                var best = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, catalog, null, catalog);
+                Assert.That(best?.IsMatch == true ? best.Book : seven, Is.SameAs(seven), release);
+            }
+
+            var complete = ReleaseTitleMatchScorer.FindBestMatch("Devney Perry - " + editionTitle, author.Name, catalog, null, catalog);
+            Assert.That(complete?.IsMatch == true ? complete.Book : null, Is.SameAs(seven));
         }
 
         [Test]

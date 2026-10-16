@@ -5690,44 +5690,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return (bestStart, bestEnd);
             }
 
-            // Closing bracket -> opening bracket, including the full-width forms used in CJK titles.
-            private static readonly Dictionary<char, char> TrailingQualifierOpeners = new()
-            {
-                [')'] = '(',
-                [']'] = '[',
-                ['）'] = '（',
-                ['］'] = '［',
-                ['】'] = '【'
-            };
-
-            private string StripTrailingParentheticals(string title)
-            {
-                if (string.IsNullOrWhiteSpace(title))
-                {
-                    return title;
-                }
-
-                var remaining = title.Trim();
-                while (remaining.Length > 0 && TrailingQualifierOpeners.TryGetValue(remaining[remaining.Length - 1], out var opener))
-                {
-                    var open = remaining.LastIndexOf(opener);
-                    if (open <= 0)
-                    {
-                        break;
-                    }
-
-                    var inside = remaining.Substring(open + 1, remaining.Length - open - 2).Trim();
-                    if (string.IsNullOrWhiteSpace(inside))
-                    {
-                        break;
-                    }
-
-                    remaining = remaining.Substring(0, open).TrimEnd();
-                }
-
-                return remaining;
-            }
-
             /// <summary>
             /// Run FTS search and smoke test each result. Returns first match that passes smoke test.
             /// </summary>
@@ -6864,7 +6826,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     {
                         try
                         {
-                            var stripped = StripTrailingParentheticals(result.EditionTitle);
+                            var stripped = TitleBracketCatalog.BaseTitle(result.EditionTitle);
                             var hasTrailingParenthetical = !string.IsNullOrWhiteSpace(stripped) &&
                                                            !string.Equals(stripped, result.EditionTitle, StringComparison.Ordinal);
                             if (hasTrailingParenthetical)
@@ -8143,8 +8105,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         }
 
                         var seriesNames = GetBookSeriesNames(book)
+                            .SelectMany(TitleBracketCatalog.FullThenBase)
                             .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .Select(name => TokenizeForLeftoverGateSequence(StripTrailingParentheticals(name)))
+                            .Select(TokenizeForLeftoverGateSequence)
                             .Where(tokens => tokens.Count > 0)
                             .ToList();
                         foreach (var observed in observedValues)
@@ -10104,9 +10067,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             private bool IsTitleOwnedSeriesTitle(string title, Book book)
             {
                 var titleTokens = TokenizeForLeftoverGateSequence(title);
-                return titleTokens.Count > 0 && GetBookSeriesNames(book).Any(seriesName =>
+                return titleTokens.Count > 0 && GetBookSeriesNames(book).SelectMany(TitleBracketCatalog.FullThenBase).Any(seriesName =>
                 {
-                    var seriesTokens = TokenizeForLeftoverGateSequence(StripTrailingParentheticals(seriesName));
+                    var seriesTokens = TokenizeForLeftoverGateSequence(seriesName);
                     return seriesTokens.Count > 0 && titleTokens.SequenceEqual(seriesTokens, StringComparer.OrdinalIgnoreCase);
                 });
             }
