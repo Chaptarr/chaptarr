@@ -357,6 +357,27 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(match.BookId, Is.EqualTo(book.Id));
         }
 
+        [TestCase("Rilla of Ingleside", "Rilla of Ingleside （アンの娘リラ）")]
+        [TestCase("Rilla of Ingleside", "Rilla of Ingleside (Anne of Green Gables, #8)")]
+        [TestCase("Rilla of Ingleside", "Rilla of Ingleside [Illustrated]")]
+        [TestCase("Rilla of Ingleside", "Rilla of Ingleside ［Illustrated］")]
+        [TestCase("刺客正傳1：刺客學徒", "刺客正傳1：刺客學徒【二十五週年紀念．典藏插畫精裝版】")]
+        public void trailing_bracket_qualifier_in_any_width_should_not_block_the_edition_title(string observedTitle, string editionTitle)
+        {
+            var book = new Book { Id = 1, AuthorId = 77, Title = observedTitle, BaseBookId = "gr:1",
+                MediaType = BookMediaType.Ebook, AnyEditionOk = true };
+            var edition = new EditionFtsMatch { BookId = 1, EditionId = 11, AuthorId = 77, AuthorName = "L.M. Montgomery",
+                BookTitle = book.Title, EditionTitle = editionTitle, ReadingFormatId = 3, ForeignEditionId = "gr:edition" };
+            var matching = CreateOwnSeriesTitleMatcher(new[] { book }, new() { edition }, "L.M. Montgomery");
+            var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/bracket-qualifier.epub",
+                AllTags = new() { ["TITLE"] = new() { observedTitle }, ["AUTHOR"] = new() { "L.M. Montgomery" } }
+            }, BookMediaType.Ebook, restrictToAuthorId: 77);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(edition.EditionId));
+        }
+
         [Test]
         public void repeated_representative_editions_should_preserve_native_winner_without_multiplying_identity_work()
         {

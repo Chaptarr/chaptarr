@@ -36,6 +36,17 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
         }
 
+        [TestCase("刺客正傳1：刺客學徒", "刺客正傳1", "刺客學徒", true)]
+        [TestCase("刺客正傳1：刺客學徒", "刺客正傳1", null, false)]
+        public void full_width_colon_title_splits_like_an_ascii_colon(string title, string head, string tail, bool expected)
+        {
+            var tags = new Dictionary<string, List<string>> { ["TITLE"] = new() { head } };
+            if (tail != null) tags["custom"] = new() { tail };
+            var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+            Assert.That(validator.GetEditionTitleEvidence(title, tags).Count > 0, Is.EqualTo(expected));
+            Assert.That(validator.ValidateEditionInTags(title, tags), Is.EqualTo(expected));
+        }
+
         [TestCase(null)]
         [TestCase("The Bound and The Broken")]
         public void absent_or_incomplete_tail_does_not_prove_a_colon_title(string tail)

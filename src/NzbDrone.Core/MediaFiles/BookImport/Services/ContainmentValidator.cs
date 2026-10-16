@@ -436,7 +436,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
         private IReadOnlyList<EditionTitleEvidence> GetSplitTitleEvidence(string title, IDictionary<string, List<string>> tags)
         {
-            var separator = title.IndexOf(':');
+            // ASCII and full-width colons both mark a title/subtitle split.
+            var separator = title.IndexOfAny(new[] { ':', '：' });
             if (separator <= 0 || separator == title.Length - 1)
             {
                 return Array.Empty<EditionTitleEvidence>();

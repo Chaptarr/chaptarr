@@ -5690,6 +5690,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return (bestStart, bestEnd);
             }
 
+            // Closing bracket -> opening bracket, including the full-width forms used in CJK titles.
+            private static readonly Dictionary<char, char> TrailingQualifierOpeners = new()
+            {
+                [')'] = '(',
+                [']'] = '[',
+                ['）'] = '（',
+                ['］'] = '［',
+                ['】'] = '【'
+            };
+
             private string StripTrailingParentheticals(string title)
             {
                 if (string.IsNullOrWhiteSpace(title))
@@ -5698,9 +5708,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var remaining = title.Trim();
-                while (remaining.EndsWith(")", StringComparison.Ordinal) || remaining.EndsWith("]", StringComparison.Ordinal))
+                while (remaining.Length > 0 && TrailingQualifierOpeners.TryGetValue(remaining[remaining.Length - 1], out var opener))
                 {
-                    var open = remaining.LastIndexOf(remaining.EndsWith("]", StringComparison.Ordinal) ? '[' : '(');
+                    var open = remaining.LastIndexOf(opener);
                     if (open <= 0)
                     {
                         break;
