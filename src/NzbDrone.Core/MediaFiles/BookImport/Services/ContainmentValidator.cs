@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.MediaFiles.TagExtraction;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Utilities;
 using NLog;
@@ -272,6 +273,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 }
             }
 
+            if (GetSplitTitleEvidence(editionTitle, allTags).Count > 0)
+            {
+                return true;
+            }
+
             if (TryGetNearExactTitleEvidence(editionTitle, allTags, includeDurationGatedNearExact: false).Count > 0)
             {
                 _logger.Trace("[CONTAINMENT] Edition '{0}' MATCHED via ordered near-exact title evidence",
@@ -353,6 +359,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return evidence;
             }
 
+            evidence.AddRange(GetSplitTitleEvidence(editionTitle, allTags));
+            if (evidence.Count > 0)
+            {
+                return evidence;
+            }
+
             evidence.AddRange(TryGetNearExactTitleEvidence(editionTitle, allTags, includeDurationGatedNearExact));
             if (evidence.Count > 0)
             {
@@ -420,6 +432,62 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return evidence;
+        }
+
+        private IReadOnlyList<EditionTitleEvidence> GetSplitTitleEvidence(string title, IDictionary<string, List<string>> tags)
+        {
+            var separator = title.IndexOf(':');
+            if (separator <= 0 || separator == title.Length - 1)
+            {
+                return Array.Empty<EditionTitleEvidence>();
+            }
+
+            var head = title.Substring(0, separator).Trim();
+            var tail = title.Substring(separator + 1).Trim();
+            var headTokens = GetEditionTokensForValidation(head);
+            var tailTokens = GetEditionTokensForValidation(tail);
+            if (headTokens.Count == 0 || tailTokens.Count == 0)
+            {
+                return Array.Empty<EditionTitleEvidence>();
+            }
+
+            var heads = new List<EditionTitleEvidence>();
+            var tails = new List<EditionTitleEvidence>();
+            foreach (var field in tags)
+            {
+                if (IsExcludedFromEditionTitleEvidenceKey(field.Key) || field.Value == null)
+                {
+                    continue;
+                }
+
+                foreach (var value in field.Value)
+                {
+                    if (string.IsNullOrWhiteSpace(value) || value.Length > MaxTitleEvidenceValueLength ||
+                        TagCanonicalizer.IsCanonicalAliasBackedByRawSource(field.Key, value, tags))
+                    {
+                        continue;
+                    }
+
+                    var tokens = ExtractTokensAsList(NormalizeForWordExtraction(value).ToLowerInvariant());
+                    if (CanConsumeAllTokens(headTokens, tokens))
+                    {
+                        heads.Add(new EditionTitleEvidence(field.Key, value, head));
+                    }
+
+                    if (CanConsumeAllTokens(tailTokens, tokens))
+                    {
+                        tails.Add(new EditionTitleEvidence(field.Key, value, tail));
+                    }
+                }
+            }
+
+            // Each complete part needs its own physical field. Preserve those source spans for
+            // token consumption; a generated alias cannot supply the same occurrence twice.
+            return heads.Where(headEvidence => tails.Any(tailEvidence =>
+                    !string.Equals(headEvidence.FieldName, tailEvidence.FieldName, StringComparison.OrdinalIgnoreCase)))
+                .Concat(tails.Where(tailEvidence => heads.Any(headEvidence =>
+                    !string.Equals(headEvidence.FieldName, tailEvidence.FieldName, StringComparison.OrdinalIgnoreCase))))
+                .ToList();
         }
 
         private IReadOnlyList<EditionTitleEvidence> TryGetNearExactTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact)

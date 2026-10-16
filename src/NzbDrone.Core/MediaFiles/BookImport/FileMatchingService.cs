@@ -5698,9 +5698,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var remaining = title.Trim();
-                while (remaining.EndsWith(")", StringComparison.Ordinal))
+                while (remaining.EndsWith(")", StringComparison.Ordinal) || remaining.EndsWith("]", StringComparison.Ordinal))
                 {
-                    var open = remaining.LastIndexOf('(');
+                    var open = remaining.LastIndexOf(remaining.EndsWith("]", StringComparison.Ordinal) ? '[' : '(');
                     if (open <= 0)
                     {
                         break;
@@ -6839,6 +6839,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     directEditionEvidence = ApplyStrictSeriesPositionFieldPolicy(directEditionEvidence);
                     var evidence = directEditionEvidence;
+                    IReadOnlyList<EditionTitleEvidence> bracketEditionEvidence = Array.Empty<EditionTitleEvidence>();
                     var candidateBook = TryGetBookCached(result.BookId, booksById);
                     if (evidence == null || evidence.Count == 0)
                     {
@@ -6875,6 +6876,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     // }
 
                                     evidence = baseEvidence;
+                                    bracketEditionEvidence = baseEvidence;
                                 }
                             }
 
@@ -7018,8 +7020,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             audiobookDurationMatches = TryGetDurationFallbackDetail(result, out _);
                             audiobookRepresentativeTitleMatch = IsRepresentativeEdition(result) &&
                                                                   (HasStrongDirectEditionTitleEvidence(directEditionEvidence) ||
-                                                                   HasStrongDirectEditionTitleEvidence(evidence.Where(item =>
-                                                                       string.Equals(item.MatchedTitle?.Trim(), result.BookTitle?.Trim(), StringComparison.OrdinalIgnoreCase)).ToList()));
+                                                                   HasStrongDirectEditionTitleEvidence(bracketEditionEvidence));
 
                             if (IsRepresentativeEdition(result))
                             {

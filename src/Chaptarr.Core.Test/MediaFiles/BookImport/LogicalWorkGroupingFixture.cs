@@ -1631,6 +1631,39 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
         }
 
+        [TestCase("(The Future Chronicles)")]
+        [TestCase("[The Future Chronicles]")]
+        [TestCase("(The Future Chronicles) [Kindle Edition]")]
+        public void representative_uses_its_own_bracket_stripped_title_without_a_book_title_fallback(string suffix)
+        {
+            // Captured edition title; constructed tags and a deliberately different Book title.
+            var book = new Book
+            {
+                Id = 20824, AuthorId = 25, Title = "An unrelated pocket title",
+                MediaType = BookMediaType.Audiobook, AnyEditionOk = true
+            };
+            var edition = new EditionFtsMatch
+            {
+                EditionId = 53355, BookId = book.Id, AuthorId = 25, AuthorName = "Hugh Howey",
+                BookTitle = book.Title, EditionTitle = "The Robot Chronicles " + suffix,
+                ReadingFormatId = 3, MatchScore = 10
+            };
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/constructed/robot.m4b",
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new() { "The Robot Chronicles" },
+                    ["AUTHOR"] = new() { "Hugh Howey" }
+                }
+            };
+
+            var match = CreateSut(new List<EditionFtsMatch> { edition }, new List<Book> { book })
+                .HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 25);
+
+            Assert.That(match?.EditionId, Is.EqualTo(53355));
+        }
+
         [Test]
         public void should_use_ebook_representative_when_ebook_edition_title_is_in_tags_and_audio_is_unproven()
         {

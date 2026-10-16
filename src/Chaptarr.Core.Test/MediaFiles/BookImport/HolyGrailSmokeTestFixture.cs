@@ -231,7 +231,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("different-series", false, false)]
         [TestCase("missing-position", false, true)]
         [TestCase("different-position", false, true)]
-        [TestCase("different-book-title", false, false)]
         [TestCase("substantive-suffix", false, true)]
         [TestCase("different-author", true, false)]
         [TestCase("different-media", true, false)]
@@ -239,7 +238,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             string scenario, bool expectedDerivedEvidence, bool expectedTarget)
         {
             var target = new Book { Id = 1, AuthorId = scenario == "different-author" ? 78 : 77,
-                Title = scenario == "different-book-title" ? "Another Story" : "Story",
+                Title = "Story",
                 SeriesName = scenario == "missing-series" ? null : scenario == "different-series" ? "Other Cycle" : "Story Cycle",
                 SeriesPosition = scenario == "missing-position" ? null : scenario == "different-position" ? "2" : "1",
                 BaseBookId = "hc:91001", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
@@ -1480,8 +1479,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(resultWithBrokenDiagnostics.MatchedFiles[0].EditionId, Is.EqualTo(candidate.EditionId));
         }
 
-        [Test]
-        public void staged_fts_should_gate_unique_authors_and_rank_independent_residual_fields()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void staged_fts_should_gate_unique_authors_and_rank_independent_residual_fields(bool combinedEditionTitle)
         {
             var logger = LogManager.GetCurrentClassLogger();
             var containment = new CountingContainmentValidator(new ContainmentValidator(new TagNormalizer(), logger));
@@ -1498,9 +1498,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     {
                         EditionId = 1001,
                         BookId = 101,
-                        EditionTitle = "The Fall",
-                        MatchingTitle = "The Fall",
-                        EditionSubTitle = "The Bound and The Broken Novella",
+                        EditionTitle = combinedEditionTitle ? "The Fall: The Bound and The Broken Novella" : "The Fall",
+                        MatchingTitle = combinedEditionTitle ? "The Fall: The Bound and The Broken Novella" : "The Fall",
+                        EditionSubTitle = combinedEditionTitle ? null : "The Bound and The Broken Novella",
                         BookTitle = "The Fall",
                         AuthorId = 1,
                         AuthorName = "Ryan Cahill",
