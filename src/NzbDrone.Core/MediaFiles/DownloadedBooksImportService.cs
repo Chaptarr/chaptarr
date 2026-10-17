@@ -125,7 +125,7 @@ namespace NzbDrone.Core.MediaFiles
 
             LogInaccessiblePathError(path);
             _eventAggregator.PublishEvent(new TrackImportFailedEvent(null, null, true, downloadClientItem));
-            return new List<ImportResult> { InaccessiblePathResult(path, downloadClientItem) };
+            return new List<ImportResult> { InaccessiblePathResult(path) };
         }
 
         private List<ImportResult> ProcessFolder(IDirectoryInfo directoryInfo, ImportMode importMode, Author author, DownloadClientItem downloadClientItem, RemoteBook remoteBook, ParsedBookInfo parsedBookInfo = null, bool requireDefaultRootFolderForMissingAuthors = false)
@@ -1281,11 +1281,11 @@ namespace NzbDrone.Core.MediaFiles
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
-        private ImportResult InaccessiblePathResult(string path, DownloadClientItem downloadClientItem)
+        private static ImportResult InaccessiblePathResult(string path)
         {
             var reason = $"Download path is not accessible to Chaptarr: {path}. Check the download client path, remote path mapping, and container volume mappings.";
             var localBook = new LocalBook { Path = path };
-            var rejection = CreateMissingMediaRejection(reason, downloadClientItem);
+            var rejection = new Rejection(reason, RejectionType.Temporary);
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
