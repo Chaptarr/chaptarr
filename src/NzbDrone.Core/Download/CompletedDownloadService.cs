@@ -29,9 +29,6 @@ namespace NzbDrone.Core.Download
 
 	    public class CompletedDownloadService : ICompletedDownloadService
 	    {
-	        // Restore the pre-d60 three-cycle grace for files arriving through a remote
-	        // mount, but never keep a completed download retrying for missing files forever.
-	        private const int MissingAuthoritativeMediaFileBlockThreshold = 3;
 	        private readonly IEventAggregator _eventAggregator;
 	        private readonly IHistoryService _historyService;
 	        private readonly IProvideImportItemService _provideImportItemService;
@@ -129,7 +126,6 @@ namespace NzbDrone.Core.Download
 
                 if (importResults.Any(result => result.Result == ImportResultType.Pending))
                 {
-                    trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
                     trackedDownload.State = TrackedDownloadState.ImportPending;
                     trackedDownload.ClearStatus();
                     PublishTrackedDownloadUpdated(trackedDownload);
@@ -154,32 +150,6 @@ namespace NzbDrone.Core.Download
                     BlockImport(trackedDownload, statusMessages);
                     return;
                 }
-
-                if (AreAllImportRejectionsMissingAuthoritativeMediaFiles(importResults))
-                {
-                    trackedDownload.MissingAuthoritativeMediaFileAttempts++;
-                    var statusMessages = importResults
-                        .Where(result => result.ImportDecision.Item != null)
-                        .Select(result => new TrackedDownloadStatusMessage(Path.GetFileName(result.ImportDecision.Item.Path), result.Errors))
-                        .ToArray();
-
-                    trackedDownload.Warn(statusMessages);
-
-                    if (trackedDownload.MissingAuthoritativeMediaFileAttempts >= MissingAuthoritativeMediaFileBlockThreshold)
-                    {
-                        _logger.Warn("Declared download files did not become readable for {0} after {1} attempts; blocking automatic retries until user action.",
-                            trackedDownload.DownloadItem.Title,
-                            trackedDownload.MissingAuthoritativeMediaFileAttempts);
-                        BlockImportWithCurrentStatus(trackedDownload);
-                        return;
-                    }
-
-                    trackedDownload.State = TrackedDownloadState.ImportPending;
-                    PublishTrackedDownloadUpdated(trackedDownload);
-                    return;
-                }
-
-                trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
 
                 if (AreAllImportRejectionsTemporary(importResults))
                 {
@@ -289,16 +259,6 @@ namespace NzbDrone.Core.Download
                 result.Result != ImportResultType.Imported &&
                 result.ImportDecision?.Rejections?.Any() == true &&
                 result.ImportDecision.Rejections.All(rejection => rejection.Type == RejectionType.Temporary));
-        }
-
-        private static bool AreAllImportRejectionsMissingAuthoritativeMediaFiles(List<ImportResult> importResults)
-        {
-            return AreAllImportRejectionsTemporary(importResults) &&
-                   importResults.All(result => result.ImportDecision.Rejections.All(rejection =>
-                       string.Equals(
-                           rejection.Category,
-                           DownloadedBooksImportService.MissingAuthoritativeMediaFilesRejectionCategory,
-                           StringComparison.Ordinal)));
         }
 
         private static IEnumerable<string> GetDisallowedFormatSummary(List<ImportResult> importResults)

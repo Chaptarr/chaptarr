@@ -114,7 +114,6 @@ namespace NzbDrone.Core.Download
             _downloadClientFileSnapshotService.Delete(trackedDownload.DownloadItem);
             _downloadClientFileSnapshotService.Delete(previousImportItem);
             _downloadClientFileSnapshotService.Delete(trackedDownload.ImportItem);
-            trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
             trackedDownload.State = TrackedDownloadState.ImportPending;
             trackedDownload.ClearStatus();
             PublishQueueUpdate();

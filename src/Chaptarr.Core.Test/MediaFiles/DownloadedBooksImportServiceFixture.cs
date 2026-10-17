@@ -251,6 +251,17 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        private class DefaultReturningProxy<T> : DispatchProxy where T : class
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                var returnType = targetMethod?.ReturnType;
+                return returnType != null && returnType.IsValueType && returnType != typeof(void)
+                    ? Activator.CreateInstance(returnType)
+                    : null;
+            }
+        }
+
         private class BookServiceProxy : DispatchProxy
         {
             public Book Book { get; set; }
@@ -488,6 +499,44 @@ namespace Chaptarr.Core.Test.MediaFiles
             finally
             {
                 try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_treat_a_missing_download_path_as_temporary_without_an_authoritative_file_list()
+        {
+            var missingPath = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"), "Book.epub");
+            var service = new DownloadedBooksImportService(
+                new StubDiskProvider(),
+                new StubDiskScanService(),
+                new StubFileMatchingService(),
+                new StubMetadataTagService(),
+                new RecordingImportApprovedBooks(),
+                DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                new StubAuthorLibraryService(),
+                new StubRootFolderService(),
+                ConfigServiceTestProxy.Create(),
+                DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>(),
+                DispatchProxy.Create<IEventAggregator, DefaultReturningProxy<IEventAggregator>>(),
+                DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, DefaultReturningProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                LogManager.GetCurrentClassLogger());
+
+            var withoutFileList = service.ProcessPath(missingPath, ImportMode.Auto, author: null, downloadClientItem: null).Single();
+            var withDegradedFileList = service.ProcessPath(missingPath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem
+            {
+                FilePaths = new List<string> { missingPath },
+                FileListConfidence = DownloadClientFileListConfidence.Degraded
+            }).Single();
+
+            foreach (var result in new[] { withoutFileList, withDegradedFileList })
+            {
+                var rejection = result.ImportDecision.Rejections.Single();
+                Assert.That(rejection.Type, Is.EqualTo(RejectionType.Temporary));
+                Assert.That(result.Errors.Single(), Does.Contain("Download path is not accessible to Chaptarr"));
             }
         }
 

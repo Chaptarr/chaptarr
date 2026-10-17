@@ -391,7 +391,6 @@ namespace Chaptarr.Core.Test.Download
             subject.Import(trackedDownload);
 
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.EqualTo(1));
             Assert.That(trackedDownload.StatusMessages.SelectMany(message => message.Messages), Has.Some.Contains(rejection.Reason));
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
 
@@ -404,14 +403,13 @@ namespace Chaptarr.Core.Test.Download
 
             Assert.That(importService.CallCount, Is.EqualTo(2));
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.Zero);
             Assert.That(trackedDownload.StatusMessages, Is.Empty);
             Assert.That(eventAggregator.Events, Has.One.InstanceOf<DownloadCompletedEvent>());
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
-        public void should_restore_the_pre_d60_three_attempt_grace_for_missing_declared_files()
+        public void should_keep_retrying_missing_declared_files_instead_of_blocking()
         {
             var eventAggregator = new RecordingEventAggregator();
             var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
@@ -466,18 +464,28 @@ namespace Chaptarr.Core.Test.Download
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
-            subject.Import(trackedDownload);
-            subject.Import(trackedDownload);
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                subject.Import(trackedDownload);
+            }
+
+            Assert.That(importService.CallCount, Is.EqualTo(10));
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
+            Assert.That(trackedDownload.StatusMessages.SelectMany(message => message.Messages), Has.Some.Contains(rejection.Reason));
+            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
+
+            importService.Results = new List<ImportResult>
+            {
+                CreateImportedResult(102, 8, "Never Arrived")
+            };
+
             subject.Import(trackedDownload);
 
-            Assert.That(importService.CallCount, Is.EqualTo(3));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.EqualTo(3));
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
-            Assert.That(eventAggregator.Events, Has.One.InstanceOf<BookImportIncompleteEvent>());
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
-        public void should_not_apply_the_missing_file_cap_to_other_temporary_rejections()
+        public void should_keep_other_temporary_rejections_pending()
         {
             var eventAggregator = new RecordingEventAggregator();
             var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
@@ -534,7 +542,6 @@ namespace Chaptarr.Core.Test.Download
             subject.Import(trackedDownload);
 
             Assert.That(importService.CallCount, Is.EqualTo(3));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.Zero);
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }
