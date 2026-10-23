@@ -46,6 +46,7 @@
     <PackageVersion Include="SQLite" Version="3.54.0" />
     <PackageVersion Include="System.IO.Abstractions" Version="17.0.24" />
     <PackageVersion Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageVersion Include="System.ServiceProcess.ServiceController" Version="10.0.1" />
     <PackageVersion Include="TagLibSharp-Lidarr" Version="2.2.0.19" />
   </ItemGroup>

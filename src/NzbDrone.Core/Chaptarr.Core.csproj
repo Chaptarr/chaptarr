@@ -23,6 +23,7 @@
     <PackageReference Include="Npgsql" />
     <PackageReference Include="RestSharp" />
     <PackageReference Include="System.IO.Abstractions" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
     <PackageReference Include="TagLibSharp-Lidarr" />
     <PackageReference Include="SixLabors.ImageSharp" />
     <PackageReference Include="Equ" />
