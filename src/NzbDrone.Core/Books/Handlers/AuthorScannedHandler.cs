@@ -62,7 +62,8 @@ namespace NzbDrone.Core.Books
                     });
                 }
 
-                if (!hasMediaSpecificMode)
+                // Specific-book rows were already seeded by provider ID when the author was added.
+                if (!hasMediaSpecificMode && author.AddOptions.Monitor != MonitorTypes.SpecificBook)
                 {
                     _bookMonitoredService.SetBookMonitoredStatus(author, author.AddOptions);
                 }

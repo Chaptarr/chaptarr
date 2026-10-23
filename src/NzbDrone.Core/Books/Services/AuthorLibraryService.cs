@@ -1812,6 +1812,16 @@ namespace NzbDrone.Core.Books.Services
                 author.AddOptions.AudiobookMonitor = audiobookInitialMode;
                 author.AddOptions.EbookMonitor = ebookInitialMode;
                 author.AddOptions.SearchForMissingBooks = config.SearchForMissingBooks == true;
+
+                // A specific-book add has no per-media mode left to apply after the scan. Mark it,
+                // otherwise Monitor keeps its default (All) and the scan handler monitors the whole catalog.
+                var specificBookOnly = !audiobookInitialMode.HasValue && !ebookInitialMode.HasValue &&
+                    ((config.CreateAudiobook && config.AudiobookMonitorExistingMode == MonitorTypes.SpecificBook) ||
+                     (config.CreateEbook && config.EbookMonitorExistingMode == MonitorTypes.SpecificBook));
+                if (specificBookOnly)
+                {
+                    author.AddOptions.Monitor = MonitorTypes.SpecificBook;
+                }
             }
 
             // Apply audiobook settings only when this add request configured audiobook support.

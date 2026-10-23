@@ -55,6 +55,35 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void specific_book_add_should_not_change_book_monitoring_after_the_scan()
+        {
+            var author = new Author
+            {
+                Id = 7,
+                Name = "New Author",
+                AddOptions = new AddAuthorOptions { Monitor = MonitorTypes.SpecificBook, SearchForMissingBooks = true }
+            };
+            var monitoredService = DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
+            var queue = new StubCommandQueueManager();
+            var subject = new AuthorScannedHandler(
+                monitoredService,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                queue,
+                DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
+                new StubEventAggregator(),
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+
+            subject.Handle(new AuthorScannedEvent(author));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(((BookMonitoredServiceProxy)(object)monitoredService).Calls, Is.Empty);
+                Assert.That(queue.Pushed.OfType<MissingBookSearchCommand>().Single().AuthorId, Is.EqualTo(author.Id));
+                Assert.That(author.AddOptions, Is.Null);
+            });
+        }
+
+        [Test]
         public void media_specific_initial_modes_should_be_applied_once_after_the_scan_without_changing_the_author_gate()
         {
             var author = new Author

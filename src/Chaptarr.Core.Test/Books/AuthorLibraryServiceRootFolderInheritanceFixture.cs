@@ -470,6 +470,30 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public async Task add_author_should_mark_specific_book_adds_so_the_scan_does_not_monitor_the_catalog()
+        {
+            var root = BuildAudiobookRoot("/audiobooks", initialBookMonitoring: MonitorTypes.Missing);
+            var authorService = new StubAuthorService();
+            var service = BuildService(authorService, new StubAuthorInfo(BuildRemoteAuthor()), new StubRootFolderService(root));
+
+            var author = await service.AddAuthorAsync("hc:123", new MonitoringConfig
+            {
+                AuthorName = "Test Author",
+                CreateAudiobook = true,
+                CreateEbook = false,
+                AudiobookRootFolderPath = root.Path,
+                AudiobookMonitorExistingMode = MonitorTypes.SpecificBook,
+                AudiobookBooksToMonitor = new List<string> { "hc:456" },
+                SearchForMissingBooks = true
+            });
+
+            Assert.That(author.AddOptions.Monitor, Is.EqualTo(MonitorTypes.SpecificBook));
+            Assert.That(author.AddOptions.AudiobookMonitor, Is.Null);
+            Assert.That(author.AddOptions.EbookMonitor, Is.Null);
+            Assert.That(author.AddOptions.SearchForMissingBooks, Is.True);
+        }
+
+        [Test]
         public async Task not_ready_author_should_queue_the_same_root_tags_as_an_immediate_add()
         {
             var root = BuildAudiobookRoot("/audiobooks", tags: new[] { 7, 8 });
