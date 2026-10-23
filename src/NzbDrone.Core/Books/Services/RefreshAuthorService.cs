@@ -2227,6 +2227,14 @@ namespace NzbDrone.Core.Books
                     continue;
                 }
 
+                // The folder walker only applies the exclusion regex below its starting folder, so a scan rooted
+                // inside an excluded folder (e.g. a download client's /root/.torrents) would walk all of it.
+                if (DiskScanService.ExcludedSubFoldersRegex.IsMatch(rootFolder.Path.GetRelativePath(candidate) + Path.DirectorySeparatorChar))
+                {
+                    _logger.Debug("[FLOW-DEBUG] RESCAN-EVIDENCE-SKIP: Ignoring '{0}' because it is inside an excluded folder.", candidate);
+                    continue;
+                }
+
                 boundedCandidates.Add(candidate);
             }
 

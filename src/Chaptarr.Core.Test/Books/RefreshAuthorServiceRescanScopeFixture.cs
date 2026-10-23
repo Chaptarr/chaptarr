@@ -67,6 +67,36 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void single_author_refresh_ignores_evidence_inside_excluded_folders()
+        {
+            var root = @"C:\library".AsOsAgnostic();
+            var authorPath = Path.Combine(root, "D.J. MacHale");
+            var seeds = Path.Combine(root, ".torrents-ebook");
+            var author = new Author { Id = 7, Name = "D.J. MacHale", EbookPath = authorPath };
+            var evidence = new[]
+            {
+                NewEvidence(Path.Combine(authorPath, "Black Water", "Black Water.azw3")),
+                NewEvidence(Path.Combine(seeds, "Merchant of Death.mobi")),
+                NewEvidence(Path.Combine(seeds, "Black Water", "Black Water.azw3")),
+                NewEvidence(Path.Combine(root, "@eaDir", "thumb.epub"))
+            };
+            var queue = new StubCommandQueueManager();
+            var subject = CreateSubject(
+                new[] { author },
+                new[] { new RootFolder { Id = 1, Path = root, FolderType = FolderType.Mixed } },
+                evidence,
+                queue,
+                new StubEventAggregator());
+
+            subject.Execute(new RefreshAuthorCommand(author.Id, refreshMetadata: false, rescanFolders: true)
+            {
+                Trigger = CommandTrigger.Manual
+            });
+
+            Assert.That(queue.Pushed.OfType<RescanFoldersCommand>().Single().Folders, Is.EqualTo(new[] { authorPath }));
+        }
+
+        [Test]
         public void single_author_refresh_uses_legacy_path_only_when_both_media_paths_are_blank()
         {
             var root = @"C:\library".AsOsAgnostic();
