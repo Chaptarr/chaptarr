@@ -11,9 +11,10 @@ import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
-import AuthorDetailsSeries from './AuthorDetailsSeries';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import createBookSearchFilter from 'Utilities/Book/createBookSearchFilter';
 import isLibraryBook from 'Utilities/Book/isLibraryBook';
+import AuthorDetailsSeries from './AuthorDetailsSeries';
 
 function createMapStateToProps() {
   return createSelector(
@@ -77,45 +78,9 @@ function createMapStateToProps() {
       
       // Apply search filter first if there's a value
       if (typeof filterValue === 'string' && filterValue.trim()) {
-        const searchTerm = filterValue.toLowerCase().trim();
-        const includes = (value) => typeof value === 'string' && value.toLowerCase().includes(searchTerm);
-        const listIncludes = (list) => Array.isArray(list) && list.some((value) => includes(value));
-        const seriesMatches = includes(currentSeries.title);
-
-        const editionMatches = (edition) => {
-          if (!edition) {
-            return false;
-          }
-
-          return includes(edition.narrator) || includes(edition.title) || includes(edition.subtitle);
-        };
-
-        booksInSeries = booksInSeries.filter((book) => {
-          if (!book) {
-            return false;
-          }
-
-          // If the series name matches, keep the whole series visible.
-          if (seriesMatches) {
-            return true;
-          }
-
-          if (includes(book.title) || includes(book.authorTitle) || includes(book.seriesTitle) || includes(book.narrator)) {
-            return true;
-          }
-
-          if (listIncludes(book.availableNarrators)) {
-            return true;
-          }
-
-          if (Array.isArray(book.editions) && book.editions.some(editionMatches)) {
-            return true;
-          }
-
-          return false;
-        });
+        booksInSeries = booksInSeries.filter(createBookSearchFilter(filterValue, currentSeries.title));
       }
-      
+
       // Apply hide unmonitored/missing filter ONLY if not searching
       // When searching, show all results regardless of monitored/missing status
       if (hideUnmonitoredMissing && !filterValue && booksInSeries.length > 0) {

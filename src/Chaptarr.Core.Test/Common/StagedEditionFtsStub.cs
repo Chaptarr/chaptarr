@@ -21,6 +21,7 @@ namespace Chaptarr.Core.Test.Common
             Action<EditionFtsTraceEvent> trace = null, int limit = 20, bool monitoredOnly = false)
         {
             var terms = (tokens ?? Array.Empty<string>()).ToList();
+            limit = limit > 0 ? limit : int.MaxValue;
             _recalledEditions = SelectEditions(authorId, terms, mediaType, limit) ?? new List<EditionFtsMatch>();
             var books = _recalledEditions.Where(candidate => candidate != null)
                 .GroupBy(candidate => candidate.BookId)

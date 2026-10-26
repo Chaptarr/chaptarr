@@ -12,6 +12,7 @@ import createClientSideCollectionSelector from 'Store/Selectors/createClientSide
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import createBookSearchFilter from 'Utilities/Book/createBookSearchFilter';
 import isLibraryBook from 'Utilities/Book/isLibraryBook';
 import AuthorDetailsSeason from './AuthorDetailsSeason';
 
@@ -46,52 +47,9 @@ function createMapStateToProps() {
       
       // Apply search filter first if there's a value
       if (filterValue && typeof filterValue === 'string' && filterValue.trim()) {
-        const searchTerm = filterValue.toLowerCase().trim();
-        const includes = (value) => typeof value === 'string' && value.toLowerCase().includes(searchTerm);
-        const listIncludes = (list) => Array.isArray(list) && list.some((value) => includes(value));
-
-        const editionMatches = (edition) => {
-          if (!edition) {
-            return false;
-          }
-
-          // Narrator search: use ALL editions (even when the book-level narrator is hidden).
-          // Also include edition title/subtitle so users can search alternate-language variants.
-          return includes(edition.narrator) || includes(edition.title) || includes(edition.subtitle);
-        };
-
-        booksInGroup = booksInGroup.filter((book) => {
-          if (!book) {
-            return false;
-          }
-
-          // Book-level fields
-          if (includes(book.title) || includes(book.authorTitle) || includes(book.seriesTitle) || includes(book.narrator)) {
-            return true;
-          }
-
-          // Aggregated edition narrators (server-provided) so search works even when narrator column is hidden.
-          if (listIncludes(book.availableNarrators)) {
-            return true;
-          }
-
-          // Series (legacy shape)
-          if (Array.isArray(book.seriesLinks)) {
-            const matchesSeries = book.seriesLinks.some((link) => includes(link?.series?.title));
-            if (matchesSeries) {
-              return true;
-            }
-          }
-
-          // Editions (robust narrator search across all editions)
-          if (Array.isArray(book.editions) && book.editions.some(editionMatches)) {
-            return true;
-          }
-
-          return false;
-        });
+        booksInGroup = booksInGroup.filter(createBookSearchFilter(filterValue));
       }
-      
+
       // Apply hide unmonitored/missing filter ONLY if not searching
       // When searching, show all results regardless of monitored/missing status
       if (hideUnmonitoredMissing && (!filterValue || typeof filterValue !== 'string' || !filterValue.trim()) && booksInGroup.length > 0) {
@@ -105,12 +63,12 @@ function createMapStateToProps() {
       // Improve stability for Status sorting: use a deterministic tie-breaker (title)
       let sortedBooks;
       if (books.sortKey === 'status') {
-        const statusClause = predicateFn
-          ? (item) => predicateFn(item, books.sortDirection, effectiveMediaType)
-          : (item) => '';
-        const titleClause = (item) => (globalBookSortPredicates && globalBookSortPredicates.title)
-          ? globalBookSortPredicates.title(item)
-          : (item.title || '').toLowerCase();
+        const statusClause = predicateFn ?
+          (item) => predicateFn(item, books.sortDirection, effectiveMediaType) :
+          (item) => '';
+        const titleClause = (item) => ((globalBookSortPredicates && globalBookSortPredicates.title) ?
+          globalBookSortPredicates.title(item) :
+          (item.title || '').toLowerCase());
 
         const primaryOrder = books.sortDirection === 'ascending' ? 'asc' : 'desc';
         // Always sort title ascending for readability as a tie-breaker

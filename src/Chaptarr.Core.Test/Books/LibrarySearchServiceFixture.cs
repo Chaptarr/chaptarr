@@ -101,15 +101,7 @@ namespace Chaptarr.Core.Test.Books
                     return;
                 }
 
-                // A tiny fixture may prefer a sequential scan; test index eligibility explicitly.
-                command.Connection.Execute("SET enable_seqscan = off; SET jit = off;");
-                using var explain = new NpgsqlCommand("EXPLAIN (FORMAT JSON) " + command.CommandText, (NpgsqlConnection)command.Connection);
-                foreach (NpgsqlParameter parameter in command.Parameters)
-                {
-                    explain.Parameters.Add(parameter.Clone());
-                }
-
-                plan = (string)explain.ExecuteScalar();
+                plan = ExplainIndexEligibility(command);
             };
 
             try
@@ -129,6 +121,61 @@ namespace Chaptarr.Core.Test.Books
             {
                 _observeCommand = null;
             }
+        }
+
+        private static string ExplainIndexEligibility(IDbCommand command)
+        {
+            // A tiny fixture may prefer a sequential scan; test index eligibility explicitly.
+            command.Connection.Execute("SET enable_seqscan = off; SET jit = off;");
+            using var explain = new NpgsqlCommand("EXPLAIN (FORMAT JSON) " + command.CommandText, (NpgsqlConnection)command.Connection);
+            foreach (NpgsqlParameter parameter in command.Parameters)
+            {
+                explain.Parameters.Add(parameter.Clone());
+            }
+
+            return (string)explain.ExecuteScalar();
+        }
+
+        [Test]
+        public void native_author_header_reuses_existing_index_without_joining_whole_names()
+        {
+            DualDatabaseFixture.Run(_postgres, database =>
+            {
+                var logger = LogManager.GetCurrentClassLogger();
+                var events = InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null);
+                var authors = new AuthorRepository(database, events, logger);
+                foreach (var name in new[] { "Adam Scott Huerta", "Adam Silvera", "Adam Southward", "Sarah Adams", "J.K. Rowling", "Camille Pagán", "Frank Herbert" })
+                {
+                    authors.Insert(new Author { Name = name, CleanName = NzbDrone.Core.Parser.Parser.CleanAuthorName(name), SortName = name.ToLowerInvariant(), Path = "/header-prefix/" + name, Added = DateTime.UtcNow });
+                }
+
+                var service = new LibrarySearchService(database, logger);
+                Assert.That(service.Search("Adams", 10).Authors.Select(author => author.Name), Is.EqualTo(new[] { "Sarah Adams" }));
+                Assert.That(service.Search("Adams", 1).Authors.Single().Name, Is.EqualTo("Sarah Adams"));
+                Assert.That(service.Search("Sarah Adams", 1).Authors.Single().ExactMatch, Is.True);
+                Assert.That(service.Search("camille pagan", 1).Authors.Single().Name, Is.EqualTo("Camille Pagán"));
+                Assert.That(service.Search("frank h", 1).Authors.Single().Name, Is.EqualTo("Frank Herbert"));
+                Assert.That(service.Search("frankx", 10).Authors, Is.Empty);
+                Assert.That(service.Search("J.K. Row", 1).Authors.Single().Name, Is.EqualTo("J.K. Rowling"));
+                if (_postgres)
+                {
+                    string plan = null;
+                    var reads = 0;
+                    var observed = new MainDatabase(new Database("header-index", () => CommandObserver.Wrap<IDbConnection>(database.OpenConnection(), command =>
+                    {
+                        reads++;
+                        if (command.CommandText.Contains("FROM \"Authors\" CROSS JOIN query", StringComparison.Ordinal))
+                        {
+                            plan = ExplainIndexEligibility(command);
+                        }
+                    })));
+                    Assert.That(new LibrarySearchService(observed, logger).Search("jk row", 1).Authors.Single().Name, Is.EqualTo("J.K. Rowling"));
+                    Assert.That(reads, Is.EqualTo(2));
+                    Assert.That(plan, Does.Contain("idx_authors_fts"));
+                    using var connection = database.OpenConnection();
+                    Assert.That(connection.QuerySingle<int>("SELECT COUNT(*) FROM pg_indexes WHERE indexname='idx_authors_header_fts'"), Is.Zero);
+                }
+            });
         }
 
         [TestCase("The Seven Deaths of Evelyn Hardcastle", "The Seven Deaths of Evelyn Hardcastle")]
@@ -170,11 +217,19 @@ namespace Chaptarr.Core.Test.Books
         [TestCase("Ready Player ２")]
         [TestCase("Ready Player ②")]
         [TestCase("Ready Player Ⅱ")]
+        [TestCase("Ready Player Two' OR 1=1")]
+        [TestCase("Dune zzqqmissing")]
+        [TestCase("Lessons in Chemistry")]
+        [TestCase("The Long Journey Through Seven Distant Worlds Beyond zzqqmissing")]
+        public void every_query_word_must_match_the_same_edition(string query)
+        {
+            Assert.That(_service.Search(query, 10).Books, Is.Empty);
+        }
+
         [TestCase("player ready")]
         [TestCase("Ready Player %")]
         [TestCase("Ready Player _")]
-        [TestCase("Ready Player Two' OR 1=1")]
-        public void partial_search_should_offer_siblings_without_equating_their_titles(string query)
+        public void prefix_search_should_offer_books_containing_every_word(string query)
         {
             Assert.That(_service.Search(query, 2).Books.Select(book => book.Title),
                 Is.EquivalentTo(new[] { "Ready Player One", "Ready Player Two" }));
@@ -185,12 +240,31 @@ namespace Chaptarr.Core.Test.Books
         [TestCase("dune messiah", "Dune Messiah")]
         [TestCase("messiah dune", "Dune Messiah")]
         [TestCase("mess mess mess dune", "Dune Messiah")]
-        [TestCase("catch 22", "Catch-22")]
         [TestCase("Catch-22", "Catch-22")]
         [TestCase("hardcastle evelyn", "The Seven Deaths of Evelyn Hardcastle")]
-        public void distinct_query_terms_should_rank_above_repeated_partial_matches(string query, string expected)
+        public void all_query_terms_should_find_the_book_in_any_order(string query, string expected)
         {
             Assert.That(_service.Search(query, 1).Books.Single().Title, Is.EqualTo(expected));
+        }
+
+        [TestCase("Spider man")]
+        [TestCase("Spider-man")]
+        [TestCase("spider m")]
+        [TestCase("man spider")]
+        [TestCase("man-spider")]
+        [TestCase("man")]
+        public void punctuation_variants_find_both_title_spellings(string query)
+        {
+            Assert.That(_service.Search(query, 10).Books.Select(book => book.Title),
+                Is.EquivalentTo(new[] { "Spider-Man", "Spider Man" }));
+        }
+
+        [TestCase("Catch 22")]
+        [TestCase("Catch-22")]
+        [TestCase("22 Catch")]
+        public void numeric_title_components_do_not_require_the_stored_separator(string query)
+        {
+            Assert.That(_service.Search(query, 1).Books.Single().Title, Is.EqualTo("Catch-22"));
         }
 
         [Test]
@@ -206,6 +280,65 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(_service.Search("Stuart Tur", 10).Authors.Select(author => author.Name), Is.EqualTo(new[] { "Stuart Turton" }));
         }
 
+        [TestCase("It", "It")]
+        [TestCase(" IT ", "It")]
+        [TestCase("It St", "It Starts With Us")]
+        [TestCase("It Starts With Us", "It Starts With Us")]
+        [TestCase("Dune", "Dune")]
+        [TestCase("Dune Messiah", "Dune Messiah")]
+        [TestCase("The Long Journey Through Seven Distant Worlds Beyond", "The Long Journey Through Seven Distant Worlds Beyond")]
+        public void exact_title_precedes_prefixes_before_the_result_limit(string query, string title)
+        {
+            Assert.That(_service.Search(query, 1).Books.Single().Title, Is.EqualTo(title));
+        }
+
+        [Test]
+        public void exact_proof_comes_from_the_edition_and_survives_grouping()
+        {
+            var result = _service.Search("Alternate Edition Name", 1).Books.Single();
+            Assert.That(result.Title, Is.EqualTo("Different Work Display Title"));
+            Assert.That(result.ExactMatch, Is.True);
+            Assert.That(_service.Search("It", 10).Books.Select(book => book.Title),
+                Is.EqualTo(new[] { "It", "It Starts With Us" }));
+            Assert.That(_service.Search("It St", 10).Books.Select(book => book.Title),
+                Is.EqualTo(new[] { "It Starts With Us" }));
+        }
+
+        [TestCase("Ann", "Ann")]
+        [TestCase("ANN", "Ann")]
+        [TestCase("Ann P", "Ann Pat")]
+        [TestCase("Pat Ann", "Ann Pat")]
+        [TestCase("Turton Stuart", "Stuart Turton")]
+        public void author_search_requires_all_prefixes_and_prefers_the_exact_name(string query, string expected)
+        {
+            Assert.That(_service.Search(query, 1).Authors.Single().Name, Is.EqualTo(expected));
+        }
+
+        [TestCase("Ann zzqqmissing")]
+        [TestCase("kegaard")]
+        [TestCase("One Two Three Four Five Six Seven zzqqmissing")]
+        public void author_search_does_not_ignore_words_or_match_inside_a_word(string query)
+        {
+            Assert.That(_service.Search(query, 10).Authors, Is.Empty);
+        }
+
+        [Test]
+        public void search_executes_one_query_per_entity_type()
+        {
+            var count = 0;
+            _observeCommand = _ => count++;
+            try
+            {
+                var result = _service.Search("It", 10);
+                Assert.That(result.Books, Has.Count.EqualTo(2));
+                Assert.That(count, Is.EqualTo(2));
+            }
+            finally
+            {
+                _observeCommand = null;
+            }
+        }
+
         [Test]
         public void alternate_editions_and_media_should_return_one_provider_work_with_both_local_instances()
         {
@@ -217,28 +350,29 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void folded_author_header_should_preserve_existing_routes_and_native_updates()
+        public void folded_author_header_should_preserve_names_slugs_and_native_updates()
         {
             DualDatabaseFixture.Run(_postgres, database =>
             {
                 var logger = LogManager.GetCurrentClassLogger();
                 var events = InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null);
                 var authors = new AuthorRepository(database, events, logger);
-                var original = authors.Insert(new Author { Name = "Søren Kierkegaard", CleanName = "sorenkierkegaard", SortName = "Kept Raw Alias", TitleSlug = "123456", Path = "/native-header", Added = DateTime.UtcNow });
-                var other = authors.Insert(new Author { Name = "Other Reader", CleanName = "otherreader", SortName = "Second Alias", TitleSlug = "654321", Path = "/native-other", Added = DateTime.UtcNow });
+                var original = authors.Insert(new Author { Name = "Søren Kierkegaard", CleanName = "sorenkierkegaard", SortName = "kierkegaard, soren", TitleSlug = "123456", Path = "/native-header", Added = DateTime.UtcNow });
+                var other = authors.Insert(new Author { Name = "Other Reader", CleanName = "otherreader", SortName = "reader, other", TitleSlug = "654321", Path = "/native-other", Added = DateTime.UtcNow });
                 var service = new LibrarySearchService(database, logger);
                 Assert.That(service.Search("Soren", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
                 Assert.That(service.Search("Søren", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
-                Assert.That(service.Search("Kept Raw", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
+                Assert.That(service.Search("Kierkegaard Soren", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
                 Assert.That(service.Search("123", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
-                Assert.That(service.Search("kegaard", 10).Authors.Select(row => row.Id),
-                    Is.EqualTo(_postgres ? new[] { original.Id } : Array.Empty<int>()));
+                Assert.That(service.Search("kegaard", 10).Authors, Is.Empty);
                 Assert.That(service.Search("zzqqmissing", 10).Authors, Is.Empty);
                 Assert.That(service.Search("%", 10).Authors, Is.Empty);
                 original.Name = "Ælfric Reader";
-                authors.SetFields(original, row => row.Name);
+                original.SortName = "reader, aelfric";
+                authors.SetFields(original, row => row.Name, row => row.SortName);
                 Assert.That(service.Search("Soren", 10).Authors, Is.Empty);
                 Assert.That(service.Search("Aelfric", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { original.Id }));
+                Assert.That(service.Search("Aelfric Reader", 1).Authors.Single().ExactMatch, Is.True);
                 Assert.That(service.Search("Other", 10).Authors.Select(row => row.Id), Is.EqualTo(new[] { other.Id }));
                 authors.Delete(original.Id);
                 Assert.That(service.Search("Aelfric", 10).Authors, Is.Empty);
@@ -247,7 +381,7 @@ namespace Chaptarr.Core.Test.Books
 
         private void Seed(IDbConnection connection)
         {
-            var authorColumns = new[] { "Name", "SearchName", "SortName", "TitleSlug", "Images", "SelectedPosterHash", "HardcoverAuthorId", "GoodreadsAuthorId", "OpenLibraryAuthorId", "GoogleBooksAuthorId", "AudnexusAuthorId" };
+            var authorColumns = new[] { "Name", "SearchName", "CleanName", "SortName", "TitleSlug", "Images", "SelectedPosterHash", "HardcoverAuthorId", "GoodreadsAuthorId", "OpenLibraryAuthorId", "GoogleBooksAuthorId", "AudnexusAuthorId" };
             var bookColumns = new[] { "Title", "TitleSlug", "Images", "BaseBookId", "HardcoverBookId", "GoodreadsBookId", "GoodreadsWorkId", "OpenLibraryWorkId", "GoogleBooksId", "ASIN", "AudibleASIN", "Narrator", "SeriesName" };
             var boolean = _postgres ? "BOOLEAN DEFAULT TRUE" : "INTEGER DEFAULT 1";
             connection.Execute($"CREATE TABLE \"Authors\" (\"Id\" INTEGER PRIMARY KEY, {string.Join(", ", authorColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
@@ -257,7 +391,7 @@ namespace Chaptarr.Core.Test.Books
             if (!_postgres)
             {
                 connection.Execute("CREATE VIRTUAL TABLE author_fts USING fts5(Name, SortName, TitleSlug, content='', tokenize = 'unicode61 remove_diacritics 1 tokenchars ''-.''');");
-                connection.Execute("CREATE VIRTUAL TABLE edition_fts USING fts5(MatchingTitle, content='', tokenize = 'unicode61 remove_diacritics 1 tokenchars ''-.''');");
+                EditionFtsRepository.RebuildSqliteHeaderIndex(connection, null, LogManager.GetCurrentClassLogger());
             }
 
             else
@@ -269,8 +403,8 @@ namespace Chaptarr.Core.Test.Books
                     .Migrate(_connectionString, new MigrationContext(MigrationType.Main, 13), DatabaseType.PostgreSQL);
             }
 
-            var titles = new[] { "The Seven Deaths of Evelyn Hardcastle", "The Seven Deaths of Evelyn Hardcastle", "Ready Player One", "Ready Player Two", "23 ½ Lies", "I, Robot", "Dune", "Dune Messiah", "The Housemaid’s Secret", "Catch-22", "Mentats of Dune", "A Court of Mist and Fury" };
-            var names = new[] { "Stuart Turton", "Stuart Turton", "Ernest Cline", "Ernest Cline", "James Patterson", "Cory Doctorow", "Frank Herbert", "Frank Herbert", "Freida McFadden", "Joseph Heller", "Brian Herbert", "Sarah J. Maas" };
+            var titles = new[] { "The Seven Deaths of Evelyn Hardcastle", "The Seven Deaths of Evelyn Hardcastle", "Ready Player One", "Ready Player Two", "23 ½ Lies", "I, Robot", "Dune", "Dune Messiah", "The Housemaid’s Secret", "Catch-22", "Mentats of Dune", "A Court of Mist and Fury", "It Starts With Us", "It", "The Long Journey Through Seven Distant Worlds Beyond", "Different Work Display Title", "Alternate Edition Name Extended", "Lessons In Faking", "Spider-Man", "Spider Man" };
+            var names = new[] { "Stuart Turton", "Stuart Turton", "Ernest Cline", "Ernest Cline", "James Patterson", "Cory Doctorow", "Frank Herbert", "Frank Herbert", "Freida McFadden", "Joseph Heller", "Brian Herbert", "Sarah J. Maas", "Ann Pat", "Ann", "One Two Three Four Five Six Seven", "Other Writer", "Another Writer", "Lesson Writer", "Stan Lee", "Stan Lee" };
             var editionId = 0;
             for (var i = 0; i < titles.Length; i++)
             {
@@ -282,16 +416,13 @@ namespace Chaptarr.Core.Test.Books
                     : i == 2 ? Enumerable.Repeat(titles[i], 45).ToArray()
                     : i == 10 ? new[] { "Mentats of Dune (Dune Schools of Dune Trilogy 2)" }
                     : i == 11 ? Enumerable.Repeat("A Court of Mist and Fury (Part 2 of 2)", 45).ToArray()
+                    : i == 15 ? new[] { "Alternate Edition Name", "Alternate Edition Name Extended" }
                     : new[] { titles[i] };
                 foreach (var title in editions)
                 {
                     editionId++;
                     var key = StringSuperNormalizer.ComputeMatchingTitle(title);
                     connection.Execute("INSERT INTO \"Editions\" (\"Id\", \"BookId\", \"Title\", \"MatchingTitle\") VALUES (@Id, @BookId, @Title, @Key);", new { Id = editionId, BookId = id, Title = title, Key = key });
-                    if (!_postgres)
-                    {
-                        connection.Execute("INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (@Id, @Key);", new { Id = editionId, Key = key });
-                    }
                 }
             }
 

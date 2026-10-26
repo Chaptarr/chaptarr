@@ -19,6 +19,7 @@ namespace NzbDrone.Core.Books
         void EnsureIndexPopulated();
 
         // Separate recall from ranking so author proof gates sibling edition expansion.
+        // A nonpositive limit retains all candidates for subsequent identity checks.
         List<BookFtsMatch> RecallBooks(
             int? authorId,
             IEnumerable<string> tokens,
@@ -264,6 +265,37 @@ namespace NzbDrone.Core.Books
 
             var indexed = connection.ExecuteScalar<long>("SELECT COUNT(*) FROM edition_fts;", transaction: transaction);
             logger.Info("Rebuilt folded edition search index: {0} entries, one population statement, elapsed {1} ms", indexed, stopwatch.ElapsedMilliseconds);
+            RebuildSqliteHeaderIndex(connection, transaction, logger);
+        }
+
+        internal static void RebuildSqliteHeaderIndex(IDbConnection connection, IDbTransaction transaction, Logger logger)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            // Header searches split hyphens without changing acquisition tokenization. Titles stay in Editions.
+            connection.Execute(@"
+                DROP TRIGGER IF EXISTS edition_header_fts_ai;
+                DROP TRIGGER IF EXISTS edition_header_fts_ad;
+                DROP TRIGGER IF EXISTS edition_header_fts_au;
+                DROP TABLE IF EXISTS edition_header_fts;
+                CREATE VIRTUAL TABLE edition_header_fts USING fts5(
+                    MatchingTitle, content='Editions', content_rowid='Id',
+                    tokenize = 'unicode61 remove_diacritics 1 tokenchars ''.''');
+                CREATE TRIGGER edition_header_fts_ai AFTER INSERT ON Editions BEGIN
+                    INSERT INTO edition_header_fts(rowid, MatchingTitle) VALUES (new.Id, new.MatchingTitle);
+                END;
+                CREATE TRIGGER edition_header_fts_ad AFTER DELETE ON Editions BEGIN
+                    INSERT INTO edition_header_fts(edition_header_fts, rowid, MatchingTitle)
+                    VALUES ('delete', old.Id, old.MatchingTitle);
+                END;
+                CREATE TRIGGER edition_header_fts_au AFTER UPDATE OF Id, MatchingTitle ON Editions
+                WHEN old.Id IS NOT new.Id OR old.MatchingTitle IS NOT new.MatchingTitle BEGIN
+                    INSERT INTO edition_header_fts(edition_header_fts, rowid, MatchingTitle)
+                    VALUES ('delete', old.Id, old.MatchingTitle);
+                    INSERT INTO edition_header_fts(rowid, MatchingTitle) VALUES (new.Id, new.MatchingTitle);
+                END;
+                INSERT INTO edition_header_fts(edition_header_fts) VALUES ('rebuild');",
+                transaction: transaction);
+            logger.Info("Rebuilt header title search index in {0} ms", stopwatch.ElapsedMilliseconds);
         }
 
         private static string BuildPostgresTsQuery(IEnumerable<string> tokens, bool requireAllTerms = false)
@@ -404,11 +436,15 @@ namespace NzbDrone.Core.Books
                 return new List<BookFtsMatch>();
             }
 
+            var fetchLimit = limit > 0 && limit < int.MaxValue ? limit + 1 : limit;
             var results = _dbType == DatabaseType.PostgreSQL
-                ? RecallBooksPostgres(authorId, terms, mediaType, trace, limit, monitoredOnly)
-                : RecallBooksSqlite(authorId, terms, mediaType, trace, limit, monitoredOnly);
-            _logger.Debug("Edition FTS recall {0}: author {1}, media {2}, terms {3}, books {4}, elapsed {5} ms",
-                _dbType, authorId, mediaType, terms.Count, results.Count, stopwatch.ElapsedMilliseconds);
+                ? RecallBooksPostgres(authorId, terms, mediaType, trace, fetchLimit, monitoredOnly)
+                : RecallBooksSqlite(authorId, terms, mediaType, trace, fetchLimit, monitoredOnly);
+            var cut = limit > 0 && results.Count > limit;
+            if (cut) results.RemoveRange(limit, results.Count - limit);
+            EmitBookRecallTrace(trace, results, stopwatch.ElapsedMilliseconds);
+            _logger.Debug("Edition FTS recall {0}: author {1}, media {2}, terms {3}, books {4}, elapsed {5} ms, cut={6}",
+                _dbType, authorId, mediaType, terms.Count, results.Count, stopwatch.ElapsedMilliseconds, cut);
             return results;
         }
 
@@ -460,7 +496,6 @@ namespace NzbDrone.Core.Books
             bool monitoredOnly)
         {
             using var connection = _database.OpenConnection();
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var termKeys = PrepareSqliteQueryTermKeys(connection, terms, trace);
             terms = terms.DistinctBy(term => termKeys[term], StringComparer.Ordinal).ToList();
             var columns = "MatchingTitle SeriesName AuthorName";
@@ -543,11 +578,9 @@ namespace NzbDrone.Core.Books
                   {(authorId.HasValue ? "AND b.AuthorId = @authorId" : string.Empty)}
                 GROUP BY b.Id, b.AuthorId, a.Name, b.Title, b.SeriesName, b.SeriesPosition
                 ORDER BY MAX(fts_matches.rowid IN (SELECT rowid FROM edition_fts WHERE edition_fts MATCH @allTermsQuery)) DESC,
-                         MIN(fts_matches.bm25_score)
-                LIMIT @limit";
+                         MIN(fts_matches.bm25_score), b.Id
+                {(limit > 0 ? "LIMIT @limit" : string.Empty)}";
             var results = connection.Query<BookFtsMatch>(sql, parameters).ToList();
-            stopwatch.Stop();
-            EmitBookRecallTrace(trace, results, stopwatch.ElapsedMilliseconds);
             return results;
         }
 
@@ -664,12 +697,9 @@ namespace NzbDrone.Core.Books
                     to_tsvector('simple', COALESCE(e.""MatchingTitle"", '')) ||
                     to_tsvector('simple', COALESCE(b.""SearchSeriesName"", '')) ||
                     to_tsvector('simple', COALESCE(a.""SearchName"", '') || ' ' || COALESCE(a.""CleanName"", '') || ' ' || COALESCE(a.""TitleSlug"", ''))
-                ) @@ to_tsquery('simple', @allTermsQuery)) DESC, MatchScore DESC
-                LIMIT @limit";
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                ) @@ to_tsquery('simple', @allTermsQuery)) DESC, MatchScore DESC, b.""Id""
+                {(limit > 0 ? "LIMIT @limit" : string.Empty)}";
             var results = connection.Query<BookFtsMatch>(sql, parameters).ToList();
-            stopwatch.Stop();
-            EmitBookRecallTrace(trace, results, stopwatch.ElapsedMilliseconds);
             return results;
         }
 
@@ -943,6 +973,11 @@ namespace NzbDrone.Core.Books
             IReadOnlyList<BookFtsMatch> recalls,
             long elapsedMilliseconds)
         {
+            if (trace == null)
+            {
+                return;
+            }
+
             for (var index = 0; index < recalls.Count; index++)
             {
                 var recall = recalls[index];
@@ -990,6 +1025,7 @@ namespace NzbDrone.Core.Books
                 SELECT
                     e.Id AS EditionId,
                     e.ForeignEditionId AS ForeignEditionId,
+                    e.Monitored AS Monitored,
                     e.BookId AS BookId,
                     COALESCE(NULLIF(LOWER(TRIM(e.Language)), ''), 'unknown') AS Lang,
                     e.Title AS EditionTitle,
@@ -1025,6 +1061,7 @@ namespace NzbDrone.Core.Books
                 SELECT
                     e.""Id"" AS EditionId,
                     e.""ForeignEditionId"" AS ForeignEditionId,
+                    e.""Monitored"" AS Monitored,
                     e.""BookId"" AS BookId,
                     COALESCE(NULLIF(LOWER(TRIM(e.""Language"")), ''), 'unknown') AS Lang,
                     e.""Title"" AS EditionTitle,
@@ -1532,6 +1569,7 @@ namespace NzbDrone.Core.Books
 	    {
 	        public int EditionId { get; set; }
 	        public string ForeignEditionId { get; set; }
+            public bool Monitored { get; set; }
 	        public int BookId { get; set; }
 	        public string EditionTitle { get; set; }
 	        public string MatchingTitle { get; set; }

@@ -12,12 +12,84 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Parser;
 
 namespace Chaptarr.Core.Test.Books
 {
     [TestFixture]
     public class EditionFtsRepositoryStagedFixture
     {
+        [TestCase(DatabaseType.SQLite, BookMediaType.Audiobook, true)]
+        [TestCase(DatabaseType.SQLite, BookMediaType.Audiobook, false)]
+        [TestCase(DatabaseType.PostgreSQL, BookMediaType.Audiobook, true)]
+        [TestCase(DatabaseType.PostgreSQL, BookMediaType.Audiobook, false)]
+        [TestCase(DatabaseType.SQLite, BookMediaType.Ebook, true)]
+        [TestCase(DatabaseType.SQLite, BookMediaType.Ebook, false)]
+        [TestCase(DatabaseType.PostgreSQL, BookMediaType.Ebook, true)]
+        [TestCase(DatabaseType.PostgreSQL, BookMediaType.Ebook, false)]
+        public void recalled_roman_title_must_pass_numeric_proof_without_losing_the_number(
+            DatabaseType databaseType, BookMediaType mediaType, bool storedRoman)
+        {
+            WithSeededFtsRepository(databaseType, (repository, connection) =>
+            {
+                var six = storedRoman ? "Wild Cards VI" : "Wild Cards 6";
+                var seven = storedRoman ? "Wild Cards VII" : "Wild Cards 7";
+                connection.Execute("UPDATE \"Books\" SET \"MediaType\" = @mediaType WHERE \"Id\" IN (1, 2); " +
+                    "UPDATE \"Editions\" SET \"Title\" = @six, \"MatchingTitle\" = @sixKey, \"Language\" = NULL WHERE \"Id\" = 11; " +
+                    "UPDATE \"Editions\" SET \"Title\" = @seven, \"MatchingTitle\" = @sevenKey, \"Language\" = NULL WHERE \"Id\" = 22;",
+                    new { mediaType = (int)mediaType, six, seven, sixKey = StringSuperNormalizer.ComputeMatchingTitle(six), sevenKey = StringSuperNormalizer.ComputeMatchingTitle(seven) });
+                RefreshProjections(connection);
+                if (databaseType == DatabaseType.SQLite)
+                {
+                    repository.RebuildIndex();
+                }
+
+                var observed = storedRoman ? "Wild Cards 7" : "Wild Cards VII";
+                var terms = ReleaseTitleMatchScorer.Tokenize(observed);
+                var recalled = repository.RecallBooks(1, terms, mediaType, limit: 0);
+                Assert.That(recalled.Select(book => book.BookId), Does.Contain(2));
+                var ranked = repository.RankEditions(recalled, new[]
+                {
+                    new EditionFtsFieldQuery { Key = "CUSTOM[0]", ResidualValue = observed, Terms = terms, SourceFields = new[] { "CUSTOM[0]" } }
+                }, mediaType);
+                var proven = ranked.Where(edition => ReleaseTitleMatchScorer.FindNumberEquivalentTitleSpans(
+                    terms, ReleaseTitleMatchScorer.Tokenize(edition.EditionTitle), edition.Lang).Any()).ToList();
+
+                Assert.That(proven.Select(edition => edition.EditionId), Is.EqualTo(new[] { 22 }));
+                Assert.That(proven.Single().EditionTitle, Is.EqualTo(seven));
+                Assert.That(connection.ExecuteScalar<string>("SELECT \"Title\" FROM \"Editions\" WHERE \"Id\" = 22"), Is.EqualTo(seven));
+            });
+        }
+
+        [TestCase(DatabaseType.SQLite, 20)]
+        [TestCase(DatabaseType.SQLite, 21)]
+        [TestCase(DatabaseType.PostgreSQL, 20)]
+        [TestCase(DatabaseType.PostgreSQL, 21)]
+        public void recall_cutoff_should_be_stable_and_trace_only_returned_books(DatabaseType databaseType, int count)
+        {
+            WithSeededFtsRepository(databaseType, (repository, connection) =>
+            {
+                foreach (var id in Enumerable.Range(100, count).Reverse())
+                {
+                    connection.Execute("INSERT INTO \"Books\" (\"Id\", \"AuthorId\", \"Title\", \"MediaType\") VALUES (@id, 1, 'Deterministic Beacon', @mediaType); " +
+                        "INSERT INTO \"Editions\" (\"Id\", \"BookId\", \"Title\", \"MatchingTitle\", \"NarratorNames\", \"Images\") VALUES (@id, @id, 'Deterministic Beacon', 'deterministic beacon', '[]', '[]');",
+                        new { id, mediaType = (int)BookMediaType.Audiobook });
+                }
+                RefreshProjections(connection);
+                if (databaseType == DatabaseType.SQLite) repository.RebuildIndex();
+                var terms = new[] { "deterministic", "beacon" };
+                Assert.That(repository.RecallBooks(1, terms, BookMediaType.Audiobook, limit: 0), Has.Count.EqualTo(count));
+                for (var pass = 0; pass < 2; pass++)
+                {
+                    var trace = new List<EditionFtsTraceEvent>();
+                    var recalled = repository.RecallBooks(1, terms, BookMediaType.Audiobook, trace.Add);
+                    Assert.That(recalled.Select(row => row.BookId), Is.EqualTo(Enumerable.Range(100, 20)));
+                    Assert.That(trace.Where(row => row.EventType == "candidate").Select(row => row.BookId),
+                        Is.EqualTo(recalled.Select(row => (int?)row.BookId)));
+                }
+            });
+        }
+
         [OneTimeSetUp]
         public void SetUpFixture()
         {
@@ -58,8 +130,12 @@ namespace Chaptarr.Core.Test.Books
                 var recalled = repository.RecallBooks(1, terms, mediaType, trace.Add, limit: 20);
                 var duplicates = repository.RecallBooks(1, terms.Concat(new[] { "SILVER", "silver" }), mediaType, limit: 20);
                 var incomplete = repository.RecallBooks(1, terms.Concat(new[] { "unmatched" }), mediaType, limit: 20);
+                var uncapped = repository.RecallBooks(1, terms.Concat(new[] { "unmatched" }), mediaType, limit: 0);
                 Assert.Multiple(() =>
                 {
+                    Assert.That(uncapped.Select(row => row.BookId), Does.Contain(1));
+                    Assert.That(uncapped.Select(row => row.BookId), Is.SupersetOf(Enumerable.Range(100, 21)));
+                    Assert.That(uncapped.Count, Is.GreaterThan(20));
                     Assert.That(incomplete.Select(row => row.MatchScore), Is.Ordered.Descending);
                     Assert.That(recalled, Has.Count.EqualTo(20));
                     Assert.That(recalled[0].BookId, Is.EqualTo(1));
@@ -1389,6 +1465,7 @@ namespace Chaptarr.Core.Test.Books
                     ""Id"" INTEGER PRIMARY KEY,
                     ""ForeignEditionId"" TEXT,
                     ""BookId"" INTEGER NOT NULL,
+                    ""Monitored"" BOOLEAN NOT NULL DEFAULT FALSE,
                     ""Language"" TEXT,
                     ""Title"" TEXT,
                     ""Subtitle"" TEXT,
