@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
+using NzbDrone.Core.Configuration.Events;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
@@ -21,6 +22,7 @@ namespace NzbDrone.Core.MediaCover
                                                 IHandle<BookDeletedEvent>,
                                                 IHandle<BookFileAddedEvent>,
                                                 IHandle<BookFilesAddedEvent>,
+                                                IHandle<ConfigSavedEvent>,
                                                 IHandle<BooksEditedEvent>
     {
         private const int CompletedCommandLimit = 1024;
@@ -74,6 +76,14 @@ namespace NzbDrone.Core.MediaCover
         public void Handle(BookFilesAddedEvent message)
         {
             QueueOrDeferBookCovers(GetBookIdsForFiles(message?.BookFiles));
+        }
+
+        public void Handle(ConfigSavedEvent message)
+        {
+            if (message.BookCoverCleanupRequired)
+            {
+                _commandQueueManager.Push(new CleanupBookCoversCommand());
+            }
         }
 
         public void Handle(BooksEditedEvent message)
@@ -245,45 +255,37 @@ namespace NzbDrone.Core.MediaCover
 
         private void FlushPendingBookCovers(string logMessageTemplate)
         {
-            var pendingBookIds = _deferredCoverService.GetPendingBookIds()
-                .Distinct()
-                .ToList();
+            // Claim before processing so a later import can re-defer the same books.
+            var pendingBookIds = _deferredCoverService.TakePendingBookIds();
 
-            if (!pendingBookIds.Any())
+            if (pendingBookIds.Count == 0)
             {
                 return;
             }
 
             _logger.Info(logMessageTemplate, pendingBookIds.Count);
 
-            var books = _bookService.GetExistingBooks(pendingBookIds);
-            var booksById = books.ToDictionary(book => book.Id);
-            var missingBookIds = pendingBookIds
-                .Where(bookId => !booksById.ContainsKey(bookId))
-                .ToList();
-
-            if (missingBookIds.Any())
+            try
             {
-                _logger.Debug("Skipping deferred cover downloads for {0} deleted books", missingBookIds.Count);
-            }
+                var books = _bookService.GetExistingBooks(pendingBookIds);
+                var missingCount = pendingBookIds.Count - books.Count;
+                if (missingCount > 0)
+                {
+                    _logger.Debug("Skipping deferred cover downloads for {0} deleted books", missingCount);
+                }
 
-            if (books.Count > 0)
-            {
-                try
+                if (books.Count > 0)
                 {
                     _mediaCoverService.EnsureBookCoversForBooks(books);
-                    _logger.Debug("Downloaded covers for {0} deferred books", books.Count);
                 }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "Error downloading covers for {0} deferred books", books.Count);
-                }
-            }
 
-            // Remove only the snapshot we processed. A new import may have queued more books
-            // while covers were being downloaded.
-            _deferredCoverService.RemovePendingBooks(pendingBookIds);
-            _logger.Debug("[PERF] Completed deferred cover downloads");
+                _logger.Debug("[PERF] Processed deferred cover batch for {0} books", books.Count);
+            }
+            catch (Exception ex)
+            {
+                _deferredCoverService.RequeueBooksForCoverDownload(pendingBookIds);
+                _logger.Error(ex, "Deferred cover batch failed; retained {0} book IDs for a later flush", pendingBookIds.Count);
+            }
         }
     }
 }

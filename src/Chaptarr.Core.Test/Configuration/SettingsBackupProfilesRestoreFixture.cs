@@ -88,7 +88,7 @@ namespace Chaptarr.Core.Test.Configuration
                     .Invoke(_service, new object[] { package, package.Tags.ToDictionary(tag => tag.Id, tag => tag.Id + 1000), mode, result });
             }
             typeof(SettingsBackupService).GetMethod("RestoreQualitySizes", BindingFlags.Instance | BindingFlags.NonPublic)
-                .Invoke(_service, new object[] { package, result });
+                .Invoke(_service, new object[] { package, result, mode });
             return result;
         }
 
@@ -138,7 +138,7 @@ namespace Chaptarr.Core.Test.Configuration
         }
 
         [Test]
-        public void merge_should_remap_references_match_sets_and_apply_enabled_without_duplicates()
+        public void merge_should_remap_references_without_changing_existing_enabled_choice()
         {
             _indexers.Add(new IndexerDefinition { Id = 24, Name = "my indexer" });
             _indexers.Add(new IndexerDefinition { Id = 23, Name = "My INDEXER" });
@@ -154,7 +154,7 @@ namespace Chaptarr.Core.Test.Configuration
             Restore(package);
             Assert.That(_releases, Has.Count.EqualTo(1));
             Assert.That(_releases.Single().Id, Is.EqualTo(7));
-            Assert.That(_releases.Single().Enabled, Is.True);
+            Assert.That(_releases.Single().Enabled, Is.False);
             Assert.That(_releases.Single().IndexerId, Is.EqualTo(23));
             Assert.That(_delays, Has.Count.EqualTo(2));
             Assert.That(_delays.Single(row => row.Id != 1).Tags, Is.EquivalentTo(new[] { 1004 }));
@@ -210,6 +210,26 @@ namespace Chaptarr.Core.Test.Configuration
             });
             Assert.That(_releases, Is.Empty);
             Assert.That(result.Warnings.Single(), Does.Contain("Absent indexer"));
+        }
+
+        [TestCase(SettingsBackupRestoreMode.Merge)]
+        [TestCase(SettingsBackupRestoreMode.Overwrite)]
+        public void restore_mode_should_control_existing_delays_and_quality_sizes(SettingsBackupRestoreMode mode)
+        {
+            _delays.Single().EnableTorrent = false;
+            _delays.Single().TorrentDelay = 0;
+            _qualities.Add(new QualityDefinition(Quality.MP3) { Id = 42, Title = "", MinSize = 0, MaxSize = 10 });
+            Restore(new SettingsBackupPackage
+            {
+                DelayProfiles = new() { new DelayProfile { Id = 1, EnableTorrent = true, TorrentDelay = 60 } },
+                QualityDefinitions = new() { new QualityDefinition(Quality.MP3) { Title = "MP3 backup", MinSize = 5, MaxSize = 30 } }
+            }, mode);
+            Assert.That(_delays.Single().EnableTorrent, Is.EqualTo(mode == SettingsBackupRestoreMode.Overwrite));
+            Assert.That(_delays.Single().TorrentDelay, Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? 0 : 60));
+            Assert.That(_qualities.Single().Id, Is.EqualTo(42));
+            Assert.That(_qualities.Single().Title, Is.EqualTo("MP3 backup"));
+            Assert.That(_qualities.Single().MinSize, Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? 0 : 5));
+            Assert.That(_qualities.Single().MaxSize, Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? 10 : 30));
         }
 
         [Test]
@@ -289,7 +309,7 @@ namespace Chaptarr.Core.Test.Configuration
         public void quality_sizes_should_use_destination_identity_and_bulk_update()
         {
             _qualities.Add(new QualityDefinition(Quality.EPUB) { Id = 17, MinSize = 0, MaxSize = 100 });
-            Restore(new SettingsBackupPackage { QualityDefinitions = new() { new QualityDefinition(Quality.EPUB) { Id = 82, MinSize = 1, MaxSize = 7 } } });
+            Restore(new SettingsBackupPackage { QualityDefinitions = new() { new QualityDefinition(Quality.EPUB) { Id = 82, MinSize = 1, MaxSize = 7 } } }, SettingsBackupRestoreMode.Overwrite);
             Assert.That(_qualities.Single().Id, Is.EqualTo(17));
             Assert.That(_qualities.Single().MinSize, Is.EqualTo(1));
             Assert.That(_qualities.Single().MaxSize, Is.EqualTo(7));

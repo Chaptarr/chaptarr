@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NLog;
 using NUnit.Framework;
+using ServiceHost = NzbDrone.Common.ServiceHost;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
@@ -478,6 +479,10 @@ namespace Chaptarr.Core.Test.Datastore
             });
             var restore = InterfaceProxy.Proxy<IRestoreDatabase>((method, _) =>
             {
+                if (method.Name == "get_CommitFailed")
+                {
+                    return false;
+                }
                 Assert.That(method.Name, Is.EqualTo("Rollback"));
                 Assert.That(host.Disposed, Is.True);
                 rolledBack = true;
@@ -866,8 +871,9 @@ namespace Chaptarr.Core.Test.Datastore
             var staging = new StagingDbContext(_appFolderInfo, LogManager.GetCurrentClassLogger());
             Assert.DoesNotThrow(() => InitializeStores(null, staging));
             Assert.That(staging.InitializationError, Is.TypeOf<SqliteException>());
-            var exception = Assert.Throws<InvalidOperationException>(() => staging.OpenConnection());
-            Assert.That(exception.Message, Does.Contain("Imports are unavailable"));
+            var exception = Assert.Throws<SqliteException>(() => staging.OpenConnection());
+            Assert.That(staging.InitializationError, Is.SameAs(exception));
+            Assert.That(exception.SqliteErrorCode, Is.EqualTo(26));
             Assert.That(ReadMarker(_appFolderInfo.GetDatabase()), Is.EqualTo("live"));
             Assert.That(File.ReadAllText(_appFolderInfo.GetStagingDatabase()), Is.EqualTo("invalid queue database"));
         }
@@ -1060,6 +1066,155 @@ namespace Chaptarr.Core.Test.Datastore
             Assert.That(DatabaseRestorationService.GetStatus(_appFolderInfo).RestoreFailed, Is.True);
             action();
             Assert.That(calls, Is.EqualTo(1));
+        }
+
+        [TestCase(true, true, false)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(true, true, true)]
+        public void real_host_restore_commit_failure_restarts_only_after_successful_rollback(bool failCommit, bool allowRestart, bool failRollback)
+        {
+            SeedLive();
+            StageCandidate();
+            DatabaseRestorationService.PrepareConfiguration(_appFolderInfo);
+            using var host = new HostBuilder()
+                .ConfigureServices(services => services.AddSingleton<IRestoreDatabase>(_subject))
+                .Build();
+            var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+            lifetime.ApplicationStarted.Register(lifetime.StopApplication);
+            InitializeStores(lifetime, InterfaceProxy.Proxy<IStagingDbContext>((_, _) => null));
+            if (failCommit)
+            {
+                Directory.CreateDirectory(Path.Combine(_appFolderInfo.GetDatabaseRestoreBundle(), "restore.json.tmp"));
+            }
+            if (failRollback)
+            {
+                Directory.CreateDirectory(_appFolderInfo.GetDatabase() + ".failed-restore");
+            }
+
+            var calls = 0;
+            Action restart = () =>
+            {
+                Assert.Throws<ObjectDisposedException>(() => host.Services.GetRequiredService<IRestoreDatabase>());
+                AssertLive();
+                calls++;
+            };
+            var runHost = typeof(Bootstrap).GetMethod("RunHost", BindingFlags.NonPublic | BindingFlags.Static);
+            if (failRollback)
+            {
+                Assert.Throws<TargetInvocationException>(() => runHost.Invoke(null, new object[] { host, restart }));
+                Assert.That(_subject.RecoveryCompleted, Is.False);
+                Assert.That(calls, Is.Zero);
+                Assert.That(ReadMarker(Path.Combine(_appFolderInfo.GetDatabaseRestoreBundle(), "previous", "chaptarr.db")), Is.EqualTo("live"));
+                return;
+            }
+
+            Action action = null;
+            Assert.DoesNotThrow(() => action = (Action)runHost.Invoke(null, new object[] { host, allowRestart ? restart : null }));
+            Assert.Throws<ObjectDisposedException>(() => host.Services.GetRequiredService<IRestoreDatabase>());
+            Assert.That(calls, Is.Zero);
+            Assert.That(_subject.RecoveryCompleted, Is.EqualTo(failCommit));
+            if (failCommit)
+            {
+                AssertLive();
+            }
+            else
+            {
+                Assert.That(ReadMarker(_appFolderInfo.GetDatabase()), Is.EqualTo("candidate"));
+                Assert.That(Directory.Exists(_appFolderInfo.GetDatabaseRestoreBundle()), Is.False);
+            }
+
+            if (failCommit && allowRestart)
+            {
+                Assert.That(action, Is.SameAs(restart));
+                action();
+                Assert.That(calls, Is.EqualTo(1));
+            }
+            else
+            {
+                Assert.That(action, Is.Null);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void real_host_intentional_stop_does_not_restart_after_rolling_back_an_uncommitted_restore(bool cancelStartup)
+        {
+            SeedLive();
+            StageCandidate();
+            DatabaseRestorationService.PrepareConfiguration(_appFolderInfo);
+            Assert.That(_subject.Restore(), Is.True);
+            using var host = new HostBuilder()
+                .ConfigureServices(services => services.AddSingleton<IRestoreDatabase>(_subject))
+                .Build();
+            var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+            if (cancelStartup)
+            {
+                lifetime.StopApplication();
+            }
+            else
+            {
+                lifetime.ApplicationStarted.Register(lifetime.StopApplication);
+            }
+
+            var action = (Action)typeof(Bootstrap).GetMethod("RunHost", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { host, (Action)(() => Assert.Fail("Intentional shutdown must stay stopped")) });
+            Assert.That(action, Is.Null);
+            Assert.That(_subject.RecoveryCompleted, Is.True);
+            AssertLive();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void service_host_keeps_running_until_real_restore_rollback_and_recovered_host_finish(bool failCommit)
+        {
+            SeedLive();
+            StageCandidate();
+            DatabaseRestorationService.PrepareConfiguration(_appFolderInfo);
+            var runs = 0;
+            ServiceHost.Run(new HostBuilder(), (configureLifetime, stoppingToken) =>
+            {
+                var builder = new HostBuilder().ConfigureServices(services => services.AddSingleton<IRestoreDatabase>(_subject));
+                configureLifetime(builder);
+                var host = builder.Build();
+                var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+                lifetime.ApplicationStarted.Register(lifetime.StopApplication);
+                InitializeStores(lifetime, InterfaceProxy.Proxy<IStagingDbContext>((_, _) => null));
+                if (failCommit)
+                {
+                    Directory.CreateDirectory(Path.Combine(_appFolderInfo.GetDatabaseRestoreBundle(), "restore.json.tmp"));
+                }
+
+                Action recovered = () =>
+                {
+                    Assert.That(stoppingToken.IsCancellationRequested, Is.False);
+                    AssertLive();
+                    Assert.Throws<ObjectDisposedException>(() => host.Services.GetRequiredService<IRestoreDatabase>());
+                    var recoveredBuilder = new HostBuilder();
+                    configureLifetime(recoveredBuilder);
+                    var recoveredHost = recoveredBuilder.Build();
+                    var recoveredLifetime = recoveredHost.Services.GetRequiredService<IHostApplicationLifetime>();
+                    recoveredLifetime.ApplicationStarted.Register(recoveredLifetime.StopApplication);
+                    recoveredHost.Run();
+                    runs++;
+                };
+                var action = (Action)typeof(Bootstrap).GetMethod("RunHost", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(null, new object[] { host, recovered });
+                Assert.That(stoppingToken.IsCancellationRequested, Is.False);
+                runs++;
+                action?.Invoke();
+            });
+
+            Assert.That(runs, Is.EqualTo(failCommit ? 2 : 1));
+            Assert.That(_subject.RecoveryCompleted, Is.EqualTo(failCommit));
+            if (failCommit)
+            {
+                AssertLive();
+            }
+            else
+            {
+                Assert.That(ReadMarker(_appFolderInfo.GetDatabase()), Is.EqualTo("candidate"));
+            }
         }
 
         [TestCase("Applied")]

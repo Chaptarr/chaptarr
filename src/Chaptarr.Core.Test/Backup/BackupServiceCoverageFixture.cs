@@ -297,7 +297,7 @@ namespace Chaptarr.Core.Test.Backup
         }
 
         private BackupService CreateService(IMainDatabase database, IAppFolderInfo folders, IRestoreDatabase restoration = null, IArchiveService archive = null,
-            ILogDatabase logs = null, ICacheDatabase cache = null, IConnectionStringFactory connectionStrings = null, bool includeExtras = true, int interval = 7, IHostApplicationLifetime hostLifetime = null, IDiskProvider disk = null)
+            ILogDatabase logs = null, ICacheDatabase cache = null, IConnectionStringFactory connectionStrings = null, bool includeExtras = true, int interval = 7, IHostApplicationLifetime hostLifetime = null, IDiskProvider disk = null, IEventAggregator events = null)
         {
             var config = InterfaceProxy.Proxy<IConfigService>((method, _) => method.Name switch
             {
@@ -310,7 +310,8 @@ namespace Chaptarr.Core.Test.Backup
             hostLifetime ??= InterfaceProxy.Proxy<IHostApplicationLifetime>((method, _) => method.Name.StartsWith("get_", StringComparison.Ordinal)
                 ? CancellationToken.None : null);
             return new BackupService(hostLifetime, database, new MakeDatabaseBackup(_logger, connectionStrings), new DiskTransferService(disk ?? _disk, _logger),
-                disk ?? _disk, folders, archive ?? new ArchiveService(_logger), config, restoration ?? new DatabaseRestorationService(_disk, folders), _logger,
+                disk ?? _disk, folders, archive ?? new ArchiveService(_logger), config, restoration ?? new DatabaseRestorationService(_disk, folders),
+                events ?? InterfaceProxy.Proxy<IEventAggregator>((_, _) => null), _logger,
                 logs ?? new LogDatabase(new Database("logs", () => new SqliteConnection(ConnectionString(folders.GetLogDatabase())))),
                 cache ?? new CacheDatabase(new Database("cache", () => new SqliteConnection(ConnectionString(folders.GetCacheDatabase())))));
         }

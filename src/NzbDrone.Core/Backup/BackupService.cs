@@ -57,6 +57,7 @@ namespace NzbDrone.Core.Backup
         private readonly ICacheDatabase _cacheDb;
         private readonly Logger _logger;
         private readonly IHostApplicationLifetime _appLifetime;
+        private readonly IEventAggregator _eventAggregator;
         private readonly object _backupGate = new();
         private int _activeBackups;
         private TaskCompletionSource _backupCompletion;
@@ -72,6 +73,7 @@ namespace NzbDrone.Core.Backup
                              IArchiveService archiveService,
                              IConfigService configService,
                              IRestoreDatabase restoreDatabaseService,
+                             IEventAggregator eventAggregator,
                              Logger logger,
                              ILogDatabase logDatabase = null,
                              ICacheDatabase cacheDatabase = null)
@@ -85,6 +87,7 @@ namespace NzbDrone.Core.Backup
             _archiveService = archiveService;
             _configService = configService;
             _restoreDatabaseService = restoreDatabaseService;
+            _eventAggregator = eventAggregator;
             _logger = logger;
             _logDb = logDatabase;
             _cacheDb = cacheDatabase;
@@ -326,9 +329,17 @@ namespace NzbDrone.Core.Backup
             return status;
         }
 
-        public void CancelRestore() => DatabaseRestorationService.CancelPendingRestore(_appFolderInfo);
+        public void CancelRestore()
+        {
+            DatabaseRestorationService.CancelPendingRestore(_appFolderInfo);
+            _eventAggregator.PublishEvent(new BackupRestoreStateChangedEvent());
+        }
 
-        public void DismissFailedRestores() => DatabaseRestorationService.DismissFailedRestores(_appFolderInfo);
+        public void DismissFailedRestores()
+        {
+            DatabaseRestorationService.DismissFailedRestores(_appFolderInfo);
+            _eventAggregator.PublishEvent(new BackupRestoreStateChangedEvent());
+        }
 
         public void Restore(string backupFileName)
         {

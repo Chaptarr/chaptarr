@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading;
 using DryIoc;
 using DryIoc.Microsoft.DependencyInjection;
 using Microsoft.AspNetCore.Hosting;
@@ -16,6 +17,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using NLog;
 using Npgsql;
+using NzbDrone.Common;
 using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
@@ -53,14 +55,29 @@ namespace NzbDrone.Host
 
         public static void Start(string[] args, Action<IHostBuilder> trayCallback = null)
         {
-            StartCore(args, trayCallback, false);
+            if (GetApplicationMode(new StartupContext(args)) == ApplicationModes.Service)
+            {
+                ServiceHost.Run(new HostBuilder().UseWindowsService(),
+                    (configureLifetime, stoppingToken) => StartCore(args, trayCallback, false, configureLifetime, stoppingToken));
+            }
+            else
+            {
+                StartCore(args, trayCallback, false);
+            }
         }
 
-        private static void StartCore(string[] args, Action<IHostBuilder> trayCallback, bool recoveryAttempt)
+        private static void StartCore(string[] args, Action<IHostBuilder> trayCallback, bool recoveryAttempt,
+            Action<IHostBuilder> configureLifetime = null, CancellationToken stoppingToken = default)
         {
+            if (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             IAppFolderInfo restoreFolders = null;
             FileStream appDataLock = null;
             Action restart = null;
+            Action restartAfterRecovery = recoveryAttempt ? null : () => StartCore(args, trayCallback, true, configureLifetime, stoppingToken);
             try
             {
                 Logger.Info("Starting Chaptarr - {0} - Version {1}",
@@ -96,7 +113,9 @@ namespace NzbDrone.Host
                         {
                             Logger.Debug("Service selected");
 
-                            restart = RunHost(CreateConsoleHostBuilder(args, startupContext).UseWindowsService().Build(), recoveryAttempt ? null : () => StartCore(args, trayCallback, true));
+                            var builder = CreateConsoleHostBuilder(args, startupContext);
+                            configureLifetime(builder);
+                            restart = RunHost(builder.Build(), restartAfterRecovery);
                             break;
                         }
 
@@ -110,7 +129,7 @@ namespace NzbDrone.Host
                                 trayCallback(builder);
                             }
 
-                            restart = RunHost(builder.Build(), recoveryAttempt ? null : () => StartCore(args, trayCallback, true));
+                            restart = RunHost(builder.Build(), restartAfterRecovery);
                             break;
                         }
 
@@ -160,10 +179,10 @@ namespace NzbDrone.Host
             catch (Exception ex)
             {
                 var recoveredConfiguration = restoreFolders != null && DatabaseRestorationService.AbortConfiguration(restoreFolders);
-                if (recoveredConfiguration && !recoveryAttempt)
+                if (recoveredConfiguration && restartAfterRecovery != null && !stoppingToken.IsCancellationRequested)
                 {
                     Logger.Error(ex, "The restored configuration could not start; restarting with the original configuration");
-                    restart = () => StartCore(args, trayCallback, true);
+                    restart = restartAfterRecovery;
                 }
                 else if (ex is InvalidConfigFileException or AccessDeniedConfigFileException)
                 {
@@ -225,6 +244,16 @@ namespace NzbDrone.Host
             {
                 // Run disposes the failed host before rollback, releasing initialization and listener resources.
                 restore.Rollback();
+            }
+
+            if (restore.CommitFailed && restore.RecoveryCompleted)
+            {
+                if (restartAfterRecovery != null)
+                {
+                    Logger.Error("Restore finalization failed; restarting with the recovered original stores");
+                }
+
+                return restartAfterRecovery;
             }
 
             return lifetime == null ? null : lifetime.RestartIfPending;

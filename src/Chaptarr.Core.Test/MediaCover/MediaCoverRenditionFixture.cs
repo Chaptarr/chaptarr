@@ -19,7 +19,9 @@ using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaCover.Commands;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Messaging.Events;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
@@ -318,12 +320,20 @@ namespace Chaptarr.Core.Test.MediaCover
         private class BookServiceProxy : DispatchProxy
         {
             public List<Book> Books { get; set; } = new();
+            public Action OnGetExistingBooks { get; set; }
             public List<int> RequestedAuthorIds { get; } = new();
             public List<int> EligibleLibraryBookIds { get; } = new();
             public List<List<int>> LibraryBookIdQueries { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IBookService.GetExistingBooks))
+                {
+                    OnGetExistingBooks?.Invoke();
+                    var requestedIds = ((IEnumerable<int>)args[0]).ToHashSet();
+                    return Books.Where(book => requestedIds.Contains(book.Id)).ToList();
+                }
+
                 if (targetMethod?.Name == nameof(IBookService.GetBooksByAuthor))
                 {
                     RequestedAuthorIds.Add((int)args[0]);
@@ -347,7 +357,7 @@ namespace Chaptarr.Core.Test.MediaCover
             out BookServiceProxy bookService,
             out DiskProviderProxy disk,
             out ImageHttpClientProxy httpClient,
-            out DeferredCoverProxy deferred, MediaCoverProxyStub proxy = null)
+            out DeferredCoverProxy deferred, MediaCoverProxyStub proxy = null, IDeferredCoverService deferredService = null)
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
@@ -375,8 +385,44 @@ namespace Chaptarr.Core.Test.MediaCover
                 configService,
                 configFile,
                 null,
-                deferredApi,
+                deferredService ?? deferredApi,
                 LogManager.GetCurrentClassLogger());
+        }
+
+        [TestCase(CoverDownloadScope.AllBooks, false)]
+        [TestCase(CoverDownloadScope.AllBooks, true)]
+        [TestCase(CoverDownloadScope.LibraryBooks, false)]
+        [TestCase(CoverDownloadScope.LibraryBooks, true)]
+        public void overlapping_import_should_keep_covers_redeferred_by_the_real_cover_service(CoverDownloadScope scope, bool commandCompletion)
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var covers = CreateBookCoverSubject(scope, new[] { 1, 2 }, out var books, out _, out var http, out _, deferredService: deferred);
+            books.Books = new List<Book>
+            {
+                CreateBookWithCover(1, true, "https://images.example/first.jpg"),
+                CreateBookWithCover(2, true, "https://images.example/second.jpg")
+            };
+            var service = new DeferredCoverDownloadService(deferred, (IBookService)(object)books, null, covers, LogManager.GetCurrentClassLogger());
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "first start") { CommandId = 71 });
+            deferred.MarkBooksForCoverDownload(new[] { 1, 2 });
+            books.OnGetExistingBooks = () => service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "second start") { CommandId = 72 });
+
+            if (commandCompletion)
+            {
+                service.Handle(new CommandExecutedEvent(new CommandModel { Id = 71 }));
+            }
+            else
+            {
+                service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "first done") { CommandId = 71 });
+            }
+
+            Assert.That(http.RequestedUrls, Is.Empty);
+            Assert.That(deferred.GetPendingBookIds(), Is.EquivalentTo(new[] { 1, 2 }));
+            books.OnGetExistingBooks = null;
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "second done") { CommandId = 72 });
+
+            Assert.That(http.RequestedUrls, Is.EquivalentTo(new[] { "https://images.example/first.jpg", "https://images.example/second.jpg" }));
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty);
         }
 
         private static Book CreateBookWithCover(int id, bool monitoredEdition, string coverUrl, bool audiobookMonitored = false)

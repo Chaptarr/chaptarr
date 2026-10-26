@@ -1,18 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.IO;
 using System.Linq;
 using Chaptarr.Core.Test.Common;
 using Dapper;
-using Microsoft.Data.Sqlite;
 using NLog;
-using Npgsql;
 using NUnit.Framework;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
-using NzbDrone.Core.Datastore.Migration.Framework;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Housekeeping.Housekeepers;
 using NzbDrone.Core.ImportLists;
@@ -269,41 +265,7 @@ namespace Chaptarr.Core.Test.Housekeeping
 
         private static void WithLibrary(bool postgres, Action<Library> test)
         {
-            var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, "saved_media_tags_" + Guid.NewGuid().ToString("N") + ".db");
-            var databaseName = "saved_media_tags_" + Guid.NewGuid().ToString("N");
-            var adminString = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
-            if (postgres && string.IsNullOrWhiteSpace(adminString)) Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING for PostgreSQL tag coverage");
-            var connectionString = postgres ? new NpgsqlConnectionStringBuilder(adminString) { Database = databaseName, Pooling = false }.ToString()
-                : new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString();
-            IDbConnection Open()
-            {
-                IDbConnection connection = postgres ? new NpgsqlConnection(connectionString) : new SqliteConnection(connectionString);
-                connection.Open();
-                return connection;
-            }
-            if (postgres)
-            {
-                using var admin = new NpgsqlConnection(adminString);
-                admin.Open();
-                admin.Execute($"CREATE DATABASE \"{databaseName}\"");
-            }
-            try
-            {
-                var type = postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite;
-                new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(connectionString, new MigrationContext(MigrationType.Main), type);
-                if (TableMapping.Mapper.TableMap.Count == 0) TableMapping.Map();
-                test(new Library(Open, type));
-            }
-            finally
-            {
-                if (postgres)
-                {
-                    using var admin = new NpgsqlConnection(adminString);
-                    admin.Open();
-                    admin.Execute($"DROP DATABASE \"{databaseName}\"");
-                }
-                else if (File.Exists(path)) File.Delete(path);
-            }
+            DualDatabaseFixture.Run(postgres, database => test(new Library(database.OpenConnection, database.DatabaseType)));
         }
     }
 }

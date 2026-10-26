@@ -8,19 +8,14 @@ using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Housekeeping.Housekeepers;
-using NzbDrone.Core.MediaCover;
-using NzbDrone.Core.MediaCover.Commands;
-using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
-using NzbDrone.Http.REST.Attributes;
 
 namespace Chaptarr.Api.V1.Config
 {
     [V1ApiController("config/mediamanagement")]
     public class MediaManagementConfigController : ConfigController<MediaManagementConfigResource>
     {
-        private readonly IManageCommandQueue _commandQueue;
         private readonly CleanupOrphanedBookCovers _coverCleanup;
 
         public MediaManagementConfigController(IConfigService configService,
@@ -32,11 +27,9 @@ namespace Chaptarr.Api.V1.Config
                                            SystemFolderValidator systemFolderValidator,
                                            RootFolderAncestorValidator rootFolderAncestorValidator,
                                            RootFolderValidator rootFolderValidator,
-                                           IManageCommandQueue commandQueue,
                                            CleanupOrphanedBookCovers coverCleanup)
             : base(configService)
         {
-            _commandQueue = commandQueue;
             _coverCleanup = coverCleanup;
             var paths = new MediaManagementPathValidator(pathExistsValidator, folderChmodValidator, folderWritableValidator,
                 authorPathValidator, startupFolderValidator, systemFolderValidator, rootFolderAncestorValidator, rootFolderValidator);
@@ -67,20 +60,6 @@ namespace Chaptarr.Api.V1.Config
                 // An exhausted estimate budget is an expected client-visible failure, already logged by the estimator.
                 throw new NzbDroneClientException(HttpStatusCode.RequestTimeout, e.Message, e);
             }
-        }
-
-        [RestPutById]
-        public override ActionResult<MediaManagementConfigResource> SaveConfig([FromBody] MediaManagementConfigResource resource)
-        {
-            var previousScope = _configService.CoverDownloadScope;
-            var response = base.SaveConfig(resource);
-            if (previousScope != _configService.CoverDownloadScope &&
-                _configService.CoverDownloadScope == CoverDownloadScope.LibraryBooks)
-            {
-                _commandQueue.Push(new CleanupBookCoversCommand());
-            }
-
-            return response;
         }
 
         protected override MediaManagementConfigResource ToResource(IConfigService model)

@@ -23,6 +23,7 @@ namespace NzbDrone.Core.Datastore
         private readonly IAppFolderInfo _appFolderInfo;
         private readonly Logger _logger;
         private readonly string _connectionString;
+        private readonly object _initializationLock = new object();
 
         public StagingDbContext(IAppFolderInfo appFolderInfo, Logger logger)
         {
@@ -45,7 +46,13 @@ namespace NzbDrone.Core.Datastore
         {
             if (InitializationError != null)
             {
-                throw new InvalidOperationException("The import queue could not be initialized. Imports are unavailable until the staging database is repaired and Chaptarr is restarted.", InitializationError);
+                lock (_initializationLock)
+                {
+                    if (InitializationError != null)
+                    {
+                        InitializeDatabase();
+                    }
+                }
             }
 
             return OpenConnection(true);

@@ -15,7 +15,6 @@ import '../src/index.css';
 
 const history = createMemoryHistory();
 const store = createAppStore(history);
-store.dispatch(set({ section: 'app', dimensions: { width: window.innerWidth, height: window.innerHeight } }));
 store.dispatch(set({ section: 'settings.ui', item: { shortDateFormat: 'MMM D YYYY', longDateFormat: 'dddd, MMMM D YYYY', timeFormat: 'HH:mm', showRelativeDates: false } }));
 window.fixtureState = () => store.getState();
 window.setFixtureTheme = (name) => Object.entries(themes[name]).forEach(([key, value]) => {

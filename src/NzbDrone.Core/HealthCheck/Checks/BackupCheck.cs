@@ -3,6 +3,7 @@ using NzbDrone.Core.Localization;
 
 namespace NzbDrone.Core.HealthCheck.Checks
 {
+    [CheckOn(typeof(BackupRestoreStateChangedEvent))]
     public class BackupCheck : HealthCheckBase
     {
         private readonly IBackupService _backupService;

@@ -17,10 +17,14 @@ using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Common.Options;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Configuration.Events;
 using NzbDrone.Core.Configuration.SettingsBackups;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.MediaCover.Commands;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.RemotePathMappings;
@@ -80,6 +84,38 @@ namespace Chaptarr.Core.Test.Configuration
                     yield return new TestCaseData(property.Name, useDefault)
                         .SetName($"backup_should_restore_{property.Name}_{(useDefault ? "default" : "changed")}");
                 }
+            }
+        }
+
+        private static IEnumerable<string> MergeSettings() => Settings.Select(property => property.Name);
+
+        [TestCaseSource(nameof(MergeSettings))]
+        public void merge_should_fill_only_blank_config_values(string settingName)
+        {
+            var property = typeof(IConfigService).GetProperty(settingName);
+            foreach (var keepDefault in new[] { true, false })
+            {
+                var source = CreateConfigService();
+                var target = CreateConfigService();
+                var current = property.GetValue(target);
+                if (!keepDefault)
+                {
+                    current = SettingsBackupTestValues.DifferentValue(property.PropertyType, current);
+                    property.SetValue(target, current);
+                    current = property.GetValue(target);
+                }
+                property.SetValue(source, SettingsBackupTestValues.DifferentValue(property.PropertyType, current));
+                var incoming = property.GetValue(source);
+                var blank = current == null || current is string text && string.IsNullOrWhiteSpace(text) ||
+                    current is System.Collections.IEnumerable values && current is not string && !values.Cast<object>().Any();
+                var package = Export(source);
+                target = CreateConfigService();
+                if (!keepDefault)
+                {
+                    property.SetValue(target, current);
+                }
+                Restore(target, package, mode: SettingsBackupRestoreMode.Merge);
+                Assert.That(property.GetValue(target), Is.EqualTo(blank ? incoming : current), settingName);
             }
         }
 
@@ -635,7 +671,7 @@ namespace Chaptarr.Core.Test.Configuration
                     IDiskProvider disk = OsInfo.IsWindows ? new NzbDrone.Windows.Disk.DiskProvider()
                         : new NzbDrone.Mono.Disk.DiskProvider(null, null, null, LogManager.GetCurrentClassLogger());
                     var service = new SettingsBackupService(InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => folder), disk, config, null, null, null,
-                        InterfaceProxy.Proxy<NzbDrone.Core.Notifications.INotificationFactory>((_, _) => throw new AssertionException("Connections must not be attempted")),
+                        InterfaceProxy.Proxy<NzbDrone.Core.Notifications.INotificationFactory>((method, _) => method.Name == "All" ? new List<NzbDrone.Core.Notifications.NotificationDefinition>() : throw new AssertionException("Connection writes must not be attempted")),
                         InterfaceProxy.Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>((method, args) =>
                         {
                             if (method.Name == "All") return qualities;
@@ -768,7 +804,136 @@ namespace Chaptarr.Core.Test.Configuration
             return SettingsBackupTestValues.DifferentValue(property.PropertyType, defaultValue);
         }
 
-        private static ConfigService CreateConfigService()
+        [TestCase(CoverDownloadScope.AllBooks, CoverDownloadScope.LibraryBooks, true)]
+        [TestCase(CoverDownloadScope.LibraryBooks, CoverDownloadScope.LibraryBooks, false)]
+        [TestCase(CoverDownloadScope.LibraryBooks, CoverDownloadScope.AllBooks, false)]
+        [TestCase(CoverDownloadScope.AllBooks, CoverDownloadScope.AllBooks, false)]
+        [TestCase(CoverDownloadScope.LibraryBooks, null, false)]
+        [TestCase(CoverDownloadScope.AllBooks, null, false)]
+        public void save_and_encrypted_restore_should_share_cover_cleanup_after_persistence(
+            CoverDownloadScope initialScope, CoverDownloadScope? requestedScope, bool expectCleanup)
+        {
+            foreach (var restore in new[] { false, true })
+            {
+                var queued = new List<Command>();
+                ConfigService config = null;
+                var queue = InterfaceProxy.Proxy<IManageCommandQueue>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(IManageCommandQueue.Push)));
+                    Assert.That(config.CoverDownloadScope, Is.EqualTo(CoverDownloadScope.LibraryBooks));
+                    queued.Add((Command)args[0]);
+                    return null;
+                });
+                var covers = new DeferredCoverDownloadService(null, null, queue, null, LogManager.GetCurrentClassLogger());
+                var events = InterfaceProxy.Proxy<IEventAggregator>((_, args) =>
+                {
+                    if (args[0] is ConfigSavedEvent saved)
+                    {
+                        covers.Handle(saved);
+                    }
+
+                    return null;
+                });
+                config = CreateConfigService(events);
+                config.CoverDownloadScope = initialScope;
+
+                if (restore)
+                {
+                    WithBackupFolder(folder =>
+                    {
+                        var package = Export(config);
+                        package.Categories = new() { SettingsBackupCategory.MediaManagement };
+                        package.MediaManagement.CoverDownloadScope = requestedScope;
+                        var path = Path.Combine(folder, "cover-scope.chaptarr-settings-backup.json");
+                        File.WriteAllText(path, JsonSerializer.Serialize(SettingsBackupCrypto.Encrypt(
+                            JsonSerializer.SerializeToUtf8Bytes(package, STJson.GetSerializerSettings()), "test passphrase"), STJson.GetSerializerSettings()));
+                        FileBackupService(config, folder).RestoreBackup(new SettingsBackupRestoreRequest
+                        {
+                            FilePath = path, Passphrase = "test passphrase", Categories = package.Categories.ToHashSet()
+                        });
+                    });
+                }
+                else
+                {
+                    var values = new Dictionary<string, object>();
+                    if (requestedScope.HasValue)
+                    {
+                        values[nameof(IConfigService.CoverDownloadScope)] = requestedScope.Value;
+                    }
+
+                    config.SaveConfigDictionary(values);
+                }
+
+                Assert.That(config.CoverDownloadScope, Is.EqualTo(requestedScope ?? initialScope));
+                Assert.That(queued.Count, Is.EqualTo(expectCleanup ? 1 : 0), $"restore={restore}");
+                Assert.That(queued, Has.All.TypeOf<CleanupBookCoversCommand>());
+                config.SaveConfigDictionary(new Dictionary<string, object> { [nameof(IConfigService.DeleteEmptyFolders)] = true });
+                Assert.That(queued.Count, Is.EqualTo(expectCleanup ? 1 : 0), "Unrelated settings must not repeat cleanup");
+            }
+        }
+
+        [Test]
+        public void encrypted_media_management_restore_updates_live_watchers_without_optional_cover_settings(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool initialWatch,
+            [Values(false, true)] bool includeCoverScope)
+        {
+            WithBackupFolder(folder => DualDatabaseFixture.Run(postgres, database =>
+            {
+                var library = Path.Combine(folder, "library");
+                Directory.CreateDirectory(library);
+                RootFolderWatchingService watcher = null;
+                ConfigService config = null;
+                var savedEvents = new List<ConfigSavedEvent>();
+                var events = InterfaceProxy.Proxy<IEventAggregator>((_, args) =>
+                {
+                    if (args[0] is ConfigSavedEvent saved)
+                    {
+                        Assert.That(config.WatchLibraryForChanges, Is.EqualTo(!initialWatch));
+                        Assert.That(config.GranularFileSystemScanning, Is.True);
+                        savedEvents.Add(saved);
+                        watcher.Handle(saved);
+                    }
+
+                    return null;
+                });
+                var repository = new ConfigRepository(database, events);
+                config = new ConfigService(repository, events, null, LogManager.GetCurrentClassLogger());
+                config.WatchLibraryForChanges = initialWatch;
+                config.GranularFileSystemScanning = false;
+                config.CoverDownloadScope = CoverDownloadScope.AllBooks;
+                var roots = InterfaceProxy.Proxy<NzbDrone.Core.RootFolders.IRootFolderService>((method, _) =>
+                    method.Name == "All" ? new List<NzbDrone.Core.RootFolders.RootFolder> { new() { Path = library } }
+                    : throw new NotSupportedException(method.Name));
+                using (watcher = new RootFolderWatchingService(roots, null, config, null, LogManager.GetCurrentClassLogger()))
+                {
+                    var watchers = (System.Collections.Concurrent.ConcurrentDictionary<string, FileSystemWatcher>)
+                        typeof(RootFolderWatchingService).GetField("_fileSystemWatchers", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(watcher);
+                    watcher.Handle(new NzbDrone.Core.Lifecycle.ApplicationStartedEvent());
+                    Assert.That(System.Threading.SpinWait.SpinUntil(() => watchers.Count == (initialWatch ? 1 : 0), 5000), Is.True);
+                    var package = Export(config);
+                    package.Categories = new() { SettingsBackupCategory.MediaManagement };
+                    package.MediaManagement.WatchLibraryForChanges = !initialWatch;
+                    package.MediaManagement.GranularFileSystemScanning = true;
+                    package.MediaManagement.CoverDownloadScope = includeCoverScope ? CoverDownloadScope.LibraryBooks : null;
+                    var path = Path.Combine(folder, "watchers.chaptarr-settings-backup.json");
+                    File.WriteAllText(path, JsonSerializer.Serialize(SettingsBackupCrypto.Encrypt(
+                        JsonSerializer.SerializeToUtf8Bytes(package, STJson.GetSerializerSettings()), "test passphrase"), STJson.GetSerializerSettings()));
+
+                    FileBackupService(config, folder).RestoreBackup(new SettingsBackupRestoreRequest
+                    {
+                        FilePath = path, Passphrase = "test passphrase", Categories = package.Categories.ToHashSet()
+                    });
+
+                    Assert.That(savedEvents, Has.Count.EqualTo(1));
+                    Assert.That(savedEvents.Single().BookCoverCleanupRequired, Is.EqualTo(includeCoverScope));
+                    Assert.That(repository.Get("watchlibraryforchanges").Value, Is.EqualTo((!initialWatch).ToString()));
+                    Assert.That(config.CoverDownloadScope, Is.EqualTo(includeCoverScope ? CoverDownloadScope.LibraryBooks : CoverDownloadScope.AllBooks));
+                    Assert.That(System.Threading.SpinWait.SpinUntil(() => watchers.Count == (initialWatch ? 0 : 1), 5000), Is.True);
+                }
+            }));
+        }
+
+        private static ConfigService CreateConfigService(IEventAggregator events = null)
         {
             var values = new Dictionary<string, Config>();
             var repository = InterfaceProxy.Proxy<IConfigRepository>((method, args) =>
@@ -786,7 +951,7 @@ namespace Chaptarr.Core.Test.Configuration
                         throw new NotImplementedException(method.Name);
                 }
             });
-            return new ConfigService(repository, InterfaceProxy.Proxy<IEventAggregator>((_, _) => null), null, LogManager.GetCurrentClassLogger());
+            return new ConfigService(repository, events ?? InterfaceProxy.Proxy<IEventAggregator>((_, _) => null), null, LogManager.GetCurrentClassLogger());
         }
 
         private static SettingsBackupService CreateBackupService(IConfigService config, INamingConfigService naming = null, IAppFolderInfo folders = null, IDiskProvider disk = null, IConfigFileProvider host = null, IRemotePathMappingService mappings = null)
@@ -821,9 +986,14 @@ namespace Chaptarr.Core.Test.Configuration
             return JsonSerializer.Deserialize<SettingsBackupPackage>(JsonSerializer.Serialize(package, STJson.GetSerializerSettings()), STJson.GetSerializerSettings());
         }
 
-        private static void Restore(IConfigService config, SettingsBackupPackage package, INamingConfigService naming = null, IConfigFileProvider host = null)
+        private static void Restore(IConfigService config, SettingsBackupPackage package, INamingConfigService naming = null, IConfigFileProvider host = null, SettingsBackupRestoreMode mode = SettingsBackupRestoreMode.Overwrite)
         {
             var service = CreateBackupService(config, naming, host: host);
+            if (mode == SettingsBackupRestoreMode.Merge)
+            {
+                typeof(SettingsBackupService).GetMethod("MergeGeneralSettings", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(service, new object[] { package, package.Categories.ToHashSet() });
+            }
             foreach (var section in new[] { "MediaManagement", "MetadataServer", "Hardcover", "IndexerSettings", "DownloadClientSettings", "UiSettings" })
             {
                 var method = typeof(SettingsBackupService).GetMethod($"Restore{section}", BindingFlags.Instance | BindingFlags.NonPublic);

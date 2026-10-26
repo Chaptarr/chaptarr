@@ -7,6 +7,8 @@ const webpack = require('webpack');
 const { chromium } = require('playwright');
 
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'chaptarr-backup-ui-'));
+const artifacts = process.env.CHAPTARR_LAYOUT_ARTIFACTS || output;
+fs.mkdirSync(artifacts, { recursive: true });
 const config = require('./webpack.config')({ production: true });
 
 config.entry = { fixture: path.join(__dirname, 'backup-fixture.js') };
@@ -45,6 +47,8 @@ async function check(browser, width, lostReply) {
   let pending = true;
   let cancels = 0;
   let restores = 0;
+  let rejectRestore = false;
+  let statusRequests = 0;
   let restarts = 0;
   let settingsRestores = 0;
   let failedRestore = true;
@@ -76,6 +80,7 @@ async function check(browser, width, lostReply) {
       ] });
     }
     if (pathname.endsWith('/system/backup/status')) {
+      statusRequests++;
       return route.fulfill({ json: { pendingRestore: pending, canCancelRestore: pending, scheduleDisabled: true, restoreFailed: failedRestore } });
     }
     if (pathname.endsWith('/system/backup/restore/failed') && request.method() === 'DELETE') {
@@ -93,6 +98,9 @@ async function check(browser, width, lostReply) {
     }
     if (pathname.endsWith('/system/backup/restore/7')) {
       restores++;
+      if (rejectRestore) {
+        return route.fulfill({ status: 400, json: { message: 'Fixture restore validation failure' } });
+      }
       if (lostReply) {
         return route.abort('failed');
       }
@@ -115,7 +123,7 @@ async function check(browser, width, lostReply) {
       return route.fulfill({ path: css });
     }
     if (pathname === '/') {
-      return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={urlBase:"",apiRoot:"/api/v1",isProduction:true,instanceName:"Chaptarr"};</script><script src="/fixture.js"></script></body></html>' });
+      return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><link rel="stylesheet" href="/style.css"><style>#root{display:flex;height:100vh}</style></head><body><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={urlBase:"",apiRoot:"/api/v1",isProduction:true,instanceName:"Chaptarr"};</script><script src="/fixture.js"></script></body></html>' });
     }
     const asset = path.resolve(output, `.${decodeURIComponent(pathname)}`);
     if (asset.startsWith(`${output}${path.sep}`) && fs.existsSync(asset) && fs.statSync(asset).isFile()) {
@@ -129,6 +137,46 @@ async function check(browser, width, lostReply) {
     await page.getByText(strings.BackupsContainUnencryptedCredentials, { exact: true }).waitFor();
     await page.getByText(strings.ScheduledBackupsDisabled, { exact: true }).waitFor();
     await page.getByText(strings.BackupUploadLimitHelp, { exact: true }).waitFor();
+    const originalStatus = await page.evaluate(() => window.fixtureState().system.backupStatus);
+    const originalRequests = statusRequests;
+    const assertStatusRetained = async() => {
+      await page.getByRole('button', { name: strings.Cancel, exact: true }).waitFor({ state: 'hidden' });
+      assert.deepEqual(await page.evaluate(() => window.fixtureState().system.backupStatus), originalStatus, 'Closing Restore must preserve the Backups page status');
+      await page.getByText(strings.BackupRestoreFailedWarning, { exact: false }).waitFor();
+      await page.getByText(strings.BackupRestorePendingWarning, { exact: false }).waitFor();
+      await page.getByText(strings.ScheduledBackupsDisabled, { exact: true }).waitFor();
+      assert.equal(statusRequests, originalRequests, 'Closing Restore must not refetch page status');
+      assert.equal(cancels, 0, 'Closing the dialog must not cancel the pending server restore');
+    };
+    for (const close of ['cancel', 'escape', 'x']) {
+      for (const origin of ['upload', 'existing']) {
+        const open = origin === 'existing' ? page.locator('table') : page;
+        await open.getByRole('button', { name: strings.RestoreBackup, exact: true }).first().click();
+        await page.getByRole('button', { name: strings.Cancel, exact: true }).waitFor();
+        if (close === 'cancel') {
+          await page.getByRole('button', { name: strings.Cancel, exact: true }).click();
+        } else if (close === 'x') {
+          await page.locator('#portal-root [class*="ModalContent-closeButton"]').click();
+        } else {
+          await page.keyboard.press('Escape');
+        }
+        await assertStatusRetained();
+      }
+    }
+    assert.equal(restores, 0, 'Opening and closing either dialog must not start a restore');
+    rejectRestore = true;
+    await page.locator('table').getByRole('button', { name: strings.RestoreBackup, exact: true }).click();
+    await page.getByRole('button', { name: strings.Restore, exact: true }).click();
+    await page.waitForFunction(() => window.fixtureState().system.backups.restoreError?.status === 400);
+    await page.getByRole('button', { name: strings.Cancel, exact: true }).click();
+    await assertStatusRetained();
+    assert.equal(await page.evaluate(() => window.fixtureState().system.backups.restoreError), null);
+    assert.equal(await page.evaluate(() => window.fixtureState().system.backups.isRestoring), false);
+    assert.equal(await page.evaluate(() => !!window.fixtureState().app.isRestarting), false);
+    assert.equal(restores, 1);
+    await page.getByText(strings.BackupRestorePendingWarning, { exact: false }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(artifacts, `retained-status-${width}-${lostReply}.png`), fullPage: true });
+    rejectRestore = false;
     await page.evaluate(() => window.showSettingsRestoreError());
     await page.getByText('Destination folder is missing', { exact: false }).waitFor();
     await page.getByText('Remote folder is required', { exact: false }).waitFor();
@@ -138,13 +186,13 @@ async function check(browser, width, lostReply) {
     await page.getByText('failed at delay profiles (may be partially changed)', { exact: false }).waitFor();
     await page.getByText('Not attempted categories: Connections.', { exact: false }).waitFor();
     await page.getByText('Completed categories: Interface Preferences.', { exact: false }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: path.join(output, `partial-settings-${width}-${lostReply}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(artifacts, `partial-settings-${width}-${lostReply}.png`), fullPage: true });
     await page.getByRole('button', { name: strings.Close, exact: true }).click();
     await page.evaluate(() => window.showSettingsRestoreError());
     await page.getByText('Skipped unavailable provider', { exact: true }).waitFor();
     assert.equal(navigations, 1, 'Successful settings restore must keep results visible');
     await page.getByText('Skipped unavailable provider', { exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: path.join(output, `settings-result-${width}-${lostReply}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(artifacts, `settings-result-${width}-${lostReply}.png`), fullPage: true });
     assert.equal(await page.getByRole('button', { name: strings.Restore, exact: true }).isDisabled(), true);
     const reload = page.waitForRequest((request) => request.isNavigationRequest());
     await page.getByRole('button', { name: strings.Close, exact: true }).click();
@@ -159,7 +207,7 @@ async function check(browser, width, lostReply) {
     assert.equal(cancels, 1);
     await page.getByRole('button', { name: strings.DeleteFailedRestoreFiles, exact: true }).click();
     await page.getByText(strings.DeleteFailedRestoreFilesMessage, { exact: true }).waitFor();
-    await page.screenshot({ path: path.join(output, `delete-recovery-${width}-${lostReply}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(artifacts, `delete-recovery-${width}-${lostReply}.png`), fullPage: true });
     await page.getByRole('button', { name: strings.Cancel, exact: true }).click();
     assert.equal(dismissals, 0, 'Cancel must not remove any recovery files');
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -178,7 +226,8 @@ async function check(browser, width, lostReply) {
     for (const theme of ['light', 'dark']) {
       await page.evaluate((name) => window.setFixtureTheme(name), theme);
       themeColors.add(await page.locator('table').evaluate((element) => getComputedStyle(element).color));
-      await page.screenshot({ path: path.join(output, `list-${width}-${theme}-${lostReply}.png`), fullPage: true });
+      await page.locator('table').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(artifacts, `list-${width}-${theme}-${lostReply}.png`), fullPage: true });
     }
     assert.equal(themeColors.size, 2, 'Both themes must change the rendered table colors');
     await page.locator('table').getByRole('button', { name: strings.RestoreBackup, exact: true }).click();
@@ -187,11 +236,11 @@ async function check(browser, width, lostReply) {
     await page.getByRole('button', { name: strings.Restore, exact: true }).click();
     await page.waitForFunction(() => window.fixtureState().app.isRestarting === true);
     assert.equal(await page.getByRole('button', { name: strings.Restore, exact: true }).isDisabled(), true);
-    assert.equal(restores, 1);
+    assert.equal(restores, 2);
     assert.equal(restarts, 0, 'The browser must not own the restore restart');
     await reconnect;
     assert.deepEqual(errors, []);
-    await page.screenshot({ path: path.join(output, `backup-${width}-${lostReply}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(artifacts, `backup-${width}-${lostReply}.png`), fullPage: true });
   } catch (error) {
     console.error(await page.locator('body').innerText(), errors);
     throw error;
@@ -210,10 +259,14 @@ async function check(browser, width, lostReply) {
         await check(browser, width, lostReply);
       }
     }
-    console.log('PASS: backup status/cancel, warning and contents, desktop/mobile, light/dark, keyboard, normal/lost response reconnect. Screenshots:', output);
+    console.log('PASS: restore dialog Cancel/Escape/X and failed-restore close preserve status; server cancel/dismiss still refresh it; settings restore, desktop/mobile, light/dark, keyboard, normal/lost response reconnect.');
   } finally {
-    if (browser) {
-      await browser.close();
+    try {
+      if (browser) {
+        await browser.close();
+      }
+    } finally {
+      fs.rmSync(output, { recursive: true, force: true });
     }
   }
 })().catch((error) => {

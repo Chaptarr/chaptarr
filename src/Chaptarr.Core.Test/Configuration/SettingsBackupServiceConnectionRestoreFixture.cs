@@ -29,7 +29,7 @@ namespace Chaptarr.Core.Test.Configuration
 
             Assert.That(factoryProxy.Definitions, Has.Count.EqualTo(1));
             AssertAudioBookShelfMappingsCleared(factoryProxy.Definitions[0]);
-            Assert.That(result.Warnings, Has.Some.Contains("Cleared AudioBookShelf library mappings"));
+            Assert.That(result.Warnings, Has.Some.Contains("Discarded backup AudioBookShelf library mappings"));
             Assert.That(result.Warnings, Has.Some.Contains("Root folders are not included in settings backups"));
         }
 
@@ -57,7 +57,33 @@ namespace Chaptarr.Core.Test.Configuration
             Assert.That(factoryProxy.Definitions, Has.Count.EqualTo(1));
             Assert.That(factoryProxy.Definitions[0].Id, Is.EqualTo(42));
             AssertAudioBookShelfMappingsCleared(factoryProxy.Definitions[0]);
-            Assert.That(result.Warnings, Has.Some.Contains("Cleared AudioBookShelf library mappings"));
+            Assert.That(result.Warnings, Has.Some.Contains("Discarded backup AudioBookShelf library mappings"));
+        }
+
+        [Test]
+        public void merge_connections_should_keep_destination_settings_and_library_mappings()
+        {
+            var factory = CreateNotificationFactory(out var proxy);
+            var settings = new AudioBookShelfSettings { Host = "destination", Port = 0, ApiKey = "" };
+            settings.SetLibraryMappings(new List<AudioBookShelfLibraryMapping>
+            {
+                new() { RootFolderId = 42, MediaType = "audiobook", LibraryId = "destination-library" }
+            });
+            proxy.Definitions.Add(new NotificationDefinition
+            {
+                Id = 42, Name = "AudioBookShelf", Implementation = "AudioBookShelf",
+                Settings = settings, IncludeHealthWarnings = false
+            });
+            var package = BuildPackageWithAudioBookShelfConnection();
+            package.Connections.Single().IncludeHealthWarnings = true;
+            InvokeRestoreConnections(CreateService(factory), package, SettingsBackupRestoreMode.Merge, new SettingsBackupRestoreResult());
+            var restored = (AudioBookShelfSettings)proxy.Definitions.Single().Settings;
+            Assert.That(restored.Host, Is.EqualTo("destination"));
+            Assert.That(restored.Port, Is.Zero);
+            Assert.That(restored.ApiKey, Is.EqualTo("apikey"));
+            Assert.That(restored.GetLibraryMappings().Single().RootFolderId, Is.EqualTo(42));
+            Assert.That(restored.GetLibraryMappings().Single().LibraryId, Is.EqualTo("destination-library"));
+            Assert.That(proxy.Definitions.Single().IncludeHealthWarnings, Is.False);
         }
 
         [Test]

@@ -311,7 +311,7 @@ namespace Chaptarr.Core.Test.Configuration
                     package.IndexerNames[id] = "Coverage indexer";
                     service = CreateService(new IndexerDefinition { Id = id, Name = "Coverage indexer" }, entity => restored = entity);
                 }
-                if (type == typeof(QualityDefinition)) Invoke("RestoreQualitySizes", service, package, result);
+                if (type == typeof(QualityDefinition)) Invoke("RestoreQualitySizes", service, package, result, SettingsBackupRestoreMode.Overwrite);
                 else Invoke(type == typeof(DelayProfile) ? "RestoreDelayProfiles" : "RestoreReleaseProfiles", service, package, tags, SettingsBackupRestoreMode.Merge, result);
             }
             else if (type == typeof(CustomFormat))
@@ -320,7 +320,7 @@ namespace Chaptarr.Core.Test.Configuration
             }
             else if (type == typeof(MetadataProfile))
             {
-                Invoke("RestoreMetadataProfiles", service, package, result);
+                Invoke("RestoreMetadataProfiles", service, package, result, SettingsBackupRestoreMode.Overwrite);
             }
             else if (type == typeof(ProxyDefinition))
             {

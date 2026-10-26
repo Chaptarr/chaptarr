@@ -9,6 +9,8 @@ using NzbDrone.Core.Configuration.SettingsBackups;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients.QBittorrent;
+using NzbDrone.Core.Download.Clients.Sabnzbd;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
 using NzbDrone.Core.Indexers.Newznab;
@@ -116,6 +118,73 @@ namespace Chaptarr.Core.Test.Configuration
             });
         }
 
+        [TestCase("client", false, false)]
+        [TestCase("client", true, false)]
+        [TestCase("rss", false, false)]
+        [TestCase("rss", true, false)]
+        [TestCase("automatic", true, false)]
+        [TestCase("interactive", true, false)]
+        [TestCase("notification", false, false)]
+        [TestCase("notification", true, false)]
+        [TestCase("audiobookshelf", false, false)]
+        [TestCase("client", false, true)]
+        [TestCase("rss", false, true)]
+        [TestCase("notification", false, true)]
+        public void restore_preflight_should_follow_editor_enablement_without_accepting_malformed_settings(string kind, bool enabled, bool malformed)
+        {
+            ProviderDefinition source = kind switch
+            {
+                "client" => new DownloadClientDefinition { Enable = enabled, Settings = new SabnzbdSettings() },
+                "notification" => new NotificationDefinition { OnImportFailure = enabled, Settings = new WebhookSettings() },
+                "audiobookshelf" => new NotificationDefinition { Settings = new AudioBookShelfSettings() },
+                _ => new IndexerDefinition
+                {
+                    EnableRss = kind == "rss" && enabled,
+                    EnableAutomaticSearch = kind == "automatic" && enabled,
+                    EnableInteractiveSearch = kind == "interactive" && enabled,
+                    Settings = new NewznabSettings()
+                }
+            };
+            source.Name = "Unfinished connection";
+            source.Implementation = source.Settings.GetType().Name.Replace("Settings", string.Empty);
+            Assert.That(source.Settings.Validate().IsValid, Is.False);
+            Assert.That(source.Enable, Is.EqualTo(enabled || kind == "audiobookshelf"));
+            var backup = ExportDefinition(source);
+            if (malformed)
+            {
+                backup.GetType().GetProperty("Settings").SetValue(backup, JsonSerializer.SerializeToElement("not an object"));
+            }
+            var package = new SettingsBackupPackage();
+            var category = SettingsBackupCategory.DownloadClients;
+            switch (backup)
+            {
+                case DownloadClientDefinitionBackup client:
+                    package.DownloadClients.Add(client);
+                    break;
+                case IndexerDefinitionBackup indexer:
+                    category = SettingsBackupCategory.Indexers;
+                    package.Indexers.Add(indexer);
+                    break;
+                case NotificationDefinitionBackup notification:
+                    category = SettingsBackupCategory.Connections;
+                    // Enable is derived from triggers/implementation; a serialized value must not override it.
+                    notification.Enable = !source.Enable;
+                    package.Connections.Add(notification);
+                    break;
+            }
+            package = JsonSerializer.Deserialize<SettingsBackupPackage>(JsonSerializer.Serialize(package, STJson.GetSerializerSettings()), STJson.GetSerializerSettings());
+            if (source.Enable || malformed)
+            {
+                var error = Assert.Throws<NzbDroneClientException>(() => SettingsBackupService.ValidateRestore(package, new() { category }));
+                Assert.That(error.Message, Does.Contain(source.Name).And.Contain("No settings were restored"));
+            }
+            else
+            {
+                Assert.That(SettingsBackupService.ValidateRestore(package, new() { category }), Is.Empty);
+                Assert.That(RoundTrip(source).Enable, Is.False);
+            }
+        }
+
         [Test]
         public void exclusions_should_reference_existing_properties_and_explain_their_scope()
         {
@@ -219,9 +288,7 @@ namespace Chaptarr.Core.Test.Configuration
             Dictionary<int, int> proxies = null)
         {
             var flags = BindingFlags.NonPublic | BindingFlags.Static;
-            var export = typeof(SettingsBackupService).GetMethod("ToBackup", flags, null, new[] { source.GetType() }, null);
-            Assert.That(export, Is.Not.Null, source.GetType().Name);
-            var backup = export.Invoke(null, new object[] { source });
+            var backup = ExportDefinition(source);
             Assert.That((int)backup.GetType().GetProperty("OriginalId").GetValue(backup), Is.EqualTo(source.Id));
             var json = JsonSerializer.Serialize(backup, backup.GetType(), STJson.GetSerializerSettings());
             backup = JsonSerializer.Deserialize(json, backup.GetType(), STJson.GetSerializerSettings());
@@ -234,6 +301,13 @@ namespace Chaptarr.Core.Test.Configuration
             Assert.That(restored, Is.Not.Null, $"Failed to materialize {source.GetType().Name} with {source.ConfigContract}");
             Assert.That(restored.ConfigContract, Is.EqualTo(source.ConfigContract));
             return restored;
+        }
+
+        private static object ExportDefinition(ProviderDefinition source)
+        {
+            var export = typeof(SettingsBackupService).GetMethod("ToBackup", BindingFlags.NonPublic | BindingFlags.Static, null, new[] { source.GetType() }, null);
+            Assert.That(export, Is.Not.Null, source.GetType().Name);
+            return export.Invoke(null, new object[] { source });
         }
 
         private static bool Equivalent(object actual, object expected, Type type)

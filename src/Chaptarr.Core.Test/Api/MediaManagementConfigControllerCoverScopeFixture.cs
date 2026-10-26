@@ -23,9 +23,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Housekeeping.Housekeepers;
 using NzbDrone.Core.MediaCover;
-using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
-using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
@@ -87,27 +85,6 @@ namespace Chaptarr.Core.Test.Api
             }
         }
 
-        private class RecordingCommandQueueProxy : DispatchProxy
-        {
-            public List<Command> Commands { get; } = new();
-            public List<string> Events { get; set; }
-            public System.Func<CoverDownloadScope> CurrentScope { get; set; }
-            public List<CoverDownloadScope> ScopeAtPush { get; } = new();
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                if (targetMethod?.Name == nameof(IManageCommandQueue.Push) && args?.FirstOrDefault() is Command command)
-                {
-                    Commands.Add(command);
-                    Events.Add("queue");
-                    ScopeAtPush.Add(CurrentScope());
-                    return null;
-                }
-
-                throw new System.NotImplementedException(targetMethod?.Name);
-            }
-        }
-
         private class DefaultDependencyProxy : DispatchProxy
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -138,7 +115,6 @@ namespace Chaptarr.Core.Test.Api
                 SystemFolderValidator systemFolderValidator,
                 RootFolderAncestorValidator rootFolderAncestorValidator,
                 RootFolderValidator rootFolderValidator,
-                IManageCommandQueue commandQueue,
                 CleanupOrphanedBookCovers coverCleanup)
                 : base(
                     configService,
@@ -150,7 +126,6 @@ namespace Chaptarr.Core.Test.Api
                     systemFolderValidator,
                     rootFolderAncestorValidator,
                     rootFolderValidator,
-                    commandQueue,
                     coverCleanup)
             {
             }
@@ -223,25 +198,8 @@ namespace Chaptarr.Core.Test.Api
             }
         }
 
-        private static CleanupOrphanedBookCovers CreateNoopCoverCleanup(IConfigService configService)
-        {
-            var bookService = DispatchProxy.Create<IBookService, DefaultDependencyProxy>();
-            var diskProvider = DispatchProxy.Create<IDiskProvider, DefaultDependencyProxy>();
-            var appFolder = DispatchProxy.Create<IAppFolderInfo, DefaultDependencyProxy>();
-            var coverService = DispatchProxy.Create<IMapCoversToLocal, DefaultDependencyProxy>();
-
-            return new CleanupOrphanedBookCovers(
-                bookService,
-                diskProvider,
-                appFolder,
-                LogManager.GetCurrentClassLogger(),
-                configService,
-                coverService);
-        }
-
         private static TestableMediaManagementConfigController CreateController(
             IConfigService configService,
-            IManageCommandQueue commandQueue,
             CleanupOrphanedBookCovers coverCleanup)
         {
             var disk = DispatchProxy.Create<IDiskProvider, DefaultDependencyProxy>();
@@ -259,7 +217,6 @@ namespace Chaptarr.Core.Test.Api
                 new SystemFolderValidator(),
                 new RootFolderAncestorValidator(rootFolders),
                 new RootFolderValidator(rootFolders),
-                commandQueue,
                 coverCleanup);
         }
 
@@ -268,7 +225,6 @@ namespace Chaptarr.Core.Test.Api
         {
             var configApi = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
             ((ConfigServiceProxy)(object)configApi).Scope = CoverDownloadScope.AllBooks;
-            var queueApi = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
             var appFolder = DispatchProxy.Create<IAppFolderInfo, EstimateAppFolderProxy>();
             var appFolderProxy = (EstimateAppFolderProxy)(object)appFolder;
             appFolderProxy.AppDataFolder = @"C:\config".AsOsAgnostic();
@@ -288,7 +244,7 @@ namespace Chaptarr.Core.Test.Api
                 LogManager.GetCurrentClassLogger(),
                 configApi,
                 coverService);
-            var controller = CreateController(configApi, queueApi, cleanup);
+            var controller = CreateController(configApi, cleanup);
 
             var response = controller.GetCoverCleanupEstimate(CancellationToken.None);
 
@@ -306,8 +262,6 @@ namespace Chaptarr.Core.Test.Api
         {
             var configApi = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
             var config = (ConfigServiceProxy)(object)configApi;
-            var queueApi = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            var queue = (RecordingCommandQueueProxy)(object)queueApi;
             var appFolder = DispatchProxy.Create<IAppFolderInfo, EstimateAppFolderProxy>();
             ((EstimateAppFolderProxy)(object)appFolder).AppDataFolder = @"C:\config".AsOsAgnostic();
             var diskProvider = DispatchProxy.Create<IDiskProvider, EstimateDiskProviderProxy>();
@@ -318,7 +272,7 @@ namespace Chaptarr.Core.Test.Api
             var coverService = DispatchProxy.Create<IMapCoversToLocal, DefaultDependencyProxy>();
             var cleanup = new CleanupOrphanedBookCovers(books, diskProvider, appFolder,
                 LogManager.GetCurrentClassLogger(), configApi, coverService);
-            var controller = CreateController(configApi, queueApi, cleanup);
+            var controller = CreateController(configApi, cleanup);
 
             var exception = Assert.Throws<NzbDroneClientException>(() => controller.GetCoverCleanupEstimate(CancellationToken.None));
             using var factory = new LogFactory();
@@ -336,28 +290,21 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(target.Logs, Has.None.StartWith("Error|").And.None.StartWith("Fatal|"));
             Assert.That(disk.DeletedDirectories, Is.Empty);
             Assert.That(config.SaveCalls, Is.Zero);
-            Assert.That(queue.Commands, Is.Empty);
         }
 
-        [TestCase(CoverDownloadScope.AllBooks, CoverDownloadScope.LibraryBooks, true)]
-        [TestCase(CoverDownloadScope.LibraryBooks, CoverDownloadScope.LibraryBooks, false)]
-        [TestCase(CoverDownloadScope.LibraryBooks, CoverDownloadScope.AllBooks, false)]
-        public void save_should_schedule_cover_cleanup_only_when_library_scope_is_newly_enabled(
+        [TestCase(CoverDownloadScope.AllBooks, CoverDownloadScope.LibraryBooks)]
+        [TestCase(CoverDownloadScope.LibraryBooks, CoverDownloadScope.LibraryBooks)]
+        [TestCase(CoverDownloadScope.LibraryBooks, CoverDownloadScope.AllBooks)]
+        public void save_should_persist_the_requested_cover_scope(
             CoverDownloadScope initialScope,
-            CoverDownloadScope requestedScope,
-            bool expectCleanupCommand)
+            CoverDownloadScope requestedScope)
         {
             var events = new List<string>();
             var configApi = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
             var config = (ConfigServiceProxy)(object)configApi;
             config.Scope = initialScope;
             config.Events = events;
-            var queueApi = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            var queue = (RecordingCommandQueueProxy)(object)queueApi;
-            queue.Events = events;
-            queue.CurrentScope = () => config.Scope;
-
-            var controller = CreateController(configApi, queueApi, CreateNoopCoverCleanup(configApi));
+            var controller = CreateController(configApi, null);
             var resource = new MediaManagementConfigResource
             {
                 Id = 1,
@@ -371,18 +318,7 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(response.Result, Is.Not.Null);
             Assert.That(config.SaveCalls, Is.EqualTo(1));
             Assert.That(config.Scope, Is.EqualTo(requestedScope));
-            if (expectCleanupCommand)
-            {
-                Assert.That(queue.Commands, Has.Count.EqualTo(1));
-                Assert.That(queue.Commands.Single(), Is.TypeOf<CleanupBookCoversCommand>());
-                Assert.That(queue.ScopeAtPush, Is.EqualTo(new[] { CoverDownloadScope.LibraryBooks }));
-                Assert.That(events, Is.EqualTo(new[] { "persist:start", "persist:complete", "queue" }));
-            }
-            else
-            {
-                Assert.That(queue.Commands, Is.Empty);
-                Assert.That(events, Is.EqualTo(new[] { "persist:start", "persist:complete" }));
-            }
+            Assert.That(events, Is.EqualTo(new[] { "persist:start", "persist:complete" }));
         }
     }
 }

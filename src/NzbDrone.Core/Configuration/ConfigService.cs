@@ -75,7 +75,11 @@ namespace NzbDrone.Core.Configuration
                 }
             }
 
-            _eventAggregator.PublishEvent(new ConfigSavedEvent());
+            _eventAggregator.PublishEvent(new ConfigSavedEvent
+            {
+                BookCoverCleanupRequired = (CoverDownloadScope)allWithDefaults[nameof(CoverDownloadScope)] != CoverDownloadScope &&
+                                           CoverDownloadScope == CoverDownloadScope.LibraryBooks
+            });
         }
 
         public bool IsDefined(string key)

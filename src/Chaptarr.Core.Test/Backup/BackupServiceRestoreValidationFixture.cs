@@ -68,6 +68,7 @@ namespace Chaptarr.Core.Test.Backup
         private sealed class RejectingRestoreDatabase : IRestoreDatabase
         {
             public bool RecoveryCompleted => false;
+            public bool CommitFailed => false;
             public List<string> ValidatedPaths { get; } = new();
 
             public void Validate(string path)
@@ -112,6 +113,7 @@ namespace Chaptarr.Core.Test.Backup
                 new TestArchiveService(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 _restoreDatabase,
+                InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null),
                 LogManager.GetCurrentClassLogger());
         }
 

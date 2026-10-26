@@ -33,6 +33,7 @@ namespace NzbDrone.Core.Datastore
         void Commit();
         void Rollback();
         bool RecoveryCompleted { get; }
+        bool CommitFailed { get; }
     }
 
     public class DatabaseRestorationService : IRestoreDatabase
@@ -42,6 +43,7 @@ namespace NzbDrone.Core.Datastore
         private readonly IConnectionStringFactory _connectionStrings;
         private bool _restoreApplied;
         public bool RecoveryCompleted { get; private set; }
+        public bool CommitFailed { get; private set; }
         private static readonly object RestoreGate = new();
         private static readonly Logger Logger = NzbDroneLogger.GetLogger(typeof(DatabaseRestorationService));
         private const string ReceiptName = "restore.json";
@@ -485,9 +487,15 @@ namespace NzbDrone.Core.Datastore
 
         public void Commit()
         {
-            var bundle = BundlePath(_appFolderInfo);
-            if (Directory.Exists(bundle))
+            CommitFailed = false;
+            try
             {
+                var bundle = BundlePath(_appFolderInfo);
+                if (!Directory.Exists(bundle))
+                {
+                    return;
+                }
+
                 var receipt = ReadReceipt(bundle);
                 if (receipt.State != "Applied")
                 {
@@ -498,9 +506,13 @@ namespace NzbDrone.Core.Datastore
                 _restoreApplied = false;
                 CleanupCommittedBundle(bundle);
                 CleanupFailedRestores(_appFolderInfo);
-                return;
             }
-
+            catch (Exception ex)
+            {
+                CommitFailed = true;
+                Logger.Error(ex, "Failed to finalize database restore");
+                throw;
+            }
         }
 
         public void Rollback()

@@ -323,7 +323,7 @@ namespace NzbDrone.Host
                 }
                 catch (Exception ex) when (!restoreInProgress)
                 {
-                    NLog.LogManager.GetCurrentClassLogger().Error(ex, "The import queue could not be initialized. Chaptarr will start with imports unavailable; repair staging.db and restart.");
+                    NLog.LogManager.GetCurrentClassLogger().Error(ex, "The import queue could not be initialized. Chaptarr will retry initialization when the queue is next used.");
                 }
                 if (restoreInProgress)
                 {

@@ -541,13 +541,6 @@ export const reducers = createHandleActions({
   [CLEAR_RESTORE_BACKUP]: function(state, { payload }) {
     return {
       ...state,
-      backupStatus: {
-        isFetching: false,
-        isPopulated: false,
-        error: null,
-        item: {}
-      },
-
       backups: {
         ...state.backups,
         isRestoring: false,

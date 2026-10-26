@@ -699,7 +699,7 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
     await dialog.getByText(strings.CoverDownloadScopeConfirmMessage, { exact: true }).click();
     assert.equal(await dialog.locator('[aria-live]').count(), 0, 'Confirmation must not show an estimate until Calculate was used');
-    await page.keyboard.press('Enter');
+    await dialog.getByRole('button', { name: 'Save', exact: true }).press('Enter');
     await page.waitForFunction(() => window.savedCalls.length === 2);
     assert.equal(estimates.length, requestCount, 'Saving without Calculate must never request an estimate');
 
