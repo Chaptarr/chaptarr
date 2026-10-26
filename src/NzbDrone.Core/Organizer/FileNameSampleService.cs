@@ -34,8 +34,8 @@ namespace NzbDrone.Core.Organizer
 
         public SampleResult GetMultiDiscTrackSample(NamingConfig nameSpec, string mediaType = "audiobook")
         {
-            var firstPart = GetSample(nameSpec, mediaType, 2, 1);
-            var secondPart = GetSample(nameSpec, mediaType, 2, 2);
+            var firstPart = GetSample(nameSpec, mediaType, 12, 1);
+            var secondPart = GetSample(nameSpec, mediaType, 12, 2);
             if (string.Equals(firstPart.FileName, secondPart.FileName, DiskProviderBase.PathStringComparison))
             {
                 firstPart.FileName = string.Empty;
@@ -51,9 +51,9 @@ namespace NzbDrone.Core.Organizer
 
         private static Author CreateAuthor() => new Author
         {
-            Name = "The Author Name",
+            Name = "Jim Butcher",
             Disambiguation = "US Author",
-            NameLastFirst = "Last name, First name"
+            NameLastFirst = "Butcher, Jim"
         };
 
         private SampleResult GetSample(NamingConfig nameSpec, string mediaType, int partCount, int partNumber = 1)
@@ -64,27 +64,27 @@ namespace NzbDrone.Core.Organizer
             var author = CreateAuthor();
             var book = new Book
             {
-                Title = "The Book Title",
+                Title = "Grave Peril",
                 ReleaseDate = DateTime.Today,
                 Author = author,
                 MediaType = isEbook ? BookMediaType.Ebook : BookMediaType.Audiobook,
                 SeriesLinks = new List<SeriesBookLink>
                 {
-                    new SeriesBookLink { Position = "1", Series = new Series { Title = "Series Title", GoodreadsSeriesId = "gr:1",
+                    new SeriesBookLink { Position = "3", Series = new Series { Title = "The Dresden Files", GoodreadsSeriesId = "gr:1",
                         MediaType = isEbook ? BookMediaType.Ebook : BookMediaType.Audiobook } }
                 }
             };
             var edition = new Edition
             {
-                Title = "The Edition Title",
+                Title = book.Title,
                 Book = book,
-                NarratorNames = isEbook ? new List<string>() : new List<string> { "Alice Reader", "Bob Voice" }
+                NarratorNames = isEbook ? new List<string>() : new List<string> { "James Marsters" }
             };
-            var originalName = isEbook ? "Author.Name.Book.Name.EPUB" : "Author.Name.Book.Name.TrackNum.Track.Title.MP3256";
+            var originalName = book.Title;
             // Preserve source identity per part so Original Title patterns can distinguish input files.
-            if (partNumber > 1)
+            if (partCount > 1)
             {
-                originalName += ".Part" + partNumber.ToString("00", CultureInfo.InvariantCulture);
+                originalName += " - Part " + partNumber.ToString(CultureInfo.InvariantCulture);
             }
 
             var file = new BookFile

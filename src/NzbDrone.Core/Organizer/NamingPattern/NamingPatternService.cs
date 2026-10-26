@@ -256,7 +256,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             var bookTitle = string.IsNullOrWhiteSpace(context.BookTitle) ? "Book Title" : context.BookTitle.Trim();
             var seriesTitle = string.IsNullOrWhiteSpace(context.SeriesTitle) ? "Series Title" : context.SeriesTitle.Trim();
             var seriesPosition = string.IsNullOrWhiteSpace(context.SeriesPosition) ? "1" : context.SeriesPosition.Trim();
-            var narratorName = string.IsNullOrWhiteSpace(context.NarratorName) ? "Narrator Name" : context.NarratorName.Trim();
+            var narratorName = context.NarratorName?.Trim() ?? "Narrator Name";
 
             var year = DateTime.UtcNow.Year;
             if (int.TryParse(context.Year, out var parsedYear) && parsedYear is >= 1 and <= 9999)
@@ -292,7 +292,9 @@ namespace NzbDrone.Core.Organizer.NamingPattern
                 Book = book,
                 ReleaseDate = new DateTime(year, 1, 1),
                 Narrator = narratorName,
-                NarratorNames = new List<string> { narratorName }
+                NarratorNames = context.NarratorNames ?? new List<string> { narratorName },
+                AudioProductionType = context.AudioProductionType,
+                IsGraphicAudio = context.IsGraphicAudio
             };
 
             var quality = Quality.MP3;
@@ -322,7 +324,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             {
                 book.MediaType = BookMediaType.Ebook;
                 edition.Narrator = null;
-                edition.NarratorNames.Clear();
+                edition.NarratorNames = new List<string>();
             }
 
             series.MediaType = book.MediaType;
@@ -378,6 +380,9 @@ namespace NzbDrone.Core.Organizer.NamingPattern
         public string SeriesTitle { get; set; }
         public string SeriesPosition { get; set; }
         public string NarratorName { get; set; }
+        public List<string> NarratorNames { get; set; }
+        public string AudioProductionType { get; set; }
+        public bool IsGraphicAudio { get; set; }
         public string Quality { get; set; }
         public string Year { get; set; }
     }

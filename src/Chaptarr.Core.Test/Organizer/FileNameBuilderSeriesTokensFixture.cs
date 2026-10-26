@@ -25,7 +25,7 @@ using NzbDrone.Core.Qualities;
 namespace Chaptarr.Core.Test.Organizer
 {
     [TestFixture]
-    public class FileNameBuilderSeriesTokensFixture
+    public partial class FileNameBuilderSeriesTokensFixture
     {
         private class StubNamingConfigService : INamingConfigService
         {
@@ -109,6 +109,36 @@ namespace Chaptarr.Core.Test.Organizer
             }
         }
 
+        [TestCase("audiobook", "3", "03, Grave Peril")]
+        [TestCase("ebook", "3", "03, Grave Peril")]
+        [TestCase("audiobook", "2.5", "02.5, Grave Peril")]
+        [TestCase("ebook", "2.5", "02.5, Grave Peril")]
+        [TestCase("audiobook", "1,2,3", "1,2,3, Grave Peril")]
+        [TestCase("ebook", "1,2,3", "1,2,3, Grave Peril")]
+        [TestCase("audiobook", null, "Grave Peril")]
+        [TestCase("ebook", null, "Grave Peril")]
+        public void series_position_format_preserves_comma_suffix(string mediaType, string position, string expected)
+        {
+            var author = new Author { Name = "Jim Butcher" };
+            var edition = new Edition
+            {
+                Title = "Grave Peril",
+                Book = new Book { Author = author, SeriesLinks = SeriesLinks("Dresden Files", position) }
+            };
+            var config = NamingConfig.Default;
+            config.RenameBooks = config.EbookRenameBooks = true;
+            config.StandardBookFormat = config.EbookStandardBookFormat = "{Book SeriesPosition:00, }{Book Title}";
+            var file = new BookFile
+            {
+                Path = "/downloads/Grave Peril.m4b",
+                MediaType = mediaType,
+                Quality = new QualityModel(mediaType == "ebook" ? Quality.EPUB : Quality.M4B)
+            };
+
+            Assert.That(CreateBuilder().BuildBookFileName(author, edition, file, config, new List<CustomFormat>()),
+                Is.EqualTo(expected));
+        }
+
         [TestCase("audiobook")]
         [TestCase("ebook")]
         public void should_render_padded_series_position_in_naming_examples_from_series_links(string mediaType)
@@ -128,7 +158,7 @@ namespace Chaptarr.Core.Test.Organizer
 
             var examples = (NamingExampleResource)controller.GetExamples(config, mediaType);
 
-            Assert.That(examples.SingleBookExample, Is.EqualTo(Path.Combine("Series Title", "01 - The Edition Title")));
+            Assert.That(examples.SingleBookExample, Is.EqualTo(Path.Combine("The Dresden Files", "03 - Grave Peril")));
         }
 
         [TestCase("audiobook", "Audio", "MP3", true)]
@@ -141,16 +171,16 @@ namespace Chaptarr.Core.Test.Organizer
             var config = NamingConfig.Default;
             config.Id = 1;
             config.RenameBooks = config.EbookRenameBooks = true;
-            config.StandardBookFormat = "Audio/{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:00)}";
-            config.EbookStandardBookFormat = "Text/{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:00)}";
+            config.StandardBookFormat = "Audio/{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:smart)}";
+            config.EbookStandardBookFormat = "Text/{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:smart)}";
             config.AuthorFolderFormat = "Audio/{Author Name}";
             config.EbookAuthorFolderFormat = "Text/{Author Name}";
 
             var result = (NamingExampleResource)controller.GetExamples(config.ToResource(), mediaType);
-            var name = "The Edition Title - " + quality + (hasNarrator ? " - Alice Reader + Bob Voice" : "");
+            var name = "Grave Peril - " + quality + (hasNarrator ? " - James Marsters" : "");
             Assert.That(result.SingleBookExample, Is.EqualTo(Path.Combine(folder, name)));
             Assert.That(result.MultiPartBookExample, Is.EqualTo(Path.Combine(folder, name + " (01)")));
-            Assert.That(result.AuthorFolderExample, Is.EqualTo(Path.Combine(folder, "The Author Name")));
+            Assert.That(result.AuthorFolderExample, Is.EqualTo(Path.Combine(folder, "Jim Butcher")));
         }
 
         [TestCase("audiobook", true, "Q")]
@@ -302,15 +332,15 @@ namespace Chaptarr.Core.Test.Organizer
             config.StandardBookFormat = config.EbookStandardBookFormat = "{Book Title}{ - Quality Title}{ - Narrator}{ (PartNumber:00)}";
             var audio = service.GetMultiDiscTrackSample(config, "audiobook");
             var ebook = service.GetMultiDiscTrackSample(config, "ebook");
-            Assert.That(audio.BookFile.PartCount, Is.EqualTo(2));
-            Assert.That(ebook.BookFile.PartCount, Is.EqualTo(2));
+            Assert.That(audio.BookFile.PartCount, Is.EqualTo(12));
+            Assert.That(ebook.BookFile.PartCount, Is.EqualTo(12));
             Assert.That(ebook.BookFile.MediaType, Is.EqualTo("ebook"));
             Assert.That(ebook.BookFile.MediaInfo, Is.Null);
             Assert.That(ebook.BookFile.Edition.NarratorNames, Is.Empty);
             audio.BookFile.Edition.Title = "changed sample";
             Assert.That(service.GetMultiDiscTrackSample(config, "audiobook").FileName,
-                Is.EqualTo("The Edition Title - MP3 - Alice Reader + Bob Voice (01)"));
-            Assert.That(ebook.FileName, Is.EqualTo("The Edition Title - EPUB (01)"));
+                Is.EqualTo("Grave Peril - MP3 - James Marsters (01)"));
+            Assert.That(ebook.FileName, Is.EqualTo("Grave Peril - EPUB (01)"));
         }
 
         [TestCase("EPUB", "Grave Peril - EPUB")]
