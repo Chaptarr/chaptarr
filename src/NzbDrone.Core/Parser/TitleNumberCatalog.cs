@@ -79,7 +79,7 @@ namespace NzbDrone.Core.Parser
 
         public static IEnumerable<string> SupportedLanguages => CardinalValuesByLanguage.Keys;
 
-        public static IEnumerable<(int TokenCount, decimal Value)> GetNumberMatches(IReadOnlyList<string> tokens, int index, string editionLanguage, bool allowRoman = true)
+        public static IEnumerable<(int TokenCount, decimal Value)> GetNumberMatches(IReadOnlyList<string> tokens, int index, string editionLanguage)
         {
             if (tokens == null || index < 0 || index >= tokens.Count)
             {
@@ -98,7 +98,7 @@ namespace NzbDrone.Core.Parser
                 yield break;
             }
 
-            if (allowRoman && UnicodeComparisonNormalizer.TryParseRomanNumeral(token, out var roman))
+            if (UnicodeComparisonNormalizer.TryParseRomanNumeral(token, out var roman))
             {
                 yield return (1, roman);
                 yield break;

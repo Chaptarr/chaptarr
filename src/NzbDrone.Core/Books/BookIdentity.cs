@@ -142,6 +142,12 @@ namespace NzbDrone.Core.Books
             var localWorkTokens = GetStableWorkProviderIdentityTokens(local);
             var remoteWorkTokens = GetStableWorkProviderIdentityTokens(remote);
 
+            return MatchesByProviderIdIntersection(local, remote, localWorkTokens, remoteWorkTokens);
+        }
+
+        internal static bool MatchesByProviderIdIntersection(Book local, Book remote,
+            HashSet<string> localWorkTokens, HashSet<string> remoteWorkTokens)
+        {
             if (localWorkTokens.Count > 0 || remoteWorkTokens.Count > 0)
             {
                 return localWorkTokens.Count > 0 &&

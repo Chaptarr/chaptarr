@@ -252,7 +252,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         [TestCase("Vi", "6")]
         [TestCase("Ready Player II", "Ready Player 2")]
         [TestCase("Ready Player Ⅱ", "Ready Player Two")]
-        public void unmarked_roman_title_words_require_independent_numeric_evidence(string title, string observed)
+        public void unmarked_roman_title_fallback_preserves_literal_and_numeric_forms(string title, string observed)
         {
             foreach (var strictness in MatchingStrictnesses)
             {
@@ -265,7 +265,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
                     Assert.That(Decide(author, target, catalog, $"Test Author - {title} (epub)", "Test Author", strictness).Accepted,
                         Is.True, $"{strictness}: literal title");
                     Assert.That(Decide(author, target, catalog, $"Test Author - {observed} (epub)", "Test Author", strictness).Accepted,
-                        Is.False, $"{strictness}: unproven numeric interpretation");
+                        Is.True, $"{strictness}: numeric fallback");
+                    Assert.That(target.Editions.Single().Title, Is.EqualTo(title));
                 });
             }
         }
@@ -398,7 +399,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
         [TestCase("mambench")]
         [TestCase("releasereplay")]
-        public void production_search_replay_should_not_numericize_a_stored_roman_word(string inputMode)
+        public void production_search_replay_should_allow_numeric_fallback_without_rewriting_a_stored_title(string inputMode)
         {
             var author = new Author { Id = 523, Name = "Ernest Cline" };
             var target = MakeBook(5231, author, "The Mix", "English", BookMediaType.Ebook, "hc:5231");
@@ -410,7 +411,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 new[]
                 {
                     MakeRelease(inputMode, "literal", "Ernest Cline - The Mix (epub)"),
-                    MakeRelease(inputMode, "unproven-number", "Ernest Cline - The 1009 (epub)")
+                    MakeRelease(inputMode, "number-alias", "Ernest Cline - The 1009 (epub)")
                 },
                 criteria, usedSyntheticInput: true, hasCompleteSourceData: true);
 
@@ -418,7 +419,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
             {
                 Assert.That(replay.BlockedExternalRequestCount, Is.Zero);
                 Assert.That(replay.Decisions.Single(result => result.RemoteBook.Release.Guid == "literal").Approved, Is.True);
-                Assert.That(replay.Decisions.Single(result => result.RemoteBook.Release.Guid == "unproven-number").Approved, Is.False);
+                Assert.That(replay.Decisions.Single(result => result.RemoteBook.Release.Guid == "number-alias").Approved, Is.True);
+                Assert.That(target.Editions.Single().Title, Is.EqualTo("The Mix"));
             });
         }
 

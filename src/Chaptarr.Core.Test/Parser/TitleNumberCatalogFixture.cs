@@ -87,5 +87,35 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(SeriesPositionTokenHelper.ToRomanNumeral(40), Is.Null);
             Assert.That(SeriesPositionTokenHelper.GetPositionTokens("40"), Does.Not.Contain("xl"));
         }
+
+        [TestCase("Wild Cards VII", "Wild Cards 7")]
+        [TestCase("Wild Cards 7", "Wild Cards VII")]
+        [TestCase("Wild Cards Ⅶ", "Wild Cards ７")]
+        [TestCase("Vi", "6")]
+        [TestCase("المجلد VII", "المجلد 7")]
+        public void roman_fallback_is_comparison_only_and_language_independent(string title, string observed)
+        {
+            var expectedTokens = ReleaseTitleMatchScorer.Tokenize(title);
+            var observedTokens = ReleaseTitleMatchScorer.Tokenize(observed);
+            var beforeExpected = expectedTokens.ToArray();
+            var beforeObserved = observedTokens.ToArray();
+
+            Assert.That(ReleaseTitleMatchScorer.FindNumberEquivalentTitleSpans(observedTokens, expectedTokens, null),
+                Does.Contain((0, observedTokens.Count - 1)));
+            Assert.That(ReleaseTitleMatchScorer.FindExactTitleSpans(expectedTokens, expectedTokens),
+                Does.Contain((0, expectedTokens.Count - 1)));
+            Assert.That(expectedTokens, Is.EqualTo(beforeExpected));
+            Assert.That(observedTokens, Is.EqualTo(beforeObserved));
+        }
+
+        [TestCase("VII", "6")]
+        [TestCase("VI", "7")]
+        [TestCase("VII", "VIIa")]
+        [TestCase("Vi", "Violet")]
+        public void numeric_fallback_does_not_erase_different_numbers_or_match_partial_words(string title, string observed)
+        {
+            Assert.That(ReleaseTitleMatchScorer.FindNumberEquivalentTitleSpans(
+                ReleaseTitleMatchScorer.Tokenize(observed), ReleaseTitleMatchScorer.Tokenize(title), null), Is.Empty);
+        }
     }
 }

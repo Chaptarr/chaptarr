@@ -285,6 +285,43 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(Matches(rowling, stone, catalog, "Harry Potter V - Harry Potter and the Sorcerer's Stone JK Rowling"), Is.True);
         }
 
+        [TestCase("The Silent Patient", "X", "10 - The Silent Patient", true)]
+        [TestCase("The Silent Patient", "X", "The Silent Patient - X", false)]
+        [TestCase("Wild Cards", "Wild Cards VII: Dead Man's Hand", "Wild Cards 7 Dead Man's Hand", false)]
+        [TestCase("A Woman Named Vi", "Unrelated Book", "A Woman Named Vi", true)]
+        [TestCase("A Woman Named Vi", "Unrelated Book", "A Woman Named 6", true)]
+        [TestCase("A Woman Named Vi", "A Woman Named 6", "A Woman Named 6", false)]
+        [TestCase("Un livre Tome IV", "Unrelated Book", "Un livre Tome 4", true)]
+        [TestCase("Ein Buch Band II", "Unrelated Book", "Ein Buch Band 2", true)]
+        public void numeric_fallback_must_explain_the_target_title_to_contradict_it(
+            string title, string siblingTitle, string observed, bool expected)
+        {
+            var author = new Author { Id = 710, Name = "Example Author" };
+            var target = Make(7101, author, title, string.Empty, string.Empty);
+            var sibling = Make(7102, author, siblingTitle, string.Empty, string.Empty);
+            var catalog = new List<Book> { target, sibling };
+            var release = "Example Author - " + observed;
+            Assert.Multiple(() =>
+            {
+                Assert.That(DirectMatch(author, target, catalog, release)?.IsMatch == true, Is.EqualTo(expected), "Direct/RSS title matching");
+                Assert.That(Match(author, target, catalog, release)?.IsMatch == true, Is.EqualTo(expected), "Targeted search title matching");
+            });
+        }
+
+        [Test]
+        public void numeric_rival_must_not_replace_the_existing_unexplained_number_rejection()
+        {
+            var author = new Author { Id = 711, Name = "Example Author" };
+            var target = Make(7111, author, "The Silent Patient", string.Empty, string.Empty);
+            var sibling = Make(7112, author, "X", string.Empty, string.Empty);
+            var release = "Example Author - The Silent Patient - 10";
+            var withoutSibling = DirectMatch(author, target, new List<Book> { target }, release);
+            var withSibling = DirectMatch(author, target, new List<Book> { target, sibling }, release);
+            Assert.That(withoutSibling?.ProblemCode, Is.EqualTo(TitleMatchProblemCode.SuspiciousAdjacentNumber));
+            Assert.That(withSibling?.ProblemCode, Is.EqualTo(withoutSibling.ProblemCode));
+            Assert.That(withSibling?.IsMatch, Is.False);
+        }
+
         [TestCase("Vi", "vi")]
         [TestCase("MIX", "mix")]
         public void canonical_roman_looking_words_remain_exact_book_title_evidence(string title, string releaseTitle)

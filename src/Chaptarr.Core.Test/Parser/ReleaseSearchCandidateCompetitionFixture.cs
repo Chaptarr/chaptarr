@@ -33,6 +33,118 @@ namespace Chaptarr.Core.Test.Parser
                 structuredAuthor, catalog, new ReleaseTitleMatchScorer.CatalogPreparation());
         }
 
+        [TestCase("Brandon Sanderson - Mistborn: The Final Empire", 33880)]
+        [TestCase("Brandon.Sanderson.Mistborn.The.Final.Empire", 33880)]
+        [TestCase("Brandon Sanderson - The Final Empire", 33880)]
+        [TestCase("Brandon Sanderson - Mistborn", 34086)]
+        [TestCase("Brandon Sanderson - Mistborn: The Final Empire - Annotations", 34092)]
+        public void complete_title_and_series_evidence_beats_an_omitted_qualification(string release, int expectedId)
+        {
+            // Captured catalog titles, IDs and memberships; constructed releases.
+            var author = new Author { Id = 1, Name = "Brandon Sanderson" };
+            var novel = Make(33880, author, "The Final Empire", "Mistborn, Era 1: Original Trilogy", "1");
+            novel.Editions[0].Id = 81885;
+            var shortTitle = Make(34086, author, "Mistborn");
+            shortTitle.Editions[0].Id = 98105;
+            var annotations = Make(34092, author, "Mistborn: The Final Empire - Annotations");
+            annotations.Editions[0].Id = 82652;
+            annotations.Editions[0].Subtitle = "The Final Empire - Annotations";
+            AssertSearchAndRssWinner(new List<Book> { novel, shortTitle, annotations }, release, expectedId);
+        }
+
+        [TestCase("Example Writer - Crystal Sea: Dawn", 1)]
+        [TestCase("Example Writer - Crystal Sea: Dawn - Commentary", 2)]
+        [TestCase("Example Writer - Dawn", 1)]
+        public void series_explanation_does_not_require_a_third_book_named_after_the_series(string release, int expectedId)
+        {
+            var author = new Author { Id = 1, Name = "Example Writer" };
+            var target = Make(1, author, "Dawn", "Crystal Sea Chronicles", "1");
+            var commentary = Make(2, author, "Crystal Sea: Dawn - Commentary");
+            AssertSearchAndRssWinner(new List<Book> { target, commentary }, release, expectedId);
+        }
+
+        [TestCase("Frank Herbert - Dune", 1)]
+        [TestCase("Frank Herbert - Dune Messiah", 2)]
+        [TestCase("Frank Herbert - Dune - Dune: Messiah", 2)]
+        public void a_more_specific_title_with_a_missing_suffix_still_beats_a_contained_title(string release, int expectedId)
+        {
+            var author = new Author { Id = 1, Name = "Frank Herbert" };
+            var catalog = new List<Book>
+            {
+                Make(1, author, "Dune", "Dune", "1"),
+                Make(2, author, "Dune Messiah: édition illustrée", "Dune", "2")
+            };
+            AssertSearchAndRssWinner(catalog, release, expectedId);
+        }
+
+        [TestCase("Crystal Sea Chronicles", true)]
+        [TestCase("Crystal Seaside Chronicles", false)]
+        [TestCase("Sea Crystal Chronicles", false)]
+        [TestCase("Crystal Distant Sea Chronicles", false)]
+        [TestCase("", false)]
+        public void a_series_explanation_requires_an_exact_contiguous_phrase(string series, bool expected)
+        {
+            var author = new Author { Id = 1, Name = "Example Writer" };
+            var target = Make(1, author, "Dawn", series, "1");
+            var sibling = Make(2, author, "Crystal Sea");
+            var catalog = new List<Book> { target, sibling };
+            Assert.That(Matches(target, catalog, "Example Writer - Crystal Sea: Dawn"), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void unrelated_omitted_suffixes_remain_ambiguous()
+        {
+            var author = new Author { Id = 1, Name = "Example Writer" };
+            var catalog = new List<Book> { Make(1, author, "Dawn: Commentary"), Make(2, author, "Dawn: Study Guide") };
+            foreach (var target in catalog)
+            {
+                Assert.That(Matches(target, catalog, "Example Writer - Dawn"), Is.False);
+            }
+        }
+
+        [TestCase("Example Writer - Dawn", 1)]
+        [TestCase("Example Writer - Dawn: Commentary", 2)]
+        public void known_series_prefix_is_not_an_unsupported_title_omission(string release, int expectedId)
+        {
+            var author = new Author { Id = 1, Name = "Example Writer" };
+            var catalog = new List<Book>
+            {
+                Make(1, author, "Crystal Sea: Dawn", "Crystal Sea", "1"),
+                Make(2, author, "Dawn: Commentary")
+            };
+            AssertSearchAndRssWinner(catalog, release, expectedId);
+        }
+
+        private static void AssertSearchAndRssWinner(List<Book> catalog, string title, int expectedId)
+        {
+            foreach (var media in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            {
+                foreach (var book in catalog)
+                {
+                    book.MediaType = media;
+                }
+
+                foreach (var reverse in new[] { false, true })
+                {
+                    if (reverse)
+                    {
+                        catalog.Reverse();
+                    }
+
+                    var release = new ReleaseInfo { Title = title };
+                    var rss = ReleaseTitleMatchScorer.FindBestMatches(release, catalog[0].Author.Name,
+                        catalog, null, catalog, new ReleaseTitleMatchScorer.CatalogPreparation());
+                    Assert.That(rss.Select(match => match.Book.Id), Is.EqualTo(new[] { expectedId }),
+                        $"RSS {media}, reversed {reverse}");
+                    foreach (var target in catalog)
+                    {
+                        Assert.That(Matches(target, catalog, title), Is.EqualTo(target.Id == expectedId),
+                            $"Search {target.Id}, {media}, reversed {reverse}");
+                    }
+                }
+            }
+        }
+
         private static (Author Author, List<Book> Catalog, Book Target) JamesHunt()
         {
             var author = new Author { Id = 631, Name = "James Hunt" };
@@ -47,6 +159,60 @@ namespace Chaptarr.Core.Test.Parser
             };
 
             return (author, catalog, target);
+        }
+
+        [TestCase("Scott Bartlett - Spacers: Thatcher's Gambit")]
+        [TestCase("Scott.Bartlett.Spacers.Thatcher's.Gambit")]
+        [TestCase("Scott Bartlett - Thatcher's Gambit")]
+        public void linked_series_should_explain_a_competing_title_without_being_required(string release)
+        {
+            // Captured catalog identities and membership; constructed release strings.
+            var author = new Author { Id = 554, Name = "Scott Bartlett" };
+            var target = Make(36369, author, "Thatcher's Gambit");
+            target.Editions[0].Id = 89719;
+            target.SeriesLinks = new List<SeriesBookLink>
+            {
+                new() { BookId = target.Id, Position = "6", Series = new Series { Title = "Spacers", GoodreadsSeriesId = "gr:288426" } }
+            };
+            var sibling = Make(36305, author, "Spacers");
+            sibling.Editions[0].Id = 89632;
+            var catalog = new List<Book> { sibling, target };
+
+            var result = FindMatch(target, catalog, release);
+            var best = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, catalog, null, catalog);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result?.IsMatch, Is.True);
+                Assert.That(best?.IsMatch, Is.True);
+                Assert.That(best?.Book.Editions[0].Id, Is.EqualTo(89719));
+                Assert.That(Matches(sibling, catalog, release), Is.False);
+            });
+        }
+
+        [TestCase("Example Writer - Long Series Name: Dawn")]
+        [TestCase("Example Writer - Dawn")]
+        public void explained_series_should_not_beat_a_shorter_independent_edition_title(string release)
+        {
+            var author = new Author { Id = 1, Name = "Example Writer" };
+            var target = Make(1, author, "Dawn", "Long Series Name", "1");
+            var sibling = Make(2, author, "Long Series Name");
+            var catalog = new List<Book> { sibling, target };
+            var best = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, catalog, null, catalog);
+            Assert.That(best?.IsMatch, Is.True);
+            Assert.That(best?.Book, Is.SameAs(target));
+        }
+
+        [TestCase("Frank Herbert - Dune", 1)]
+        [TestCase("Frank Herbert - Dune: Messiah", 2)]
+        [TestCase("Frank.Herbert.Dune.Messiah", 2)]
+        public void a_contained_title_must_not_defeat_the_complete_edition_title(string release, int expectedId)
+        {
+            var author = new Author { Id = 1, Name = "Frank Herbert" };
+            var catalog = new List<Book> { Make(1, author, "Dune", "Dune", "1"), Make(2, author, "Dune: Messiah", "Dune", "2") };
+            foreach (var target in catalog)
+            {
+                Assert.That(Matches(target, catalog, release), Is.EqualTo(target.Id == expectedId));
+            }
         }
 
         [TestCase("James Hunt - The Final Homestead - EMP Survival in a Powerless World (epub)", false)]

@@ -24,6 +24,28 @@ namespace NzbDrone.Core.Books
                 .ThenBy(link => link.Position, StringComparer.Ordinal);
         }
 
+        internal static IEnumerable<string> GetNames(Book book)
+        {
+            if (book == null)
+            {
+                yield break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(book.SeriesName))
+            {
+                yield return book.SeriesName;
+            }
+
+            foreach (var link in book.SeriesLinks ?? Enumerable.Empty<SeriesBookLink>())
+            {
+                var name = link?.Series?.Value?.Title;
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    yield return name;
+                }
+            }
+        }
+
         public static SeriesBookLink Select(Book book)
         {
             return GetLinks(book)
