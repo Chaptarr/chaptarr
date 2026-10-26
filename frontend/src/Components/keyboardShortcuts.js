@@ -13,11 +13,6 @@ export const shortcuts = {
     name: 'Close Current Modal'
   },
 
-  ACCEPT_CONFIRM_MODAL: {
-    key: 'Enter',
-    name: 'Accept Confirmation Modal'
-  },
-
   AUTHOR_SEARCH_INPUT: {
     key: 's',
     name: 'Focus Search Box'

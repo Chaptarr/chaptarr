@@ -630,6 +630,7 @@ export const setBookValue = createAction(SET_BOOK_VALUE, (payload) => {
 
 export const actionHandlers = handleThunks({
   [FETCH_BOOKS]: function(getState, payload, dispatch) {
+    const { onComplete, ...query } = payload;
     const requestId = ++currentFetchRequestId;
 
     if (abortCurrentFetchRequest) {
@@ -641,7 +642,7 @@ export const actionHandlers = handleThunks({
 
     const { request, abortRequest } = createAjaxRequest({
       url: '/book',
-      data: payload,
+      data: query,
       traditional: true
     });
 
@@ -687,6 +688,9 @@ export const actionHandlers = handleThunks({
         error: xhr.aborted ? null : xhr
       }));
     });
+
+    request.done((data) => onComplete?.(requestId === currentFetchRequestId ? null : { aborted: true }, data));
+    request.fail((xhr) => onComplete?.(xhr));
 
     return abortRequest;
   },

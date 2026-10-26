@@ -1,6 +1,5 @@
 import PropTypes from 'prop-types';
-import React, { useEffect } from 'react';
-import keyboardShortcuts from 'Components/keyboardShortcuts';
+import React from 'react';
 import Button from 'Components/Link/Button';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import Modal from 'Components/Modal/Modal';
@@ -23,27 +22,8 @@ function ConfirmModal(props) {
     hideCancelButton,
     isSpinning,
     onConfirm,
-    onCancel,
-    bindShortcut,
-    unbindShortcut
+    onCancel
   } = props;
-
-  useEffect(() => {
-    if (isOpen) {
-      const onEnter = (event) => {
-        // Focused buttons own Enter, including secondary actions and Cancel.
-        if (event.target.closest('button')) {
-          return undefined;
-        }
-
-        return onConfirm(event);
-      };
-
-      bindShortcut('enter', onEnter);
-
-      return () => unbindShortcut('enter', onEnter);
-    }
-  }, [bindShortcut, unbindShortcut, isOpen, onConfirm]);
 
   return (
     <Modal
@@ -95,9 +75,7 @@ ConfirmModal.propTypes = {
   hideCancelButton: PropTypes.bool,
   isSpinning: PropTypes.bool.isRequired,
   onConfirm: PropTypes.func.isRequired,
-  onCancel: PropTypes.func.isRequired,
-  bindShortcut: PropTypes.func.isRequired,
-  unbindShortcut: PropTypes.func.isRequired
+  onCancel: PropTypes.func.isRequired
 };
 
 ConfirmModal.defaultProps = {
@@ -106,4 +84,4 @@ ConfirmModal.defaultProps = {
   isSpinning: false
 };
 
-export default keyboardShortcuts(ConfirmModal);
+export default ConfirmModal;
