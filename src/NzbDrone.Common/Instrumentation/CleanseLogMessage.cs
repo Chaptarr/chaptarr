@@ -7,12 +7,22 @@ namespace NzbDrone.Common.Instrumentation
 {
     public static class CleanseLogMessage
     {
+        // A literal '<' may belong to a credential; only actual markup ends the value.
+        private const string MarkupBoundary = @"<(?:/?[\p{L}_:][^<>]*>|[!?])";
+        private const string SecretValue =
+            @"(?:(?:""(?<secret>(?:\\.|[^""\\])*)""|'(?<secret>(?:\\.|[^'\\])*)')(?=[&;=<>\s,\]}]|/?>|[\w.-]+=|$)|" +
+            @"(?<secret>(?:(?!" + MarkupBoundary + @")[^&;=\s])+?)(?=[""']?(?:/?>|[&;=\s]|$)|" + MarkupBoundary + @"|[""'][,\]}]|[""'](?=[\w.-]+=)|\]\]>))";
+
+        // JSON/RPC strings escape quotes with a backslash, unlike connection strings.
+        private const string DoubleQuotedSecretValue = @"""(?<secret>(?:\\.|[^""\\])+)""";
+
         private static readonly Regex[] CleansingRules =
         {
             // Url
-            new (@"(?<=\?|&|;|: )((?:(?:api|auth|pass)[-_]?)?key|rss[-_]?key|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd)=(?<secret>[^&;=""]+?)(?=[ ""&;=]|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"\b(?:authorization_code|code|client_secret|id_token|refresh_token|secret)=(?<secret>[^&\s=""]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"(?<=\?|&)[^=]*?(username|password)=(?<secret>[^&=]+?)(?= |&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=\?|&|;|: |[""'])(?:(?:(?:(?:api|auth|pass)[-_]?)?key|rss[-_]?key|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd|pwd|_sid|sessionid|torrent_pass)=|feed=torrents_notify_)" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"\b(?:authorization_code|code|client_secret|id_token|refresh_token|secret)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=\?|&)[^&;=<>\s]*?(username|password)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"/rest/[^?<>\s""']+\?(?:[^<>\s""']*?(?:&|&amp;))?p=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // URL userinfo (http(s)://user:pass@host)
             new (@"(?<=://)(?<secret>[^/@\s]+:[^@/\s]+)(?=@)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // HTTP headers that sometimes get embedded into logs/exception messages
@@ -21,16 +31,16 @@ namespace NzbDrone.Common.Instrumentation
             new (@"\b(?:X[-_]?)?API[-_]Key:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\bCookie:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\bSet-Cookie:\s*(?<secret>[^\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"""[^""]*(?:api[-_]?key|passkey|authkey|rss[-_]?key|torrent_pass|token|secret|password|passwd|pwd|authorization|cookie)[^""]*""\s*:\s*""(?<secret>[^""]+)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"(?<=\?|&)(X-Plex-Token|X-Plex-Client-Identifier)=(?<secret>[^&=]+?)(?= |&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"""[^""]*(?:api[-_]?key|passkey|authkey|rss[-_]?key|torrent_pass|token|secret|password|passwd|pwd|authorization|cookie)[^""]*""\s*:\s*" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=\?|&)(X-Plex-Token|X-Plex-Client-Identifier)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // Connection strings (e.g. Host=...;Username=...;Password=...;)
-            new (@"(?<=\b(?:password|pwd)\s*=\s*)(?<secret>[^;\r\n]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=(?<![?&]|&amp;)\b(?:password|pwd)\s*=\s*)(?:""(?<secret>(?:""""|[^""])*)""|'(?<secret>(?:''|[^'])*)'|(?<secret>[^;\r\n]+))", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"rss(24h)?\.torrentleech\.org/(?!rss)(?<secret>[0-9a-z]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"torrentleech\.org/rss/download/[0-9]+/(?<secret>[0-9a-z]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"iptorrents\.com/[/a-z0-9?&;]*?(?:[?&;](u|tp)=(?<secret>[^&=;]+?))+(?= |;|&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"/fetch/[a-z0-9]{32}/(?<secret>[a-z0-9]{32})", RegexOptions.Compiled),
-            new (@"getnzb.*?(?<=\?|&)(r)=(?<secret>[^&=]+?)(?= |&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"\b(\w*)?(_?(?<!use|get_)token|username|passwo?rd)=(?<secret>[^&=]+?)(?= |&|$|;)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?:getnzb|rss)[^\s""'<>]*?(?<=\?|&|;)r=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"\b(\w*)?(_?(?<!use|get_)token|username|passwo?rd)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"-hd.me/torrent/[a-z0-9-]\.[0-9]+\.(?<secret>[0-9a-z]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Trackers Announce Keys; Designed for Qbit Json; should work for all in theory
@@ -41,26 +51,24 @@ namespace NzbDrone.Common.Instrumentation
             new (@"/(home|Users)/(?<secret>[^/""]+?)(/|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // NzbGet
-            new (@"""Name""\s*:\s*""[^""]*(username|password)""\s*,\s*""Value""\s*:\s*""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"""Name""\s*:\s*""[^""]*(username|password)""\s*,\s*""Value""\s*:\s*" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Sabnzbd
-            new (@"""[^""]*(username|password|api_?key|nzb_key)""\s*:\s*""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"""email_(account|to|from|pwd)""\s*:\s*""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"""[^""]*(username|password|api_?key|nzb_key)""\s*:\s*" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"""email_(account|to|from|pwd)""\s*:\s*" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // uTorrent
-            new (@"\[""[a-z._]*(username|password)"",\d,""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"\[""(boss_key|boss_key_salt|proxy\.proxy)"",\d,""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"\[""[a-z._]*(username|password)"",\d," + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"\[""(boss_key|boss_key_salt|proxy\.proxy)"",\d," + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Deluge
-            new (@"auth.login\(""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"auth.login\(" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // BroadcastheNet
-            new (@"""?method""?\s*:\s*""(getTorrents)"",\s*""?params""?\s*:\s*\[\s*""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"getTorrents\(""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"(?<=\?|&)(authkey|torrent_pass)=(?<secret>[^&=]+?)(?=""|&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-
+            new (@"""?method""?\s*:\s*""(getTorrents)"",\s*""?params""?\s*:\s*\[\s*" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"getTorrents\(" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // Good Reads
-            new (@"(?<=""(token|tokensecret)"":\s)""(?<secret>[^""]+?)""", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=""(token|tokensecret)"":\s)" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Webhooks
             // Notifiarr
