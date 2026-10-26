@@ -1,13 +1,14 @@
 import { batchActions } from 'redux-batched-actions';
 import { messageTypes } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
-import { isSameCommand } from 'Utilities/Command';
+import { isCommandComplete, isCommandFailed, isSameCommand } from 'Utilities/Command';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 import { hideMessage, showMessage } from './appActions';
 import { removeItem, set, update, updateItem } from './baseActions';
 import createHandleActions from './Creators/createHandleActions';
 import createRemoveItemHandler from './Creators/createRemoveItemHandler';
-import translate from 'Utilities/String/translate';
+import { reconcileAuthorSearchCommand } from './releaseActions';
 
 //
 // Variables
@@ -18,7 +19,6 @@ let lastCommand = null;
 let lastCommandTimeout = null;
 const removeCommandTimeoutIds = {};
 const commandFinishedCallbacks = {};
-const pausedCommands = new Set();
 
 //
 // State
@@ -63,8 +63,26 @@ export const updateCommand = createThunk(UPDATE_COMMAND);
 export const finishCommand = createThunk(FINISH_COMMAND);
 export const removeCommand = createThunk(REMOVE_COMMAND);
 
+export function showCommandProgress(payload) {
+  return (dispatch, getState) => {
+    const command = getState().commands.items.find((item) => item.id === payload.commandId);
+
+    if (!isCommandComplete(command) && !isCommandFailed(command)) {
+      dispatch(showMessage({ ...payload, hideAfter: 0 }));
+    }
+  };
+}
+
 //
 // Helpers
+
+function clearCommandProgress(getState, dispatch, shouldClear) {
+  (getState().app.messages?.items || []).forEach((message) => {
+    if (message.commandId != null && message.hideAfter === 0 && shouldClear(message.commandId)) {
+      dispatch(hideMessage({ id: message.id }));
+    }
+  });
+}
 
 function showCommandMessage(payload, dispatch) {
   const {
@@ -87,8 +105,8 @@ function showCommandMessage(payload, dispatch) {
 
   let type = messageTypes.INFO;
   let hideAfter = 0;
-  let clickable = false;
-  let onClick = undefined;
+  const clickable = false;
+  const onClick = undefined;
 
   // Handle scan commands specially
   if (name === 'RescanFolders' &&
@@ -99,13 +117,14 @@ function showCommandMessage(payload, dispatch) {
   } else if (status === 'completed') {
     type = messageTypes.SUCCESS;
     hideAfter = 4;
-  } else if (status === 'failed') {
+  } else if (isCommandFailed(payload)) {
     type = messageTypes.ERROR;
     hideAfter = trigger === 'manual' ? 10 : 4;
   }
 
   dispatch(showMessage({
     id,
+    commandId: id,
     name,
     message,
     type,
@@ -122,10 +141,7 @@ function shouldRestoreCommandMessage(command) {
 }
 
 function scheduleRemoveCommand(command, dispatch) {
-  const {
-    id,
-    status
-  } = command;
+  const { id } = command;
 
   const timeoutId = removeCommandTimeoutIds[id];
 
@@ -134,8 +150,7 @@ function scheduleRemoveCommand(command, dispatch) {
     delete removeCommandTimeoutIds[id];
   }
 
-  if (status === 'queued' || status === 'paused') {
-    // Don't auto-remove queued or paused commands
+  if (shouldRestoreCommandMessage(command)) {
     return;
   }
 
@@ -192,6 +207,7 @@ export function executeCommandHelper(payload, dispatch) {
 
 export const actionHandlers = handleThunks({
   [FETCH_COMMANDS]: function(getState, payload, dispatch) {
+    const previousCommands = new Map(getState().commands.items.map((command) => [command.id, command]));
     dispatch(set({ section: 'commands', isFetching: true }));
 
     const { request, abortRequest } = createAjaxRequest({
@@ -201,6 +217,19 @@ export const actionHandlers = handleThunks({
     });
 
     request.done((data) => {
+      const commands = new Map(data.map((command) => [command.id, command]));
+
+      // Events received during the request must not be undone by its older snapshot.
+      getState().commands.items.forEach((command) => {
+        const incoming = commands.get(command.id);
+        if (!isCommandComplete(incoming) && !isCommandFailed(incoming) &&
+            (command !== previousCommands.get(command.id) ||
+             (incoming && (isCommandComplete(command) || isCommandFailed(command))))) {
+          commands.set(command.id, command);
+        }
+      });
+
+      data = Array.from(commands.values());
       dispatch(batchActions([
         update({ section: 'commands', data }),
         set({
@@ -210,6 +239,11 @@ export const actionHandlers = handleThunks({
           error: null
         })
       ]));
+
+      dispatch(reconcileAuthorSearchCommand({ commands: data }));
+
+      const activeIds = new Set(data.filter(shouldRestoreCommandMessage).map((command) => command.id));
+      clearCommandProgress(getState, dispatch, (id) => !activeIds.has(id));
 
       data
         .filter(shouldRestoreCommandMessage)
@@ -235,24 +269,24 @@ export const actionHandlers = handleThunks({
   },
 
   [CANCEL_COMMAND]: createRemoveItemHandler(section, '/command'),
-  
+
   [PAUSE_COMMAND]: function(getState, payload, dispatch) {
     const promise = createAjaxRequest({
       url: `/command/${payload.id}/pause`,
       method: 'POST'
     }).request;
-    
+
     promise.always(() => {
       dispatch(fetchCommands());
     });
   },
-  
+
   [RESUME_COMMAND]: function(getState, payload, dispatch) {
     const promise = createAjaxRequest({
       url: `/command/${payload.id}/resume`,
       method: 'POST'
     }).request;
-    
+
     promise.always(() => {
       dispatch(fetchCommands());
     });
@@ -263,7 +297,7 @@ export const actionHandlers = handleThunks({
       url: '/command/pause/all',
       method: 'POST'
     }).request;
-    
+
     promise.done((data) => {
       dispatch(showMessage({
         id: 'bulk-commands-pause',
@@ -294,7 +328,7 @@ export const actionHandlers = handleThunks({
       url: '/command/cancel/all',
       method: 'POST'
     }).request;
-    
+
     promise.done((data) => {
       dispatch(showMessage({
         id: 'bulk-commands-cancel',
@@ -325,7 +359,7 @@ export const actionHandlers = handleThunks({
       url: '/command/resume/all',
       method: 'POST'
     }).request;
-    
+
     promise.done((data) => {
       dispatch(showMessage({
         id: 'bulk-commands-resume',
@@ -352,24 +386,23 @@ export const actionHandlers = handleThunks({
   },
 
   [ADD_COMMAND]: function(getState, payload, dispatch) {
+    const current = getState().commands.items.find((command) => command.id === payload.id);
+    if (shouldRestoreCommandMessage(payload) && (isCommandComplete(current) || isCommandFailed(current))) {
+      return;
+    }
+
     dispatch(updateItem({ section: 'commands', ...payload }));
+    dispatch(reconcileAuthorSearchCommand({ command: payload }));
   },
 
   [UPDATE_COMMAND]: function(getState, payload, dispatch) {
-    // If command status changed to paused, add to pausedCommands
-    if (payload.status === 'paused') {
-      pausedCommands.add(payload.id);
+    const current = getState().commands.items.find((command) => command.id === payload.id);
+    if (shouldRestoreCommandMessage(payload) && (isCommandComplete(current) || isCommandFailed(current))) {
+      return;
     }
-    // If command resumed (started), remove from pausedCommands
-    else if (payload.status === 'started') {
-      pausedCommands.delete(payload.id);
-    }
-    // If command completed or failed, remove from paused set
-    else if (payload.status === 'completed' || payload.status === 'failed') {
-      pausedCommands.delete(payload.id);
-    }
-    
+
     dispatch(updateItem({ section: 'commands', ...payload }));
+    dispatch(reconcileAuthorSearchCommand({ command: payload }));
 
     showCommandMessage(payload, dispatch);
     scheduleRemoveCommand(payload, dispatch);
@@ -394,14 +427,16 @@ export const actionHandlers = handleThunks({
     }
 
     delete commandFinishedCallbacks[payload.id];
-    pausedCommands.delete(payload.id);
 
     dispatch(updateItem({ section: 'commands', ...payload }));
+    dispatch(reconcileAuthorSearchCommand({ command: payload }));
+    clearCommandProgress(getState, dispatch, (id) => id === payload.id);
     scheduleRemoveCommand(payload, dispatch);
     showCommandMessage(payload, dispatch);
   },
 
   [REMOVE_COMMAND]: function(getState, payload, dispatch) {
+    clearCommandProgress(getState, dispatch, (id) => id === payload.id);
     dispatch(removeItem({ section: 'commands', ...payload }));
   }
 

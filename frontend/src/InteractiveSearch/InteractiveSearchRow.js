@@ -286,6 +286,8 @@ class InteractiveSearchRow extends Component {
       isGrabbing,
       isGrabbed,
       isPreferredChoice,
+      showPreferredBadge,
+      showNarrator,
       summaryMode,
       summaryBookLabel,
       summaryStatusText,
@@ -314,7 +316,7 @@ class InteractiveSearchRow extends Component {
             {summaryStatusText ? <div className={styles.summaryBookStatus}>{summaryStatusText}</div> : null}
           </TableRowCell>
           <TableRowCell className={styles.title}>
-            <div className={styles.titleContent}>
+            <div className={classNames(styles.titleContent, !showPreferredBadge && styles.titleContentWithoutBadge)}>
               <div className={styles.titleTextBlock}>
                 <Link
                   to={infoUrl}
@@ -325,7 +327,7 @@ class InteractiveSearchRow extends Component {
                 </Link>
                 {grabError ? <div className={styles.grabError}>{grabError}</div> : null}
               </div>
-              {isPreferredChoice ? <span className={styles.preferredBadge}>{translate('Preferred')}</span> : null}
+              {isPreferredChoice && showPreferredBadge ? <span className={styles.preferredBadge}>{translate('Preferred')}</span> : null}
             </div>
           </TableRowCell>
           <TableRowCell className={styles.indexer}>{indexer}</TableRowCell>
@@ -337,9 +339,10 @@ class InteractiveSearchRow extends Component {
             />
           </TableRowCell>
           <TableRowCell className={styles.size}>{formatBytes(size)}</TableRowCell>
-          <TableRowCell className={styles.narrator}>
-            <div className={styles.narratorContent}>{narratorDisplay}</div>
-          </TableRowCell>
+          {showNarrator ?
+            <TableRowCell className={styles.narrator}>
+              <div className={styles.narratorContent}>{narratorDisplay}</div>
+            </TableRowCell> : null}
           <TableRowCell className={styles.download}>
             <SpinnerIconButton
               name={getDownloadIcon(isGrabbing, isGrabbed, grabError)}
@@ -398,7 +401,7 @@ class InteractiveSearchRow extends Component {
                 </div>
               ) : null}
             </div>
-            {isPreferredChoice ? (
+            {isPreferredChoice && showPreferredBadge ? (
               <span className={styles.preferredBadge}>{translate('Preferred')}</span>
             ) : null}
           </div>
@@ -426,19 +429,20 @@ class InteractiveSearchRow extends Component {
           {this.props.duration || ''}
         </TableRowCell>
 
-        <TableRowCell className={styles.narrator}>
-          <div className={styles.narratorContent}>
-            {narratorDisplay}
-            {isGraphicAudio ? (
-              <Label
-                kind={kinds.INFO}
-                title={translate('InteractiveSearchDramatizedTitle')}
-              >
-                {translate('InteractiveSearchDramatized')}
-              </Label>
-            ) : null}
-          </div>
-        </TableRowCell>
+        {showNarrator ?
+          <TableRowCell className={styles.narrator}>
+            <div className={styles.narratorContent}>
+              {narratorDisplay}
+              {isGraphicAudio ? (
+                <Label
+                  kind={kinds.INFO}
+                  title={translate('InteractiveSearchDramatizedTitle')}
+                >
+                  {translate('InteractiveSearchDramatized')}
+                </Label>
+              ) : null}
+            </div>
+          </TableRowCell> : null}
 
         <TableRowCell className={styles.quality}>
           <BookQuality
@@ -558,6 +562,8 @@ InteractiveSearchRow.propTypes = {
   isGrabbing: PropTypes.bool.isRequired,
   isGrabbed: PropTypes.bool.isRequired,
   isPreferredChoice: PropTypes.bool,
+  showPreferredBadge: PropTypes.bool,
+  showNarrator: PropTypes.bool,
   summaryMode: PropTypes.bool,
   summaryBookLabel: PropTypes.node,
   summaryStatusText: PropTypes.string,
@@ -577,6 +583,8 @@ InteractiveSearchRow.defaultProps = {
   isGrabbing: false,
   isGrabbed: false,
   isPreferredChoice: false,
+  showPreferredBadge: true,
+  showNarrator: true,
   summaryMode: false,
   duration: null,
   narrator: null,

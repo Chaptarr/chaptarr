@@ -15,7 +15,6 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.SignalR;
 
 namespace Chaptarr.Core.Test.Indexers
 {
@@ -91,7 +90,7 @@ namespace Chaptarr.Core.Test.Indexers
                 indexerFactory: null,
                 cacheManager: cacheManager,
                 logger: LogManager.GetLogger(nameof(ReleaseControllerDownloadRejectionFixture)),
-                signalRBroadcaster: new NoOpSignalRBroadcaster());
+                groupedAuthorSearch: null);
 
             var context = new DefaultHttpContext();
             context.Request.Method = HttpMethods.Post;
@@ -117,11 +116,6 @@ namespace Chaptarr.Core.Test.Indexers
             return memory;
         }
 
-        private sealed class NoOpSignalRBroadcaster : IBroadcastSignalRMessage
-        {
-            public bool IsConnected => false;
-            public Task BroadcastMessage(SignalRMessage message) => Task.CompletedTask;
-        }
 
         private sealed class RejectingDownloadService : IDownloadService
         {

@@ -66,6 +66,7 @@ const columns = [
   },
   {
     name: 'narrator',
+    className: styles.narratorColumn,
     label: 'Narrator',
     isSortable: true,
     isVisible: true
@@ -183,6 +184,7 @@ class InteractiveSearch extends Component {
   renderTableRows(items) {
     const {
       searchPayload,
+      showNarrator,
       longDateFormat,
       timeFormat,
       onGrabPress
@@ -192,6 +194,7 @@ class InteractiveSearch extends Component {
       <InteractiveSearchRow
         key={`${item.indexerId}-${item.guid}`}
         {...item}
+        showNarrator={showNarrator}
         isPreferredChoice={
           item.isPreferredChoice === true &&
           item.downloadAllowed === true &&
@@ -208,6 +211,7 @@ class InteractiveSearch extends Component {
   render() {
     const {
       searchPayload,
+      showNarrator,
       isFetching,
       isPopulated,
       error,
@@ -226,6 +230,8 @@ class InteractiveSearch extends Component {
     } = this.props;
 
     const { showHiddenResults } = this.state;
+    const visibleColumns = showNarrator ? columns : columns.filter((column) => column.name !== 'narrator');
+    const tableClassName = showNarrator ? styles.table : styles.ebookTable;
     const selectedMediaType = searchPayload?.initialMediaType === 'ebook' ? 'ebook' : 'audiobook';
     const hiddenCount = hiddenItems.length;
     const hiddenPageCount = Math.ceil(hiddenCount / hiddenResultsPageSize);
@@ -310,8 +316,8 @@ class InteractiveSearch extends Component {
 
             {items.length ?
               <Table
-                className={styles.table}
-                columns={columns}
+                className={tableClassName}
+                columns={visibleColumns}
                 sortKey={sortKey}
                 sortDirection={sortDirection}
                 onSortPress={onSortPress}
@@ -353,8 +359,8 @@ class InteractiveSearch extends Component {
                 </div>
 
                 <Table
-                  className={styles.table}
-                  columns={columns}
+                  className={tableClassName}
+                  columns={visibleColumns}
                   sortKey={sortKey}
                   sortDirection={sortDirection}
                   onSortPress={onSortPress}
@@ -373,6 +379,7 @@ class InteractiveSearch extends Component {
 }
 
 InteractiveSearch.propTypes = {
+  showNarrator: PropTypes.bool,
   searchPayload: PropTypes.object.isRequired,
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
@@ -395,6 +402,10 @@ InteractiveSearch.propTypes = {
   onGrabPress: PropTypes.func.isRequired,
   onToggleBypass: PropTypes.func,
   onMediaTypeChange: PropTypes.func
+};
+
+InteractiveSearch.defaultProps = {
+  showNarrator: true
 };
 
 export default InteractiveSearch;

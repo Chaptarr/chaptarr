@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Chaptarr.Http.REST;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.DecisionEngine;
-using NzbDrone.Core.Download;
 
 namespace Chaptarr.Api.V1.Indexers
 {
@@ -36,25 +35,7 @@ namespace Chaptarr.Api.V1.Indexers
 
         protected virtual ReleaseResource MapDecision(DownloadDecision decision, int initialWeight)
         {
-            var release = decision.ToResource();
-
-            release.ReleaseWeight = initialWeight;
-            release.Rank = initialWeight + 1; // 1-based ranking (1=best, 2=second, etc.)
-            release.IsPreferredChoice = initialWeight == 0 && decision.RemoteBook.DownloadAllowed;
-
-            if (decision.RemoteBook.Author != null)
-            {
-                var qualityProfile = decision.RemoteBook.GetQualityProfile();
-                if (qualityProfile != null)
-                {
-                    release.QualityWeight = qualityProfile.GetIndex(release.Quality.Quality).Index * 100;
-                }
-            }
-
-            release.QualityWeight += release.Quality.Revision.Real * 10;
-            release.QualityWeight += release.Quality.Revision.Version;
-
-            return release;
+            return decision.ToResource(initialWeight);
         }
     }
 }

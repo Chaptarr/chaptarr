@@ -31,6 +31,10 @@
   column-gap: 10px;
 }
 
+.titleContentWithoutBadge {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .titleTextBlock {
   min-width: 0;
 }

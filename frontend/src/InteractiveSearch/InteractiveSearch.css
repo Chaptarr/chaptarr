@@ -42,25 +42,33 @@
   width: 72px;
 }
 
-.table th:nth-child(9) {
+.narratorColumn {
+  composes: narrator from '~Components/Table/Table.css';
+
   width: 130px;
 }
 
-.table th:nth-child(10) {
+.table th:nth-last-child(5) {
   width: 120px;
 }
 
-.table th:nth-child(11) {
+.table th:nth-last-child(4) {
   width: 64px;
 }
 
-.table th:nth-child(12),
-.table th:nth-child(13) {
+.table th:nth-last-child(3),
+.table th:nth-last-child(2) {
   width: 36px;
 }
 
-.table th:nth-child(14) {
+.table th:last-child {
   width: 40px;
+}
+
+.ebookTable {
+  composes: table;
+
+  min-width: 1042px;
 }
 
 .filteredMessage {
@@ -178,6 +186,10 @@
   white-space: nowrap;
 }
 
+.authorSearchBookButton:global(.isDisabled) .authorSearchBookDisclosure {
+  color: var(--disabledColor);
+}
+
 .authorSearchStatusCell {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
 
@@ -213,12 +225,18 @@
   width: 85px;
 }
 
-.summaryTable > thead th:nth-child(6) {
+.summaryTable > thead th:nth-child(6):not(:last-child) {
   width: 160px;
 }
 
-.summaryTable > thead th:nth-child(7) {
+.summaryTable > thead th:last-child {
   width: 100px;
+}
+
+.ebookSummaryTable {
+  composes: summaryTable;
+
+  min-width: 990px;
 }
 
 .authorSearchExpandedRow {

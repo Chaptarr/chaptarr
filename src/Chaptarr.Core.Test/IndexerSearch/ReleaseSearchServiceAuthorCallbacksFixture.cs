@@ -8,6 +8,8 @@ using System.Net.Http.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Indexers;
+using Chaptarr.Core.Test.Common;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -200,6 +202,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             var cache = new CacheManager();
             var prioritize = DispatchProxy.Create<IPrioritizeDownloadDecision, SearchPrioritizeProxy>();
             var broadcaster = new SearchBroadcaster();
+            var driver = new GroupedAuthorSearchDriver(harness.Subject, prioritize, broadcaster, cache, autoStart: true);
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
@@ -207,7 +210,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             builder.Services.AddControllers().AddApplicationPart(typeof(ReleaseController).Assembly).AddControllersAsServices();
             builder.Services.AddTransient(_ => new ReleaseController(null, harness.Subject, null, prioritize,
                 null, null, null, null, null, cache,
-                LogManager.GetLogger(nameof(ReleaseSearchServiceAuthorCallbacksFixture)), broadcaster));
+                LogManager.GetLogger(nameof(ReleaseSearchServiceAuthorCallbacksFixture)), driver.Service));
             await using var app = builder.Build();
             app.UseCors();
             app.MapControllers();
@@ -224,7 +227,10 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
             using var result = await client.GetAsync($"/api/v1/release?authorId={author.Id}&mediaType=audiobook&searchId={searchId}");
             result.EnsureSuccessStatusCode();
-            var response = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
+            var admission = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
+            Assert.That(admission.IsComplete, Is.False);
+            await driver.Executions[searchId].WaitAsync(TimeSpan.FromSeconds(10));
+            var response = broadcaster.LastResult;
             var expectedBookIds = currentCatalog.Select(book => book.Id).ToArray();
 
             Assert.Multiple(() =>
@@ -496,9 +502,10 @@ namespace Chaptarr.Core.Test.IndexerSearch
             });
         }
 
-        [TestCase(true)]
-        [TestCase(false)]
-        public async Task http_stop_should_finish_the_active_book_and_preserve_results_without_aborting_the_get(bool hasPendingBook)
+        [TestCase(true, true)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        public async Task short_http_admission_should_survive_proxy_deadline_and_preserve_explicit_stop(bool hasPendingBook, bool requestStop)
         {
             var author = BuildAuthor();
             var first = BuildBook(701, BookMediaType.Audiobook, author, DateTime.MinValue);
@@ -531,6 +538,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             var cache = new CacheManager();
             var prioritize = DispatchProxy.Create<IPrioritizeDownloadDecision, SearchPrioritizeProxy>();
             var broadcaster = new SearchBroadcaster();
+            var driver = new GroupedAuthorSearchDriver(harness.Subject, prioritize, broadcaster, cache, autoStart: true);
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
@@ -538,15 +546,37 @@ namespace Chaptarr.Core.Test.IndexerSearch
             builder.Services.AddControllers().AddApplicationPart(typeof(ReleaseController).Assembly).AddControllersAsServices();
             builder.Services.AddTransient(_ => new ReleaseController(null, harness.Subject, null, prioritize,
                 null, null, null, null, null, cache,
-                LogManager.GetLogger(nameof(ReleaseSearchServiceAuthorCallbacksFixture)), broadcaster));
+                LogManager.GetLogger(nameof(ReleaseSearchServiceAuthorCallbacksFixture)), driver.Service));
             await using var app = builder.Build();
             app.UseCors();
             app.MapControllers();
             await app.StartAsync();
             var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses.Single();
+            using var upstream = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(2) };
+            var proxyBuilder = WebApplication.CreateSlimBuilder();
+            proxyBuilder.Logging.ClearProviders();
+            proxyBuilder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
+            await using var proxy = proxyBuilder.Build();
+            proxy.Run(async context =>
+            {
+                try
+                {
+                    using var forwarded = new HttpRequestMessage(new HttpMethod(context.Request.Method), address + context.Request.Path + context.Request.QueryString);
+                    using var received = await upstream.SendAsync(forwarded, context.RequestAborted);
+                    context.Response.StatusCode = (int)received.StatusCode;
+                    context.Response.ContentType = "application/json";
+                    await received.Content.CopyToAsync(context.Response.Body);
+                }
+                catch (OperationCanceledException)
+                {
+                    context.Response.StatusCode = StatusCodes.Status504GatewayTimeout;
+                }
+            });
+            await proxy.StartAsync();
+            var proxyAddress = proxy.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses.Single();
             using var client = new HttpClient(new HttpClientHandler { UseProxy = false })
             {
-                BaseAddress = new Uri(address),
+                BaseAddress = new Uri(proxyAddress),
                 Timeout = TimeSpan.FromSeconds(20),
                 DefaultRequestVersion = HttpVersion.Version11,
                 DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
@@ -557,17 +587,18 @@ namespace Chaptarr.Core.Test.IndexerSearch
             try
             {
                 await activeStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
-                using var stop = await client.DeleteAsync($"/api/v1/release?searchId={searchId}");
-                stop.EnsureSuccessStatusCode();
-                var acknowledgement = await stop.Content.ReadFromJsonAsync<AuthorReleaseSearchStopResponse>();
-                Assert.Multiple(() =>
+                var admitted = await search;
+                Assert.That(admitted.StatusCode, Is.EqualTo(HttpStatusCode.OK), "Admission must finish while the indexer is blocked, before the proxy returns 504.");
+                Assert.That(finishActive.Task.IsCompleted, Is.False);
+                if (requestStop)
                 {
-                    Assert.That(acknowledgement.IsStopping, Is.True);
-                    Assert.That(search.IsCompleted, Is.False, "The active book must finish before the stopped response.");
-                    Assert.That(finishActive.Task.IsCompleted, Is.False);
-                    Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id),
-                        Is.EqualTo(new[] { first.Id, active.Id }));
-                });
+                    using var stop = await client.DeleteAsync($"/api/v1/release?searchId={searchId}");
+                    stop.EnsureSuccessStatusCode();
+                    Assert.That((await stop.Content.ReadFromJsonAsync<AuthorReleaseSearchStopResponse>()).IsStopping, Is.True);
+                }
+
+                Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id),
+                    Is.EqualTo(new[] { first.Id, active.Id }));
             }
             finally
             {
@@ -576,19 +607,22 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
             using var result = await search;
             result.EnsureSuccessStatusCode();
-            var response = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
+            var admission = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
+            Assert.That(admission.IsComplete, Is.False);
+            await driver.Executions[searchId].WaitAsync(TimeSpan.FromSeconds(10));
+            var response = broadcaster.LastResult;
             Assert.Multiple(() =>
             {
                 Assert.That(response.IsComplete, Is.True);
-                Assert.That(response.IsCancelled, Is.EqualTo(hasPendingBook));
+                Assert.That(response.IsCancelled, Is.EqualTo(hasPendingBook && requestStop));
                 Assert.That(response.BookResults.Select(group => group.Status),
-                    Is.EqualTo(hasPendingBook ? new[] { "complete", "complete", "pending" } : new[] { "complete", "complete" }));
+                    Is.EqualTo(hasPendingBook ? new[] { "complete", "complete", requestStop ? "pending" : "complete" } : new[] { "complete", "complete" }));
                 Assert.That(response.BookResults.SelectMany(group => group.Releases).Select(release => release.Guid),
-                    Is.EqualTo(new[] { $"retained-{first.Id}", $"retained-{active.Id}" }));
+                    Is.EqualTo(requestStop || !hasPendingBook ? new[] { $"retained-{first.Id}", $"retained-{active.Id}" } : new[] { $"retained-{first.Id}", $"retained-{active.Id}", $"retained-{pending.Id}" }));
                 Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id),
-                    Is.EqualTo(new[] { first.Id, active.Id }));
+                    Is.EqualTo(requestStop || !hasPendingBook ? new[] { first.Id, active.Id } : new[] { first.Id, active.Id, pending.Id }));
                 Assert.That(broadcaster.LastResult.IsComplete, Is.True);
-                Assert.That(broadcaster.LastResult.IsCancelled, Is.EqualTo(hasPendingBook));
+                Assert.That(broadcaster.LastResult.IsCancelled, Is.EqualTo(hasPendingBook && requestStop));
             });
 
             using var afterCompletion = await client.DeleteAsync($"/api/v1/release?searchId={searchId}");

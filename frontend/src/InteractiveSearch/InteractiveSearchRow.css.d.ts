@@ -27,6 +27,7 @@ interface CssExports {
   'summaryBookStatus': string;
   'title': string;
   'titleContent': string;
+  'titleContentWithoutBadge': string;
   'titleLink': string;
   'titleMatch': string;
   'titleTextBlock': string;

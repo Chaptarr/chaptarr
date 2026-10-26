@@ -217,7 +217,7 @@ class AuthorInteractiveSearchTable extends Component {
       !authorSearch.isFetching ||
       authorSearch.isComplete ||
       authorSearch.isCancelled ||
-      !authorSearch.bookResults.length ||
+      (!authorSearch.isAccepted && !authorSearch.bookResults.length) ||
       (this.state.stopSearchId === searchId && this.state.stopRequestStatus)
     ) {
       return;
@@ -273,9 +273,10 @@ class AuthorInteractiveSearchTable extends Component {
     });
   };
 
-  renderBookResult(bookResult) {
+  renderBookResult(bookResult, columns) {
     const {
       authorSearch,
+      selectedMediaType,
       sortKey,
       sortDirection,
       sortPredicates,
@@ -285,9 +286,11 @@ class AuthorInteractiveSearchTable extends Component {
       onSortPress,
       onGrabPress
     } = this.props;
-    const isExpanded = authorSearch.expandedBookIds[bookResult.bookId] === true;
     const releases = bookResult.releases || [];
     const hiddenReleases = bookResult.hiddenReleases || [];
+    const showNarrator = selectedMediaType !== 'ebook';
+    const hasResults = releases.length > 0 || hiddenReleases.length > 0;
+    const isExpanded = hasResults && authorSearch.expandedBookIds[bookResult.bookId] === true;
     const preferredRelease = releases.find(isPreferredRelease);
     const otherReleases = preferredRelease ? releases.filter((release) => release !== preferredRelease) : releases;
     const statusText = getGroupStatusText(bookResult, authorSearch);
@@ -312,6 +315,7 @@ class AuthorInteractiveSearchTable extends Component {
         className={styles.authorSearchBookButton}
         kind={kinds.DEFAULT}
         size="small"
+        isDisabled={!hasResults}
         aria-label={translate(isExpanded ? 'AuthorSearchCollapseBook' : 'AuthorSearchExpandBook', { title: bookResult.title })}
         aria-expanded={isExpanded}
         title={translate(isExpanded ? 'AuthorSearchCollapseBook' : 'AuthorSearchExpandBook', { title: bookResult.title })}
@@ -332,6 +336,7 @@ class AuthorInteractiveSearchTable extends Component {
     if (hasOtherResults) {
       expandedContent = (
         <InteractiveSearch
+          showNarrator={showNarrator}
           searchPayload={{ ...searchPayload, initialMediaType: authorSearch.mediaType }}
           type="author"
           isFetching={bookResult.status === 'pending' && authorSearch.isFetching}
@@ -355,7 +360,7 @@ class AuthorInteractiveSearchTable extends Component {
 
     const expandedRow = isExpanded ? (
       <TableRow className={styles.authorSearchExpandedRow}>
-        <TableRowCell className={styles.authorSearchExpandedCell} colSpan={7}>
+        <TableRowCell className={styles.authorSearchExpandedCell} colSpan={columns.length}>
           {expandedContent}
         </TableRowCell>
       </TableRow>
@@ -370,6 +375,8 @@ class AuthorInteractiveSearchTable extends Component {
             summaryBookLabel={bookControl}
             summaryStatusText={statusText}
             isPreferredChoice={true}
+            showPreferredBadge={isExpanded}
+            showNarrator={showNarrator}
             searchPayload={searchPayload}
             longDateFormat={longDateFormat}
             timeFormat={timeFormat}
@@ -381,7 +388,7 @@ class AuthorInteractiveSearchTable extends Component {
             <TableRowCell />
             <TableRowCell />
             <TableRowCell />
-            <TableRowCell />
+            {showNarrator ? <TableRowCell /> : null}
             <TableRowCell />
           </TableRow>}
         {expandedRow}
@@ -396,10 +403,12 @@ class AuthorInteractiveSearchTable extends Component {
       authorSearch
     } = this.props;
     const isSearchDisabled = !searchCount || !selectedMediaType || authorSearch.isFetching;
+    const showNarrator = selectedMediaType !== 'ebook';
+    const columns = showNarrator ? resultColumns : resultColumns.filter((column) => column.name !== 'narrator');
     const isSearchActive = authorSearch.isFetching && !authorSearch.isComplete && !authorSearch.isCancelled;
     const stopRequestStatus = this.state.stopSearchId === authorSearch.searchId ? this.state.stopRequestStatus : null;
     const showStopError = isSearchActive && this.state.stopSearchId === authorSearch.searchId && this.state.stopError;
-    const canRequestStop = isSearchActive && authorSearch.bookResults.length > 0;
+    const canRequestStop = isSearchActive && (authorSearch.isAccepted || authorSearch.bookResults.length > 0);
     let stopStatusText = null;
 
     if (stopRequestStatus === 'requesting') {
@@ -466,16 +475,16 @@ class AuthorInteractiveSearchTable extends Component {
             {translate('AuthorSearchStopped')}
           </Alert> :
           null}
-        {!authorSearch.isFetching && authorSearch.isComplete && !authorSearch.isCancelled && !authorSearch.bookResults.length ?
+        {!authorSearch.isFetching && authorSearch.isComplete && !authorSearch.isCancelled && !authorSearch.error && !authorSearch.bookResults.length ?
           <Alert kind={kinds.INFO}>
             {translate('AuthorSearchNoBooksReturned')}
           </Alert> :
           null}
 
         {authorSearch.bookResults.length ?
-          <Table className={styles.summaryTable} columns={resultColumns}>
+          <Table className={showNarrator ? styles.summaryTable : styles.ebookSummaryTable} columns={columns}>
             <TableBody>
-              {authorSearch.bookResults.map((bookResult) => this.renderBookResult(bookResult))}
+              {authorSearch.bookResults.map((bookResult) => this.renderBookResult(bookResult, columns))}
             </TableBody>
           </Table> :
           null}

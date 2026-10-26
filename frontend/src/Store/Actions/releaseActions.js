@@ -2,6 +2,7 @@ import { createAction } from 'redux-actions';
 import { filterBuilderTypes, filterBuilderValueTypes, filterTypes, sortDirections } from 'Helpers/Props';
 import { set } from 'Store/Actions/baseActions';
 import { createThunk, handleThunks } from 'Store/thunks';
+import { isCommandComplete, isCommandFailed } from 'Utilities/Command';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import createHandleActions from './Creators/createHandleActions';
@@ -16,8 +17,9 @@ export const bookSection = 'releases.book';
 export const authorSection = 'releases.author';
 
 let abortCurrentRequest = null;
-const authorSearchAbortRequests = new Map();
+const authorSearchCancelRequests = new Map();
 const authorReleaseStopRequests = new Map();
+const authorCommandRequests = new Map();
 
 //
 // State
@@ -30,6 +32,8 @@ export const defaultState = {
   hiddenItems: [],
   authorSearch: {
     searchId: null,
+    commandId: null,
+    commandEnded: false,
     authorId: null,
     mediaType: null,
     isFetching: false,
@@ -262,6 +266,7 @@ export const FETCH_AUTHOR_RELEASES = 'releases/fetchAuthorReleases';
 export const CANCEL_AUTHOR_RELEASES = 'releases/cancelAuthorReleases';
 export const REQUEST_AUTHOR_RELEASE_STOP = 'releases/requestAuthorReleaseStop';
 export const SET_AUTHOR_SEARCH_RESULTS = 'releases/setAuthorSearchResults';
+export const RECONCILE_AUTHOR_SEARCH_COMMAND = 'releases/reconcileAuthorSearchCommand';
 export const CLEAR_AUTHOR_SEARCH = 'releases/clearAuthorSearch';
 export const TOGGLE_AUTHOR_SEARCH_BOOK = 'releases/toggleAuthorSearchBook';
 
@@ -283,6 +288,7 @@ export const fetchAuthorReleases = createThunk(FETCH_AUTHOR_RELEASES);
 export const cancelAuthorReleases = createThunk(CANCEL_AUTHOR_RELEASES);
 export const requestAuthorReleaseStop = createThunk(REQUEST_AUTHOR_RELEASE_STOP);
 export const setAuthorSearchResults = createAction(SET_AUTHOR_SEARCH_RESULTS);
+export const reconcileAuthorSearchCommand = createThunk(RECONCILE_AUTHOR_SEARCH_COMMAND);
 export const clearAuthorSearch = createAction(CLEAR_AUTHOR_SEARCH);
 export const toggleAuthorSearchBook = createAction(TOGGLE_AUTHOR_SEARCH_BOOK);
 
@@ -372,6 +378,10 @@ function mergeAuthorBookResults(previousResults, incomingResults) {
     const incomingId = String(incoming.bookId);
     const index = results.findIndex((result) => String(result.bookId) === incomingId);
     const previous = index === -1 ? null : results[index];
+    if (previous && previous.status !== 'pending' && incoming.status === 'pending') {
+      return;
+    }
+
     const merged = {
       ...previous,
       ...incoming,
@@ -448,6 +458,7 @@ export const actionHandlers = handleThunks({
 
   [FETCH_AUTHOR_RELEASES]: function(getState, payload, dispatch) {
     const { searchId, authorId, mediaType } = payload;
+    let stopAfterAdmission = false;
 
     dispatch(set({
       section,
@@ -460,32 +471,39 @@ export const actionHandlers = handleThunks({
       }
     }));
 
-    const { request, abortRequest } = createAjaxRequest({
+    const { request } = createAjaxRequest({
       url: '/release',
       data: { authorId, mediaType, searchId },
       traditional: true
     });
 
-    authorSearchAbortRequests.set(searchId, abortRequest);
+    // Leaving before admission completes must still stop the queued work.
+    authorSearchCancelRequests.set(searchId, () => {
+      stopAfterAdmission = true;
+    });
 
     request.done((data) => {
-      authorSearchAbortRequests.delete(searchId);
+      authorSearchCancelRequests.delete(searchId);
+      if (stopAfterAdmission) {
+        dispatch(requestAuthorReleaseStop({ searchId }));
+        return;
+      }
+
       dispatch(setAuthorSearchResults({
         ...data,
-        allowTerminalMerge: true,
-        requestFinished: true
+        isAccepted: true
       }));
+      dispatch(reconcileAuthorSearchCommand());
     });
 
     request.fail((xhr) => {
-      authorSearchAbortRequests.delete(searchId);
+      authorSearchCancelRequests.delete(searchId);
 
       if (!xhr.aborted) {
         dispatch(setAuthorSearchResults({
           searchId,
           authorId,
           mediaType,
-          requestFinished: true,
           requestFailed: true,
           error: xhr
         }));
@@ -494,15 +512,62 @@ export const actionHandlers = handleThunks({
   },
 
   [CANCEL_AUTHOR_RELEASES]: function(getState, payload) {
-    const abortRequest = authorSearchAbortRequests.get(payload.searchId);
+    const cancelRequest = authorSearchCancelRequests.get(payload.searchId);
 
-    if (abortRequest) {
-      authorSearchAbortRequests.delete(payload.searchId);
-      abortRequest();
+    if (cancelRequest) {
+      authorSearchCancelRequests.delete(payload.searchId);
+      cancelRequest();
     }
   },
 
-  [REQUEST_AUTHOR_RELEASE_STOP]: function(getState, payload) {
+  [RECONCILE_AUTHOR_SEARCH_COMMAND]: function(getState, payload, dispatch) {
+    const search = getState().releases?.authorSearch;
+    if (!search?.commandId || search.isComplete || search.commandEnded) {
+      return;
+    }
+
+    const applyCommand = (command) => {
+      if (command && (command.id !== search.commandId ||
+          command.body?.searchId !== search.searchId ||
+          command.body?.authorId !== search.authorId ||
+          command.body?.mediaType !== search.mediaType)) {
+        return;
+      }
+
+      if (!command || isCommandComplete(command) || isCommandFailed(command)) {
+        dispatch(setAuthorSearchResults({
+          searchId: search.searchId,
+          authorId: search.authorId,
+          mediaType: search.mediaType,
+          commandEnded: true
+        }));
+      }
+    };
+
+    const command = payload.command || (payload.commands || getState().commands.items)
+      .find((item) => item.id === search.commandId);
+    if (!payload.lookup && command) {
+      applyCommand(command);
+      return;
+    }
+
+    if (authorCommandRequests.has(search.commandId)) {
+      return authorCommandRequests.get(search.commandId);
+    }
+
+    const request = createAjaxRequest({ url: `/command/${search.commandId}` }).request;
+    authorCommandRequests.set(search.commandId, request);
+    request.done(applyCommand);
+    request.fail((xhr) => {
+      if (xhr.status === 404) {
+        applyCommand(null);
+      }
+    });
+    request.always(() => authorCommandRequests.delete(search.commandId));
+    return request;
+  },
+
+  [REQUEST_AUTHOR_RELEASE_STOP]: function(getState, payload, dispatch) {
     const searchId = payload.searchId;
     const existingRequest = authorReleaseStopRequests.get(searchId);
 
@@ -517,6 +582,11 @@ export const actionHandlers = handleThunks({
     }).request;
 
     authorReleaseStopRequests.set(searchId, request);
+    request.done((data) => {
+      if (!data.isStopping && getState().releases.authorSearch.searchId === searchId) {
+        dispatch(reconcileAuthorSearchCommand({ lookup: true }));
+      }
+    });
     request.always(() => {
       if (authorReleaseStopRequests.get(searchId) === request) {
         authorReleaseStopRequests.delete(searchId);
@@ -616,7 +686,7 @@ export const reducers = createHandleActions({
       payload.searchId !== current.searchId ||
       payload.authorId !== current.authorId ||
       payload.mediaType !== current.mediaType ||
-      (current.isComplete && payload.allowTerminalMerge !== true)
+      current.isComplete
     ) {
       return state;
     }
@@ -632,17 +702,22 @@ export const reducers = createHandleActions({
       });
     }
 
+    const commandEnded = current.commandEnded || payload.commandEnded === true;
     const bookResults = mergeAuthorBookResults(current.bookResults, payload.bookResults);
     const isComplete = current.isComplete || payload.isComplete === true;
+    const error = isComplete ? null : commandEnded || current.error;
 
     return Object.assign({}, state, {
       authorSearch: {
         ...current,
         bookResults,
-        isFetching: payload.requestFinished === true || isComplete ? false : current.isFetching,
+        commandId: payload.commandId ?? current.commandId,
+        commandEnded: !isComplete && commandEnded,
+        isAccepted: current.isAccepted || payload.isAccepted === true,
+        isFetching: !isComplete && !commandEnded,
         isComplete,
         isCancelled: current.isCancelled || payload.isCancelled === true,
-        error: isComplete ? null : current.error
+        error: payload.isFailed ? true : error
       }
     });
   },

@@ -8,12 +8,13 @@ import { fetchAuthor } from 'Store/Actions/authorActions';
 import { showAuthorFolderPicker } from 'Store/Actions/authorFolderActions';
 import { removeItem, update, updateItem } from 'Store/Actions/baseActions';
 import { deleteAuthorBooks } from 'Store/Actions/bookActions';
-import { fetchCommands, finishCommand, pauseCommand, resumeCommand, updateCommand } from 'Store/Actions/commandActions';
+import { fetchCommands, finishCommand, pauseCommand, resumeCommand, showCommandProgress, updateCommand } from 'Store/Actions/commandActions';
 import { fetchQueue, fetchQueueDetails } from 'Store/Actions/queueActions';
 import { setAuthorSearchResults } from 'Store/Actions/releaseActions';
 import { fetchQualityDefinitions, fetchRootFolders } from 'Store/Actions/settingsActions';
 import { fetchHealth } from 'Store/Actions/systemActions';
 import { fetchTagDetails, fetchTags } from 'Store/Actions/tagActions';
+import { isCommandComplete, isCommandFailed } from 'Utilities/Command';
 import { detectOrphanedModals, forceCloseAllModals } from 'Utilities/modalCleanup';
 import { repopulatePage } from 'Utilities/pagePopulator';
 import titleCase from 'Utilities/String/titleCase';
@@ -60,6 +61,7 @@ const mapDispatchToProps = {
   dispatchAuthorSearchResults: setAuthorSearchResults,
   dispatchUpdateCommand: updateCommand,
   dispatchFinishCommand: finishCommand,
+  dispatchShowCommandProgress: showCommandProgress,
   dispatchPauseCommand: pauseCommand,
   dispatchResumeCommand: resumeCommand,
   dispatchSetAppValue: setAppValue,
@@ -272,13 +274,9 @@ class SignalRConnector extends Component {
     }
 
     const resource = body.resource;
-    const status = resource.status;
     const name = resource.name;
 
-    // Both sucessful and failed commands need to be
-    // completed, otherwise they spin until they timeout.
-
-    if (status === 'completed' || status === 'failed') {
+    if (isCommandComplete(resource) || isCommandFailed(resource)) {
       this.props.dispatchFinishCommand(resource);
 
       // If an import/scan command completed, clear the header import tracker and any persisted state.
@@ -288,10 +286,6 @@ class SignalRConnector extends Component {
         this.clearPendingImportProgress();
         this.props.dispatchSetAppValue({ importTracker: getDefaultImportTracker() });
         localStorage.removeItem('importProgress');
-      }
-
-      if (name === 'BulkRefreshAuthor') {
-        this.props.dispatchHideMessage({ id: `bulk-author-book-progress-${resource.id}` });
       }
     } else {
       this.props.dispatchUpdateCommand(resource);
@@ -534,13 +528,12 @@ class SignalRConnector extends Component {
       return;
     }
 
-    this.props.dispatchShowMessage({
+    this.props.dispatchShowCommandProgress({
       id: `bulk-author-book-progress-${body.commandId}`,
       commandId: body.commandId,
       name: 'BulkAuthorBookProgress',
       message: body.message,
-      type: 'info',
-      hideAfter: 0
+      type: 'info'
     });
   };
 
@@ -1002,6 +995,7 @@ SignalRConnector.propTypes = {
   dispatchAuthorSearchResults: PropTypes.func.isRequired,
   dispatchUpdateCommand: PropTypes.func.isRequired,
   dispatchFinishCommand: PropTypes.func.isRequired,
+  dispatchShowCommandProgress: PropTypes.func.isRequired,
   dispatchPauseCommand: PropTypes.func.isRequired,
   dispatchResumeCommand: PropTypes.func.isRequired,
   dispatchSetAppValue: PropTypes.func.isRequired,

@@ -13,7 +13,6 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.SignalR;
 
 namespace Chaptarr.Core.Test.Indexers
 {
@@ -48,7 +47,7 @@ namespace Chaptarr.Core.Test.Indexers
         {
             return new ReleaseController(null, search, null,
                 DispatchProxy.Create<IPrioritizeDownloadDecision, SearchScopeProxy>(),
-                null, null, null, null, null, new CacheManager(), LogManager.GetCurrentClassLogger(), new NoOpSignalRBroadcaster())
+                null, null, null, null, null, new CacheManager(), LogManager.GetCurrentClassLogger(), null)
             {
                 ControllerContext = new ControllerContext
                 {
@@ -60,11 +59,6 @@ namespace Chaptarr.Core.Test.Indexers
             };
         }
 
-        private sealed class NoOpSignalRBroadcaster : IBroadcastSignalRMessage
-        {
-            public bool IsConnected => false;
-            public Task BroadcastMessage(SignalRMessage message) => Task.CompletedTask;
-        }
 
         private class SearchScopeProxy : DispatchProxy
         {
@@ -94,14 +88,14 @@ namespace Chaptarr.Core.Test.Indexers
                 new RemoteBook { Release = new ReleaseInfo { Title = "House Harkonnen" } },
                 new Rejection("Release appears to contain multiple books", RejectionType.Permanent, true, "Pack", 3));
 
-            var result = ReleaseController.ShouldFilterFromInteractiveSearch(decision);
+            var result = NzbDrone.Core.DecisionEngine.InteractiveSearchVisibility.Evaluate(decision);
 
             // A pack is filtered out of the default list because "Pack" is a mismatch category, but it is a
             // soft filter, so it reaches the hidden-results collection as a bypassable release.
             Assert.Multiple(() =>
             {
-                Assert.That(result.shouldFilter, Is.True);
-                Assert.That(result.isHardFilter, Is.False);
+                Assert.That(result.ShouldFilter, Is.True);
+                Assert.That(result.IsHardFilter, Is.False);
             });
         }
 
@@ -118,9 +112,9 @@ namespace Chaptarr.Core.Test.Indexers
                 },
                 new Rejection("Rejected by configured preference", RejectionType.Permanent, true, category));
 
-            var result = ReleaseController.ShouldFilterFromInteractiveSearch(decision);
+            var result = NzbDrone.Core.DecisionEngine.InteractiveSearchVisibility.Evaluate(decision);
 
-            Assert.That(result.shouldFilter, Is.False);
+            Assert.That(result.ShouldFilter, Is.False);
         }
 
         [Test]
@@ -134,7 +128,7 @@ namespace Chaptarr.Core.Test.Indexers
                 },
                 new Rejection("Custom Format score -1000 is below profile minimum 0", RejectionType.Permanent, true, "Format"));
 
-            var summary = ReleaseController.CreateFilterSummary(
+            var summary = InteractiveReleaseMapper.CreateFilterSummary(
                 new[] { decision },
                 new List<ReleaseResource> { new() },
                 hardFilteredCount: 0,

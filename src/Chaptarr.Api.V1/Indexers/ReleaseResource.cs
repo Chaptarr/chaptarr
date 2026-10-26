@@ -1,4 +1,5 @@
 using System;
+using NzbDrone.Core.Download;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -96,12 +97,14 @@ namespace Chaptarr.Api.V1.Indexers
 
     public class AuthorReleaseSearchResponse
     {
+        public int? CommandId { get; set; }
         public string SearchId { get; set; }
         public int AuthorId { get; set; }
         public string MediaType { get; set; }
         public List<BookReleaseSearchResult> BookResults { get; set; } = new();
         public bool IsComplete { get; set; }
         public bool IsCancelled { get; set; }
+        public bool IsFailed { get; set; }
     }
 
     public class BookReleaseSearchResult
@@ -229,6 +232,29 @@ namespace Chaptarr.Api.V1.Indexers
 
     public static class ReleaseResourceMapper
     {
+        public static ReleaseResource ToResource(this DownloadDecision decision, int initialWeight)
+        {
+            var release = decision.ToResource();
+
+            release.ReleaseWeight = initialWeight;
+            release.Rank = initialWeight + 1; // 1-based ranking (1=best, 2=second, etc.)
+            release.IsPreferredChoice = initialWeight == 0 && decision.RemoteBook.DownloadAllowed;
+
+            if (decision.RemoteBook.Author != null)
+            {
+                var qualityProfile = decision.RemoteBook.GetQualityProfile();
+                if (qualityProfile != null)
+                {
+                    release.QualityWeight = qualityProfile.GetIndex(release.Quality.Quality).Index * 100;
+                }
+            }
+
+            release.QualityWeight += release.Quality.Revision.Real * 10;
+            release.QualityWeight += release.Quality.Revision.Version;
+
+            return release;
+        }
+
         private static readonly Regex EbookHintRegex = new Regex(@"\b(epub|mobi|azw3|azw|pdf|djvu|cbz|cbr|fb2|ebook)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex AudiobookHintRegex = new Regex(@"\b(audiobook|audible|mp3|m4b|m4a|flac|aac|opus|ogg|wav)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 

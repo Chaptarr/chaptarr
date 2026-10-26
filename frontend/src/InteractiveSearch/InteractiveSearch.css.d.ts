@@ -11,6 +11,8 @@ interface CssExports {
   'authorSearchProgress': string;
   'authorSearchStatusCell': string;
   'blankpad': string;
+  'ebookSummaryTable': string;
+  'ebookTable': string;
   'filterMenuContainer': string;
   'filteredMessage': string;
   'formatCount': string;
@@ -21,6 +23,7 @@ interface CssExports {
   'hiddenResultsPager': string;
   'hiddenResultsRange': string;
   'hiddenResultsTitle': string;
+  'narratorColumn': string;
   'summaryTable': string;
   'table': string;
 }
