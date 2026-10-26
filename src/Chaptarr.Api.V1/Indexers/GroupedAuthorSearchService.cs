@@ -202,7 +202,7 @@ namespace Chaptarr.Api.V1.Indexers
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 response.IsCancelled = true;
-                _logger.Info("Stopped author search {0} after {1} of {2} books; completed results retained", command.SearchId,
+                _logger.Info("Stopped author search {0} after {1} of {2} books; completed results sent to connected clients", command.SearchId,
                     response.BookResults.Count(result => result.Status != "pending"), response.BookResults.Count);
             }
             catch (Exception ex)

@@ -137,9 +137,18 @@ class AuthorInteractiveSearchTable extends Component {
 
   componentDidMount() {
     this._isMounted = true;
+    window.addEventListener('pagehide', this.onPageHide);
   }
 
   componentWillUnmount() {
+    window.removeEventListener('pagehide', this.onPageHide);
+    this.stopOnLeave();
+    this._isMounted = false;
+  }
+
+  onPageHide = () => this.stopOnLeave(true);
+
+  stopOnLeave = (keepalive = false) => {
     const { authorSearch, authorId, selectedMediaType } = this.props;
 
     if (
@@ -155,8 +164,8 @@ class AuthorInteractiveSearchTable extends Component {
 
       const stopRequestAlreadySent = this.state.stopSearchId === authorSearch.searchId && this.state.stopRequestStatus;
 
-      if (authorSearch.isFetching && !authorSearch.isComplete && !authorSearch.isCancelled && !stopRequestAlreadySent) {
-        const stopRequest = this.props.dispatchRequestAuthorReleaseStop({ searchId: authorSearch.searchId });
+      if (authorSearch.isFetching && !authorSearch.isComplete && !authorSearch.isCancelled && (keepalive || !stopRequestAlreadySent)) {
+        const stopRequest = this.props.dispatchRequestAuthorReleaseStop({ searchId: authorSearch.searchId, keepalive });
 
         if (stopRequest && typeof stopRequest.fail === 'function') {
           stopRequest.fail(() => {});
@@ -167,8 +176,7 @@ class AuthorInteractiveSearchTable extends Component {
       this.props.dispatchClearAuthorSearch(scope);
     }
 
-    this._isMounted = false;
-  }
+  };
 
   onSearchPress = () => {
     if (this.props.searchCount > 5) {

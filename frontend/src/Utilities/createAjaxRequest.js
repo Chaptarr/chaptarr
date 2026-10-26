@@ -25,6 +25,18 @@ function addContentType(ajaxOptions) {
   }
 }
 
+export function prepareAjaxOptions(originalAjaxOptions) {
+  const ajaxOptions = { ...originalAjaxOptions };
+
+  if (isRelative(ajaxOptions)) {
+    addRootUrl(ajaxOptions);
+    addApiKey(ajaxOptions);
+    addContentType(ajaxOptions);
+  }
+
+  return ajaxOptions;
+}
+
 export default function createAjaxRequest(originalAjaxOptions) {
   const requestXHR = new window.XMLHttpRequest();
   let aborted = false;
@@ -37,13 +49,7 @@ export default function createAjaxRequest(originalAjaxOptions) {
     }
   }
 
-  const ajaxOptions = { ...originalAjaxOptions };
-
-  if (isRelative(ajaxOptions)) {
-    addRootUrl(ajaxOptions);
-    addApiKey(ajaxOptions);
-    addContentType(ajaxOptions);
-  }
+  const ajaxOptions = prepareAjaxOptions(originalAjaxOptions);
 
   const request = $.ajax({
     xhr: () => requestXHR,

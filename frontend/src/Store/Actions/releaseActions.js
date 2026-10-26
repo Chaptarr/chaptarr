@@ -3,7 +3,7 @@ import { filterBuilderTypes, filterBuilderValueTypes, filterTypes, sortDirection
 import { set } from 'Store/Actions/baseActions';
 import { createThunk, handleThunks } from 'Store/thunks';
 import { isCommandComplete, isCommandFailed } from 'Utilities/Command';
-import createAjaxRequest from 'Utilities/createAjaxRequest';
+import createAjaxRequest, { prepareAjaxOptions } from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import createHandleActions from './Creators/createHandleActions';
 import createSetClientSideCollectionFilterReducer from './Creators/Reducers/createSetClientSideCollectionFilterReducer';
@@ -569,6 +569,11 @@ export const actionHandlers = handleThunks({
 
   [REQUEST_AUTHOR_RELEASE_STOP]: function(getState, payload, dispatch) {
     const searchId = payload.searchId;
+    if (payload.keepalive) {
+      const { url, headers } = prepareAjaxOptions({ url: `/release?searchId=${encodeURIComponent(searchId)}` });
+      return window.fetch(url, { method: 'DELETE', headers, keepalive: true }).catch(() => {});
+    }
+
     const existingRequest = authorReleaseStopRequests.get(searchId);
 
     if (existingRequest) {
