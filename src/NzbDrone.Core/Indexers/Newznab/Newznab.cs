@@ -48,17 +48,20 @@ namespace NzbDrone.Core.Indexers.Newznab
             return new NewznabRssParser();
         }
 
-        public bool CanProvideNarratorMetadata => Settings?.EnableNarratorMetadata == true;
+        private NewznabNarratorMetadataClient NarratorMetadataClient => _narratorMetadataClient ??=
+            new NewznabNarratorMetadataClient(_httpClient, Settings, Definition?.Id ?? 0, RateLimit, _cacheManager, (Definition as IndexerDefinition)?.ProxyId);
+
+        public bool? SupportsNarratorMetadata => Definition?.Settings is NewznabSettings ? NarratorMetadataClient.SupportsMetadata : null;
+        public bool CanProvideNarratorMetadata => Settings?.EnableNarratorMetadata == true && SupportsNarratorMetadata != false;
+
+        public void TestNarratorMetadata(IEnumerable<ReleaseInfo> releases)
+        {
+            NarratorMetadataClient.Test(releases);
+        }
 
         public bool TryPopulateNarratorMetadata(ReleaseInfo release)
         {
-            if (!CanProvideNarratorMetadata)
-            {
-                return false;
-            }
-
-            _narratorMetadataClient ??= new NewznabNarratorMetadataClient(_httpClient, Settings, Definition?.Id ?? 0, RateLimit, _cacheManager, _logger);
-            return _narratorMetadataClient.TryPopulate(release);
+            return CanProvideNarratorMetadata && NarratorMetadataClient.TryPopulate(release);
         }
 
         public override IEnumerable<ProviderDefinition> DefaultDefinitions

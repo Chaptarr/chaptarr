@@ -59,11 +59,6 @@ namespace NzbDrone.Core.CustomFormats
             return input?.PreferredNarratorNames?.Any(name => !string.IsNullOrWhiteSpace(name)) == true;
         }
 
-        public static bool HasPreferredNarratorTarget(Book book)
-        {
-            return BuildTarget(book) != null;
-        }
-
         public static void ApplyTarget(CustomFormatInput input, Book book, Edition explicitEdition = null)
         {
             ApplyTarget(input, BuildTarget(book, explicitEdition));

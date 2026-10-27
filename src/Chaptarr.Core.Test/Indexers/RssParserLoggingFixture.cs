@@ -23,6 +23,7 @@ namespace Chaptarr.Core.Test.Indexers
         public void SetUp()
         {
             _previousConfiguration = LogManager.Configuration;
+            NzbDroneLogger.GetLogger(typeof(RssParser));
         }
 
         [TearDown]

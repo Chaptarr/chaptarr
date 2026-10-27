@@ -6,6 +6,7 @@ using Chaptarr.Http.REST;
 using FluentValidation;
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.ThingiProvider;
@@ -89,14 +90,29 @@ namespace Chaptarr.Api.V1
             return Created(providerDefinition.Id);
         }
 
+        protected virtual bool SkipUnchangedUpdates => false;
+
         [RestPutById]
         [Consumes("application/json")]
         [Produces("application/json")]
         public ActionResult<TProviderResource> UpdateProvider([FromBody] TProviderResource providerResource, [FromQuery] bool forceSave = false)
         {
-            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false, !forceSave);
+            var existing = _providerFactory.Get(providerResource.Id);
+            var providerDefinition = GetDefinition(providerResource, true, !forceSave, false, !forceSave, existing);
+            if (SkipUnchangedUpdates)
+            {
+                var comparison = _resourceMapper.ToModel(STJson.Deserialize<TProviderResource>(STJson.ToJson(_resourceMapper.ToResource(existing))));
+                comparison.Settings = existing.Settings;
+                comparison.ImplementationName = providerDefinition.ImplementationName;
+                comparison.Message = providerDefinition.Message;
 
-            // Only test existing definitions if it is enabled and forceSave isn't set.
+                if (JToken.DeepEquals(JToken.Parse(comparison.ToJson()), JToken.Parse(providerDefinition.ToJson())))
+                {
+                    return Accepted(providerResource.Id);
+                }
+            }
+
+            // Test enabled definitions unless explicitly bypassed.
             if (providerDefinition.Enable && !forceSave)
             {
                 Test(providerDefinition, true);
@@ -148,25 +164,23 @@ namespace Chaptarr.Api.V1
             return Accepted(_providerFactory.Update(definitionsToUpdate).Select(x => _resourceMapper.ToResource(x)));
         }
 
-        private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate, bool willRunProviderTest)
+        private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate, bool willRunProviderTest, TProviderDefinition existing = null)
         {
             var definition = _resourceMapper.ToModel(providerResource);
-            TProviderDefinition existing = null;
 
             if (providerResource.Id != 0)
             {
-                existing = _providerFactory.Get(providerResource.Id);
+                existing ??= _providerFactory.Get(providerResource.Id);
                 var configContract = ProviderConfigTypeCache.Find(definition.ConfigContract) ??
                                      ProviderConfigTypeCache.Find(existing.ConfigContract);
 
                 if (configContract != null)
                 {
-                    // Apply changes onto the existing settings instance so we can safely mask secrets in the UI
-                    // without losing them when the user saves unchanged forms.
+                    // Preserve masked secrets without mutating the saved definition during Test or validation.
                     var settingsTarget = existing.Settings != null &&
                                          existing.Settings != NullConfig.Instance &&
                                          existing.Settings.GetType() == configContract
-                        ? existing.Settings
+                        ? (IProviderConfig)STJson.Deserialize(STJson.ToJson(existing.Settings), configContract)
                         : (IProviderConfig)Activator.CreateInstance(configContract);
 
                     SchemaBuilder.ReadFromSchema(providerResource.Fields ?? new List<Field>(), settingsTarget);
@@ -244,7 +258,7 @@ namespace Chaptarr.Api.V1
 
             // Return an object so the UI can optionally show a green success alert.
             // Frontend callers that ignore the body remain compatible.
-            return new { successMessages };
+            return new { successMessages, resource = _resourceMapper.ToResource(providerDefinition) };
         }
 
         [HttpPost("testall")]

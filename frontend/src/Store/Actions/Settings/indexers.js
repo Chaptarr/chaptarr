@@ -1,5 +1,7 @@
+import _ from 'lodash';
 import { createAction } from 'redux-actions';
 import { sortDirections } from 'Helpers/Props';
+import { updateItem } from 'Store/Actions/baseActions';
 import createBulkEditItemHandler from 'Store/Actions/Creators/createBulkEditItemHandler';
 import createBulkRemoveItemHandler from 'Store/Actions/Creators/createBulkRemoveItemHandler';
 import createFetchHandler from 'Store/Actions/Creators/createFetchHandler';
@@ -117,7 +119,15 @@ export default {
     [SAVE_INDEXER]: createSaveProviderHandler(section, '/indexer'),
     [CANCEL_SAVE_INDEXER]: createCancelSaveProviderHandler(section),
     [DELETE_INDEXER]: createRemoveItemHandler(section, '/indexer'),
-    [TEST_INDEXER]: createTestProviderHandler(section, '/indexer'),
+    [TEST_INDEXER]: createTestProviderHandler(section, '/indexer', (data, testData, getState, dispatch) => {
+      const supportsNarratorMetadata = data?.resource?.supportsNarratorMetadata ?? undefined;
+      const saved = getState().settings.indexers.items.find((item) => item.id === testData.id);
+      if (saved && saved.proxyId === testData.proxyId &&
+          testData.fields.every((field) => _.isEqual(field.value, saved.fields.find((item) => item.name === field.name)?.value))) {
+        dispatch(updateItem({ section, id: saved.id, supportsNarratorMetadata }));
+      }
+      dispatch(setIndexerValue({ name: 'supportsNarratorMetadata', value: supportsNarratorMetadata }));
+    }),
     [CANCEL_TEST_INDEXER]: createCancelTestProviderHandler(section),
     [TEST_ALL_INDEXERS]: createTestAllProvidersHandler(section, '/indexer'),
     [BULK_EDIT_INDEXERS]: createBulkEditItemHandler(section, '/indexer/bulk'),

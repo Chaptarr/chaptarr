@@ -10,7 +10,7 @@ namespace NzbDrone.Core.Indexers.Newznab
 {
     public class NewznabRequestGenerator : IIndexerRequestGenerator
     {
-        protected readonly INewznabCapabilitiesProvider _capabilitiesProvider;
+        private readonly INewznabCapabilitiesProvider _capabilitiesProvider;
         private readonly Logger _logger;
         private readonly string _indexerName;
         public int MaxPages { get; set; }
@@ -39,7 +39,7 @@ namespace NzbDrone.Core.Indexers.Newznab
             }
         }
 
-        protected virtual bool SupportsBookSearch
+        private bool SupportsBookSearch
         {
             get
             {
@@ -84,6 +84,16 @@ namespace NzbDrone.Core.Indexers.Newznab
                 return pageableRequests;
             }
 
+            var supportsSearch = SupportsSearch;
+            var narratorQuery = supportsSearch ? searchCriteria.NarratorQuery : string.Empty;
+            if (!string.IsNullOrWhiteSpace(narratorQuery))
+            {
+                pageableRequests.Add(GetPagedRequests(MaxPages,
+                    searchCategories,
+                    "search",
+                    $"&q={NewsnabifyTitle(searchCriteria.BookQuery)}+{NewsnabifyTitle(searchCriteria.AuthorQuery)}+{NewsnabifyTitle(narratorQuery)}"));
+            }
+
             if (SupportsBookSearch)
             {
                 AddBookPageableRequests(pageableRequests,
@@ -95,7 +105,7 @@ namespace NzbDrone.Core.Indexers.Newznab
                     $"&title={NewsnabifyTitle(searchCriteria.BookQuery)}");
             }
 
-            if (SupportsSearch)
+            if (supportsSearch)
             {
                 pageableRequests.AddTier();
 

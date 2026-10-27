@@ -1,6 +1,6 @@
 {
   "name": "chaptarr",
-  "version": "0.9.1035",
+  "version": "0.9.1036",
   "description": "Chaptarr",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
@@ -15,6 +15,10 @@
     "check-author-photo": "node frontend/build/check-author-photo.cjs",
     "check-author-delete": "node frontend/build/check-author-delete.cjs",
     "check-author-search": "node frontend/build/check-author-search.cjs",
+    "check-author-entry": "node frontend/build/check-author-entry.cjs",
+    "check-book-route-guards": "node frontend/build/check-book-route-guards.cjs",
+    "check-header-search": "node frontend/build/check-header-search.cjs",
+    "check-indexer-nfo": "node frontend/build/check-indexer-nfo.cjs",
     "check-book-cover-scope": "node frontend/build/check-book-cover-scope.cjs",
     "check-media-management-cover-scope": "node frontend/build/check-media-management-cover-scope.cjs",
     "check-import-lists": "node frontend/build/check-import-lists.cjs",
@@ -23,10 +27,11 @@
     "check-manual-import-confirmation": "node frontend/build/check-manual-import-confirmation.cjs",
     "check-confirm-modal": "node frontend/build/check-confirm-modal.cjs",
     "check-mobile-toolbar": "node frontend/build/check-mobile-toolbar.cjs",
-    "lint-browser-checks": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore \"frontend/build/check-*.cjs\" \"frontend/build/*-fixture.js\"",
+    "lint-browser-checks": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore \"frontend/build/*.cjs\" \"frontend/build/*-fixture.js\" \"frontend/build/BookRouteDetailWitness.js\"",
     "stylelint-linux": "stylelint $(find frontend -name '*.css') --config frontend/.stylelintrc",
     "stylelint-windows": "stylelint \"frontend/**/*.css\" --config frontend/.stylelintrc",
-    "check-wanted-authors": "node frontend/build/check-wanted-authors.cjs"
+    "check-wanted-authors": "node frontend/build/check-wanted-authors.cjs",
+    "check-smart-narrator": "node frontend/build/check-smart-narrator.cjs"
   },
   "repository": {
     "type": "git",

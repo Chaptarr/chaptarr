@@ -171,7 +171,7 @@ jobs:
         yarn playwright install --with-deps chromium
 
     # Directory-based `yarn lint` does not discover these .cjs runners.
-    # Discover browser files by convention; new checks must use check-*.cjs / *-fixture.js.
+    # Include the shared browser helpers as well as their check runners and fixtures.
     - name: Lint browser checks
       if: runner.os == 'Linux'
       run: yarn lint-browser-checks
@@ -210,6 +210,17 @@ jobs:
       env:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-author-search
+
+    - name: Check author entry, book routes and search controls
+      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: |
+        yarn check-author-entry
+        yarn check-book-route-guards
+        yarn check-header-search
+        yarn check-indexer-nfo
 
     - name: Check ConfirmModal Enter behavior
       if: runner.os == 'Linux'
@@ -253,6 +264,7 @@ jobs:
         yarn check-import-lists
         yarn check-backups
         yarn check-notification-upgrade
+        yarn check-smart-narrator
 
     - name: Upload cover settings evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}

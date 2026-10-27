@@ -91,7 +91,7 @@ namespace NzbDrone.Core.Indexers.Newznab
         [FieldDefinition(5, Label = "Additional Parameters", HelpText = "Additional Newznab parameters", Advanced = true)]
         public string AdditionalParameters { get; set; }
 
-        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Fetch Narrator Metadata", HelpText = "When a narrator-specific edition is selected, Chaptarr can use extra indexer API requests to populate narrator metadata before custom format scoring.")]
+        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Fetch Narrator Metadata", HelpText = "IndexerNarratorMetadataHelpText")]
         public bool EnableNarratorMetadata { get; set; }
 
         [FieldDefinition(7, Label = "Narrator Metadata URL", HelpText = "Only needed when this indexer was added via Prowlarr. Leave blank to use the main URL.")]

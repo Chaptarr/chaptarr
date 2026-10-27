@@ -364,6 +364,18 @@ namespace NzbDrone.Core.Indexers
                 {
                     return new ValidationFailure(string.Empty, "Query successful, but no results in the configured categories were returned from your indexer. This may be an issue with the indexer or your indexer category settings.");
                 }
+
+                if (this is INarratorMetadataProvider metadataProvider)
+                {
+                    try
+                    {
+                        metadataProvider.TestNarratorMetadata(releases);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Unable to verify optional NFO support for {0}; regular indexer testing succeeded", Definition.Name);
+                    }
+                }
             }
             catch (ApiKeyException ex)
             {

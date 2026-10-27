@@ -48,45 +48,20 @@ namespace NzbDrone.Core.Indexers.Torznab
             return new TorznabRssParser();
         }
 
-        public bool CanProvideNarratorMetadata => Settings?.EnableNarratorMetadata == true;
+        private NewznabNarratorMetadataClient NarratorMetadataClient => _narratorMetadataClient ??=
+            new NewznabNarratorMetadataClient(_httpClient, Settings, Definition?.Id ?? 0, RateLimit, _cacheManager, (Definition as IndexerDefinition)?.ProxyId);
+
+        public bool? SupportsNarratorMetadata => Definition?.Settings is NewznabSettings ? NarratorMetadataClient.SupportsMetadata : null;
+        public bool CanProvideNarratorMetadata => Settings?.EnableNarratorMetadata == true && SupportsNarratorMetadata != false;
+
+        public void TestNarratorMetadata(IEnumerable<ReleaseInfo> releases)
+        {
+            NarratorMetadataClient.Test(releases);
+        }
 
         public bool TryPopulateNarratorMetadata(ReleaseInfo release)
         {
-            if (!CanProvideNarratorMetadata)
-            {
-                return false;
-            }
-
-            _narratorMetadataClient ??= new NewznabNarratorMetadataClient(_httpClient, Settings, Definition?.Id ?? 0, RateLimit, _cacheManager, _logger);
-            return _narratorMetadataClient.TryPopulate(release);
-        }
-
-        private IndexerDefinition GetDefinition(string name, TorznabSettings settings)
-        {
-            return new IndexerDefinition
-            {
-                EnableRss = false,
-                EnableAutomaticSearch = false,
-                EnableInteractiveSearch = false,
-                Name = name,
-                Implementation = GetType().Name,
-                Settings = settings,
-                Protocol = DownloadProtocol.Usenet,
-                SupportsRss = SupportsRss,
-                SupportsSearch = SupportsSearch
-            };
-        }
-
-        private TorznabSettings GetSettings(string url, params int[] categories)
-        {
-            var settings = new TorznabSettings { BaseUrl = url };
-
-            if (categories.Any())
-            {
-                settings.Categories = categories;
-            }
-
-            return settings;
+            return CanProvideNarratorMetadata && NarratorMetadataClient.TryPopulate(release);
         }
 
         protected override async Task Test(List<ValidationFailure> failures)

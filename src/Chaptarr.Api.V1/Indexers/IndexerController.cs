@@ -8,6 +8,8 @@ namespace Chaptarr.Api.V1.Indexers
     [V1ApiController]
     public class IndexerController : ProviderControllerBase<IndexerResource, IndexerBulkResource, IIndexer, IndexerDefinition>
     {
+        protected override bool SkipUnchangedUpdates => true;
+
         public static readonly IndexerResourceMapper ResourceMapper = new();
         public static readonly IndexerBulkResourceMapper BulkResourceMapper = new();
 

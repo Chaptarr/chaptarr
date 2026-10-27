@@ -2,7 +2,6 @@ using System;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
-using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
@@ -63,6 +62,24 @@ namespace Chaptarr.Core.Test.Indexers
             var normalized = NewznabNarratorMetadataClient.NormalizeDuration(raw);
 
             Assert.That(normalized, Is.EqualTo(expected));
+        }
+
+        [TestCase("１２:３０")]
+        [TestCase("١٢ hours")]
+        [TestCase("99999999999 minutes")]
+        [TestCase("99999999 hours")]
+        [TestCase("35791394 hours 2147483647 minutes")]
+        public void should_preserve_unparseable_duration_without_losing_other_nfo_metadata(string duration)
+        {
+            var metadata = NewznabNarratorMetadataClient.ParseNfo(
+                $"Duration: {duration}\nNarration: Steven Pacey\nGraphic Audio");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(metadata.Duration, Is.EqualTo(duration));
+                Assert.That(metadata.Narrator, Is.EqualTo("Steven Pacey"));
+                Assert.That(metadata.IsGraphicAudio, Is.True);
+            });
         }
 
         [Test]
@@ -168,8 +185,7 @@ Narration: Graphic Audio
                     settings,
                     indexerId: 42,
                     rateLimit: TimeSpan.Zero,
-                    cacheManager,
-                    LogManager.GetCurrentClassLogger());
+                    cacheManager);
             }
 
             ReleaseInfo CreateRelease()

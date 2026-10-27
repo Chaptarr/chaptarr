@@ -76,7 +76,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         {
             var searchTerms = new List<string>();
 
-            void AddSearchTerm(string term, string logMessage, bool isFallback = false)
+            void AddSearchTerm(string term, string logMessage)
             {
                 var normalized = term?.Trim() ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(normalized))
@@ -96,14 +96,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 // log shows the fallbacks without the term they were falling back from.
                 var tier = searchTerms.Count + 1;
 
-                if (isFallback)
-                {
-                    Logger.Debug(logMessage + " [tier {1}]", normalized, tier);
-                }
-                else
-                {
-                    Logger.Debug(logMessage + " [tier {2}]", normalized, bookQuery ?? "Empty", tier);
-                }
+                Logger.Debug(logMessage + " [tier {1}]", normalized, tier);
 
                 searchTerms.Add(normalized);
             }
@@ -145,12 +138,18 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 decodedQuery += decodedAuthor.Trim();
             }
 
-            AddSearchTerm(decodedQuery, "MAM_SEARCH_TERM: '{0}' (decoded from: '{1}')");
+            var narratorQuery = NormalizeApostrophes(System.Web.HttpUtility.UrlDecode(searchCriteria.NarratorQuery));
+            if (!string.IsNullOrWhiteSpace(narratorQuery))
+            {
+                AddSearchTerm($"{decodedQuery} {narratorQuery}", "MAM_SEARCH_TERM: '{0}' (pinned narrator)");
+            }
+
+            AddSearchTerm(decodedQuery, "MAM_SEARCH_TERM: '{0}' (title and author)");
 
             if (!string.IsNullOrWhiteSpace(decodedTitle) &&
                 !string.Equals(decodedTitle.Trim(), decodedQuery, StringComparison.OrdinalIgnoreCase))
             {
-                AddSearchTerm(decodedTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (title-only fallback)", isFallback: true);
+                AddSearchTerm(decodedTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (title-only fallback)");
             }
 
             // Interactive search: add a fallback query for verbose titles like "... , Book 3" that can hurt recall.
@@ -160,7 +159,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 if (!string.IsNullOrWhiteSpace(fallbackTitle) &&
                     !string.Equals(fallbackTitle, decodedTitle.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
-                    AddSearchTerm(fallbackTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (book-number fallback)", isFallback: true);
+                    AddSearchTerm(fallbackTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (book-number fallback)");
                 }
             }
 
