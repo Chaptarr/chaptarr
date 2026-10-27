@@ -601,7 +601,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [TestCase(".mkv", false, false)]
-        [TestCase(".mkv", true, false)]
+        [TestCase(".mkv", true, true)]
         [TestCase(".epub", false, false)]
         [TestCase(".epub", true, false)]
         [TestCase(".exe", false, true)]

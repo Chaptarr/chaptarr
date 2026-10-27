@@ -373,7 +373,7 @@ namespace NzbDrone.Core.MediaFiles
             if (!MediaFileExtensions.AllExtensions.Contains(fileInfo.Extension) ||
                 (targetMedia.HasValue && QualityMediaTypeHelper.GetMediaTypeFromPath(fileInfo.FullName) != targetMedia))
             {
-                return new List<ImportResult> { NoSupportedMediaFilesResult(fileInfo.FullName, new[] { fileInfo }, targetMedia) };
+                return new List<ImportResult> { NoSupportedMediaFilesResult(fileInfo.FullName, new[] { fileInfo }, targetMedia, singleFile: true) };
             }
 
             if (DiskScanService.IsExcludedFile(fileInfo.FullName))
@@ -1340,7 +1340,7 @@ namespace NzbDrone.Core.MediaFiles
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
-        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles, BookMediaType? targetMedia = null)
+        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles, BookMediaType? targetMedia = null, bool singleFile = false)
         {
             var unsupported = visibleFiles?.Where(file => file != null &&
                 !DiskScanService.IsExcludedFile(file.FullName) &&
@@ -1360,7 +1360,7 @@ namespace NzbDrone.Core.MediaFiles
             var mediaLabel = targetMedia == BookMediaType.Audiobook ? "audiobook" : targetMedia == BookMediaType.Ebook ? "ebook" : "audio or ebook";
             var reason = $"No supported {mediaLabel} files were found in {path}.{observedFilesMessage} Check that the download contains supported {mediaLabel} files and that Chaptarr can read the completed download folder.";
             var localBook = new LocalBook { Path = path };
-            var rejection = new Rejection(reason, RejectionType.Temporary);
+            var rejection = new Rejection(reason, singleFile && unsupported.Count > 0 ? RejectionType.Permanent : RejectionType.Temporary);
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
