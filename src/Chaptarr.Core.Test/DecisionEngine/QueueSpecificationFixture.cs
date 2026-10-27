@@ -22,6 +22,20 @@ namespace Chaptarr.Core.Test.DecisionEngine
     public class QueueSpecificationFixture
     {
         [Test]
+        public void batch_queue_check_reads_once_and_does_not_request_conversion_status_overlays()
+        {
+            var queue = new StubQueueService(new List<QueueItem>());
+            var specification = new QueueSpecification(queue, null, null, null, LogManager.GetCurrentClassLogger());
+            var check = specification.PrepareCheck();
+            var author = BuildAuthor();
+            var book = BuildBook(author, 100, BookMediaType.Audiobook);
+            var subject = BuildRemoteBook(author, book, Quality.MP3);
+            for (var i = 0; i < 1000; i++) Assert.That(check(subject).Accepted, Is.True);
+            Assert.That(queue.Reads, Is.EqualTo(1));
+            Assert.That(queue.IncludedConversionStatus, Is.False);
+        }
+
+        [Test]
         public void should_reject_when_same_book_already_has_queued_release_that_meets_cutoff()
         {
             var author = BuildAuthor();
@@ -270,6 +284,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
         private sealed class StubQueueService : IQueueService
         {
+            public int Reads { get; private set; }
+            public bool IncludedConversionStatus { get; private set; }
             private readonly List<QueueItem> _queue;
 
             public StubQueueService(List<QueueItem> queue)
@@ -277,8 +293,10 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 _queue = queue;
             }
 
-            public List<QueueItem> GetQueue()
+            public List<QueueItem> GetQueue(bool includeConversionStatus = true)
             {
+                Reads++;
+                IncludedConversionStatus = includeConversionStatus;
                 return _queue;
             }
 

@@ -5,12 +5,12 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Profiles;
-using NzbDrone.Core.Profiles.Qualities;
 
 namespace NzbDrone.Core.DecisionEngine
 {
@@ -23,17 +23,12 @@ namespace NzbDrone.Core.DecisionEngine
     {
         private readonly Logger _logger;
         private readonly IIndexerFactory _indexerFactory;
-        private readonly IQualityProfileService _qualityProfileService;
         private readonly ICustomFormatService _customFormatService;
 
-        public ReleaseNarratorMetadataEnricher(Logger logger,
-                                               IIndexerFactory indexerFactory,
-                                               IQualityProfileService qualityProfileService,
-                                               ICustomFormatService customFormatService)
+        public ReleaseNarratorMetadataEnricher(Logger logger, IIndexerFactory indexerFactory, ICustomFormatService customFormatService)
         {
             _logger = logger;
             _indexerFactory = indexerFactory;
-            _qualityProfileService = qualityProfileService;
             _customFormatService = customFormatService;
         }
 
@@ -48,33 +43,54 @@ namespace NzbDrone.Core.DecisionEngine
                 return Array.Empty<ReleaseInfo>();
             }
 
-            var hasPinnedTarget = searchCriteria?.Books?.Any(PreferredNarratorMatcher.HasPreferredNarratorTarget) == true;
-            if (!hasPinnedTarget && !HasActiveNarratorCondition(searchCriteria))
+            var books = searchCriteria?.Books?.Where(book => book?.MediaType == BookMediaType.Audiobook).ToList();
+            if (books == null || books.Count == 0)
             {
                 return Array.Empty<ReleaseInfo>();
             }
 
-            var providerCache = new Dictionary<int, INarratorMetadataProvider>();
+            var targets = books.Select(book => PreferredNarratorMatcher.BuildTarget(book)).Where(target => target != null).ToList();
+            var scoredIds = searchCriteria.Author?.GetQualityProfileForMediaType(BookMediaType.Audiobook)?.FormatItems?
+                .Where(item => item.Score != 0 && item.Format != null).Select(item => item.Format.Id).ToHashSet();
+            var conditions = scoredIds?.Count > 0
+                ? _customFormatService.All().Where(format => scoredIds.Contains(format.Id) && format.AppliesToMediaType(BookMediaType.Audiobook))
+                    .SelectMany(format => format.Specifications).Where(condition =>
+                        condition is NarratorSpecification or NarratorNamesSpecification or AudioProductionSpecification).ToList()
+                : new List<ICustomFormatSpecification>();
+            if (targets.Count == 0 && conditions.Count == 0)
+            {
+                return Array.Empty<ReleaseInfo>();
+            }
+
             var populated = new List<ReleaseInfo>();
             var lookups = 0;
             var stopwatch = Stopwatch.StartNew();
 
             foreach (var group in releases.Where(r => r != null).GroupBy(r => r.IndexerId))
             {
-                var provider = GetNarratorMetadataProvider(group.Key, providerCache);
+                var provider = GetNarratorMetadataProvider(group.Key);
                 if (provider == null || !provider.CanProvideNarratorMetadata)
                 {
                     continue;
                 }
 
-                foreach (var release in group.Where(IsLikelyAudiobook).Where(release => NeedsNarratorMetadata(release, searchCriteria)))
+                foreach (var release in group)
                 {
-                    lookups++;
-                    provider.TryPopulateNarratorMetadata(release);
-
-                    if (release.Narrator.IsNotNullOrWhiteSpace())
+                    try
                     {
-                        populated.Add(release);
+                        if (IsLikelyAudiobook(release) && NeedsMetadata(release, searchCriteria.Author, books, targets, conditions))
+                        {
+                            lookups++;
+                            if (provider.TryPopulateNarratorMetadata(release))
+                            {
+                                populated.Add(release);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Optional narrator metadata failed for release '{0}' from indexer '{1}' ({2}); keeping existing search evidence",
+                            release.Title, release.Indexer, release.IndexerId);
                     }
                 }
             }
@@ -83,26 +99,21 @@ namespace NzbDrone.Core.DecisionEngine
 
             if (lookups > 0)
             {
-                // Each lookup is one indexer API call. The caller's release set is the bound,
-                // so the volume is always reported rather than silently truncated.
+                // The caller's release set bounds lookup attempts. Cached results may avoid HTTP;
+                // endpoint fallback may need more than one request per lookup.
                 _logger.Log(lookups >= LoudLookupCount ? LogLevel.Warn : LogLevel.Debug,
-                    "Narrator metadata: {0} indexer lookup(s) across {1} candidate release(s) populated {2} narrator(s) in {3}ms",
+                    "Narrator metadata: {0} indexer lookup(s) across {1} candidate release(s) updated {2} release(s) in {3}ms",
                     lookups, releases.Count, populated.Count, stopwatch.ElapsedMilliseconds);
             }
 
             return populated;
         }
 
-        private INarratorMetadataProvider GetNarratorMetadataProvider(int indexerId, Dictionary<int, INarratorMetadataProvider> cache)
+        private INarratorMetadataProvider GetNarratorMetadataProvider(int indexerId)
         {
             if (indexerId <= 0)
             {
                 return null;
-            }
-
-            if (cache.TryGetValue(indexerId, out var cached))
-            {
-                return cached;
             }
 
             INarratorMetadataProvider provider = null;
@@ -120,30 +131,48 @@ namespace NzbDrone.Core.DecisionEngine
                 _logger.Trace(ex, "Narrator metadata enrichment: failed to resolve indexer provider for id {0}", indexerId);
             }
 
-            cache[indexerId] = provider;
             return provider;
         }
 
-        private static bool NeedsNarratorMetadata(ReleaseInfo release, SearchCriteriaBase searchCriteria)
+        private static bool NeedsMetadata(ReleaseInfo release, Author author, List<Book> books,
+            IReadOnlyCollection<PreferredNarratorMatcher.PreferredNarratorTarget> targets,
+            IReadOnlyCollection<ICustomFormatSpecification> conditions)
         {
-            if (release == null)
+            if (release.HasNfo == false)
             {
                 return false;
             }
 
-            if (release.HasNfo.HasValue && release.HasNfo.Value == false)
+            if (conditions.Count > 0)
             {
-                return false;
+                var input = CustomFormatCalculationService.CreateReleaseInput(new RemoteBook { Release = release, Author = author, Books = books });
+                if (conditions.Any(condition => condition is AudioProductionSpecification) &&
+                    !AudioProductionDetector.IsDramatizedOrFullCast(input.IsGraphicAudio, input.AudioProductionType, input.AudioProductionFields))
+                {
+                    return true;
+                }
+
+                // A negated condition can match because evidence is absent. Only positive
+                // evidence settles that condition without an additional lookup.
+                if (input.Narrator.IsNullOrWhiteSpace() && conditions.Any(condition =>
+                    (condition is NarratorSpecification or NarratorNamesSpecification) && condition.IsSatisfiedBy(input) == condition.Negate))
+                {
+                    return true;
+                }
             }
 
+            return targets.Count > 0 && NeedsNarratorMetadata(release, targets);
+        }
+
+        private static bool NeedsNarratorMetadata(ReleaseInfo release, IReadOnlyCollection<PreferredNarratorMatcher.PreferredNarratorTarget> targets)
+        {
             if (!string.IsNullOrWhiteSpace(release.Narrator))
             {
                 return false;
             }
 
-            return !(searchCriteria?.Books ?? Enumerable.Empty<NzbDrone.Core.Books.Book>())
-                .Select(book => PreferredNarratorMatcher.BuildTarget(book))
-                .Where(target => target?.Names?.Count > 0 && (!target.HasUnresolvedNames || target.Names.Count == 1))
+            return !targets
+                .Where(target => !target.HasUnresolvedNames || target.Names.Count == 1)
                 .Any(target => target.Names.All(name =>
                     ReleaseNarratorEvidenceExtractor.ContainsKnownNarratorName(new[] { name }, release.Title) ||
                     release.NarratorEvidenceFields?.Any(field =>
@@ -161,38 +190,6 @@ namespace NzbDrone.Core.DecisionEngine
             }
 
             return true;
-        }
-
-        private bool HasActiveNarratorCondition(SearchCriteriaBase searchCriteria)
-        {
-            var profileId = searchCriteria?.Author?.AudiobookQualityProfileId;
-            if (!profileId.HasValue || profileId.Value <= 0 || _qualityProfileService == null || _customFormatService == null)
-            {
-                return false;
-            }
-
-            try
-            {
-                var profile = _qualityProfileService.Get(profileId.Value);
-                var activeFormatIds = (profile?.FormatItems ?? new List<ProfileFormatItem>())
-                    .Where(item => item.Score != 0 && item.Format?.Id > 0)
-                    .Select(item => item.Format.Id)
-                    .ToHashSet();
-
-                if (activeFormatIds.Count == 0)
-                {
-                    return false;
-                }
-
-                return _customFormatService.All()
-                    .Where(format => activeFormatIds.Contains(format.Id))
-                    .Any(format => format.Specifications?.Any(specification => specification is NarratorSpecification or NarratorNamesSpecification) == true);
-            }
-            catch (System.Exception ex)
-            {
-                _logger.Trace(ex, "Narrator metadata enrichment: failed to resolve audiobook profile {0}", profileId.Value);
-                return false;
-            }
         }
     }
 }

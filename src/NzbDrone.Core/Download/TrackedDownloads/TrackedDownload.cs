@@ -17,7 +17,6 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         public string Indexer { get; set; }
         public DateTime? Added { get; set; }
         public bool IsTrackable { get; set; }
-        public int MissingAuthoritativeMediaFileAttempts { get; set; }
 
         public TrackedDownload()
         {

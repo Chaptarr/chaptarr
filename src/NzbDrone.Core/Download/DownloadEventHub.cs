@@ -106,7 +106,8 @@ namespace NzbDrone.Core.Download
 
         private bool ShouldPreserveDownloadClientItem(TrackedDownload trackedDownload, IDownloadClient downloadClient = null, DownloadClientItem importItem = null)
         {
-            if (_downloadImportModeResolver.ShouldPreserveDownloadClientItem(trackedDownload.DownloadItem))
+            if (_downloadImportModeResolver.ShouldPreserveDownloadClientItem(trackedDownload.DownloadItem,
+                trackedDownload.RemoteBook?.Release?.IndexerId ?? 0))
             {
                 _logger.Info("[{0}] Preserving download-client item and data due to download preservation policy",
                     trackedDownload.DownloadItem.Title);

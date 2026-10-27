@@ -25,11 +25,13 @@ namespace Chaptarr.Core.Test.Api
         public void initial_scan_should_keep_explicit_requests_but_later_edits_should_not(
             [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
             [Values(MonitorTypes.None, MonitorTypes.All, MonitorTypes.Missing, MonitorTypes.Existing)] MonitorTypes initial,
-            [Values(false, true)] bool initialScan)
+            [Values(false, true)] bool initialScan,
+            [Values(false, true)] bool requestedMonitored,
+            [Values(false, true)] bool changedBeforeScan)
         {
-            var author = new Author { Id = 42, AddOptions = initialScan ? new AddAuthorOptions() : null };
-            var requested = new Book { Id = 1, MediaType = mediaType, AddOptions = new AddBookOptions { AddType = BookAddType.Manual } };
-            requested.SetMonitored(true);
+            var author = new Author { Id = 42, AddOptions = new AddAuthorOptions() };
+            var requested = new Book { Id = 1, MediaType = mediaType, AddOptions = new AddBookOptions { AddType = BookAddType.Manual, MonitorBook = changedBeforeScan ? !requestedMonitored : requestedMonitored } };
+            requested.SetMonitored(requestedMonitored);
             var withFiles = new Book { Id = 2, MediaType = mediaType };
             var withoutFiles = new Book { Id = 3, MediaType = mediaType };
             var opposite = new Book { Id = 4, MediaType = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook };
@@ -66,11 +68,11 @@ namespace Chaptarr.Core.Test.Api
                 ? args[0] : throw new NotImplementedException(method.Name);
             var service = new BookMonitoredService(authorService, bookService, LogManager.GetCurrentClassLogger());
 
-            service.SetBookMonitoredStatus(author, new MonitoringOptions { Monitor = initial, MediaType = mediaType });
+            service.SetBookMonitoredStatus(author, new MonitoringOptions { Monitor = initial, MediaType = mediaType }, initialSetup: initialScan);
 
             Assert.Multiple(() =>
             {
-                Assert.That(requested.IsMonitored(), Is.EqualTo(initialScan || initial is MonitorTypes.All or MonitorTypes.Missing));
+                Assert.That(requested.IsMonitored(), Is.EqualTo(initialScan ? requestedMonitored : initial is MonitorTypes.All or MonitorTypes.Missing));
                 Assert.That(withFiles.IsMonitored(), Is.EqualTo(initial is MonitorTypes.All or MonitorTypes.Existing));
                 Assert.That(withoutFiles.IsMonitored(), Is.EqualTo(initial is MonitorTypes.All or MonitorTypes.Missing));
                 Assert.That(opposite.IsMonitored(), Is.False);
@@ -82,11 +84,24 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
+        public void add_book_mapping_keeps_explicit_selection_separate_from_author_monitor_none(
+            [Values("audiobook", "ebook")] string mediaType,
+            [Values("", ",\"monitored\":false", ",\"monitored\":true")] string selection)
+        {
+            var resource = System.Text.Json.JsonSerializer.Deserialize<BookResource>(
+                "{\"title\":\"Dune\",\"mediaType\":\"" + mediaType + "\",\"author\":{\"addOptions\":{\"monitor\":\"none\"}}" + selection + "}",
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true,
+                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } });
+            var book = resource.ToModel();
+            Assert.That(book.IsMonitored(), Is.EqualTo(selection == "" || selection.EndsWith("true")));
+            Assert.That(book.Author.AddOptions.Monitor, Is.EqualTo(MonitorTypes.None));
+            Assert.That(book.AddOptions.MonitorBook, Is.EqualTo(selection == "" ? (bool?)null : selection.EndsWith("true")));
+        }
+
+        [Test]
         public void facade_should_resolve_first_setup_per_format_and_preserve_configured_settings(
             [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
-            [Values(0, 1, 2)] int existingSide,
-            [Values(MonitorTypes.All, MonitorTypes.None)] MonitorTypes rootInitial,
-            [Values(false, true)] bool rootGate)
+            [Values(0, 1, 2)] int existingSide)
         {
             var audiobook = mediaType == BookMediaType.Audiobook;
             var existing = existingSide == 0 ? null : new Author();
@@ -115,22 +130,17 @@ namespace Chaptarr.Core.Test.Api
                 MonitorNewItems = "none",
                 AddOptions = new AddAuthorOptions { BooksToMonitor = new List<string> { "hc:1001" } }
             };
-            BookController.ApplyFacadeBookRequestDefaults(requested, existing, new MediaTypeSettings
-            {
-                Monitored = rootGate,
-                MonitorExistingMode = rootInitial,
-                MonitorNewItems = NewItemMonitorTypes.All
-            }, mediaType);
+            BookController.ApplyFacadeBookRequestDefaults(requested, existing, mediaType);
 
             var model = requested.ToModel(new ReadarrFacadeContext("hc", audiobook ? "audiobook" : "ebook", "/readarr"));
             Assert.Multiple(() =>
             {
                 Assert.That(audiobook ? model.AudiobookMonitored : model.EbookMonitored,
-                    Is.EqualTo(existingSide == 2 ? false : rootGate));
+                    Is.EqualTo(existingSide != 2));
                 Assert.That(audiobook ? model.AudiobookMonitorNewItems : model.EbookMonitorNewItems,
-                    Is.EqualTo(existingSide == 2 ? NewItemMonitorTypes.New : NewItemMonitorTypes.All));
+                    Is.EqualTo(existingSide == 2 ? NewItemMonitorTypes.New : NewItemMonitorTypes.None));
                 Assert.That(audiobook ? model.AddOptions.AudiobookMonitor : model.AddOptions.EbookMonitor,
-                    Is.EqualTo(existingSide == 2 ? MonitorTypes.None : rootInitial));
+                    Is.EqualTo(MonitorTypes.None));
                 Assert.That(audiobook ? model.EbookMonitored : model.AudiobookMonitored, Is.Null);
                 Assert.That(audiobook ? model.EbookMonitorNewItems : model.AudiobookMonitorNewItems, Is.Null);
                 Assert.That(model.AddOptions.BooksToMonitor, Is.EqualTo(new[] { "hc:1001" }));

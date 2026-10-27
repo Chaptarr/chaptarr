@@ -191,14 +191,35 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("The Mix", "The 1009")]
         [TestCase("Vi", "6")]
         [TestCase("Ready Player II", "Ready Player 2")]
-        public void roman_word_title_must_not_gain_numeric_import_proof(string title, string observed)
+        [TestCase("Wild Cards VII: Dead Man's Hand", "Wild Cards 7: Dead Man's Hand")]
+        [TestCase("Wild Cards 7: Dead Man's Hand", "Wild Cards VII: Dead Man's Hand")]
+        public void roman_title_fallback_preserves_literal_titles_and_original_evidence(string title, string observed)
+        {
+            var svc = CreateService(
+                new[] { Candidate(1, 1, title, durationSeconds: 3600) },
+                new[] { Book(1, title) });
+
+            var file = File(observed, durationSeconds: 3600);
+            var match = svc.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 41);
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(1));
+            Assert.That(file.AllTags["ALBUM"], Is.EqualTo(new[] { observed }));
+            Assert.That(match.IdentityProof.Values, Has.Some.Matches<MatchIdentityProofValue>(value =>
+                value.Role == MatchIdentityRole.Title && value.Observed == observed && value.Expected == title));
+            Assert.That(svc.HolyGrailMatchFile(File(title, durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41), Is.Not.Null);
+        }
+
+        [TestCase("Wild Cards VII", "Wild Cards 6")]
+        [TestCase("Wild Cards VI", "Wild Cards 7")]
+        [TestCase("Wild Cards VII: Dead Man's Hand", "Wild Cards 7")]
+        [TestCase("Vi", "Violet")]
+        public void numeric_fallback_requires_the_same_number_and_complete_title(string title, string observed)
         {
             var svc = CreateService(
                 new[] { Candidate(1, 1, title, durationSeconds: 3600) },
                 new[] { Book(1, title) });
 
             Assert.That(svc.HolyGrailMatchFile(File(observed, durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41), Is.Null);
-            Assert.That(svc.HolyGrailMatchFile(File(title, durationSeconds: 3600), BookMediaType.Audiobook, restrictToAuthorId: 41), Is.Not.Null);
         }
 
         [TestCase("Collected Stories Volume II", "Collected Stories Volume 2")]

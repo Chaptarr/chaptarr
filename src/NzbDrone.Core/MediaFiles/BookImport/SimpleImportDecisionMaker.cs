@@ -189,7 +189,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            ApplyManualPreviewMatches(manualPreviewCandidates, idOverrides, bookCache, editionCache, cancellationToken);
+            ApplyManualPreviewMatches(manualPreviewCandidates, idOverrides, itemInfo, bookCache, editionCache, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             foreach (var decision in decisions)
@@ -209,6 +209,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private void ApplyManualPreviewMatches(
             List<ManualPreviewCandidate> candidates,
             IdentificationOverrides idOverrides,
+            ImportDecisionMakerInfo itemInfo,
             Dictionary<int, Book> bookCache,
             Dictionary<int, Edition> editionCache,
             CancellationToken cancellationToken)
@@ -221,7 +222,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             try
             {
                 var restrictToAuthorId = idOverrides?.Author?.Id > 0 ? idOverrides.Author.Id : (int?)null;
-                var context = MatchingContextPresets.ForManualPreview();
+                var context = MatchingContextPresets.ForManualPreview(targetBookIds: itemInfo?.TargetBookIds);
                 context.CancellationToken = cancellationToken;
                 var result = _fileMatchingService
                     .MatchFilesToLibraryAsync(candidates.Select(c => c.Discovered).ToArray(), restrictToAuthorId, context)

@@ -142,7 +142,7 @@ namespace NzbDrone.Core.DecisionEngine
                     subject.PreparedPendingReleaseDates = oldestPublishDates;
                 }
 
-                _specifications.OfType<HistorySpecification>().FirstOrDefault()?.PrepareAlternativeCopySuppression(historySubjects);
+                _specifications.OfType<HistorySpecification>().FirstOrDefault()?.PrepareAlternativeCopySuppression(historySubjects, checkGrabHistory: searchCriteria == null);
             }
             catch (Exception ex)
             {
@@ -388,40 +388,7 @@ namespace NzbDrone.Core.DecisionEngine
                 }
                 catch (Exception e)
                 {
-                    _logger.Error(e, "Couldn't process release.");
-
-                    // A processing failure is not a rejection of a stored RSS candidate.
-                    if (searchCriteria == null)
-                    {
-                        reportNumber++;
-                        continue;
-                    }
-
-                    // Ensure ParsedBookInfo is always present so API mapping can't null-ref on error decisions.
-                    var parsedBookInfo = new ParsedBookInfo
-                    {
-                        AuthorName = report.Author,
-                        BookTitle = report.Title,
-                        ReleaseTitle = report.Title,
-                        Quality = new QualityModel { Quality = Quality.Unknown }
-                    };
-
-                    try
-                    {
-                        var torrentInfo = report as TorrentInfo;
-                        parsedBookInfo.Quality = torrentInfo?.FileType.IsNotNullOrWhiteSpace() == true && IsMAMIndexer(report.Indexer)
-                            ? QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer)
-                            : QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Debug(ex, "Failed to derive quality for errored release '{0}'", report.Title);
-                    }
-
-                    var remoteBook = new RemoteBook { Release = report, ParsedBookInfo = parsedBookInfo, ReleaseSource = releaseSource };
-
-                    // Hard filter: Processing errors are never bypassable
-                    decision = new DownloadDecision(remoteBook, new Rejection("Unexpected error processing release", RejectionType.Permanent, false, "Error", 3));
+                    decision = ProcessingFailure(report, searchCriteria, e);
                 }
 
                 reportNumber++;
@@ -436,6 +403,38 @@ namespace NzbDrone.Core.DecisionEngine
             _logger.Debug("Processed {0} releases in {1} ms", reports.Count, stopwatch.ElapsedMilliseconds);
 
             return decisions;
+        }
+
+        private DownloadDecision ProcessingFailure(ReleaseInfo report, SearchCriteriaBase searchCriteria, Exception exception)
+        {
+            _logger.Error(exception, "Couldn't process release '{0}' from '{1}'", report.Title, report.Indexer);
+
+            // A processing failure is not a rejection of a stored RSS candidate.
+            if (searchCriteria == null)
+            {
+                return null;
+            }
+
+            // Keep API display data available even when parsing or scoring failed.
+            var parsedBookInfo = new ParsedBookInfo
+            {
+                AuthorName = report.Author,
+                BookTitle = report.Title,
+                ReleaseTitle = report.Title,
+                Quality = new QualityModel { Quality = Quality.Unknown }
+            };
+
+            try
+            {
+                parsedBookInfo.Quality = ParseQualityForSearchDecision(report);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Failed to derive quality for errored release '{0}'", report.Title);
+            }
+
+            return new DownloadDecision(new RemoteBook { Release = report, ParsedBookInfo = parsedBookInfo },
+                new Rejection("Unexpected error processing release", RejectionType.Permanent, false, "Error", 3));
         }
 
         private DownloadDecision ScoreAndDecide(RemoteBook remoteBook, SearchCriteriaBase searchCriteria, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
@@ -642,7 +641,7 @@ namespace NzbDrone.Core.DecisionEngine
                     {
                         Author = author,
                         Matches = best.Where(match => match.Book != null && ReleaseTitleMatchSpecification.IsAcceptedMatch(
-                            match, ReleaseIdentityEvidence.Analyze(report, author, match.Book, match),
+                            match, ReleaseIdentityEvidence.Analyze(report, author, match),
                             _configService?.BookMatchingStrictness ?? BookMatchingStrictness.Balanced)).ToList()
                     };
                 })
@@ -985,20 +984,26 @@ namespace NzbDrone.Core.DecisionEngine
                 return;
             }
 
-            var visible = decisions.Where(d => !InteractiveSearchVisibility.IsHidden(d)).ToList();
+            var candidates = decisions.Where(d => !HasProcessingError(d)).ToList();
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            var visible = candidates.Where(d => !InteractiveSearchVisibility.IsHidden(d)).ToList();
             if (visible.Count == 0 && searchCriteria?.InteractiveSearch != true)
             {
                 return;
             }
 
-            var targets = visible.Count > 0 ? visible : decisions;
+            var targets = visible.Count > 0 ? visible : candidates;
 
             var releases = targets
                 .Select(d => d.RemoteBook?.Release)
                 .Where(r => r != null)
                 .ToList();
 
-            _logger.Trace("Narrator metadata: offering {0} of {1} release(s) for lookup ({2}); {3} hidden release(s) skipped",
+            _logger.Trace("Narrator metadata: offering {0} of {1} release(s) for lookup ({2}); {3} hidden or errored release(s) skipped",
                 releases.Count,
                 decisions.Count,
                 visible.Count > 0 ? "visible" : "hidden fallback",
@@ -1010,7 +1015,7 @@ namespace NzbDrone.Core.DecisionEngine
                 return;
             }
 
-            _logger.Debug("Narrator metadata populated {0} of {1} offered release(s); {2} hidden release(s) cost no lookup",
+            _logger.Debug("Narrator metadata populated {0} of {1} offered release(s); {2} hidden or errored release(s) cost no lookup",
                 enriched.Count, releases.Count, decisions.Count - targets.Count);
 
             var enrichedReleases = new HashSet<ReleaseInfo>(enriched);
@@ -1018,19 +1023,34 @@ namespace NzbDrone.Core.DecisionEngine
             for (var i = 0; i < decisions.Count; i++)
             {
                 var remoteBook = decisions[i].RemoteBook;
-                if (remoteBook?.Release == null || !enrichedReleases.Contains(remoteBook.Release))
+                if (HasProcessingError(decisions[i]) || remoteBook?.Release == null || !enrichedReleases.Contains(remoteBook.Release))
                 {
                     continue;
                 }
 
-                // A narrator changes the custom formats, so the score and every specification
-                // that reads it are re-evaluated. Parsing and book mapping are not redone.
-                var rescored = ScoreAndDecide(remoteBook, searchCriteria, catalogPreparation);
+                // Changed metadata affects custom formats and specifications. Re-evaluate
+                // them without repeating parsing or book mapping.
+                DownloadDecision rescored;
+                try
+                {
+                    rescored = ScoreAndDecide(remoteBook, searchCriteria, catalogPreparation);
+                }
+                catch (Exception ex)
+                {
+                    rescored = ProcessingFailure(remoteBook.Release, searchCriteria, ex);
+                }
+
                 if (rescored != null)
                 {
                     decisions[i] = FinalizeDecision(rescored, remoteBook.ReleaseSource);
                 }
+                else
+                {
+                    decisions.RemoveAt(i--);
+                }
             }
         }
+
+        private static bool HasProcessingError(DownloadDecision decision) => decision.Rejections.Any(rejection => rejection.Category == "Error");
     }
 }

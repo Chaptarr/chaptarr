@@ -15,6 +15,7 @@ using NzbDrone.Core.Download.Clients.rTorrent;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Localization;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
@@ -28,6 +29,7 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
         private readonly IRTorrentProxy _proxy;
         private readonly IRTorrentDirectoryValidator _rTorrentDirectoryValidator;
         private readonly IDownloadSeedConfigProvider _downloadSeedConfigProvider;
+        private readonly ILocalizationService _localizationService;
         private readonly string _imported_view = string.Concat(BuildInfo.AppName.ToLower(), "_imported");
 
         public RTorrent(IRTorrentProxy proxy,
@@ -39,12 +41,14 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
                         IDownloadSeedConfigProvider downloadSeedConfigProvider,
                         IRTorrentDirectoryValidator rTorrentDirectoryValidator,
                         IBlocklistService blocklistService,
+                        ILocalizationService localizationService,
                         Logger logger)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, blocklistService, logger)
         {
             _proxy = proxy;
             _rTorrentDirectoryValidator = rTorrentDirectoryValidator;
             _downloadSeedConfigProvider = downloadSeedConfigProvider;
+            _localizationService = localizationService;
         }
 
         private string GetPostImportCategory(DownloadClientItem downloadClientItem)
@@ -106,7 +110,7 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
             var priority = (RTorrentPriority)(remoteBook.IsRecentBook() ? Settings.RecentTvPriority : Settings.OlderTvPriority);
 
             var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
-            _proxy.AddTorrentFromUrl(magnetLink, category, priority, Settings.MusicDirectory, Settings);
+            _proxy.AddTorrentFromUrl(magnetLink, category, priority, Settings.MusicDirectory, remoteBook.SeedConfiguration?.KeepSeeding == true, Settings);
 
             var tries = 10;
             var retryDelay = 500;
@@ -127,7 +131,7 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
             var priority = (RTorrentPriority)(remoteBook.IsRecentBook() ? Settings.RecentTvPriority : Settings.OlderTvPriority);
 
             var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
-            _proxy.AddTorrentFromFile(filename, fileContent, category, priority, Settings.MusicDirectory, Settings);
+            _proxy.AddTorrentFromFile(filename, fileContent, category, priority, Settings.MusicDirectory, remoteBook.SeedConfiguration?.KeepSeeding == true, Settings);
 
             var tries = 10;
             var retryDelay = 500;
@@ -143,7 +147,7 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
 
         public override string Name => "rTorrent";
 
-        public override ProviderMessage Message => new ProviderMessage($"Chaptarr does not configure rTorrent's seeding limits; rTorrent settings and scripts control seeding. Seed goals only make imported torrents eligible for Chaptarr's automatic removal, which happens when Remove Completed is enabled and the torrent is not protected by Preserve torrents or Post-Import Category. After importing it will also set \"{_imported_view}\" as an rTorrent view, which can be used in rTorrent scripts to customize behavior.", ProviderMessageType.Info);
+        public override ProviderMessage Message => new ProviderMessage(_localizationService.GetLocalizedString("DownloadClientRTorrentProviderMessage", new Dictionary<string, object> { { "importedView", _imported_view } }), ProviderMessageType.Info);
 
         public override IEnumerable<DownloadClientItem> GetItems()
         {

@@ -58,8 +58,6 @@ namespace Chaptarr.Api.V1.Books
 	        protected readonly IAddBookService _addBookService;
 	        private readonly IEditionSelector _editionSelector;
 	        protected readonly IManageCommandQueue _commandQueueManager;
-	        protected readonly IMetadataProfileService _metadataProfileService;
-	        protected readonly IQualityProfileService _qualityProfileService;
 	        protected readonly IRootFolderService _rootFolderService;
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IEventAggregator _eventAggregator;
@@ -84,8 +82,6 @@ namespace Chaptarr.Api.V1.Books
 	                          IBroadcastSignalRMessage signalRBroadcaster,
 	                          IManageCommandQueue commandQueueManager,
 	                          IEventAggregator eventAggregator,
-	                          IMetadataProfileService metadataProfileService,
-	                          IQualityProfileService qualityProfileService,
 	                          IRootFolderService rootFolderService,
                           QualityProfileExistsValidator qualityProfileExistsValidator,
                           MetadataProfileExistsValidator metadataProfileExistsValidator,
@@ -99,8 +95,6 @@ namespace Chaptarr.Api.V1.Books
 	            _editionSelector = editionSelector;
 	            _addBookService = addBookService;
 	            _commandQueueManager = commandQueueManager;
-	            _metadataProfileService = metadataProfileService;
-            _qualityProfileService = qualityProfileService;
             _rootFolderService = rootFolderService;
             _mediaFileService = mediaFileService;
             _eventAggregator = eventAggregator;
@@ -161,16 +155,16 @@ namespace Chaptarr.Api.V1.Books
 		                         .WithMessage("At least one quality profile must be selected");
 	            PostValidator.RuleFor(s => s.Author.MetadataProfileId).SetValidator(metadataProfileExistsValidator);
 	            PostValidator.RuleFor(s => s.Author.AudiobookQualityProfileId)
-	                         .SetValidator(qualityProfileExistsValidator)
+	                         .SetValidator(qualityProfileExistsValidator.ForType(ProfileType.Audiobook))
 	                         .When(s => s.Author?.AudiobookQualityProfileId.HasValue == true && s.Author.AudiobookQualityProfileId.Value > 0);
 	            PostValidator.RuleFor(s => s.Author.EbookQualityProfileId)
-	                         .SetValidator(qualityProfileExistsValidator)
+	                         .SetValidator(qualityProfileExistsValidator.ForType(ProfileType.Ebook))
 	                         .When(s => s.Author?.EbookQualityProfileId.HasValue == true && s.Author.EbookQualityProfileId.Value > 0);
 	            PostValidator.RuleFor(s => s.Author.AudiobookMetadataProfileId)
-	                         .SetValidator(metadataProfileExistsValidator)
+	                         .SetValidator(metadataProfileExistsValidator.ForType(MetadataProfileType.Audiobook))
 	                         .When(s => s.Author?.AudiobookMetadataProfileId.HasValue == true && s.Author.AudiobookMetadataProfileId.Value > 0);
 	            PostValidator.RuleFor(s => s.Author.EbookMetadataProfileId)
-	                         .SetValidator(metadataProfileExistsValidator)
+	                         .SetValidator(metadataProfileExistsValidator.ForType(MetadataProfileType.Ebook))
 	                         .When(s => s.Author?.EbookMetadataProfileId.HasValue == true && s.Author.EbookMetadataProfileId.Value > 0);
             PostValidator.RuleFor(s => s.Author.AudiobookRootFolderPath).IsValidPath()
 		                         .When(s => s.Author.Path.IsNullOrWhiteSpace() && !s.Author.AudiobookRootFolderPath.IsNullOrWhiteSpace());
@@ -425,7 +419,6 @@ namespace Chaptarr.Api.V1.Books
                 var monitorMode = monitoring.MonitorExistingMode ?? MonitorTypes.SpecificBook;
                 var authorMonitored = monitoring.Monitored;
                 var monitorNewItems = monitoring.MonitorNewItems;
-                var monitorCurrentBook = monitorMode != MonitorTypes.None;
 
                 if (editionId != "0" && !string.Equals(editionProvider, bookProvider, StringComparison.OrdinalIgnoreCase))
                 {
@@ -440,9 +433,9 @@ namespace Chaptarr.Api.V1.Books
                 {
                     Title = "Pending Import",
                     MediaType = bookMediaType,
-                    Monitored = monitorCurrentBook,
-                    AudiobookMonitored = bookMediaType == BookMediaType.Audiobook && monitorCurrentBook,
-                    EbookMonitored = bookMediaType == BookMediaType.Ebook && monitorCurrentBook,
+                    Monitored = true,
+                    AudiobookMonitored = bookMediaType == BookMediaType.Audiobook,
+                    EbookMonitored = bookMediaType == BookMediaType.Ebook,
                     // This compatibility/import endpoint is automation-facing. A supplied Edition is an
                     // initial preference, not the explicit human preservation pin used by the id-route editor.
                     AnyEditionOk = true,
@@ -1197,12 +1190,27 @@ namespace Chaptarr.Api.V1.Books
                                 throw new ValidationException(prefixFailures);
                             }
 
-			                if (string.IsNullOrWhiteSpace(requestedMediaType))
+			                requestedMediaType = MediaTypeParameterParser.ResolveWriteScope(requestedMediaType, facadeContext?.MediaType);
+                if (requestedMediaType == null)
+                {
+                    var explicitAudio = AuthorResourceMapper.HasAudiobookSpecificSettings(bookResource?.Author);
+                    var explicitEbook = AuthorResourceMapper.HasEbookSpecificSettings(bookResource?.Author);
+                    if (!explicitAudio && !explicitEbook)
+                    {
+                        return BadRequest(MediaTypeParameterParser.FormatRequiredMessage);
+                    }
+                    if (explicitAudio != explicitEbook)
+                    {
+                        requestedMediaType = explicitAudio ? "audiobook" : "ebook";
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(requestedMediaType))
 			                {
-	                    // Seerr compatibility: when mediaType is omitted, attempt to monitor/add BOTH audiobook and ebook variants.
+	                    // Explicit per-format settings for both sides request both variants.
 	                    // We reuse the same payload and invoke AddBook twice with the appropriate mediaType, but only for
 	                    // media types that are actually configured (or already configured on the existing author).
-		                    _logger.Debug("[AddBook] No mediaType provided; defaulting to BOTH audiobook and ebook");
+		                    _logger.Debug("[AddBook] Explicit settings for both audiobook and ebook");
 
 	                    NormalizeReadarrSingleFields(bookResource, wantAudiobook: true, wantEbook: true);
 	                    var existingAuthor = TryGetExistingAuthor(bookResource?.Author);
@@ -1330,11 +1338,7 @@ namespace Chaptarr.Api.V1.Books
                             var existingAuthor = TryGetExistingAuthor(bookResource.Author);
                             var requestedType = string.Equals(requestedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
                                 ? BookMediaType.Ebook : BookMediaType.Audiobook;
-                            var rootPath = requestedType == BookMediaType.Ebook
-                                ? bookResource.Author.EbookRootFolderPath
-                                : bookResource.Author.AudiobookRootFolderPath;
-                            var root = string.IsNullOrWhiteSpace(rootPath) ? null : _rootFolderService.GetBestRootFolder(rootPath);
-                            ApplyFacadeBookRequestDefaults(bookResource.Author, existingAuthor, GetMediaSettings(root, requestedType), requestedType);
+                            ApplyFacadeBookRequestDefaults(bookResource.Author, existingAuthor, requestedType);
                         }
 
 			                var modelToAdd = bookResource.ToModel(facadeContext);
@@ -1518,20 +1522,19 @@ namespace Chaptarr.Api.V1.Books
         internal static void ApplyFacadeBookRequestDefaults(
             global::Chaptarr.Api.V1.Author.AuthorResource requested,
             NzbDrone.Core.Books.Author existing,
-            MediaTypeSettings rootSettings,
             BookMediaType mediaType)
         {
-            // Seerr calls its sides default/alternate; neither is privileged. First setup
-            // inherits the selected root, while later book requests preserve the saved side.
+            // Book requests initialize only their selected work; established author
+            // monitoring stays unchanged on subsequent requests.
             var configured = HasConfiguredMediaSettings(existing, mediaType);
             var audiobook = mediaType == BookMediaType.Audiobook;
             var monitored = configured
                 ? (audiobook ? existing.AudiobookMonitored : existing.EbookMonitored)
-                : rootSettings?.Monitored;
+                : true;
             var newItems = configured
                 ? (audiobook ? existing.AudiobookMonitorNewItems : existing.EbookMonitorNewItems)
-                : rootSettings?.MonitorNewItems;
-            var initial = configured ? MonitorTypes.None : rootSettings?.MonitorExistingMode ?? MonitorTypes.None;
+                : NewItemMonitorTypes.None;
+            var initial = MonitorTypes.None;
 
             requested.Monitored = monitored == true;
             requested.MonitorNewItems = newItems?.ToString().ToLowerInvariant();
@@ -1679,7 +1682,6 @@ namespace Chaptarr.Api.V1.Books
 		                return;
 		            }
 
-		            var requestedBothMediaTypes = wantAudiobook && wantEbook;
 		            var rootFolders = _rootFolderService.All() ?? new List<RootFolder>();
 
 		            RootFolder rootFolderByPath = null;
@@ -1688,66 +1690,16 @@ namespace Chaptarr.Api.V1.Books
 		                rootFolderByPath = rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.RootFolderPath));
 		            }
 
-		            // If a client sends a single qualityProfileId, map it to the correct media type by profile type.
-		            if (author.QualityProfileId.HasValue &&
-		                !author.AudiobookQualityProfileId.HasValue &&
-		                !author.EbookQualityProfileId.HasValue)
-		            {
-		                try
-		                {
-		                    var profile = _qualityProfileService.Get(author.QualityProfileId.Value);
-		                    if (profile.ProfileType == ProfileType.Audiobook)
-		                    {
-		                        author.AudiobookQualityProfileId = author.QualityProfileId;
-		                    }
-		                    else if (profile.ProfileType == ProfileType.Ebook)
-		                    {
-		                        author.EbookQualityProfileId = author.QualityProfileId;
-		                    }
-
-		                    // Avoid storing a type-specific profile ID in the legacy single field.
-		                    author.QualityProfileId = null;
-		                }
-		                catch
-		                {
-		                    // ignore and let downstream validation/reporting handle
-		                }
-		            }
-
-		            // Same idea for metadataProfileId.
-		            if (author.MetadataProfileId.HasValue &&
-		                !author.AudiobookMetadataProfileId.HasValue &&
-		                !author.EbookMetadataProfileId.HasValue)
-		            {
-		                try
-		                {
-		                    var profile = _metadataProfileService.Get(author.MetadataProfileId.Value);
-		                    if (profile.ProfileType == MetadataProfileType.Audiobook)
-		                    {
-		                        author.AudiobookMetadataProfileId = author.MetadataProfileId;
-		                        author.MetadataProfileId = null;
-		                    }
-		                    else if (profile.ProfileType == MetadataProfileType.Ebook)
-		                    {
-		                        author.EbookMetadataProfileId = author.MetadataProfileId;
-		                        author.MetadataProfileId = null;
-		                    }
-		                    // If General, keep it as a legacy fallback.
-		                }
-		                catch
-		                {
-		                    // ignore and let downstream validation/reporting handle
-		                }
-		            }
-
-		            // With no media type, a shared root can configure one format without implying the other.
-		            if (requestedBothMediaTypes && rootFolderByPath != null)
-		            {
-		                wantAudiobook = HasAnyMediaSettings(author, BookMediaType.Audiobook) ||
-		                                RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath.GetAudiobookSettings());
-		                wantEbook = HasAnyMediaSettings(author, BookMediaType.Ebook) ||
-		                            RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath.GetEbookSettings());
-		            }
+		            if (wantAudiobook)
+            {
+                author.AudiobookQualityProfileId ??= author.QualityProfileId;
+                author.AudiobookMetadataProfileId ??= author.MetadataProfileId;
+            }
+            if (wantEbook)
+            {
+                author.EbookQualityProfileId ??= author.QualityProfileId;
+                author.EbookMetadataProfileId ??= author.MetadataProfileId;
+            }
 
             RootFolder audiobookRootFolder = null;
             if (!string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath))
@@ -1805,7 +1757,7 @@ namespace Chaptarr.Api.V1.Books
 	            var fillAudiobookSettings = wantAudiobook;
 	            var fillEbookSettings = wantEbook;
 
-	            if (!requestedBothMediaTypes && HttpContext.GetReadarrFacadeContext() == null && wantAudiobook &&
+	            if (HttpContext.GetReadarrFacadeContext() == null && wantAudiobook &&
 	                !wantEbook &&
 	                ShouldFillSiblingFromMixedRoot(author, requestedAudiobookRootFolder, BookMediaType.Ebook))
 	            {
@@ -1813,7 +1765,7 @@ namespace Chaptarr.Api.V1.Books
 	                fillEbookSettings = true;
 	            }
 
-	            if (!requestedBothMediaTypes && HttpContext.GetReadarrFacadeContext() == null && wantEbook &&
+	            if (HttpContext.GetReadarrFacadeContext() == null && wantEbook &&
 	                !wantAudiobook &&
 	                ShouldFillSiblingFromMixedRoot(author, requestedEbookRootFolder, BookMediaType.Audiobook))
 	            {
@@ -1922,43 +1874,52 @@ namespace Chaptarr.Api.V1.Books
 
             var book = _bookService.GetBook(bookResource.Id);
             var beforeMonitoredEditionId = book?.Editions?.SingleOrDefault(e => e != null && e.Monitored)?.Id;
+            var beforeAnyEditionOk = book.AnyEditionOk;
+            var beforeMonitoring = (book.AudiobookMonitored, book.EbookMonitored);
+            var beforeEditions = book.Editions.ToDictionary(edition => edition.Id);
+            var beforeSelection = book.Editions.ToDictionary(edition => edition.Id, edition => (edition.Monitored, edition.ManualAdd));
 
             var model = bookResource.ToModel(book, facadeContext);
-            var shouldPinExplicitEditionSelection = ShouldPinExplicitEditionSelection(pinExplicitEditionChange, beforeMonitoredEditionId, model?.Editions);
-            var shouldSkipEditionRepair = ShouldSkipEditionRepairForPartialFacadeCompat(pinExplicitEditionChange, facadeContext, beforeMonitoredEditionId, book?.Editions, model?.Editions);
+            var explicitEditionSelectionChange = ShouldPinExplicitEditionSelection(pinExplicitEditionChange, beforeMonitoredEditionId, model?.Editions);
+            var shouldPinExplicitEditionSelection = !bookResource.AnyEditionOkSpecified && explicitEditionSelectionChange;
 
-            // Preserve a single submitted edition selection. Only clean up impossible
-            // zero/multiple monitored states before persisting.
-            if (!shouldSkipEditionRepair)
-            {
-                _editionSelector.EnsureSingleMonitoredEdition(model.Editions, mediaType: model.MediaType);
-            }
+            // Repair needs the same file evidence as insertion and housekeeping, loaded once.
+            var repairFileCounts = model.Editions.Count(edition => edition.Monitored) == 1
+                ? null
+                : _mediaFileService.GetFilesByBook(model.Id).GroupBy(file => file.EditionId)
+                    .ToDictionary(group => group.Key, group => group.Count());
+            _editionSelector.EnsureSingleMonitoredEdition(model.Editions, repairFileCounts, model.MediaType, model.AnyEditionOk);
             if (shouldPinExplicitEditionSelection)
             {
                 model.AnyEditionOk = false;
             }
-            var afterMonitoredEditionId = shouldSkipEditionRepair
-                ? beforeMonitoredEditionId
-                : model?.Editions?.SingleOrDefault(e => e != null && e.Monitored)?.Id;
+            var afterMonitoredEditionId = model.Editions.SingleOrDefault(e => e != null && e.Monitored)?.Id;
 
-            if (ShouldApplyFacadeSpecificBookMonitoring(
-                    facadeContext,
-                    model.MediaType,
-                    bookResource.Monitored))
+            var applyFacadeMonitoring = ShouldApplyFacadeSpecificBookMonitoring(
+                facadeContext, model.MediaType, bookResource.Monitored);
+            if (applyFacadeMonitoring)
             {
                 // A book-row request changes only book-row selections; the author-side gate is
                 // an independent setting. Matching sibling rows follow format sync when enabled.
                 model.AddOptions ??= new AddBookOptions();
                 model.AddOptions.AddType = BookAddType.Manual;
-                _bookService.SetAddOptions(new[] { model });
-                _bookService.MonitorRequestedBooks(new[] { model.Id }, facadeContext.MediaType);
-            }
-            else
-            {
-                _bookService.UpdateBook(model);
+                // The scoped monitoring writer validates roots and applies format sync.
+                (model.AudiobookMonitored, model.EbookMonitored) = beforeMonitoring;
             }
 
-            _editionService.UpdateMany(model.Editions);
+            var editionUpdates = model.Editions.Where(edition => !edition.Equals(beforeEditions[edition.Id]) ||
+                beforeSelection[edition.Id] != (edition.Monitored, edition.ManualAdd)).ToList();
+            var relinkFiles = pinExplicitEditionChange && !model.AnyEditionOk && afterMonitoredEditionId is > 0 &&
+                (explicitEditionSelectionChange || beforeAnyEditionOk);
+            var relinkedCount = 0;
+            _bookService.UpdateBook(model, editionUpdates, applyFacadeMonitoring ? facadeContext.MediaType : null,
+                relinkFiles ? (connection, transaction) =>
+                    relinkedCount = _mediaFileService.RelinkFilesByBook(model.Id, afterMonitoredEditionId.Value, connection, transaction) : null);
+            if (relinkedCount > 0)
+            {
+                _logger.Info("Reassigned {0} book files for BookId={1} to EditionId={2} after explicit edition correction",
+                    relinkedCount, model.Id, afterMonitoredEditionId.Value);
+            }
 
             if (beforeMonitoredEditionId != afterMonitoredEditionId)
             {
@@ -1989,36 +1950,6 @@ namespace Chaptarr.Api.V1.Books
         internal static bool ShouldPinExplicitEditionSelection(bool pinExplicitEditionChange, int? beforeMonitoredEditionId, IEnumerable<Edition> submittedEditions)
         {
             return pinExplicitEditionChange && IsExplicitEditionSelectionChange(beforeMonitoredEditionId, submittedEditions);
-        }
-
-        internal static bool ShouldSkipEditionRepairForPartialFacadeCompat(bool pinExplicitEditionChange, ReadarrFacadeContext facadeContext, int? beforeMonitoredEditionId, IEnumerable<Edition> storedEditions, IEnumerable<Edition> submittedEditions)
-        {
-            if (pinExplicitEditionChange || facadeContext == null || !beforeMonitoredEditionId.HasValue)
-            {
-                return false;
-            }
-
-            var storedEditionIds = new HashSet<int>((storedEditions ?? Enumerable.Empty<Edition>())
-                .Where(e => e != null && e.Id > 0)
-                .Select(e => e.Id));
-            var submitted = (submittedEditions ?? Enumerable.Empty<Edition>())
-                .Where(e => e != null)
-                .ToList();
-
-            if (storedEditionIds.Count == 0 || submitted.Count == 0)
-            {
-                return false;
-            }
-
-            var submittedEditionIds = new HashSet<int>(submitted
-                .Where(e => e.Id > 0)
-                .Select(e => e.Id));
-
-            return submittedEditionIds.Count > 0 &&
-                   submittedEditionIds.All(storedEditionIds.Contains) &&
-                   submittedEditionIds.Count < storedEditionIds.Count &&
-                   !submittedEditionIds.Contains(beforeMonitoredEditionId.Value) &&
-                   !submitted.Any(e => e.Monitored);
         }
 
         internal static bool IsExplicitEditionSelectionChange(int? beforeMonitoredEditionId, IEnumerable<Edition> submittedEditions)

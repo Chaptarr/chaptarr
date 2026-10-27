@@ -168,23 +168,23 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(Accepted(author, target, catalog, "Powerless 004", "James Hunt"), Is.True);
         }
 
-        [TestCase("Scott Brick - Powerless", true)]
-        [TestCase("Powerless Scott Brick", true)]
-        [TestCase("Read by Scott Brick - Powerless", true)]
-        [TestCase("Powerless Read by Scott Brick", true)]
-        [TestCase("Narrated by Scott Brick - Powerless", true)]
-        [TestCase("Powerless Narrated by Scott Brick", true)]
-        [TestCase("Powerless 004 Scott Brick", false)]
-        [TestCase("Scott Brick 004 Powerless", false)]
-        [TestCase("Scott; Brick - Powerless", false)]
-        [TestCase("Powerless Scott; Brick", false)]
-        public void known_narrator_credit_must_remain_at_the_title_boundary(string releaseTitle, bool accepted)
+        [TestCase("Scott Brick - Powerless")]
+        [TestCase("Powerless Scott Brick")]
+        [TestCase("Read by Scott Brick - Powerless")]
+        [TestCase("Powerless Read by Scott Brick")]
+        [TestCase("Narrated by Scott Brick - Powerless")]
+        [TestCase("Powerless Narrated by Scott Brick")]
+        [TestCase("Powerless 004 Scott Brick")]
+        [TestCase("Scott Brick 004 Powerless")]
+        [TestCase("Scott; Brick - Powerless")]
+        [TestCase("Powerless Scott; Brick")]
+        public void known_narrator_without_author_cannot_pass_the_title_gate(string releaseTitle)
         {
             var author = new Author { Id = 631, Name = "James Hunt" };
             var target = Make(42421, author, "Powerless", "A Tale Of Survival in a Powerless World", "1-4");
             target.Editions[0].Narrator = "Scott Brick";
 
-            Assert.That(Accepted(author, target, new List<Book> { target }, releaseTitle, structuredAuthor: null), Is.EqualTo(accepted));
+            Assert.That(Accepted(author, target, new List<Book> { target }, releaseTitle, structuredAuthor: null), Is.False);
         }
 
         [Test]

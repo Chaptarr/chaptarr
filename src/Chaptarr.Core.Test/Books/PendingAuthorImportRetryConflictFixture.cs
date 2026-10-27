@@ -28,7 +28,7 @@ namespace Chaptarr.Core.Test.Books
                 var repository = new PendingAuthorImportRepository(database, events);
                 var old = repository.Insert(Row(PendingImportStatus.Failed));
                 var active = repository.Insert(Row(PendingImportStatus.Pending));
-                var service = new PendingAuthorImportService(repository, null, events, LogManager.GetCurrentClassLogger());
+                var service = new PendingAuthorImportService(repository, NoLocalAuthors(), events, LogManager.GetCurrentClassLogger());
                 var controller = new PendingAuthorImportController(null, service, null, null, null, null);
                 var failure = Assert.Throws<ModelConflictException>(() => controller.RetryNow(old.Id));
                 var context = new DefaultHttpContext();
@@ -54,7 +54,7 @@ namespace Chaptarr.Core.Test.Books
                 var events = InterfaceProxy.Proxy<IEventAggregator>((method, args) => null);
                 var repository = new PendingAuthorImportRepository(database, events);
                 var old = repository.Insert(Row(PendingImportStatus.Failed));
-                new PendingAuthorImportService(repository, null, events, LogManager.GetCurrentClassLogger()).RetryNow(old.Id);
+                new PendingAuthorImportService(repository, NoLocalAuthors(), events, LogManager.GetCurrentClassLogger()).RetryNow(old.Id);
                 var saved = repository.Find(old.Id);
                 Assert.That(saved.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
                 Assert.That(saved.AudiobookStatus, Is.EqualTo(PendingImportStatus.Failed));
@@ -69,9 +69,12 @@ namespace Chaptarr.Core.Test.Books
             var failure = new InvalidOperationException("unrelated failure");
             var repository = InterfaceProxy.Proxy<IPendingAuthorImportRepository>((method, args) =>
                 method.Name == nameof(IPendingAuthorImportRepository.Find) ? Row(PendingImportStatus.Failed) : throw failure);
-            var service = new PendingAuthorImportService(repository, null, null, LogManager.GetCurrentClassLogger());
+            var service = new PendingAuthorImportService(repository, NoLocalAuthors(), null, LogManager.GetCurrentClassLogger());
             Assert.That(Assert.Throws<InvalidOperationException>(() => service.RetryNow(1)), Is.SameAs(failure));
         }
+
+        private static IAuthorService NoLocalAuthors() => InterfaceProxy.Proxy<IAuthorService>((method, _) =>
+            method.Name == nameof(IAuthorService.FindByProviderId) ? null : throw new NotSupportedException(method.Name));
 
         private static PendingAuthorImport Row(PendingImportStatus status) => new()
         {

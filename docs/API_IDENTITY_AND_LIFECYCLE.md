@@ -37,9 +37,23 @@ When an API accepts a provider ID and a media type, the media type scopes the ma
 
 ### Existing-Book Import and Local Edition Lookup
 
-`POST /api/v1/book/import` for an existing book on a configured author side completes the request using the stored row. It preserves metadata and the selected/pinned edition, leaves the author's monitoring gates unchanged, and monitors the requested book unless `authorMonitoring.monitor` is `none`. `none` leaves its current monitoring state unchanged; it does not unmonitor an already selected book. An explicit `searchForMissing` starts one Manual single-book search. Import-list exclusions are removed only after request completion succeeds. Native requests resolving to several eligible copies still return HTTP 409 with candidates; clients must choose a local row for an exact-row operation.
+`POST /api/v1/book/import` for an existing book on a configured author side completes the request using the stored row. It preserves metadata and the selected/pinned edition, leaves the author's monitoring gates unchanged, and monitors the requested book. `authorMonitoring.monitor: none` controls the author's other books; it does not disable monitoring for the requested book. Native `POST /book` accepts an explicit book-level `monitored: false` (or the media-side equivalent) to add without monitoring; omitted book monitoring selects the requested book. Initial author monitoring and the requested book's selection are independent. An explicit `searchForMissing` starts one Manual single-book search. Import-list exclusions are removed only after request completion succeeds. Native requests resolving to several eligible copies still return HTTP 409 with candidates; clients must choose a local row for an exact-row operation.
 
 `GET /api/v1/book/lookup` returns every matching local copy in the requested media type, with each row's local `id`, editions, narrator and monitoring information. Omitting native `mediaType` returns all matching audiobook and ebook copies. `hc:123` and `gr:123` name **works**; `hc:edition:123`, `hc-ed:123` and `gr-ed:123` name **editions**. Hardcover and Goodreads work IDs are never tested against edition IDs, and an explicit edition lookup never falls back to a same-numbered work or an edition available only in the other media enum. Explicit Goodreads edition lookup recognizes dedicated edition columns and legacy `ForeignEditionId` values, including media suffixes. Native `edition:123` retains the legacy Goodreads edition lookup; native `work:123` requires a provider prefix. Under `/readarr/{hc|gr}/{ebook|audiobook}`, `work:123` and `edition:123` use that route's provider dialect and media scope. Local-copy summaries retain separate audiobook/ebook arrays and compare work evidence only with work identity and edition evidence only with edition identity.
+
+### Existing-Book Edition Policy Updates
+
+Native and media-scoped Readarr-compatible book PUTs persist an explicitly supplied `anyEditionOk` value, including when the book is already monitored. `false` preserves the selected edition against automatic switching; clients must not send it for a generic request unless they intend that restriction. Omitting the field leaves the saved policy unchanged when no explicit edition change is requested. When the field is omitted, `PUT /book/{id}` pins a newly selected edition; body-route `PUT /book` does not infer a pin merely from a changed selection. An explicit `true` selects the requested edition now while retaining the flexible policy, and does not relink existing files as a strict-edition correction. Independent stored `ManualAdd` retention remains protected under its existing policy; `anyEditionOk` does not erase it.
+
+The book, changed editions, provider aliases and configured format synchronization save in one transaction across these routes. Events are published after that transaction commits. An escaping notification failure is logged as a postcommit error and does not undo the committed save. A compatibility request to monitor a book shares the existing media-scoped monitoring preparation, including root-folder checks, without changing the author's monitoring gates. An unavailable compatible root retains the existing warn-and-skip monitoring behavior. A concurrently removed edition fails with HTTP 409 and leaves the previous book policy and selection intact. Full edition arrays write only rows whose persisted fields changed; genuine edition metadata edits still save.
+
+`PUT /book` and `PUT /book/{id}` accept only edition IDs belonging to the target local book row. Unknown IDs, editions from another row (including another copy or media type), and contradictory nonzero `bookId` values fail validation before any book, edition or file changes. An omitted/zero edition `bookId` retains its stored parent; provider identity fields remain server-owned. An omitted/empty edition list retains existing behavior; a partial list still requires valid edition resource fields. Partial edition lists merge into the already-loaded editions. Selecting one edition clears the previous selection within that local book; omitted editions remain present. Duplicate submitted edition IDs or multiple submitted monitored editions fail validation before mutation. These checks add no database lookup.
+
+Metadata saves with an unchanged selected edition preserve independent `ManualAdd` retention on unselected editions. Omitting an edition's `manualAdd` preserves its stored value; an explicit `false` still releases that marker. Explicit displacement of the previously selected pin retains its existing unpin behavior. A zero-selection repair loads that book's file evidence once and uses the shared files-first selector.
+
+Readarr-compatible edition responses expose one local representative for each projected provider edition ID within a book, preferring its current monitored edition and otherwise the lowest local edition ID. This makes equality-based selection unambiguous without merging provider identities, changing stored edition rows or collapsing copies in other local books. Native responses retain all local editions.
+
+SQLite and PostgreSQL enforce at most one monitored edition per local `BookId` with a partial unique index. Zero monitored editions are allowed by the database; existing insertion and housekeeping select a representative through the shared selector. Edition inserts, updates and selection-only writes clear a displaced selection and save its replacement in the same transaction. A failed write, including an edition removed since it was read, restores the previous selection and pin. Other local copies and media sides remain independent.
 
 ### Interactive Author Searches
 
@@ -61,8 +75,10 @@ recent RSS `ReleaseResource[]` response.
 
 The author Search tab adds a client-generated UUID `searchId` to opt into grouped
 results. This requires an explicit `audiobook` or `ebook` media type; missing scope,
-`all`, or an invalid UUID returns HTTP 400 before searching. The response shape
-is shown below; `authorId` and `bookId` are integer local request handles:
+`all`, or an invalid UUID returns HTTP 400 before searching. The GET queues an
+`InteractiveAuthorSearch` command and immediately acknowledges the UUID, author and
+media type, with empty `bookResults` and `isComplete: false`. It does not wait for
+indexers. Subsequent SignalR results use the envelope below; `authorId` and `bookId` are integer local request handles:
 
 ```json
 {
@@ -80,13 +96,15 @@ is shown below; `authorId` and `bookId` are integer local request handles:
     }
   ],
   "isComplete": true,
-  "isCancelled": false
+  "isCancelled": false,
+  "isFailed": false
 }
 ```
 
 `AuthorSearchResults` messages on the existing authenticated SignalR connection
 carry this envelope: the initial eligible roster, then one completed book group at
-a time, then completion. The final HTTP response contains all groups. A book with
+a time, then completion. The terminal SignalR message contains all groups. A worker
+failure sets `isFailed: true`, including failures before the roster is available. A book with
 no returned releases still has a group. Indexer failures can currently return an
 empty list; an empty group is not proof that no releases exist.
 
@@ -114,22 +132,33 @@ active. Missing or malformed IDs return `400`. Repeated stops are idempotent. A
 second grouped GET with the same active UUID returns `409`; UUID spelling/casing
 does not create a second identity. Stop uses the existing API authentication.
 
-The Stop button becomes available once the server has published the book roster.
-It keeps the original GET open and shows “Stopping after the current book” while
-waiting. The current book finishes and publishes its results; no remaining books
-are searched. The final GET response and terminal SignalR message carry
+The Stop button becomes available once admission is acknowledged or the first
+roster arrives. It shows “Stopping after the current book” while waiting. The current book finishes and publishes its results; no remaining books
+are searched. The terminal SignalR message carries
 `isComplete: true` and `isCancelled: true` when remaining books were stopped. If
 the active book was already the last one, the search completes normally. Completed
 results and grab state remain available. A failed Stop request is shown as an error and can be retried; it must
 not be displayed as a completed stop.
 
-Leaving the author page or changing media scope requests the same stop before
-aborting the browser request. RequestAborted remains a second cancellation signal
-for grouped and legacy flat requests when the server observes a disconnect. No
-caller cancellation enters the shared indexer HTTP failure path. Active stop
-handles exist only for the lifetime of the grouped request and are removed on
-success, cancellation, or error. Interrupted results remain partial; neither
-reconnection nor a missed update restarts tracker searches automatically.
+Leaving the author page or changing media scope requests the same stop. If admission
+is still pending, the browser lets that short request finish and requests Stop again
+after acknowledgement, preventing a search admitted after the first Stop from running
+unattended. Closing the admission HTTP connection does not cancel grouped work.
+Legacy flat searches retain RequestAborted cancellation between books. No caller
+cancellation enters the shared indexer HTTP failure path. Active stop handles belong
+to the background operation and are removed on success, cancellation, or error.
+Commands restored after an application restart cannot repeat an absent interactive
+session. Interrupted results remain partial; neither reconnection nor a missed
+update restarts tracker searches automatically.
+
+The acknowledgement includes the existing native `commandId`; the command publishes
+normal status updates. After reconnect the browser uses the existing command refresh,
+with `GET /api/v1/command/{id}` when the command is absent from that list. A terminal
+or expired command without a final result snapshot ends the spinner, preserves received
+rows and displays the existing incomplete-results warning. It does not declare a
+successful empty search. Search can be started again explicitly; a late final snapshot
+for the same search is still accepted. Failed status HTTP requests do not establish
+completion. No grouped-result recovery endpoint or snapshot cache is added.
 
 ### Ambiguous Provider Identity
 
@@ -137,7 +166,7 @@ Chaptarr-native mutations return HTTP `409` when a provider ID maps to multiple 
 
 The response body uses `ProviderAmbiguityResource` and includes the candidate rows. Clients should show the choices to the user or retry with a narrower media type/provider identity.
 
-Legacy Readarr/Seerr compatibility paths are documented exceptions. Those routes keep their compatibility picks so existing clients do not break, but new Chaptarr-native clients should use the explicit provider-ID fields and ambiguity contract.
+Readarr/Seerr compatibility base URLs retain their documented provider-ID dialect. Native clients use explicit provider-ID fields and the ambiguity contract. Shared legacy profile/root fields now also require an explicit media scope, as described below.
 
 ### Declared Metadata Refusals
 
@@ -217,6 +246,20 @@ Root-folder defaults are creation defaults, not continuing policy. Chaptarr fill
 
 If an author is waiting in the pending-import queue, Chaptarr persists the two tag sets separately. Concurrent requests union tags within the same media side so a later request cannot erase an earlier caller's pending intent; tags can be removed normally after the author exists. Once the author is materialized, the legacy combined `Author.tags` projection is the union of its audiobook and eBook tag sets.
 
+### Author monitoring sync
+
+`POST /api/v1/author/import` accepts `mediaType: "both"` to configure both sides in one request. Supply each side's `audiobookRootFolderPath` / `ebookRootFolderPath`, quality and metadata profile IDs, tags, initial monitoring mode and new-book policy. Existing single-side requests and their shared compatibility fields remain supported.
+
+For an existing author, omitted roots, profiles, monitoring choices and tags preserve the saved settings for each requested side. Changing a root explicitly does not reset omitted profile or monitoring overrides to that root's defaults. Initial monitoring and search intent awaiting metadata are retained. Reposting a pending author request without settings preserves its queued choices. For a genuinely new side, omitted roots use the configured default, or the only compatible root when no default is configured; an ambiguous choice returns a validation error. The selected root supplies unset creation settings, including tags. Explicit `false` and empty tag arrays remain meaningful values. Unrequested sides are not initialized.
+
+`syncMonitoredAcrossFormats` is an optional author setting. It can be enabled only when the resulting author has compatible audiobook and ebook roots, including when a request adds the missing side to an existing author. A new single-side author does not become dual-format merely because another root exists. Omission preserves an existing choice; compatible root defaults supply an unset choice when the author first becomes eligible. Later changes to root defaults do not rewrite the author's saved setting.
+
+For author setup with sync enabled, explicitly supplied audiobook and ebook initial monitoring modes must agree, as must their new-book policies. Conflicting choices return HTTP `400` with field validation errors before the add is saved or queued. A supplied shared choice can fill an omitted counterpart; omission alone is not a conflict. Initial monitoring selects books during setup. A later new-book-policy edit does not reapply that initial selection. Author monitoring gates, roots, profiles and tags remain independently configured for each side. Book-specific requests retain their selected book IDs and media scope; their initial selection is not converted into shared author setup, but contradictory supplied new-book policies still fail validation.
+
+Author PUT and bulk author edits use the same new-book-policy rule. An unrelated partial edit does not migrate or reject old stored policy differences, including when already-enabled sync is echoed without either policy. Clients should omit unchanged policy fields instead of resending a contradictory pair. Enabling sync for the first time when saved policies differ requires one explicit shared policy. An explicit `syncMonitoredAcrossFormats: false` permits independent choices.
+
+Pending author imports retain the sync choice and monitoring policies. Requested initial searches run after the normal initial monitoring and format reconciliation complete.
+
 ## Metadata Server V5 Lifecycle
 
 The metadata server uses V5 endpoints such as:
@@ -259,7 +302,15 @@ For author imports, Chaptarr keeps the request active without an arbitrary attem
 
 When a book add queues an author that is not available yet, `addOptions.searchForNewBook=true` remains attached to that exact media-specific request. `PendingAuthorImportResource.audiobookBooksToSearch` and `ebookBooksToSearch` expose the queued provider IDs; they are durable provider identities, not local Book row IDs. Once the authoritative author catalog imports, Chaptarr resolves those IDs within the requested media type and queues an exact Book search. If the imported catalog does not contain a requested provider ID, Chaptarr logs the missing target and does not broaden the search or synthesize a Book.
 
-For native and Readarr/Seerr facade book requests, first setup still uses explicit author-add values or the selected root folder's initial book selection and new-book policy. The book request selects the provider-identified requested row, including when the initial selection is `None`; it never changes either author media-side gate, even when a nested or round-tripped Author carries `true`. `All` may initially select siblings but does not search them. Later requests preserve author gates, profiles, paths, new-book policy and unrelated row selections; when sync across formats is enabled, matching sibling book rows follow the requested selection. Requested books retain a manual-add preservation marker, not an edition pin. Optional search-on-add queues one Manual `BookSearchCommand` per exact requested target and can perform that one-time search while its author side is paused. Subsequent RSS and automatic acquisition remain gated by the saved author-side gate and row selection. Queued requests retain these settings and provider identities through the existing pending-import lifecycle.
+Author POST/PUT and book POST requests using shared legacy profile/root fields must identify their media scope: `?mediaType=audiobook|ebook`, the existing `/audiobook` or `/ebook` compatibility base URL, or explicit per-format fields. An unscoped single-profile request returns HTTP 400 with those choices; neither the root folder nor a profile's type implicitly selects a format. The query parameter selects media only and keeps native provider-ID requirements. Compatibility base URLs retain their existing provider-ID dialect. A conflicting query and compatibility base URL is rejected. Native author requests with explicit fields for both sides remain supported. Book adds with explicit fields for both sides retain the both-format path. Wrong-side profiles must pass the existing type validation; they cannot redirect the requested format. This is write-specific validation, not a global API requirement: reads and writes to an already identified local book row retain their existing scope rules. Ordinary author edits using explicit saved per-format fields do not need a mediaType query. For example, shared `qualityProfileId` and `rootFolderPath` need a declared side, whereas `ebookQualityProfileId` and `ebookRootFolderPath` already identify it. Author request validation rejects ambiguity before setup or update; resource mapping and folder validation do not infer a side from a profile or root.
+
+Adding a book defaults to **only the requested book in the requested media type**. When setting up a new author or a previously unconfigured format, omitted native monitoring policies enable that author side, select only the requested book, and leave future-book monitoring at `none`. Chaptarr does not infer `all` from a missing policy or the root folder's monitoring defaults. Explicit native first-setup policies are retained; `all` must be supplied explicitly. Required root-folder and profile settings still need to be provided. Readarr/Seerr facade book adds initialize the requested format with initial selection `none`, then select the requested book, with future-book monitoring `none`.
+
+For a format the author already has configured, adding a book preserves the saved author-side monitoring gate (including a pause), profiles, paths, future-book policy and unrelated book selections. A nested or round-tripped Author with `monitored: true` does not resume a paused, configured side. Use Edit Author or an explicit author update to change those settings. When monitoring sync is enabled, selecting the requested book also selects its matching sibling book rows; that does not select the whole author catalog.
+
+Book selection is separate from the author's initial selection policy. `author.addOptions.monitor: "none"` does not mean “do not monitor this requested book.” Send `monitored: false` on the book resource to add it without monitoring, or the matching per-format field (`audiobookMonitored` / `ebookMonitored`), which takes precedence. Explicit `false` also unmonitors an already-present requested book; omission leaves the normal book-add selection in effect. Requested books retain a manual-add preservation marker, not an edition pin.
+
+Optional `addOptions.searchForNewBook: true` queues a Manual `BookSearchCommand` for each exact requested target. This is independent of ongoing monitoring: it can request a one-time search while the author side is paused or the book is explicitly unmonitored. It does not search unrelated titles. Subsequent RSS and automatic acquisition remain gated by the saved author-side gate and book selection. Queued requests retain their setup settings, explicit book selection, search intent and provider identities through the existing pending-import lifecycle.
 
 An explicit facade `PUT /book` with `monitored: true` selects the requested row even when it is already selected, including repair of an unmonitored matching counterpart when sync is enabled; it does not enable the author media-side gate. Lookup GETs and search-only commands never change saved monitoring settings. Clients must send the book update to request this behavior even for an already-selected book. Chaptarr does not infer an approved request from a lookup or change the meaning of the resource's `monitored` field to induce a client update.
 
@@ -372,3 +423,12 @@ Explicit audiobook narration requests inspect all same-author, same-format rows 
 Edition-capable sources retain the supplied complete narration through mapping, cache and pending requests. The exact edition ID need not exist locally if the same established work has a compatible audiobook narration; the existing complete-cast comparison applies without a duration or provider-default test. Goodreads Series and LazyLibrarian automatic selections are generic work requests. Chaptarr-to-Chaptarr imports carry narration only from the sender's explicit pin. A missing parent work stays on the existing recovery path; it is not proof that the requested narration is unavailable.
 
 Source removal does not unmonitor or delete local books. Re-monitoring applies when the provider returns the entry: Goodreads rereads its list, while Hardcover normally returns changes and performs a full refresh weekly. With searching enabled, newly selected existing rows on active author sides enter one automatic search batch that respects delay profiles. Paused author sides receive one immediate manual search per newly selected row; successful queue submission clears its saved search intent. Unchanged rows are not searched again on each sync. For newly added authors, the scan handler applies initial monitoring before submitting the stored missing-book search; paused sides retain only their explicitly listed search targets.
+
+
+## Manual-import replacement confirmation
+
+`POST /api/v1/manualimport/replacementfiles` accepts a body with `files`, each containing a selected filesystem `path` and local `bookId` (zero for an unresolved metadata suggestion). It returns a typed array of `{ id, bookId, path, associatedPaths }` for the primary BookFile rows that the selection would replace. Associated paths include existing managed ebook copies and tracked sidecars eligible for deletion under the existing ownership/shared-folder rules. The read-only preview batches file, extra-file and local-author lookups; it does not request provider metadata or create books. Selected source files and tracked in-place/relocation inputs are excluded from deletion.
+
+The GUI copies that exact array to `confirmedReplacementFiles` on its `ManualImport` command. `[]` permits no primary BookFile replacement; a metadata-only selection that later resolves an existing recording therefore fails safely rather than silently replacing it. Changed IDs, local Book ownership, paths or newly discovered destination rows require a fresh preview. Null/omitted confirmation retains the legacy API boolean `replaceExistingFiles` behavior. Combine does not request replacement confirmation.
+
+Execution checks the current associated paths before the primary database swap and passes the allowed paths to the existing deletion events. Newly discovered unconfirmed paths require another preview; event handlers also preserve any unconfirmed paths appearing afterward. A confirmed sidecar may still be retained if it serves a remaining media file. Independently owned ebooks sharing an audiobook folder are not replacement candidates. Confirmed manual imports defer managed ebook-copy reconciliation until after the primary save, using the existing mixed-root placement planner. Extra-file copies still respect Import Extra Files and its extensions, and cannot overwrite a surviving destination during a confirmed import. An omitted/null confirmation retains legacy API behavior.

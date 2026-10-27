@@ -31,6 +31,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class RecordingIngestQueueRepository : IIngestQueueRepository
         {
             public readonly List<string> PurgedPrefixes = new List<string>();
+            public readonly List<string> PurgedPaths = new List<string>();
+            public int ExactPurgeCalls { get; private set; }
 
             public void InsertBatch(List<IngestQueueItem> items) => throw new NotImplementedException();
             public List<IngestQueueItem> GetQueuedItems(int limit = 100) => throw new NotImplementedException();
@@ -58,7 +60,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return 1;
             }
 
-            public int PurgePaths(IEnumerable<string> paths) => throw new NotImplementedException();
+            public int PurgePaths(IEnumerable<string> paths)
+            {
+                ExactPurgeCalls++;
+                PurgedPaths.AddRange(paths);
+                return PurgedPaths.Count;
+            }
             public void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null) => throw new NotImplementedException();
             public void CompleteItemWithResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null, string statusError = null) => throw new NotImplementedException();
             public List<ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null) => throw new NotImplementedException();
@@ -105,10 +112,6 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                         return null;
 
-                    case nameof(IMediaFileRepository.UnlinkFilesByBook):
-                    case nameof(IMediaFileRepository.DeleteFilesByBook):
-                        return null;
-
                     case nameof(IMediaFileRepository.GetFilesByEdition):
                         return GetFilesByEditionHandler?.Invoke((int)args[0]) ?? Enumerable.Empty<BookFile>();
 
@@ -147,7 +150,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             sut.Delete(file, DeleteMediaFileReason.MissingFromDisk);
 
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { file.Path }));
+            Assert.That(ingestQueue.PurgedPaths, Is.EqualTo(new[] { file.Path }));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
             Assert.That(events.Events.OfType<BookFileDeletedEvent>(), Is.Empty);
         }
 
@@ -187,7 +191,9 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var deleteEvents = events.Events.OfType<BookFileDeletedEvent>().ToList();
 
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EquivalentTo(files.Select(f => f.Path)));
+            Assert.That(ingestQueue.PurgedPaths, Is.EquivalentTo(files.Select(f => f.Path)));
+            Assert.That(ingestQueue.ExactPurgeCalls, Is.EqualTo(1));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
             Assert.That(deleteEvents, Has.Count.EqualTo(2));
             Assert.That(deleteEvents.All(e => e.BookFile.Author?.Id == 7), Is.True);
             Assert.That(deleteEvents.Select(e => e.BookFile.Edition?.Book?.Title), Is.EquivalentTo(new[] { "Test Book 1", "Test Book 2" }));
@@ -237,7 +243,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(repoProxy.ReplacementAdditions, Is.EqualTo(new[] { replacement }));
             Assert.That(repoProxy.ReplacementRemovals, Is.EqualTo(new[] { oldFile }));
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { oldFile.Path }));
+            Assert.That(ingestQueue.PurgedPaths, Is.EqualTo(new[] { oldFile.Path }));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
             Assert.That(events.Events.OfType<BookFileDeletedEvent>().Single().BookFile.Edition.Book.Title, Is.EqualTo("Test Book"));
             Assert.That(events.Events.OfType<BookFilesAddedEvent>().Single().BookFiles, Is.EqualTo(new[] { replacement }));
         }
@@ -319,7 +326,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             sut.HandleAsync(new BookDeletedEvent(book, deleteFiles: false, addImportListExclusion: false));
 
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { "/books/books/Test Author/Test Book/Test Book.m4b" }));
+            Assert.That(ingestQueue.PurgedPaths, Is.EqualTo(new[] { "/books/books/Test Author/Test Book/Test Book.m4b" }));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
         }
     }
 }

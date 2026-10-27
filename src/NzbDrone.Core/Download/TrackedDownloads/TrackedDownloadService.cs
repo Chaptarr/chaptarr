@@ -93,10 +93,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             var existingItem = Find(downloadItem.DownloadId);
             var downloadHistory = _downloadHistoryService.GetLatestDownloadHistoryItem(downloadItem.DownloadId);
 
-            // Once a download has imported (or been ignored) it only sits in the client seeding;
-            // re-capturing its file list would re-create the snapshot row that was deliberately
-            // deleted when the import completed. The persisted history covers the fresh-cache
-            // case after a restart, when no in-memory item exists yet.
+            // Imported downloads may still be seeding. Keep their original source inventory
+            // instead of replacing it with the files left after import.
             var effectiveState = existingItem?.State
                                  ?? (downloadHistory != null ? GetStateFromHistory(downloadHistory.EventType) : TrackedDownloadState.Downloading);
 
@@ -534,7 +532,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 }
 
                 trackedDownload.IsTrackable = false;
-        }
+            }
         }
 
         private static bool ShouldKeepMissingImportPipelineTrackedDownload(TrackedDownload trackedDownload)

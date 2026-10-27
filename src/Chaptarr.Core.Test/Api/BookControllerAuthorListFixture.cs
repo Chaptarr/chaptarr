@@ -120,8 +120,6 @@ namespace Chaptarr.Core.Test.Api
                 signalRBroadcaster: null,
                 commandQueueManager: ThrowingProxy<IManageCommandQueue>(),
                 eventAggregator: ThrowingProxy<IEventAggregator>(),
-                metadataProfileService: ThrowingProxy<IMetadataProfileService>(),
-                qualityProfileService: ThrowingProxy<IQualityProfileService>(),
                 rootFolderService: ThrowingProxy<IRootFolderService>(),
                 qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
@@ -246,8 +244,6 @@ namespace Chaptarr.Core.Test.Api
                 signalRBroadcaster: null,
                 commandQueueManager: ThrowingProxy<IManageCommandQueue>(),
                 eventAggregator: ThrowingProxy<IEventAggregator>(),
-                metadataProfileService: ThrowingProxy<IMetadataProfileService>(),
-                qualityProfileService: ThrowingProxy<IQualityProfileService>(),
                 rootFolderService: ThrowingProxy<IRootFolderService>(),
                 qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
@@ -311,16 +307,9 @@ namespace Chaptarr.Core.Test.Api
             var authorMutationCount = 0;
             var scopedBookUpdateCount = 0;
             var genericBookUpdateCount = 0;
-            var addOptionsWriteCount = 0;
             var bookService = Proxy<IBookService>(new Dictionary<string, Func<MethodInfo, object[], object>>
             {
                 [nameof(IBookService.GetBook)] = (_, _) => book,
-                [nameof(IBookService.SetAddOptions)] = (_, args) =>
-                {
-                    Assert.That(((IEnumerable<Book>)args[0]).Single().AddOptions.AddType, Is.EqualTo(BookAddType.Manual));
-                    addOptionsWriteCount++;
-                    return null;
-                },
                 [nameof(IBookService.MonitorRequestedBooks)] = (_, args) =>
                 {
                     Assert.That((IEnumerable<int>)args[0], Is.EquivalentTo(new[] { book.Id }));
@@ -332,6 +321,14 @@ namespace Chaptarr.Core.Test.Api
                 [nameof(IBookService.UpdateBook)] = (_, args) =>
                 {
                     genericBookUpdateCount++;
+                    if (facade)
+                    {
+                        Assert.That(((Book)args[0]).AddOptions.AddType, Is.EqualTo(BookAddType.Manual));
+                        Assert.That(((Book)args[0]).IsMonitored(), Is.EqualTo(alreadySelected));
+                        Assert.That(args[2], Is.EqualTo(mediaType));
+                        book.SetMonitoredForMediaType(mediaType, true);
+                        scopedBookUpdateCount++;
+                    }
                     return args[0];
                 }
             });
@@ -381,8 +378,6 @@ namespace Chaptarr.Core.Test.Api
                 }),
                 commandQueueManager: ThrowingProxy<IManageCommandQueue>(),
                 eventAggregator: ThrowingProxy<IEventAggregator>(),
-                metadataProfileService: ThrowingProxy<IMetadataProfileService>(),
-                qualityProfileService: ThrowingProxy<IQualityProfileService>(),
                 rootFolderService: ThrowingProxy<IRootFolderService>(),
                 qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
@@ -423,13 +418,12 @@ namespace Chaptarr.Core.Test.Api
             {
                 Assert.That(authorMutationCount, Is.Zero);
                 Assert.That(scopedBookUpdateCount, Is.EqualTo(facade ? 1 : 0));
-                Assert.That(genericBookUpdateCount, Is.EqualTo(facade ? 0 : 1));
+                Assert.That(genericBookUpdateCount, Is.EqualTo(1));
                 Assert.That(author.AudiobookMonitored, Is.False);
                 Assert.That(author.EbookMonitored, Is.False);
                 Assert.That(author.SyncMonitoredAcrossFormats, Is.True);
                 Assert.That(book.IsMonitoredForMediaType(mediaType), Is.True);
                 Assert.That(book.IsMonitoredForMediaType(mediaType == "audiobook" ? "ebook" : "audiobook"), Is.False);
-                Assert.That(addOptionsWriteCount, Is.EqualTo(facade ? 1 : 0));
                 Assert.That(resource?.Monitored, Is.True);
             });
         }

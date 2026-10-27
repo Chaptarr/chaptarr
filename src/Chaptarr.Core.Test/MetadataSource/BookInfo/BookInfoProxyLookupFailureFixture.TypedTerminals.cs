@@ -69,6 +69,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var expectedRefusals = new Dictionary<string, int>
             {
                 ["src/NzbDrone.Core/Books/Commands/ProcessPendingImportsCommandHandler.cs"] = 7,
+                ["src/NzbDrone.Core/Books/Events/PendingAuthorImportEvents.cs"] = 2,
                 ["src/NzbDrone.Core/Books/Services/PendingAuthorImportService.cs"] = 1,
                 ["src/NzbDrone.Core/Books/Services/RefreshBookService.cs"] = 3,
                 ["src/NzbDrone.Core/Exceptions/AuthorTerminalException.cs"] = 2,
@@ -76,6 +77,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 ["src/NzbDrone.Core/Exceptions/WorkRescueTerminalException.cs"] = 2,
                 ["src/NzbDrone.Core/ImportLists/ImportListSyncService.cs"] = 1,
                 ["src/NzbDrone.Core/MetadataSource/BookInfo/BookInfoProxy.cs"] = 14,
+                ["src/NzbDrone.Core/MetadataSource/BookInfo/RefreshResult.cs"] = 1,
                 ["src/NzbDrone.Core/MetadataSource/Hardcover/HardcoverSearchClient.cs"] = 1,
                 ["src/Chaptarr.Http/Authentication/PlexAuthenticationController.cs"] = 1,
                 ["src/Chaptarr.Http/ErrorManagement/ChaptarrErrorPipeline.cs"] = 1,

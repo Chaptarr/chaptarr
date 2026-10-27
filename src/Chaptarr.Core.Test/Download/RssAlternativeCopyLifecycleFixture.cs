@@ -171,7 +171,7 @@ namespace Chaptarr.Core.Test.Download
                     {
                         if (method.Name == nameof(IHistoryService.GetAcquisitionHistory)) { HistoryReads++; if (FailHistoryRead) throw new InvalidOperationException("History unavailable"); return History.GetAcquisitionHistory((IEnumerable<int>)args[0]); }
                         throw new NotImplementedException(method.Name);
-                    }), upgradable, Formats, Config, Logger)
+                    }), new DownloadHistoryService(new DownloadHistoryRepository(Database, Events), History), upgradable, Formats, Config, Logger)
                 };
                 specifications.AddRange(extra);
                 return new DownloadDecisionMaker(specifications, Parser, BookService, new EditionFtsRepository(Database, Logger),
@@ -318,6 +318,32 @@ namespace Chaptarr.Core.Test.Download
         [TestCase(true, BookMediaType.Audiobook)]
         [TestCase(false, BookMediaType.Ebook)]
         [TestCase(true, BookMediaType.Ebook)]
+        public void rss_should_load_each_author_catalog_once_per_batch_and_refresh_it_next_batch(bool postgres, BookMediaType media)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var scene = new Scene(database, media);
+                var maker = scene.Maker();
+                var reports = Enumerable.Range(0, 25).Select(index => scene.Release(media, "batch-" + index)).ToList();
+                for (var batch = 1; batch <= 2; batch++)
+                {
+                    var decisions = maker.GetRssDecision(reports);
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(scene.CatalogReads, Is.EqualTo(batch));
+                        Assert.That(decisions, Has.Count.EqualTo(reports.Count * scene.Books.Count));
+                        Assert.That(decisions.All(decision => decision.Approved), Is.True);
+                        Assert.That(decisions.SelectMany(decision => decision.RemoteBook.Books).Select(book => book.Id).Distinct(),
+                            Is.EquivalentTo(scene.Books.Select(book => book.Id)));
+                    });
+                }
+            });
+        }
+
+        [TestCase(false, BookMediaType.Audiobook)]
+        [TestCase(true, BookMediaType.Audiobook)]
+        [TestCase(false, BookMediaType.Ebook)]
+        [TestCase(true, BookMediaType.Ebook)]
         public async Task rss_should_score_each_copy_then_send_one_grab_and_restore_both_targets(bool postgres, BookMediaType media)
         {
             await Run(postgres, async scene =>
@@ -337,7 +363,7 @@ namespace Chaptarr.Core.Test.Download
                     new DownloadHistoryService(new DownloadHistoryRepository(scene.Database, scene.Events), scene.History).Handle(message);
                     return Task.CompletedTask;
                 });
-                var process = new ProcessDownloadDecisions(downloader, scene.Prioritizer(), scene.Pending(), Logger);
+                var process = new ProcessDownloadDecisions(downloader, scene.Prioritizer(), scene.Pending(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), Logger);
                 var result = await process.ProcessDecisions(decisions);
                 Assert.That(sent, Has.Count.EqualTo(1));
                 Assert.That(result.Grabbed, Has.Count.EqualTo(1));
@@ -469,7 +495,7 @@ namespace Chaptarr.Core.Test.Download
                     pending.Handle(message);
                     return Task.CompletedTask;
                 });
-                var processor = new ProcessDownloadDecisions(downloader, prioritizer, pending, LogManager.GetCurrentClassLogger());
+                var processor = new ProcessDownloadDecisions(downloader, prioritizer, pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
                 var fetchNumber = 0;
                 var fetcher = InterfaceProxy.Proxy<IFetchAndParseRss>((method, args) => Task.FromResult(fetchNumber++ == 0 ? new List<ReleaseInfo> { report } : new List<ReleaseInfo>()));
                 var rss = new RssSyncService(null, null, fetcher, maker, processor, pending, events, LogManager.GetCurrentClassLogger());
@@ -526,7 +552,7 @@ namespace Chaptarr.Core.Test.Download
                 pending.Handle(message);
                 return Task.CompletedTask;
             });
-            return await new ProcessDownloadDecisions(downloader, scene.Prioritizer(), pending, Logger).ProcessDecisions(decisions);
+            return await new ProcessDownloadDecisions(downloader, scene.Prioritizer(), pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), Logger).ProcessDecisions(decisions);
         }
 
         [TestCase(false)] [TestCase(true)]
@@ -705,6 +731,8 @@ namespace Chaptarr.Core.Test.Download
             await Run(postgres, scene =>
             {
                 var pending = scene.Pending(); pending.Add(new DownloadDecision(Context(scene, scene.Release(media), false)), PendingReleaseReason.Delay);
+                var editions = new EditionRepository(scene.Database, scene.Events);
+                editions.DeleteMany(editions.FindByBook(new[] { scene.Books[1].Id }));
                 scene.BookWriter.Delete(scene.Books[1].Id);
                 var restored = pending.GetPending();
                 Assert.That(restored, Is.Empty);

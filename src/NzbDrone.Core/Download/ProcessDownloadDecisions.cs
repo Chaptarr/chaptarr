@@ -10,13 +10,13 @@ using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.DecisionEngine.Specifications;
 
 namespace NzbDrone.Core.Download
 {
     public interface IProcessDownloadDecisions
     {
         Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions);
-        Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId);
         Task<ProcessedDecisions> ProcessDecisions(List<DownloadDecision> decisions, int? downloadClientId);
         Task ProcessSelectedDecisions(List<RemoteBook> selected, int? downloadClientId = null);
     }
@@ -26,16 +26,19 @@ namespace NzbDrone.Core.Download
         private readonly IDownloadService _downloadService;
         private readonly IPrioritizeDownloadDecision _prioritizeDownloadDecision;
         private readonly IPendingReleaseService _pendingReleaseService;
+        private readonly QueueSpecification _queueSpecification;
         private readonly Logger _logger;
 
         public ProcessDownloadDecisions(IDownloadService downloadService,
                                         IPrioritizeDownloadDecision prioritizeDownloadDecision,
                                         IPendingReleaseService pendingReleaseService,
+                                        QueueSpecification queueSpecification,
                                         Logger logger)
         {
             _downloadService = downloadService;
             _prioritizeDownloadDecision = prioritizeDownloadDecision;
             _pendingReleaseService = pendingReleaseService;
+            _queueSpecification = queueSpecification;
             _logger = logger;
         }
 
@@ -50,6 +53,7 @@ namespace NzbDrone.Core.Download
             var rejected = decisions.Where(d => d.Rejected).ToList();
 
             var pendingAddQueue = new List<Tuple<DownloadDecision, PendingReleaseReason>>();
+            var checkQueue = _queueSpecification.PrepareCheck();
 
             var usenetFailed = false;
             var torrentFailed = false;
@@ -82,6 +86,14 @@ namespace NzbDrone.Core.Download
                 if (report.TemporarilyRejected)
                 {
                     PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.Delay);
+                    continue;
+                }
+
+                var queueDecision = checkQueue(report.RemoteBook);
+                if (!queueDecision.Accepted)
+                {
+                    rejected.Add(new DownloadDecision(report.RemoteBook, new Rejection(queueDecision.Reason,
+                        _queueSpecification.Type, queueDecision.CanBypass, queueDecision.Category, queueDecision.Severity)));
                     continue;
                 }
 
@@ -251,39 +263,6 @@ namespace NzbDrone.Core.Download
                     candidate.RemoteBook.TargetCustomFormatScores.GetValueOrDefault(book.Id, candidate.RemoteBook.CustomFormatScore))))
                 .ToDictionary(pair => pair.Key, pair => pair.Value);
             return new DownloadDecision(merged, report.Rejections.ToArray()) { AutoPickReasons = report.AutoPickReasons };
-        }
-
-        public async Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId)
-        {
-            if (decision == null)
-            {
-                return ProcessedDecisionResult.Skipped;
-            }
-
-            if (!IsQualifiedReport(decision))
-            {
-                return ProcessedDecisionResult.Rejected;
-            }
-
-            if (decision.TemporarilyRejected)
-            {
-                _pendingReleaseService.Add(decision, PendingReleaseReason.Delay);
-
-                return ProcessedDecisionResult.Pending;
-            }
-
-            var result = await ProcessDecisionInternal(decision, downloadClientId);
-
-            if (result == ProcessedDecisionResult.Pending)
-            {
-                _pendingReleaseService.Add(decision, PendingReleaseReason.Delay);
-            }
-            else if (result == ProcessedDecisionResult.Failed)
-            {
-                _pendingReleaseService.Add(decision, PendingReleaseReason.DownloadClientUnavailable);
-            }
-
-            return result;
         }
 
         internal List<DownloadDecision> GetQualifiedReports(IEnumerable<DownloadDecision> decisions)

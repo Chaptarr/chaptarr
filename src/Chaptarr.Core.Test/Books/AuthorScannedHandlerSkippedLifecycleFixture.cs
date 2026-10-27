@@ -20,9 +20,63 @@ namespace Chaptarr.Core.Test.Books
     public class AuthorScannedHandlerSkippedLifecycleFixture
     {
         [Test]
-        public void no_folder_evidence_skip_runs_the_normal_author_scan_completion_lifecycle()
+        public void rejected_initial_search_admission_retains_the_durable_request_until_an_accepted_retry()
+        {
+            var options = new AddAuthorOptions { Monitor = null, SearchForMissingBooks = true };
+            var author = new Author { Id = 7, Name = "New Author", AddOptions = options };
+            var queue = new StubCommandQueueManager { RejectSearch = true };
+            var events = new StubEventAggregator();
+            var subject = new AuthorScannedHandler(
+                DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>(),
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), queue,
+                DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(), events,
+                LogManager.GetCurrentClassLogger(),
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((_, _) => null));
+
+            subject.Handle(new AuthorScannedEvent(author));
+            Assert.That(author.AddOptions, Is.SameAs(options));
+            Assert.That(queue.Pushed.OfType<MissingBookSearchCommand>(), Is.Empty);
+            Assert.That(events.PublishedEvents.OfType<AuthorScanCompletedEvent>().Count(), Is.EqualTo(1));
+            queue.RejectSearch = false;
+            subject.Handle(new AuthorScannedEvent(author));
+            Assert.That(author.AddOptions, Is.Null);
+            Assert.That(queue.Pushed.OfType<MissingBookSearchCommand>().Count(), Is.EqualTo(1));
+        }
+
+        [TestCase(true, false, false, "audiobook")]
+        [TestCase(false, true, false, "ebook")]
+        [TestCase(true, true, false, null)]
+        [TestCase(true, false, true, null)]
+        [TestCase(false, false, false, null)]
+        public void initial_search_keeps_its_saved_media_scope(bool audio, bool ebook, bool independent, string expected)
+        {
+            var options = new AddAuthorOptions
+            {
+                SearchForMissingBooks = true,
+                AudiobookSetupSearchForMissingBooks = audio,
+                EbookSetupSearchForMissingBooks = ebook,
+                IndependentSearchForMissingBooks = independent
+            };
+            var author = new Author { Id = 7, AddOptions = options };
+            var queue = new StubCommandQueueManager();
+            var subject = new AuthorScannedHandler(
+                DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>(),
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), queue,
+                DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(), new StubEventAggregator(),
+                LogManager.GetCurrentClassLogger(),
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((_, _) => null));
+            subject.Handle(new AuthorScannedEvent(author));
+            Assert.That(queue.Pushed.OfType<MissingBookSearchCommand>().Single().MediaType, Is.EqualTo(expected));
+            Assert.That(author.AddOptions, Is.Null);
+        }
+
+        [TestCase(null)]
+        [TestCase(MonitorTypes.None)]
+        [TestCase(MonitorTypes.All)]
+        public void no_folder_evidence_skip_runs_the_normal_author_scan_completion_lifecycle(MonitorTypes? mode)
         {
             var options = new AddAuthorOptions { SearchForMissingBooks = true };
+            if (mode.HasValue) options.Monitor = mode;
             var author = new Author { Id = 7, Name = "New Author", AddOptions = options };
             var monitoredService = DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
@@ -35,13 +89,13 @@ namespace Chaptarr.Core.Test.Books
                 queue,
                 bookAddedService,
                 events,
-                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) => { queue.Pushed.Add(new BulkSyncFormatMonitoringCommand((List<int>)args[0])); return null; }));
 
             subject.Handle(new AuthorScanSkippedEvent(author, AuthorScanSkippedReason.NoFolderEvidence));
 
             var monitored = (BookMonitoredServiceProxy)(object)monitoredService;
-            Assert.That(monitored.Author, Is.SameAs(author));
-            Assert.That(monitored.Options, Is.SameAs(options));
+            Assert.That(monitored.Author, mode.HasValue ? Is.SameAs(author) : Is.Null);
+            Assert.That(monitored.Options, mode.HasValue ? Is.SameAs(options) : Is.Null);
 
             var authorProxy = (AuthorServiceProxy)(object)authorService;
             Assert.That(authorProxy.RemovedAddOptionsFor, Is.SameAs(author));
@@ -78,7 +132,7 @@ namespace Chaptarr.Core.Test.Books
                 new StubCommandQueueManager(),
                 DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
                 new StubEventAggregator(),
-                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((_, _) => throw new NotSupportedException()));
 
             subject.Handle(new AuthorScannedEvent(author));
 
@@ -112,20 +166,19 @@ namespace Chaptarr.Core.Test.Books
             };
             var queue = new StubCommandQueueManager();
             var monitoredService = DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
-            queue.OnPush = command =>
-            {
-                if (command is BulkSyncFormatMonitoringCommand)
-                {
-                    Assert.That(((BookMonitoredServiceProxy)(object)monitoredService).Calls, Has.Count.EqualTo(2));
-                }
-            };
             var subject = new AuthorScannedHandler(
                 monitoredService,
                 DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 queue,
                 DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
                 new StubEventAggregator(),
-                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(IBookService.SyncMonitoredAcrossFormats)));
+                    Assert.That(((BookMonitoredServiceProxy)(object)monitoredService).Calls, Has.Count.EqualTo(2));
+                    queue.Pushed.Add(new BulkSyncFormatMonitoringCommand((List<int>)args[0]));
+                    return null;
+                }));
 
             subject.Handle(new AuthorScannedEvent(author));
 
@@ -147,20 +200,19 @@ namespace Chaptarr.Core.Test.Books
             };
             var monitoredService = DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
             var queue = new StubCommandQueueManager();
-            queue.OnPush = command =>
-            {
-                if (command is BulkSyncFormatMonitoringCommand)
-                {
-                    Assert.That(((BookMonitoredServiceProxy)(object)monitoredService).Calls, Has.Count.EqualTo(1));
-                }
-            };
             var subject = new AuthorScannedHandler(
                 monitoredService,
                 DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 queue,
                 DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
                 new StubEventAggregator(),
-                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)));
+                LogManager.GetLogger(nameof(AuthorScannedHandlerSkippedLifecycleFixture)), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(IBookService.SyncMonitoredAcrossFormats)));
+                    Assert.That(((BookMonitoredServiceProxy)(object)monitoredService).Calls, Has.Count.EqualTo(1));
+                    queue.Pushed.Add(new BulkSyncFormatMonitoringCommand((List<int>)args[0]));
+                    return null;
+                }));
 
             subject.Handle(new AuthorScannedEvent(author));
 
@@ -241,14 +293,14 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubCommandQueueManager : IManageCommandQueue
         {
+            public bool RejectSearch { get; set; }
             public List<Command> Pushed { get; } = new();
-            public Action<Command> OnPush { get; set; }
 
             public CommandModel Push<TCommand>(TCommand command, CommandPriority priority = CommandPriority.Normal, CommandTrigger trigger = CommandTrigger.Unspecified)
                 where TCommand : Command
             {
+                if (RejectSearch && command is MissingBookSearchCommand) return null;
                 Pushed.Add(command);
-                OnPush?.Invoke(command);
                 return new CommandModel { Name = command.Name, Body = command, Priority = priority, Trigger = trigger };
             }
 

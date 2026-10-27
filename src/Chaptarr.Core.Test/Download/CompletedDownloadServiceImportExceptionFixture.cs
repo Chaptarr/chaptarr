@@ -88,7 +88,7 @@ namespace Chaptarr.Core.Test.Download
         {
             public ImportMode Resolve(ImportMode requestedMode, DownloadClientItem downloadClientItem) => requestedMode;
             public DownloadImportPolicy ResolvePolicy(ImportMode requestedMode, DownloadClientItem downloadClientItem) => new(requestedMode, false);
-            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem) => false;
+            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem, int fallbackIndexerId = 0, bool includeUnmanaged = true) => false;
         }
 
         private class ThrowingProxy<T> : DispatchProxy where T : class

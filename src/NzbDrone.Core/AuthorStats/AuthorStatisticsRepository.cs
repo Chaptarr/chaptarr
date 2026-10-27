@@ -150,17 +150,9 @@ namespace NzbDrone.Core.AuthorStats
         {
             var trueIndicator = databaseType == DatabaseType.PostgreSQL ? "true" : "1";
 
-            // Select the same lowest-Id monitored edition once, including its null date.
-            // A set join avoids repeated scalar lookups and their PostgreSQL JIT cost.
-            return $@"(SELECT ""Editions"".""BookId"", ""Editions"".""ReleaseDate""
-                       FROM ""Editions""
-                       WHERE ""Editions"".""Monitored"" = {trueIndicator}
-                         AND NOT EXISTS (
-                             SELECT 1 FROM ""Editions"" AS ""EarlierEdition""
-                             WHERE ""EarlierEdition"".""BookId"" = ""Editions"".""BookId""
-                               AND ""EarlierEdition"".""Monitored"" = {trueIndicator}
-                               AND ""EarlierEdition"".""Id"" < ""Editions"".""Id"")) AS ""MonitoredEdition""
-                      ON ""MonitoredEdition"".""BookId"" = ""Books"".""Id""";
+            return $@"""Editions"" AS ""MonitoredEdition""
+                      ON ""MonitoredEdition"".""BookId"" = ""Books"".""Id""
+                         AND ""MonitoredEdition"".""Monitored"" = {trueIndicator}";
         }
     }
 }

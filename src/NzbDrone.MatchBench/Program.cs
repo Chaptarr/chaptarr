@@ -1064,7 +1064,7 @@ namespace NzbDrone.MatchBench
             System.Console.WriteLine($"[libraryaudit] source={inputSource}, prefix='{prefix}', limit={limit}, includeMissing={includeMissing}, includeUserSelected={includeUserSelected}, flows={string.Join(",", flows)}, strictness={string.Join(",", strictnessValues.Select(v => v?.ToString() ?? "current"))}, pathFallback={string.Join(",", pathFallbackValues.Select(v => v?.ToString() ?? "current"))}{selector}");
             System.Console.WriteLine($"[libraryaudit] appdata='{workspace.AppData}' ({(workspace.IsTemporary ? "snapshot" : "live")})");
 
-            using var host = BuildHost(workspace.StartupContext);
+            using var host = BuildHost(workspace.StartupContext, blockOutboundHttp: GetBoolArg(startupContext, "offline", false));
             using var scope = host.Services.CreateScope();
             var services = scope.ServiceProvider;
 
@@ -1313,10 +1313,10 @@ namespace NzbDrone.MatchBench
             var values = ExpandCsv(raw, "scan-local");
             if (values.Any(v => string.Equals(v, "all", StringComparison.OrdinalIgnoreCase)))
             {
-                return new List<string> { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "author-ready", "direct-default" };
+                return new List<string> { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "manual-preview", "author-ready", "direct-default" };
             }
 
-            var allowed = new HashSet<string>(new[] { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "author-ready", "direct-default" }, StringComparer.OrdinalIgnoreCase);
+            var allowed = new HashSet<string>(new[] { "scan-local", "scan-v5", "scan-scoped-rematch", "downloaded", "manual-download", "manual-preview", "author-ready", "direct-default" }, StringComparer.OrdinalIgnoreCase);
             return values
                 .Select(v => v.Trim().ToLowerInvariant())
                 .Where(v => allowed.Contains(v))
@@ -1422,6 +1422,7 @@ namespace NzbDrone.MatchBench
                 "scan-scoped-rematch" => MatchingContextPresets.ForScanScopedRematch(),
                 "downloaded" => MatchingContextPresets.ForDownloaded(false, targetBookIds, pathFallback),
                 "manual-download" => MatchingContextPresets.ForDownloaded(true, targetBookIds, pathFallback),
+                "manual-preview" => MatchingContextPresets.ForManualPreview(pathFallback, targetBookIds),
                 "author-ready" => MatchingContextPresets.ForAuthorReady(),
                 "direct-default" => MatchingContextPresets.ForDirectDefault(pathFallback),
                 _ => MatchingContextPresets.ForScanLocal(pathFallback)
@@ -3925,6 +3926,11 @@ FROM Books;")
 
             if (rss)
             {
+                // The offline snapshot has no live download-client queue to refresh.
+                ((NzbDrone.Core.Queue.QueueService)services.GetRequiredService<NzbDrone.Core.Queue.IQueueService>())
+                    .Handle(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadRefreshedEvent(
+                        new List<NzbDrone.Core.Download.TrackedDownloads.TrackedDownload>()));
+
                 var replay = RunProductionRssDecision(
                     services.GetRequiredService<IMakeDownloadDecision>(), prioritizer, networkGuard, reports,
                     services.GetRequiredService<IPendingReleaseService>(), services.GetRequiredService<IProcessDownloadDecisions>(), completeSourceData);

@@ -20,10 +20,12 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         DelugeTorrent[] GetTorrents(DelugeSettings settings);
         DelugeTorrent[] GetTorrentsByLabel(string label, DelugeSettings settings);
         DelugeTorrentDetails GetTorrentDetails(string hash, DelugeSettings settings);
+        DelugeTorrent GetTorrent(string hash, DelugeSettings settings);
+        void SetTorrentPaused(string hash, bool paused, DelugeSettings settings);
         string[] GetAvailablePlugins(DelugeSettings settings);
         string[] GetEnabledPlugins(DelugeSettings settings);
         string[] GetAvailableLabels(DelugeSettings settings);
-        DelugeLabel GetLabelOptions(DelugeSettings settings);
+        DelugeLabel GetLabelOptions(string label, DelugeSettings settings);
         void SetTorrentLabel(string hash, string label, DelugeSettings settings);
         void SetTorrentConfiguration(string hash, string key, object value, DelugeSettings settings);
         void SetTorrentSeedingConfiguration(string hash, TorrentSeedConfiguration seedConfiguration, DelugeSettings settings);
@@ -36,7 +38,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
     public class DelugeProxy : IDelugeProxy
     {
-        private static readonly string[] RequiredProperties = new string[] { "hash", "name", "state", "progress", "eta", "message", "is_finished", "save_path", "total_size", "total_done", "time_added", "active_time", "ratio", "is_auto_managed", "stop_at_ratio", "remove_at_ratio", "stop_ratio" };
+        private static readonly string[] RequiredProperties = new string[] { "hash", "name", "state", "progress", "eta", "message", "is_finished", "save_path", "total_size", "total_done", "time_added", "active_time", "ratio", "is_auto_managed", "stop_at_ratio", "remove_at_ratio", "stop_ratio", "paused", "label" };
 
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
@@ -109,6 +111,21 @@ namespace NzbDrone.Core.Download.Clients.Deluge
                 "core.get_torrent_status",
                 hash,
                 new[] { "files", "file_priorities", "save_path" });
+        }
+
+        public DelugeTorrent GetTorrent(string hash, DelugeSettings settings)
+        {
+            return ProcessRequest<DelugeTorrent>(settings, "core.get_torrent_status", hash, RequiredProperties);
+        }
+
+        public void SetTorrentPaused(string hash, bool paused, DelugeSettings settings)
+        {
+            if (string.IsNullOrWhiteSpace(hash))
+            {
+                throw new ArgumentException("A torrent hash is required", nameof(hash));
+            }
+
+            ProcessRequest<object>(settings, paused ? "core.pause_torrent" : "core.resume_torrent", (object)new[] { hash });
         }
 
         public string AddTorrentFromMagnet(string magnetLink, DelugeSettings settings)
@@ -189,9 +206,9 @@ namespace NzbDrone.Core.Download.Clients.Deluge
             return response;
         }
 
-        public DelugeLabel GetLabelOptions(DelugeSettings settings)
+        public DelugeLabel GetLabelOptions(string label, DelugeSettings settings)
         {
-            var response = ProcessRequest<DelugeLabel>(settings, "label.get_options", settings.MusicCategory);
+            var response = ProcessRequest<DelugeLabel>(settings, "label.get_options", label);
 
             return response;
         }
@@ -213,7 +230,12 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
             var ratioArguments = new Dictionary<string, object>();
 
-            if (seedConfiguration.Ratio != null)
+            if (seedConfiguration.KeepSeeding)
+            {
+                ratioArguments.Add("stop_at_ratio", false);
+                ratioArguments.Add("remove_at_ratio", false);
+            }
+            else if (seedConfiguration.Ratio != null)
             {
                 ratioArguments.Add("stop_ratio", seedConfiguration.Ratio.Value);
                 ratioArguments.Add("stop_at_ratio", 1);

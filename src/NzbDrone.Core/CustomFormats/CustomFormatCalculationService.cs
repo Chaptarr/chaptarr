@@ -56,9 +56,16 @@ namespace NzbDrone.Core.CustomFormats
 
         public List<CustomFormat> ParseCustomFormat(RemoteBook remoteBook, long size)
         {
+            var input = CreateReleaseInput(remoteBook, size);
+            ApplyPreferredNarratorTarget(input, remoteBook.Books);
+            return ParseCustomFormat(input);
+        }
+
+        internal static CustomFormatInput CreateReleaseInput(RemoteBook remoteBook, long size = 0)
+        {
             var mediaType = remoteBook.GetMediaType();
             var isAudiobook = mediaType == BookMediaType.Audiobook;
-            var input = new CustomFormatInput
+            return new CustomFormatInput
             {
                 BookInfo = remoteBook.ParsedBookInfo,
                 Author = remoteBook.Author,
@@ -78,10 +85,6 @@ namespace NzbDrone.Core.CustomFormats
                     remoteBook.ParsedBookInfo?.Narrator,
                     remoteBook.ParsedBookInfo?.AudioProductionType) : new List<string>()
             };
-
-            ApplyPreferredNarratorTarget(input, remoteBook.Books);
-
-            return ParseCustomFormat(input);
         }
 
         public List<CustomFormat> ParseCustomFormat(BookFile bookFile, Author author)

@@ -33,7 +33,7 @@ namespace Chaptarr.Core.Test.Api
                 throw failure;
             });
             var controller = new BookController(null, books, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, new QualityProfileExistsValidator(new TestQualityProfileService()),
+                null, null, null, null, new QualityProfileExistsValidator(new TestQualityProfileService()),
                 new MetadataProfileExistsValidator(new TestMetadataProfileService()), LogManager.GetCurrentClassLogger());
             var result = controller.AddWantedEdition(7, new AddWantedEditionRequest { EditionId = 11, SearchForNewBook = true });
             Assert.That(result.Result, Is.InstanceOf<BadRequestObjectResult>());

@@ -10,7 +10,6 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
-using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Extras;
@@ -28,11 +27,11 @@ namespace NzbDrone.Core.MediaFiles
     {
         void DeleteTrackFile(Author author, BookFile bookFile);
         void DeleteTrackFile(BookFile bookFile, string subfolder = "");
-        void DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null);
+        List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null);
+        void DeleteBookFiles(List<Book> books);
     }
 
     public class MediaFileDeletionService : IDeleteMediaFiles,
-                                            IHandleAsync<BookDeletedEvent>,
                                             IHandle<BookFileDeletedEvent>
     {
         private readonly IDiskProvider _diskProvider;
@@ -45,6 +44,8 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IEventAggregator _eventAggregator;
         private readonly IRootFolderService _rootFolderService;
         private readonly ICalibreProxy _calibre;
+        private readonly IMetadataFileService _metadataFileService;
+        private readonly IOtherExtraFileService _otherFileService;
         private readonly Logger _logger;
 
         public MediaFileDeletionService(IDiskProvider diskProvider,
@@ -57,7 +58,9 @@ namespace NzbDrone.Core.MediaFiles
                                         ICalibreProxy calibre,
                                         Logger logger,
                                         IExtraFileRepository<MetadataFile> metadataFiles = null,
-                                        IExtraFileRepository<OtherExtraFile> otherFiles = null)
+                                        IExtraFileRepository<OtherExtraFile> otherFiles = null,
+                                        IMetadataFileService metadataFileService = null,
+                                        IOtherExtraFileService otherFileService = null)
         {
             _diskProvider = diskProvider;
             _recycleBinProvider = recycleBinProvider;
@@ -65,6 +68,8 @@ namespace NzbDrone.Core.MediaFiles
             _authorRepository = authorRepository;
             _metadataFiles = metadataFiles;
             _otherFiles = otherFiles;
+            _metadataFileService = metadataFileService;
+            _otherFileService = otherFileService;
             _configService = configService;
             _eventAggregator = eventAggregator;
             _rootFolderService = rootFolderService;
@@ -163,16 +168,16 @@ namespace NzbDrone.Core.MediaFiles
             }
             catch (Exception e)
             {
-                _logger.Error(e, "Unable to delete book file");
-                throw new NzbDroneClientException(HttpStatusCode.InternalServerError, "Unable to delete book file");
+                _logger.Error(e, "Unable to delete book file: {0}", bookFile.Path);
+                throw new NzbDroneClientException(HttpStatusCode.InternalServerError, "Unable to delete book file: {0}", bookFile.Path);
             }
         }
 
-        public void DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null)
+        public List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null)
         {
             if (authors.Count == 0)
             {
-                return;
+                return new List<BookFile>();
             }
 
             var rootFolders = _rootFolderService.All();
@@ -410,7 +415,7 @@ namespace NzbDrone.Core.MediaFiles
             var unmappedFiles = ownership.Where(file => file.Author == null && file.Path.IsNotNullOrWhiteSpace() &&
                 folders.Any(folder => folder.IsParentPath(Path.GetFullPath(file.Path)))).ToList();
             _mediaFileService.DeleteRecordsForAuthorDeletion(files.Concat(unmappedFiles).DistinctBy(file => file.Id).ToList());
-            _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+            return files;
         }
 
         private void EnsureDeletionRootAvailable(RootFolder root, string path)
@@ -508,65 +513,52 @@ namespace NzbDrone.Core.MediaFiles
             return false;
         }
 
-        public void HandleAsync(BookDeletedEvent message)
+        public void DeleteBookFiles(List<Book> books)
         {
-            if (!message.DeleteFiles)
+            var watch = Stopwatch.StartNew();
+            var files = books.SelectMany(book => book.BookFiles ?? new List<BookFile>()).DistinctBy(file => file.Id).ToList();
+            var selectedPaths = files.SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
+                .Where(path => path.IsNotNullOrWhiteSpace()).ToHashSet(PathEqualityComparer.Instance);
+            var roots = _rootFolderService.All();
+            var rootsByPath = selectedPaths.ToDictionary(path => path,
+                path => _rootFolderService.GetBestRootFolder(path, roots), PathEqualityComparer.Instance);
+            foreach (var group in rootsByPath.GroupBy(item => item.Value?.Path, PathEqualityComparer.Instance))
             {
-                return;
+                EnsureDeletionRootAvailable(group.First().Value, group.First().Key);
             }
 
-            // BookService snapshots the files onto the event before deleting the row, and
-            // MediaFileService purges those rows on this same event — asynchronously. Re-querying
-            // here races that purge and can come back empty, leaving the files on disk. Prefer the
-            // snapshot, exactly as MediaFileService does, and only fall back to a query for callers
-            // that published without one.
-            var files = message.Book?.BookFiles;
-
-            if (files == null || files.Count == 0)
+            // Mandatory disk work runs while its inventory still exists. Events only announce
+            // the committed deletion; they cannot swallow a disk failure and erase ownership.
+            foreach (var book in books)
             {
-                files = _mediaFileService.GetFilesByBook(message.Book.Id);
+                _metadataFileService?.DeleteBookFiles(book, selectedPaths);
+                _otherFileService?.DeleteBookFiles(book, selectedPaths);
             }
-
-            var folders = new List<string>();
 
             foreach (var file in files)
             {
-                CollectFolder(folders, file?.Path?.GetParentPath());
+                DeleteManagedEbookReplicas(file, failOnError: true);
+                DeleteFile(file, rootFolder: rootsByPath[file.Path]);
+            }
 
-                // No BookFileDeletedEvent is published from here, so the replica cleanup that hangs
-                // off that event never runs for a whole-book delete. Colocated ebook copies would be
-                // left behind — call it directly, exactly as the per-file handler does.
-                foreach (var replicaPath in file?.ReplicaPaths ?? new List<string>())
+            foreach (var book in books)
+            {
+                foreach (var folder in (book.BookFiles ?? new List<BookFile>())
+                    .SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
+                    .Where(path => path.IsNotNullOrWhiteSpace()).Select(Path.GetDirectoryName).Distinct(PathEqualityComparer.Instance))
                 {
-                    CollectFolder(folders, replicaPath?.GetParentPath());
+                    CleanupEmptyFolders(book.Author, folder, roots);
                 }
-
-                DeleteManagedEbookReplicas(file);
-                DeleteFile(file);
             }
 
-            // Per-file cleanup runs while the book's other files are still there, so the folder is
-            // only ever empty once the whole book is gone. Sweep once at the end.
-            var author = message.Book?.Author ?? files.FirstOrDefault()?.Author;
-
-            foreach (var folder in folders)
-            {
-                CleanupEmptyFolders(author, folder);
-            }
-        }
-
-        private static void CollectFolder(List<string> folders, string folder)
-        {
-            if (folder.IsNotNullOrWhiteSpace() && !folders.Any(f => f.PathEquals(folder)))
-            {
-                folders.Add(folder);
-            }
+            _logger.Info("Deleted files for {0} book rows: {1} media files, {2} owned paths in {3}ms",
+                books.Count, files.Count, selectedPaths.Count, watch.ElapsedMilliseconds);
         }
 
         [EventHandleOrder(EventHandleOrder.Last)]
         public void Handle(BookFileDeletedEvent message)
         {
-            DeleteManagedEbookReplicas(message.BookFile);
+            DeleteManagedEbookReplicas(message.BookFile, message.ConfirmedAssociatedPaths);
 
             if (message.Reason == DeleteMediaFileReason.Upgrade)
             {
@@ -600,7 +592,7 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void DeleteManagedEbookReplicas(BookFile bookFile)
+        private void DeleteManagedEbookReplicas(BookFile bookFile, IReadOnlyCollection<string> confirmedPaths = null, bool failOnError = false)
         {
             if (bookFile?.ReplicaPaths == null || bookFile.ReplicaPaths.Count == 0)
             {
@@ -612,6 +604,12 @@ namespace NzbDrone.Core.MediaFiles
                          .Distinct(PathEqualityComparer.Instance)
                          .Where(p => p.PathNotEquals(bookFile.Path)))
             {
+                if (confirmedPaths != null && !confirmedPaths.Any(confirmed => confirmed.PathEquals(replicaPath)))
+                {
+                    _logger.Warn("Keeping ebook replica not included in replacement confirmation: {0}", replicaPath);
+                    continue;
+                }
+
                 try
                 {
                     if (_diskProvider.FileExistsCanonical(replicaPath))
@@ -622,6 +620,12 @@ namespace NzbDrone.Core.MediaFiles
                 }
                 catch (Exception ex)
                 {
+                    if (failOnError)
+                    {
+                        _logger.Error(ex, "Unable to delete managed ebook replica: {0}", replicaPath);
+                        throw new NzbDroneClientException(HttpStatusCode.InternalServerError, "Unable to delete managed ebook replica: {0}", replicaPath);
+                    }
+
                     _logger.Debug(ex, "Failed to delete managed ebook replica: {0}", replicaPath);
                 }
             }

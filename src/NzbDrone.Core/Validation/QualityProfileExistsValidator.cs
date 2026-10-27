@@ -12,7 +12,14 @@ namespace NzbDrone.Core.Validation
             _qualityProfileService = qualityProfileService;
         }
 
-        protected override string GetDefaultMessageTemplate() => "Quality Profile does not exist";
+        private ProfileType? _profileType;
+
+        public QualityProfileExistsValidator ForType(ProfileType profileType) =>
+            new QualityProfileExistsValidator(_qualityProfileService) { _profileType = profileType };
+
+        protected override string GetDefaultMessageTemplate() => _profileType.HasValue
+            ? $"Quality profile does not exist or is incompatible with {_profileType.Value}"
+            : "Quality Profile does not exist";
 
         protected override bool IsValid(PropertyValidatorContext context)
         {
@@ -21,7 +28,7 @@ namespace NzbDrone.Core.Validation
                 return true;
             }
 
-            return _qualityProfileService.Exists((int)context.PropertyValue);
+            return _qualityProfileService.Exists((int)context.PropertyValue, _profileType);
         }
     }
 }

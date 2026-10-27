@@ -471,7 +471,9 @@ namespace NzbDrone.Core.History
             }
 
             downloadId = NormalizeDownloadId(downloadId);
-            var grabbedHistory = downloadId == null ? new List<EntityHistory>() : _historyRepository.FindByDownloadId(downloadId);
+            var grabbedHistory = downloadId == null ? new List<EntityHistory>() :
+                message.HistoryContext?.Get(downloadId, _historyRepository.FindByDownloadId) ??
+                _historyRepository.FindByDownloadId(downloadId) ?? new List<EntityHistory>();
 
             var history = new EntityHistory
             {
@@ -499,6 +501,11 @@ namespace NzbDrone.Core.History
             if (message.BookInfo?.GeneratedConversionSourcePaths?.Count > 0)
             {
                 history.Data.Add("SourcePaths", message.BookInfo.GeneratedConversionSourcePaths.ToJson());
+            }
+
+            if (message.ImportedBook?.MatchProvenance?.ImportExcludedSourcePaths?.Count > 0)
+            {
+                history.Data.Add("ExcludedSourcePaths", message.ImportedBook.MatchProvenance.ImportExcludedSourcePaths.ToJson());
             }
 
             _historyRepository.Insert(history);
@@ -842,6 +849,7 @@ namespace NzbDrone.Core.History
             }
 
             var downloadHistoryToDelete = _downloadHistoryRepository.GetByAuthorId(authorId)
+                .Where(history => !history.ShouldKeepSeeding())
                 .Where(history => !retainedDownloadIds.Contains(NormalizeDownloadId(history.DownloadId)))
                 .Select(history => history.Id)
                 .ToList();

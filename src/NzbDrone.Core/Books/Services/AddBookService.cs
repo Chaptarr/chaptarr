@@ -143,7 +143,7 @@ namespace NzbDrone.Core.Books
                 return CompleteRequestedNarration(book, dbBook) ?? await RequestBookThroughAuthorCatalog(book);
             }
 
-            if (GetInitialBookPolicy(book).HasValue)
+            if (GetInitialBookPolicy(book).HasValue || book.Author?.AddOptions?.Monitor == MonitorTypes.None || book.AddOptions?.MonitorBook == false)
             {
                 var existing = FindExistingAuthorForAdd(book);
                 var configured = book.MediaType == BookMediaType.Audiobook
@@ -155,10 +155,10 @@ namespace NzbDrone.Core.Books
                 }
 
                 return CompleteScopedBookRequest(dbBook, book.AddOptions?.SearchForNewBook == true,
-                    book.Author?.AddOptions?.Monitor != MonitorTypes.None);
+                    book.AddOptions?.MonitorBook ?? true);
             }
 
-            var monitorRequested = book.IsMonitored();
+            var monitorRequested = book.AddOptions?.MonitorBook ?? book.IsMonitored();
             var searchRequested = book.AddOptions?.SearchForNewBook == true;
             book.UseDbFieldsFrom(dbBook);
             var storedEditions = dbBook.Editions ?? _editionService.GetEditionsByBook(dbBook.Id);
@@ -514,10 +514,10 @@ namespace NzbDrone.Core.Books
                     ?? throw new ValidationException(new[] { new ValidationFailure("Edition", "The requested narration is missing from the authoritative audiobook catalog.") });
             }
 
-            if (GetInitialBookPolicy(requestedBook).HasValue)
+            if (GetInitialBookPolicy(requestedBook).HasValue || requestedBook.Author?.AddOptions?.Monitor == MonitorTypes.None || requestedBook.AddOptions?.MonitorBook == false)
             {
                 return CompleteScopedBookRequest(localBook, searchRequested,
-                    requestedBook.Author?.AddOptions?.Monitor != MonitorTypes.None);
+                    requestedBook.AddOptions?.MonitorBook ?? true);
             }
 
             localBook.Author = author;
@@ -570,11 +570,9 @@ namespace NzbDrone.Core.Books
             var author = book.Author ?? new Author();
             var mediaType = book.MediaType;
             var isAudiobook = mediaType == BookMediaType.Audiobook;
-            var isSpecificBook = author.AddOptions?.Monitor == MonitorTypes.SpecificBook;
             var initialPolicy = GetInitialBookPolicy(book);
-            var initialMonitorMode = initialPolicy ?? (author.AddOptions?.Monitor == MonitorTypes.All
-                ? MonitorTypes.All
-                : MonitorTypes.SpecificBook);
+            var initialMonitorMode = initialPolicy ?? author.AddOptions?.Monitor ?? MonitorTypes.SpecificBook;
+            var monitorRequested = book.AddOptions?.MonitorBook ?? true;
 
             return new MonitoringConfig
             {
@@ -587,13 +585,13 @@ namespace NzbDrone.Core.Books
                 AuthorName = author.Name,
                 CreateAudiobook = isAudiobook,
                 CreateEbook = !isAudiobook,
-                AudiobookMonitored = author.AudiobookMonitored,
-                AudiobookMonitorNewItems = author.AudiobookMonitorNewItems,
+                AudiobookMonitored = isAudiobook ? author.AudiobookMonitored ?? true : author.AudiobookMonitored,
+                AudiobookMonitorNewItems = isAudiobook ? author.AudiobookMonitorNewItems ?? NewItemMonitorTypes.None : author.AudiobookMonitorNewItems,
                 AudiobookMonitorExistingMode = isAudiobook && requestedIds?.Any() == true
                     ? initialMonitorMode
                     : null,
-                EbookMonitored = author.EbookMonitored,
-                EbookMonitorNewItems = author.EbookMonitorNewItems,
+                EbookMonitored = !isAudiobook ? author.EbookMonitored ?? true : author.EbookMonitored,
+                EbookMonitorNewItems = !isAudiobook ? author.EbookMonitorNewItems ?? NewItemMonitorTypes.None : author.EbookMonitorNewItems,
                 EbookMonitorExistingMode = !isAudiobook && requestedIds?.Any() == true
                     ? initialMonitorMode
                     : null,
@@ -607,11 +605,13 @@ namespace NzbDrone.Core.Books
                 EbookTags = author.EbookTags,
                 Tags = author.Tags,
                 QueueIfUnavailable = true,
-                MonitorMode = isSpecificBook ? MonitorTypes.SpecificBook : author.AddOptions?.Monitor,
+                MonitorMode = author.AddOptions?.Monitor ?? MonitorTypes.SpecificBook,
                 SpecificBookProviderIds = new HashSet<string>(requestedIds, StringComparer.OrdinalIgnoreCase),
                 SpecificBookMediaType = mediaType,
-                AudiobookBooksToMonitor = isAudiobook ? requestedIds : null,
-                EbookBooksToMonitor = isAudiobook ? null : requestedIds,
+                AudiobookBooksToAdd = isAudiobook && !monitorRequested ? requestedIds : null,
+                EbookBooksToAdd = !isAudiobook && !monitorRequested ? requestedIds : null,
+                AudiobookBooksToMonitor = isAudiobook && monitorRequested ? requestedIds : null,
+                EbookBooksToMonitor = !isAudiobook && monitorRequested ? requestedIds : null,
                 AudiobookBooksToSearch = isAudiobook && searchRequested ? requestedIds : null,
                 EbookBooksToSearch = !isAudiobook && searchRequested ? requestedIds : null
             };
@@ -653,7 +653,8 @@ namespace NzbDrone.Core.Books
             }
 
             var target = _bookService.AddWantedEdition(matches[0].BookId, matches[0].Id);
-            return CompleteScopedBookRequest(target, request.AddOptions?.SearchForNewBook == true, monitorRequested: true);
+            return CompleteScopedBookRequest(target, request.AddOptions?.SearchForNewBook == true,
+                request.AddOptions?.MonitorBook ?? true);
         }
 
         private static MonitorTypes? GetInitialBookPolicy(Book book)
@@ -672,16 +673,21 @@ namespace NzbDrone.Core.Books
             {
                 _bookService.MonitorRequestedBooks(new[] { book.Id }, mediaType);
             }
+            else
+            {
+                _bookService.SetMonitored(new[] { book.Id }, false);
+            }
 
             var author = _authorService.GetAuthor(book.AuthorId);
 
             // Request preservation survives the initial scan; it does not pin an edition.
             book.AddOptions ??= new AddBookOptions();
             book.AddOptions.AddType = BookAddType.Manual;
+            book.AddOptions.MonitorBook = monitorRequested;
             _bookService.SetAddOptions(new[] { book });
             if (author?.AddOptions != null)
             {
-                _commandQueueManager.Push(new RefreshAuthorCommand(author.Id, refreshMetadata: false, rescanFolders: true));
+                _commandQueueManager.Push(RefreshAuthorCommand.InitialScan(author));
             }
 
             if (searchRequested)

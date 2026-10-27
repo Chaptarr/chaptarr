@@ -6,6 +6,7 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Core.Test.Common;
 using Dapper;
@@ -16,6 +17,7 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Housekeeping;
 using NzbDrone.Core.Housekeeping.Housekeepers;
 using NzbDrone.Core.MediaFiles.Commands;
@@ -64,7 +66,12 @@ namespace Chaptarr.Core.Test.Datastore
         [TearDown]
         public void Cleanup()
         {
-            using (var connection = (SqliteConnection)_context.OpenConnection())
+            using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(_folder, "staging.db"),
+                Cache = SqliteCacheMode.Private,
+                Pooling = true
+            }.ToString()))
             {
                 SqliteConnection.ClearPool(connection);
             }
@@ -85,6 +92,233 @@ namespace Chaptarr.Core.Test.Datastore
             }
 
             return path;
+        }
+
+        [TestCase(1)]
+        [TestCase(8)]
+        public async Task failed_staging_initialization_recovers_once_on_access_without_resetting_active_work(int callers)
+        {
+            var abandoned = AddItem("abandoned", null);
+            var completed = AddItem("completed");
+            using var factory = new LogFactory();
+            var messages = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var logging = new NLog.Config.LoggingConfiguration();
+            logging.AddRuleForAllLevels(messages);
+            factory.Configuration = logging;
+            _context = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => _folder), factory.GetLogger("staging-recovery"));
+            _queue = new IngestQueueRepository(_context, _logger);
+            using var control = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(_folder, "staging.db"),
+                Pooling = false
+            }.ToString());
+            control.Open();
+            control.Execute(@"
+                UPDATE ingest_queue SET status='in_progress' WHERE path=@abandoned;
+                CREATE TRIGGER block_startup_recovery BEFORE UPDATE ON ingest_queue
+                BEGIN SELECT RAISE(ABORT, 'blocked staging recovery'); END;", new { abandoned });
+
+            var failure = Assert.Throws<SqliteException>(() => _context.InitializeDatabase());
+            Assert.That(_context.InitializationError, Is.SameAs(failure));
+            Assert.That(control.QuerySingle<string>("SELECT status FROM ingest_queue WHERE path=@abandoned", new { abandoned }), Is.EqualTo("in_progress"));
+            control.Execute("DROP TRIGGER block_startup_recovery;");
+            messages.Logs.Clear();
+
+            using var ready = new CountdownEvent(callers);
+            using var start = new ManualResetEventSlim();
+            control.Execute("BEGIN IMMEDIATE;");
+            var tasks = Enumerable.Range(0, callers).Select(_ => Task.Factory.StartNew(() =>
+            {
+                ready.Signal();
+                start.Wait();
+                using var connection = _context.OpenConnection();
+                return connection.ExecuteScalar<int>("SELECT COUNT(*) FROM ingest_queue");
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
+            try
+            {
+                Assert.That(ready.Wait(TimeSpan.FromSeconds(10)), Is.True);
+                start.Set();
+                Assert.That(SpinWait.SpinUntil(() => messages.Logs.Contains("Initializing staging database") ||
+                    tasks.All(task => task.IsCompleted), TimeSpan.FromSeconds(10)), Is.True);
+            }
+            finally
+            {
+                start.Set();
+                control.Execute("ROLLBACK;");
+                await Task.WhenAll(tasks);
+            }
+
+            Assert.That(tasks.Select(task => task.Result), Is.All.EqualTo(2));
+            Assert.That(messages.Logs.Count(message => message == "Initializing staging database"), Is.EqualTo(1));
+            Assert.That(_context.InitializationError, Is.Null);
+            Assert.That(control.QuerySingle<string>("SELECT status FROM ingest_queue WHERE path=@abandoned", new { abandoned }), Is.EqualTo("queued"));
+            Assert.That(_queue.GetImportResults().Single().Path, Is.EqualTo(completed));
+
+            control.Execute("UPDATE ingest_queue SET status='in_progress' WHERE path=@abandoned", new { abandoned });
+            Assert.That(_queue.GetQueueCount(), Is.EqualTo(1));
+            Assert.That(control.QuerySingle<string>("SELECT status FROM ingest_queue WHERE path=@abandoned", new { abandoned }), Is.EqualTo("in_progress"));
+            Assert.That(messages.Logs.Count(message => message == "Initializing staging database"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void failed_staging_initialization_creates_schema_when_storage_becomes_available()
+        {
+            var folder = Path.Combine(_folder, "unavailable");
+            var context = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => folder), _logger);
+            Assert.Throws<SqliteException>(() => context.InitializeDatabase());
+            Directory.CreateDirectory(folder);
+
+            using var connection = (SqliteConnection)context.OpenConnection();
+            try
+            {
+                Assert.That(context.InitializationError, Is.Null);
+                Assert.That(connection.Query<string>("SELECT name FROM sqlite_master WHERE type='table'"),
+                    Does.Contain("ingest_queue").And.Contain("import_results"));
+                var queue = new IngestQueueRepository(context, _logger);
+                queue.InsertBatch(new List<IngestQueueItem> { new IngestQueueItem { Path = "recovered.epub", TagsJson = "{}", SizeBytes = 4, MtimeNs = 1 } });
+                Assert.That(queue.GetQueueCount(), Is.EqualTo(1));
+            }
+            finally
+            {
+                SqliteConnection.ClearPool(connection);
+            }
+        }
+
+        [TestCase(false, false, 100)]
+        [TestCase(false, true, 100)]
+        [TestCase(true, false, 100)]
+        [TestCase(true, true, 100)]
+        [TestCase(false, true, 901)]
+        [TestCase(true, true, 901)]
+        public void deleted_book_queue_cleanup_batches_exact_owned_paths_and_preserves_colocated_files(bool postgres, bool deleteFiles, int trackCount)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                MediaFileService service = null;
+                var events = Stub<IEventAggregator>((_, args) =>
+                {
+                    if (args[0] is BookDeletedEvent deleted) service.HandleAsync(deleted);
+                    return null;
+                });
+                var author = new AuthorRepository(database, events, _logger).Insert(new Author
+                {
+                    Name = "Test Writer", CleanName = "testwriter", TitleSlug = "test-writer", Path = _folder, Added = DateTime.UtcNow
+                });
+                var books = new BookRepository(database, events);
+                var editions = new EditionRepository(database, events);
+                var files = new MediaFileRepository(database, events);
+                Edition AddEdition(BookMediaType media, string slug)
+                {
+                    var book = books.Insert(new Book { AuthorId = author.Id, Title = slug, CleanTitle = slug,
+                        TitleSlug = slug, MediaType = media, Added = DateTime.UtcNow });
+                    return editions.Insert(new Edition { BookId = book.Id, Title = slug, ForeignEditionId = "local:" + slug,
+                        ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Monitored = true });
+                }
+
+                var audio = AddEdition(BookMediaType.Audiobook, "the-lantern");
+                var ebook = AddEdition(BookMediaType.Ebook, "the-lantern-ebook");
+                var other = AddEdition(BookMediaType.Audiobook, "other-book");
+                var selected = Enumerable.Range(1, trackCount).Select(index => new BookFile
+                {
+                    Path = Path.Combine(_folder, $"The Lantern - Part {index:0000}.mp3"), EditionId = audio.Id, MediaType = "audiobook"
+                }).ToList();
+                var neighborFiles = new List<BookFile>
+                {
+                    new BookFile { Path = Path.Combine(_folder, "The Lantern.epub"), EditionId = ebook.Id, MediaType = "ebook",
+                        ReplicaPaths = new List<string> { Path.Combine(_folder, "The Lantern - copy.epub") } },
+                    new BookFile { Path = Path.Combine(_folder, "Other Book.m4b"), EditionId = other.Id, MediaType = "audiobook" }
+                };
+                var storedFiles = selected.Concat(neighborFiles).ToList();
+                storedFiles.ForEach(file =>
+                {
+                    file.Quality = new NzbDrone.Core.Qualities.QualityModel();
+                    file.MediaInfo = new NzbDrone.Core.Parser.Model.MediaInfoModel();
+                    file.DateAdded = file.Modified = DateTime.UtcNow;
+                });
+                files.InsertMany(storedFiles);
+                var protectedPaths = neighborFiles.Select(file => file.Path).Concat(neighborFiles.SelectMany(file => file.ReplicaPaths))
+                    .Concat(new[] { Path.Combine(_folder, "cover.jpg"), Path.Combine(_folder, "metadata.nfo"), selected[0].Path + ".jpg" }).ToArray();
+                var allPaths = selected.Select(file => file.Path).Concat(protectedPaths).ToArray();
+                foreach (var path in allPaths)
+                {
+                    File.WriteAllText(path, Path.GetFileName(path));
+                }
+
+                _queue.InsertBatch(allPaths.Select(path => new IngestQueueItem { Path = path, TagsJson = "{}", SizeBytes = 4, MtimeNs = 1 }).ToList());
+                using (var connection = _context.OpenConnection())
+                {
+                    foreach (var path in new[] { selected[0].Path, protectedPaths[0], protectedPaths.Last() })
+                    {
+                        var id = connection.QuerySingle<int>("SELECT id FROM ingest_queue WHERE path=@path", new { path });
+                        _queue.CompleteItemWithResult(id, path, ImportOutcome.Unmapped);
+                    }
+                }
+
+                var opens = 0;
+                var countedContext = Stub<IStagingDbContext>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(IStagingDbContext.OpenConnection)));
+                    opens++;
+                    return _context.OpenConnection();
+                });
+                var queue = new IngestQueueRepository(countedContext, _logger);
+                service = new MediaFileService(files, events, queue, null, _logger);
+                var bookService = new BookService(books, new EditionService(editions, events, _logger), events,
+                    Stub<IAuthorService>((method, _) => method.Name == nameof(IAuthorService.GetAuthor)
+                        ? author : throw new NotSupportedException(method.Name)),
+                    service, null, null, null, _logger,
+                    deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => Stub<IDeleteMediaFiles>((method, _) =>
+                        method.Name == nameof(IDeleteMediaFiles.DeleteBookFiles) ? null : throw new NotSupportedException(method.Name))));
+                var timer = Stopwatch.StartNew();
+                bookService.DeleteBook(audio.BookId, deleteFiles);
+                timer.Stop();
+                service.DeleteRecordsForAuthorDeletion(new List<BookFile>());
+
+                using (var connection = _context.OpenConnection())
+                {
+                    Assert.That(connection.Query<string>("SELECT path FROM ingest_queue"), Is.EquivalentTo(protectedPaths));
+                    Assert.That(connection.Query<string>("SELECT path FROM import_results"), Is.EquivalentTo(new[] { protectedPaths[0], protectedPaths.Last() }));
+                }
+
+                Assert.That(files.GetFilesByBook(ebook.BookId).Select(file => file.Id), Is.EqualTo(new[] { neighborFiles[0].Id }));
+                Assert.That(files.GetFilesByBook(other.BookId).Select(file => file.Id), Is.EqualTo(new[] { neighborFiles[1].Id }));
+                Assert.That(files.GetFileWithPath(selected.Select(file => file.Path).ToList()).Count, Is.EqualTo(deleteFiles ? 0 : trackCount));
+                Assert.That(files.GetFilesByBook(audio.BookId), Is.Empty);
+                foreach (var path in allPaths)
+                {
+                    Assert.That(File.ReadAllText(path), Is.EqualTo(Path.GetFileName(path)), "Queue cleanup cannot change file bytes");
+                }
+
+                TestContext.Progress.WriteLine($"Queue cleanup: main={(postgres ? "PostgreSQL" : "SQLite")}, files={trackCount}, delete={deleteFiles}, staging opens={opens}, elapsed={timer.Elapsed.TotalMilliseconds:F2}ms");
+                Assert.That(opens, Is.EqualTo((trackCount + 899) / 900));
+            });
+        }
+
+        [Test]
+        public void batch_file_cleanup_attempts_unavailable_staging_once_and_keeps_main_cleanup_working()
+        {
+            var unavailable = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => Path.Combine(_folder, "unavailable")), _logger);
+            Assert.Throws<SqliteException>(() => unavailable.InitializeDatabase());
+            var attempts = 0;
+            var context = Stub<IStagingDbContext>((method, args) =>
+            {
+                attempts++;
+                return unavailable.OpenConnection();
+            });
+            var selected = Enumerable.Range(1, 100).Select(index => new BookFile { Path = Path.Combine(_folder, $"Part {index}.mp3") }).ToList();
+            var deletes = 0;
+            var files = Stub<IMediaFileRepository>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IMediaFileRepository.DeleteMany)));
+                Assert.That(args[0], Is.SameAs(selected));
+                deletes++;
+                return null;
+            });
+            new MediaFileService(files, null, new IngestQueueRepository(context, _logger), null, _logger).DeleteRecordsForAuthorDeletion(selected);
+
+            Assert.That(deletes, Is.EqualTo(1));
+            Assert.That(unavailable.InitializationError, Is.Not.Null);
+            Assert.That(attempts, Is.EqualTo(1));
         }
 
         private void VerifyHandoff(OrchestratorImportResult result, IMediaFileService files, IDiskProvider disk)

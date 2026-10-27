@@ -5,6 +5,7 @@ using System.Linq;
 using Dapper;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Qualities;
 
@@ -43,16 +44,41 @@ namespace NzbDrone.Core.History
 
             var postgres = _database.DatabaseType == DatabaseType.PostgreSQL;
             var idPredicate = postgres ? "= ANY(@ids)" : "IN @ids";
-            var incompatible = postgres
-                ? "EXISTS (SELECT 1 FROM jsonb_each_text(\"Data\"::jsonb) WHERE LOWER(key) = 'alternativecopyincompatible' AND LOWER(TRIM(value)) = 'true') AND EXISTS (SELECT 1 FROM jsonb_each_text(\"Data\"::jsonb) WHERE LOWER(key) = 'alternativecopies' AND LOWER(TRIM(value)) = 'true')"
-                : "EXISTS (SELECT 1 FROM json_each(\"Data\") WHERE LOWER(key) = 'alternativecopyincompatible' AND LOWER(TRIM(value)) = 'true') AND EXISTS (SELECT 1 FROM json_each(\"Data\") WHERE LOWER(key) = 'alternativecopies' AND LOWER(TRIM(value)) = 'true')";
+            var materialized = postgres ? "MATERIALIZED " : string.Empty;
+            var dataEntries = postgres ? "jsonb_each_text(\"Data\"::jsonb)" : "json_each(\"Data\")";
+            var incompatible = $"EXISTS (SELECT 1 FROM {dataEntries} WHERE LOWER(key) = 'alternativecopyincompatible' AND LOWER(TRIM(value)) = 'true') AND EXISTS (SELECT 1 FROM {dataEntries} WHERE LOWER(key) = 'alternativecopies' AND LOWER(TRIM(value)) = 'true')";
             var sql = $@"SELECT ""History"".* FROM ""History"" WHERE ""Id"" IN (
-                WITH scoped AS (SELECT ""Id"", ""BookId"", ""Date"", ""EventType"", ""Data"" FROM ""History"" WHERE ""BookId"" {idPredicate}),
+                WITH scoped AS (SELECT ""Id"", ""BookId"", ""Date"", ""EventType"", ""Data"", ""DownloadId"" FROM ""History"" WHERE ""BookId"" {idPredicate}),
                 marked AS (SELECT ""Id"" FROM scoped WHERE ""EventType"" = @grabbed AND {incompatible}),
-                latest AS (SELECT ""Id"", ROW_NUMBER() OVER (PARTITION BY ""BookId"" ORDER BY ""Date"" DESC, ""Id"" ASC) AS rank
-                    FROM scoped WHERE ""Id"" NOT IN (SELECT ""Id"" FROM marked))
-                SELECT ""Id"" FROM latest WHERE rank = 1 UNION SELECT ""Id"" FROM marked) ORDER BY ""Id""";
-            // Keep marked evidence for the existing proof validator; only ordinary history is reduced to the latest row.
+                deleted AS (SELECT ""Id"", ""BookId"", ""Date"", ""Data"",
+                    ROW_NUMBER() OVER (PARTITION BY ""BookId"" ORDER BY ""Date"" DESC, ""Id"" DESC) AS rank
+                    FROM scoped WHERE ""EventType"" = {(int)EntityHistoryEventType.BookFileDeleted}),
+                released AS {materialized}(SELECT ""Id"", ""BookId"", ""Date"" FROM deleted WHERE rank = 1
+                    AND EXISTS (SELECT 1 FROM {dataEntries} WHERE LOWER(key) = 'reason'
+                        AND value IN ('{nameof(DeleteMediaFileReason.Manual)}', '{nameof(DeleteMediaFileReason.MissingFromDisk)}'))),
+                retained AS {materialized}(SELECT DISTINCT e.""BookId"" FROM ""Editions"" e JOIN ""BookFiles"" f ON f.""EditionId"" = e.""Id""
+                    WHERE e.""BookId"" {idPredicate}),
+                latest AS (SELECT ""Id"", ""BookId"", ""Date"", ""DownloadId"", ROW_NUMBER() OVER (PARTITION BY ""BookId"" ORDER BY ""Date"" DESC, ""Id"" DESC) AS rank
+                    FROM scoped WHERE ""Id"" NOT IN (SELECT ""Id"" FROM marked)
+                        AND (""EventType"" = @grabbed OR
+                            ((""DownloadId"" IS NULL OR ""DownloadId"" = '') AND ""EventType"" IN
+                                ({(int)EntityHistoryEventType.DownloadFailed}, {(int)EntityHistoryEventType.DownloadIgnored})))),
+                failed AS (SELECT DISTINCT latest.""Id"" FROM latest JOIN ""History"" failure
+                    ON failure.""BookId"" = latest.""BookId"" AND failure.""DownloadId"" = latest.""DownloadId""
+                    WHERE latest.rank = 1 AND failure.""BookId"" {idPredicate} AND failure.""EventType"" = {(int)EntityHistoryEventType.DownloadFailed}
+                        AND (failure.""Date"" > latest.""Date"" OR (failure.""Date"" = latest.""Date"" AND failure.""Id"" > latest.""Id"")))
+                SELECT latest.""Id"" FROM latest
+                LEFT JOIN failed ON failed.""Id"" = latest.""Id""
+                LEFT JOIN released ON released.""BookId"" = latest.""BookId""
+                LEFT JOIN retained ON retained.""BookId"" = latest.""BookId""
+                WHERE latest.rank = 1
+                    AND failed.""Id"" IS NULL
+                    AND (released.""Id"" IS NULL OR released.""Date"" < latest.""Date"" OR
+                        (released.""Date"" = latest.""Date"" AND released.""Id"" <= latest.""Id"") OR retained.""BookId"" IS NOT NULL)
+                UNION SELECT ""Id"" FROM marked) ORDER BY ""Id""";
+            // Match failures against indexed History and materialize PostgreSQL deletion/file evidence once for the batch.
+            // Rank every deletion reason before allowing manual/confirmed-missing last-file deletion to release a grab.
+            // Filter after selecting it so an earlier grab cannot regain protection.
             var stopwatch = Stopwatch.StartNew();
             using var connection = _database.OpenConnection();
             var chunkSize = postgres ? ids.Length : SqliteVariableLimit.MaxParameters - 1;

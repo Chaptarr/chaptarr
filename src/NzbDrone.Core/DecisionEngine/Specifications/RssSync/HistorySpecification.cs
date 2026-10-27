@@ -8,6 +8,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
@@ -17,18 +18,21 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
     public class HistorySpecification : IDecisionEngineSpecification
     {
         private readonly IHistoryService _historyService;
+        private readonly IDownloadHistoryService _downloadHistoryService;
         private readonly UpgradableSpecification _upgradableSpecification;
         private readonly ICustomFormatCalculationService _formatService;
         private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public HistorySpecification(IHistoryService historyService,
+                                    IDownloadHistoryService downloadHistoryService,
                                     UpgradableSpecification upgradableSpecification,
                                     ICustomFormatCalculationService formatService,
                                     IConfigService configService,
                                     Logger logger)
         {
             _historyService = historyService;
+            _downloadHistoryService = downloadHistoryService;
             _upgradableSpecification = upgradableSpecification;
             _formatService = formatService;
             _configService = configService;
@@ -42,7 +46,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
         {
             if (subject.PositivelyIncompatibleBookIds == null || subject.PreparedBookHistory == null)
             {
-                PrepareAlternativeCopySuppression(new[] { subject });
+                PrepareAlternativeCopySuppression(new[] { subject }, checkGrabHistory: searchCriteria == null);
             }
 
             if (subject.GetBooksMatchingReleaseMediaType().Any(book => subject.PositivelyIncompatibleBookIds.Contains(book.Id)))
@@ -85,8 +89,6 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                     var currentEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(qualityProfile, mostRecent.Quality);
                     var candidateEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(qualityProfile, subject.ParsedBookInfo.Quality);
 
-                    // The series will be the same as the one in history since it's the same episode.
-                    // Instead of fetching the series from the DB reuse the known series.
                     var cutoffUnmet = _upgradableSpecification.CutoffNotMet(
                         qualityProfile,
                         new List<QualityModel> { currentEffectiveQuality },
@@ -125,7 +127,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             return Decision.Accept();
         }
 
-        public void PrepareAlternativeCopySuppression(IEnumerable<RemoteBook> remoteBooks)
+        public void PrepareAlternativeCopySuppression(IEnumerable<RemoteBook> remoteBooks, bool checkGrabHistory = true)
         {
             var subjects = (remoteBooks ?? Enumerable.Empty<RemoteBook>()).Where(subject => subject != null).ToList();
             var wantedCopies = subjects.SelectMany(subject => subject.GetBooksMatchingReleaseMediaType())
@@ -166,6 +168,22 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             // A disproved copy grab did not serve the wanted row; retain any earlier ordinary grab's protection.
             var latest = history.Where(row => !ineligibleLatestGrabs.Contains(row.Id)).GroupBy(row => row.BookId)
                 .ToDictionary(group => group.Key, group => group.MaxBy(row => row.Date));
+            if (checkGrabHistory)
+            {
+                var downloads = _downloadHistoryService.GetLatestDownloadHistoryItems(latest.Values
+                        .Where(row => row.EventType == EntityHistoryEventType.Grabbed).Select(row => row.DownloadId))
+                    .ToDictionary(row => row.DownloadId, StringComparer.OrdinalIgnoreCase);
+                foreach (var row in latest.Values.ToArray())
+                {
+                    if (row.DownloadId.IsNotNullOrWhiteSpace() && downloads.TryGetValue(row.DownloadId, out var download) &&
+                        download.Date >= row.Date && (download.EventType is DownloadHistoryEventType.DownloadImported or
+                            DownloadHistoryEventType.DownloadFailed or DownloadHistoryEventType.DownloadIgnored))
+                    {
+                        latest.Remove(row.BookId);
+                    }
+                }
+            }
+
             foreach (var subject in subjects)
             {
                 subject.PreparedBookHistory = latest;

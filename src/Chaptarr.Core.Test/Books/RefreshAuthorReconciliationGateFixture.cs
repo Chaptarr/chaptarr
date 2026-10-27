@@ -47,7 +47,7 @@ namespace Chaptarr.Core.Test.Books
                         fetch?.Invoke();
                         return RefreshResult.Updated(commandAuthor);
                     }),
-                    authorService: Proxy<IAuthorService>((method, args) => method.Name == nameof(IAuthorService.GetAuthors)
+                    authorService: Proxy<IAuthorService>((method, args) => method.Name is nameof(IAuthorService.GetAuthors) or nameof(IAuthorService.GetExistingAuthors)
                         ? new List<Author> { commandAuthor } : throw new NotImplementedException(method.Name)),
                     bookService: Proxy<IBookService>((method, args) =>
                     {

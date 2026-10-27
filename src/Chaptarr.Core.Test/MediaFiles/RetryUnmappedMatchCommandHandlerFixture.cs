@@ -26,6 +26,15 @@ namespace Chaptarr.Core.Test.MediaFiles
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             public List<BookFile> UnmappedFiles { get; set; } = new List<BookFile>();
             public List<BookFile> Updated { get; } = new List<BookFile>();
             public List<string> Events { get; set; }
@@ -40,6 +49,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Events?.Add($"update:{bookFile?.Path}");
                 Updated.Add(bookFile);
             }
+            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -132,9 +142,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 new List<(string, int, int?, Dictionary<string, List<string>>, int?, long, DateTime)>();
             public Func<string, int, int?, BookImportFileResult> ResultFactory { get; set; }
 
-            public Task ImportFileAsync(string path, int bookId, string quality) => throw new NotImplementedException();
-            public Task ImportFileAsync(string path, int bookId, string quality, Dictionary<string, List<string>> tags) => throw new NotImplementedException();
-            public Task ImportFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags) => throw new NotImplementedException();
             public Task<BookImportFileResult> ImportExistingFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags)
             {
                 return ImportExistingFileAsync(path, bookId, editionId, quality, tags, null);

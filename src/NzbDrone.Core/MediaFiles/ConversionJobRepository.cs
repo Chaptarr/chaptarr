@@ -9,8 +9,10 @@ namespace NzbDrone.Core.MediaFiles
     public interface IConversionJobRepository : IBasicRepository<ConversionJob>
     {
         ConversionJob FindByDownloadId(string downloadId);
-        ConversionJob NextQueued();
         List<ConversionJob> NonCompleted();
+        List<ConversionJob> ByDownloadIds(IEnumerable<string> downloadIds);
+        List<ConversionJob> ByStatus(ConversionJobStatus status);
+        List<ConversionJob> PendingCleanup();
         void DeleteByDownloadId(string downloadId);
         void DeleteCompletedBefore(DateTime cutoff);
     }
@@ -32,16 +34,26 @@ namespace NzbDrone.Core.MediaFiles
             return Query(job => job.DownloadId == downloadId).SingleOrDefault();
         }
 
-        public ConversionJob NextQueued()
-        {
-            return Query(job => job.Status == ConversionJobStatus.Queued)
-                .OrderBy(job => job.CreatedAt)
-                .FirstOrDefault();
-        }
-
         public List<ConversionJob> NonCompleted()
         {
             return Query(job => job.Status != ConversionJobStatus.Completed);
+        }
+
+        public List<ConversionJob> ByDownloadIds(IEnumerable<string> downloadIds)
+        {
+            var ids = downloadIds?.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray() ?? Array.Empty<string>();
+            return ids.Length == 0 ? new List<ConversionJob>() : Query(job => ids.Contains(job.DownloadId));
+        }
+
+        public List<ConversionJob> ByStatus(ConversionJobStatus status)
+        {
+            return Query(job => job.Status == status);
+        }
+
+        public List<ConversionJob> PendingCleanup()
+        {
+            // RequestJson is written by the shared compact serializer; filter terminal payloads in SQL.
+            return Query(job => job.Status == ConversionJobStatus.Cancelled && job.RequestJson.Contains("\"DiscardRequested\":true"));
         }
 
         public void DeleteByDownloadId(string downloadId)

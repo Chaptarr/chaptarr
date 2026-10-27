@@ -41,7 +41,14 @@ namespace Chaptarr.Api.V1.Books
         public List<Links> Links { get; set; }
         public Ratings Ratings { get; set; }
         public bool Monitored { get; set; }
-        public bool ManualAdd { get; set; }
+        private bool? _manualAdd;
+        public bool ManualAdd
+        {
+            get => _manualAdd.GetValueOrDefault();
+            set => _manualAdd = value;
+        }
+
+        internal bool ManualAddSpecified => _manualAdd.HasValue;
         public long? GoodreadsEditionId { get; set; }
         public string HardcoverEditionId { get; set; }
         public string OpenLibraryEditionId { get; set; }

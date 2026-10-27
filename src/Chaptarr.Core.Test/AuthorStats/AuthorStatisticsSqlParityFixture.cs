@@ -31,7 +31,7 @@ namespace Chaptarr.Core.Test.AuthorStats
                 StringAssert.Contains(booleanComparison, authorSql);
                 StringAssert.DoesNotContain("MIN(\"BookFiles\"", authorSql);
                 StringAssert.Contains(@"""MonitoredEdition"".""BookId"" = ""Books"".""Id""", authorSql);
-                StringAssert.Contains(@"""EarlierEdition"".""Id"" < ""Editions"".""Id""", authorSql);
+                StringAssert.DoesNotContain("EarlierEdition", authorSql);
             });
         }
     }

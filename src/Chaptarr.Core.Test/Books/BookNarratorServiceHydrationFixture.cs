@@ -43,9 +43,7 @@ namespace Chaptarr.Core.Test.Books
             public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<NzbDrone.Core.Qualities.QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
             public List<Book> AuthorBooksBetweenDates(Author author, DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
-            public void SetMonitoredFlat(Book book, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
-            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksBySeries(int seriesId) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
@@ -64,9 +62,11 @@ namespace Chaptarr.Core.Test.Books
             public IEnumerable<Book> Get(IEnumerable<int> ids) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateManyAtomic(IList<Book> books, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated) => throw new System.NotSupportedException();
             public void UpdateMany(IList<Book> model) => throw new NotImplementedException();
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => throw new NotImplementedException();
+            public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles) => throw new NotImplementedException();
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
             public void Purge(bool vacuum = false) => throw new NotImplementedException();
             public bool HasItems() => throw new NotImplementedException();

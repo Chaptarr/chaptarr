@@ -42,12 +42,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private class DiskProviderProxy : DispatchProxy
         {
+            public bool IsFolder { get; set; } = true;
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 var path = args?.FirstOrDefault() as string;
                 return targetMethod?.Name switch
                 {
-                    nameof(IDiskProvider.FolderExists) => true,
+                    nameof(IDiskProvider.FolderExists) => IsFolder,
                     nameof(IDiskProvider.FileExists) => true,
                     nameof(IDiskProvider.GetFileInfo) => CreateFileInfo(path),
                     _ => throw new NotImplementedException($"IDiskProvider.{targetMethod?.Name}")
@@ -168,9 +170,39 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(result, Is.Empty);
         }
 
-        private static (ManualImportService Service, DiskScanServiceProxy DiskScan, ImportDecisionMakerProxy DecisionMaker) CreateService(string unrelatedPath)
+        [Test]
+        public void exact_preview_should_exclude_mac_sidecars_without_excluding_real_chapters()
+        {
+            var folder = "/downloads/Dune";
+            var real = new[] { $"{folder}/Dune Part 01.mp3", $"{folder}/Dune Part 02.mp3" };
+            var requested = real.Concat(real.Select(path => $"{folder}/._{Path.GetFileName(path)}")).ToArray();
+            var (service, diskScan, decisionMaker) = CreateService("unused");
+
+            var result = service.GetMediaFiles(folder, null, new Author { Id = 1 }, FilterFilesType.Matched,
+                false, CancellationToken.None, requested);
+
+            Assert.That(diskScan.Calls, Is.Zero);
+            Assert.That(decisionMaker.Paths, Is.EquivalentTo(real));
+            Assert.That(result.Select(item => item.Path), Is.EquivalentTo(real));
+        }
+
+        [Test]
+        public void single_file_preview_should_not_offer_a_mac_sidecar()
+        {
+            var (service, diskScan, decisionMaker) = CreateService("unused", false);
+
+            var result = service.GetMediaFiles("/downloads/Dune/._Dune Part 01.mp3", null,
+                new Author { Id = 1 }, FilterFilesType.Matched, false, CancellationToken.None);
+
+            Assert.That(result, Is.Empty);
+            Assert.That(decisionMaker.Paths, Is.Empty);
+            Assert.That(diskScan.Calls, Is.Zero);
+        }
+
+        private static (ManualImportService Service, DiskScanServiceProxy DiskScan, ImportDecisionMakerProxy DecisionMaker) CreateService(string unrelatedPath, bool isFolder = true)
         {
             var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            ((DiskProviderProxy)(object)diskProvider).IsFolder = isFolder;
             var diskScanService = DispatchProxy.Create<IDiskScanService, DiskScanServiceProxy>();
             var diskScanProxy = (DiskScanServiceProxy)(object)diskScanService;
             diskScanProxy.Files = new[] { CreateFileInfo(unrelatedPath) };
@@ -200,7 +232,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 null,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(NLog.LogManager.GetCurrentClassLogger()));
 
             return (service, diskScanProxy, decisionMakerProxy);
         }

@@ -196,6 +196,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public int EditionId { get; set; }
         public string MatchedVia { get; set; }
         public MatchProvenance Provenance { get; set; }
+        internal bool IsStandaloneRecording { get; set; }
+        internal int? EditionDurationSeconds { get; set; }
         internal Books.Edition AlternativeCopyEdition { get; set; }
         internal Dictionary<int, int> AlternativeCopyIncompatibleEditionIds { get; set; }
 

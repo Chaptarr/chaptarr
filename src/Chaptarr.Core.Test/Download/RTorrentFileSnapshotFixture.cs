@@ -72,8 +72,8 @@ namespace Chaptarr.Core.Test.Download
                 return Files;
             }
 
-            public void AddTorrentFromUrl(string torrentUrl, string label, RTorrentPriority priority, string directory, RTorrentSettings settings) => throw new NotImplementedException();
-            public void AddTorrentFromFile(string fileName, byte[] fileContent, string label, RTorrentPriority priority, string directory, RTorrentSettings settings) => throw new NotImplementedException();
+            public void AddTorrentFromUrl(string torrentUrl, string label, RTorrentPriority priority, string directory, bool keepSeeding, RTorrentSettings settings) => throw new NotImplementedException();
+            public void AddTorrentFromFile(string fileName, byte[] fileContent, string label, RTorrentPriority priority, string directory, bool keepSeeding, RTorrentSettings settings) => throw new NotImplementedException();
             public void RemoveTorrent(string hash, RTorrentSettings settings) => throw new NotImplementedException();
             public void SetTorrentLabel(string hash, string label, RTorrentSettings settings) => throw new NotImplementedException();
             public bool HasHashTorrent(string hash, RTorrentSettings settings) => throw new NotImplementedException();
@@ -130,6 +130,7 @@ namespace Chaptarr.Core.Test.Download
                     downloadSeedConfigProvider: null,
                     rTorrentDirectoryValidator: null,
                     blocklistService: null,
+                    localizationService: null,
                     logger: LogManager.GetCurrentClassLogger())
             {
             }

@@ -6,6 +6,7 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
+using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MediaCover;
@@ -217,6 +218,21 @@ namespace Chaptarr.Core.Test.Books
                     }
                 }
 
+                var deletedBookIds = new List<int>();
+                events.OnPublish = message =>
+                {
+                    if (message is BookDeletedEvent deleted)
+                    {
+                        Assert.That(duplicateBookId, Is.GreaterThan(0), "Only the unrequested duplicate may be pruned.");
+                        Assert.That(deleted.Book.Id, Is.EqualTo(duplicateBookId));
+                        Assert.That(deleted.Book.Id, Is.Not.EqualTo(previousBookId), "The requested work must survive.");
+                        Assert.That(BookIdentity.HasUserPreservationMarker(deleted.Book), Is.False);
+                        Assert.That(deleted.Book.IsMonitored(), Is.False);
+                        Assert.That(deleted.DeleteFiles, Is.False);
+                        deletedBookIds.Add(deleted.Book.Id);
+                    }
+                };
+
                 library.AddAuthorAsync("hc:9001", config).GetAwaiter().GetResult();
                 var savedAuthor = authors.All().Single();
                 var savedBooks = books.GetBooksByAuthor(savedAuthor.Id);
@@ -276,6 +292,8 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(requested.AnyEditionOk, Is.EqualTo(!pinned));
                 Assert.That(requested.Editions.Any(edition => edition.ManualAdd), Is.EqualTo(pinned));
                 AssertOtherCopyUnchanged();
+                Assert.That(deletedBookIds, Is.All.EqualTo(duplicateBookId));
+                Assert.That(deletedBookIds, Has.Count.LessThanOrEqualTo(duplicateBookId > 0 ? 1 : 0));
                 TestContext.WriteLine($"{database.DatabaseType}/{side}: generic catalog request existing={existing}, pin={pinned}; retained one work, ordinary selection resumes={!pinned}");
             });
         }

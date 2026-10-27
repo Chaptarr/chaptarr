@@ -13,15 +13,12 @@ namespace Chaptarr.Core.Test.Parser
     [TestFixture]
     public class ReleaseIdentityEvidenceFixture
     {
-        [TestCase("Fields of Promise", "Fields of Promise", true)]
-        [TestCase("Fields of Promise", "Fields Promise", false)]
-        [TestCase("Fields and Promise", "Fields Promise", false)]
-        [TestCase("The Fields of Promise", "Fields Promise", false)]
-        public void series_only_identity_must_retain_all_stored_words(string seriesName, string observedSeries, bool matches)
+        [TestCase("Fields of Promise")]
+        [TestCase("Fields Promise")]
+        public void series_cannot_replace_missing_author(string observedSeries)
         {
-            var identity = Analyze(observedSeries + " - A Book Title", "Expected Reader", "A Book Title", seriesName, "");
+            var identity = Analyze(observedSeries + " - A Book Title", "Expected Reader", "A Book Title", "Fields of Promise", "");
             Assert.That(identity.HasAuthorIdentityEvidence, Is.False);
-            Assert.That(identity.HasPositiveIdentityEvidence, Is.EqualTo(matches));
         }
 
         [Test]
@@ -35,7 +32,7 @@ namespace Chaptarr.Core.Test.Parser
                 "16");
 
             Assert.That(identity.HasStructuredAuthorMismatch, Is.False);
-            Assert.That(identity.HasPositiveIdentityEvidence, Is.True);
+            Assert.That(identity.HasAuthorIdentityEvidence, Is.True);
         }
 
         [Test]
@@ -49,7 +46,7 @@ namespace Chaptarr.Core.Test.Parser
                 "1");
 
             Assert.That(identity.HasStructuredAuthorMismatch, Is.False);
-            Assert.That(identity.HasPositiveIdentityEvidence, Is.True);
+            Assert.That(identity.HasAuthorIdentityEvidence, Is.True);
         }
 
         [TestCase("Louise Penny - [Gamache 16] - All the Devils Are Here")]
@@ -67,7 +64,7 @@ namespace Chaptarr.Core.Test.Parser
                 "16");
 
             Assert.That(identity.HasStructuredAuthorMismatch, Is.False);
-            Assert.That(identity.HasPositiveIdentityEvidence, Is.True);
+            Assert.That(identity.HasAuthorIdentityEvidence, Is.True);
         }
 
         [TestCase("")]
@@ -84,7 +81,7 @@ namespace Chaptarr.Core.Test.Parser
                 structuredAuthor);
 
             Assert.That(identity.HasStructuredAuthorMismatch, Is.False);
-            Assert.That(identity.HasPositiveIdentityEvidence, Is.True);
+            Assert.That(identity.HasAuthorIdentityEvidence, Is.True);
         }
 
         [TestCase("John Smith", "Jane Jones", "Jane Jones", false, false)]
@@ -101,13 +98,12 @@ namespace Chaptarr.Core.Test.Parser
             };
             var book = new Book { Author = author, Title = "A Book Title" };
             var identity = ReleaseIdentityEvidence.Analyze(
-                new ReleaseInfo { Title = book.Title, Author = releaseAuthor }, author, book,
+                new ReleaseInfo { Title = book.Title, Author = releaseAuthor }, author,
                 new TitleMatchResult { MatchedVariant = book.Title, MatchedStart = 0, MatchedEnd = 2 });
 
             Assert.Multiple(() =>
             {
                 Assert.That(identity.HasAuthorIdentityEvidence, Is.EqualTo(hasAuthorEvidence));
-                Assert.That(identity.HasPositiveIdentityEvidence, Is.EqualTo(hasAuthorEvidence));
                 Assert.That(identity.HasStructuredAuthorMismatch, Is.EqualTo(!hasAuthorEvidence));
             });
         }
@@ -147,7 +143,7 @@ namespace Chaptarr.Core.Test.Parser
                 "16");
 
             Assert.That(identity.HasStructuredAuthorMismatch, Is.False);
-            Assert.That(identity.HasPositiveIdentityEvidence, Is.True);
+            Assert.That(identity.HasAuthorIdentityEvidence, Is.True);
         }
 
         [TestCase("Pat Smith", "Titre par Pat Smith", true)]
@@ -176,7 +172,7 @@ namespace Chaptarr.Core.Test.Parser
 
             var titleMatch = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, new[] { book }, new[] { book });
             Assert.That(titleMatch, Is.Not.Null);
-            var identity = ReleaseIdentityEvidence.Analyze(release, author, book, titleMatch);
+            var identity = ReleaseIdentityEvidence.Analyze(release, author, titleMatch);
 
             Assert.Multiple(() =>
             {
@@ -209,7 +205,7 @@ namespace Chaptarr.Core.Test.Parser
 
             var titleMatch = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, new[] { book }, new[] { book });
             Assert.That(titleMatch, Is.Not.Null);
-            var identity = ReleaseIdentityEvidence.Analyze(release, author, book, titleMatch);
+            var identity = ReleaseIdentityEvidence.Analyze(release, author, titleMatch);
 
             Assert.Multiple(() =>
             {
@@ -262,7 +258,7 @@ namespace Chaptarr.Core.Test.Parser
         {
             var author = new Author { Name = "John Smith" };
             var identity = ReleaseIdentityEvidence.Analyze(new ReleaseInfo { Title = releaseTitle }, author,
-                new Book { Title = bookTitle, Author = author }, new TitleMatchResult
+                new TitleMatchResult
                 {
                     MatchedVariant = bookTitle,
                     MatchedStart = titleStart,
@@ -279,7 +275,7 @@ namespace Chaptarr.Core.Test.Parser
             var identity = Analyze(releaseTitle, authorName, editionTitle, null, null);
 
             Assert.That(identity.HasStructuredAuthorMismatch, Is.False);
-            Assert.That(identity.HasPositiveIdentityEvidence, Is.False);
+            Assert.That(identity.HasAuthorIdentityEvidence, Is.False);
         }
 
         [TestCase("John Smith", true)]
@@ -317,14 +313,16 @@ namespace Chaptarr.Core.Test.Parser
             });
         }
 
-        [TestCase("John Smith - A Book Title", true)]
-        [TestCase("A Book Title John Smith", true)]
+        [TestCase("John Smith - A Book Title - Jane Doe", true)]
+        [TestCase("Jane Doe - A Book Title John Smith", true)]
+        [TestCase("John Smith - A Book Title", false)]
+        [TestCase("A Book Title John Smith", false)]
         [TestCase("John; Smith - A Book Title", false)]
         [TestCase("A Book Title - John; Smith", false)]
         [TestCase("John; Smith A Book Title", false)]
         [TestCase("A Book Title John; Smith", false)]
         [TestCase("Read by John; Smith - A Book Title", false)]
-        public void known_narrator_boundary_must_preserve_contributor_boundaries(string releaseTitle, bool accepted)
+        public void known_narrator_cannot_replace_missing_author(string releaseTitle, bool accepted)
         {
             var book = CreateNarratorBook("A Book Title");
             var release = new ReleaseInfo { Title = releaseTitle };
@@ -337,9 +335,9 @@ namespace Chaptarr.Core.Test.Parser
             var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger());
             var decision = spec.IsSatisfiedBy(new RemoteBook { Release = release }, criteria);
             var match = ReleaseTitleMatchScorer.FindBestMatch(release, book.Author.Name, new[] { book }, new[] { book });
-            var identity = ReleaseIdentityEvidence.Analyze(release, book.Author, book, match);
+            var identity = ReleaseIdentityEvidence.Analyze(release, book.Author, match);
 
-            TestContext.Progress.WriteLine($"Narrator boundary: release='{releaseTitle}', scorer={match?.IsMatch == true}, positiveIdentity={identity.HasPositiveIdentityEvidence}, accepted={decision.Accepted}.");
+            TestContext.Progress.WriteLine($"Narrator boundary: release='{releaseTitle}', scorer={match?.IsMatch == true}, authorEvidence={identity.HasAuthorIdentityEvidence}, accepted={decision.Accepted}.");
             Assert.That(decision.Accepted, Is.EqualTo(accepted));
         }
 
@@ -408,7 +406,7 @@ namespace Chaptarr.Core.Test.Parser
 
             Assert.That(match, Is.Not.Null);
 
-            return ReleaseIdentityEvidence.Analyze(release, author, book, match);
+            return ReleaseIdentityEvidence.Analyze(release, author, match);
         }
     }
 }

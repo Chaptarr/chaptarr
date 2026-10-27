@@ -219,7 +219,7 @@ namespace Chaptarr.Core.Test.Books
             var authors = new AuthorService(h.Authors, h.EventAggregator, null, null, h.Queue, new CacheManager(), h.Books, null,
                 logger, null, null, new Lazy<IBookService>(() => h.BookService), mainDatabase: h.Database, h.Aliases);
             new AuthorScannedHandler(new BookMonitoredService(authors, h.BookService, logger), authors, h.Queue,
-                new BookAddedService(new CacheManager(), h.Queue, h.BookService, logger), h.EventAggregator, logger)
+                new BookAddedService(new CacheManager(), h.Queue, h.BookService, logger), h.EventAggregator, logger, h.BookService)
                 .Handle(new AuthorScannedEvent(h.Author));
         }
     }

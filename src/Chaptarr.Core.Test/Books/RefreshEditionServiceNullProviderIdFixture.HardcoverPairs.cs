@@ -27,6 +27,7 @@ namespace Chaptarr.Core.Test.Books
                 var h = new Harness(database, logFactory.GetLogger(nameof(RefreshEditionServiceNullProviderIdFixture)));
                 var first = h.Seed(null);
                 var second = h.Seed(null);
+                first.Monitored = false;
                 first.HardcoverEditionId = "hc:edition:202";
                 first.Title = "Saved Hardcover recording";
                 first.Overview = "Saved Hardcover overview";
@@ -116,6 +117,7 @@ namespace Chaptarr.Core.Test.Books
                 var h = new Harness(database);
                 var first = h.Seed(null);
                 var second = h.Seed(null);
+                first.Monitored = false;
                 first.HardcoverEditionId = "hc:edition:202";
                 first.Title = "First recording";
                 first.Asin = "B000SHARED";

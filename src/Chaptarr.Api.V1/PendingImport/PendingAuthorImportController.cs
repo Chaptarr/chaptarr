@@ -316,10 +316,13 @@ namespace Chaptarr.Api.V1.PendingImport
         [ProducesResponseType(typeof(ApiMessageResource), 200)]
         public ActionResult<ApiMessageResource> Cancel(int id, [FromQuery] bool delete = false)
         {
-            _pendingImportService.Cancel(id);
             if (delete)
             {
                 _pendingImportService.Delete(id);
+            }
+            else
+            {
+                _pendingImportService.Cancel(id);
             }
 
             return Ok(new ApiMessageResource { Message = delete ? "Pending import deleted" : "Pending import cancelled" });

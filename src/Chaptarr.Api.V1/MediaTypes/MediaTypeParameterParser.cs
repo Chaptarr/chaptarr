@@ -9,6 +9,19 @@ namespace Chaptarr.Api.V1.MediaTypes
 {
     public static class MediaTypeParameterParser
     {
+        public const string FormatRequiredMessage = "Specify ?mediaType=audiobook or ?mediaType=ebook, use a media-scoped /audiobook or /ebook base URL, or supply per-format author fields such as audiobookQualityProfileId / ebookQualityProfileId and audiobookRootFolderPath / ebookRootFolderPath.";
+
+        public static string ResolveWriteScope(string mediaType, string facadeMediaType)
+        {
+            var requested = NormalizeOptional(mediaType, allowAll: false);
+            if (requested != null && facadeMediaType != null && requested != facadeMediaType)
+            {
+                throw new BadRequestException("mediaType must agree with the media-scoped API base URL.");
+            }
+
+            return facadeMediaType ?? requested;
+        }
+
         public static BookMediaType? ParseOptional(string mediaType, bool allowAll = true)
         {
             if (string.IsNullOrWhiteSpace(mediaType))

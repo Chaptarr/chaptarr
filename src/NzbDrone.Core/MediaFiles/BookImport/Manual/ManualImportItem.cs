@@ -32,6 +32,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
         public List<string> Warnings { get; set; }
         public Dictionary<string, List<string>> Tags { get; set; }
         public bool AdditionalFile { get; set; }
+        public bool? SelectByDefault { get; set; }
         public bool ReplaceExistingFiles { get; set; }
         public bool DisableReleaseSwitching { get; set; }
 

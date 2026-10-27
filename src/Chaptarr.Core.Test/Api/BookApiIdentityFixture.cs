@@ -176,19 +176,25 @@ namespace Chaptarr.Core.Test.Api
                         ? new List<NzbDrone.Core.AuthorStats.AuthorStatistics>()
                         : new NzbDrone.Core.AuthorStats.AuthorStatistics()),
                     Files, Proxy<IMapCoversToLocal>((m, a) => null), null,
-                    Proxy<IBroadcastSignalRMessage>((m, a) => false), Queue, Events, null, null, null,
+                    Proxy<IBroadcastSignalRMessage>((m, a) => false), Queue, Events, null,
                     new QualityProfileExistsValidator(new TestQualityProfileService()),
                     new MetadataProfileExistsValidator(new TestMetadataProfileService()), logger)
                 { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
             }
 
-            public BookLookupController LookupController(Logger logger = null, ISearchForNewBook searchProxy = null)
+            public BookLookupController LookupController(Logger logger = null, ISearchForNewBook searchProxy = null, int? deletedOwner = null)
             {
                 return new BookLookupController(searchProxy ?? Proxy<ISearchForNewBook>((m, a) =>
                 {
                     RemoteLookups++;
                     return new List<Book>();
-                }), Proxy<IMapCoversToLocal>((m, a) => null), BookService, EditionService, Files,
+                }), Proxy<IMapCoversToLocal>((m, a) => null), deletedOwner.HasValue ? Proxy<IBookService>((method, args) =>
+                {
+                    var result = method.Invoke(BookService, args);
+                    return method.Name == nameof(IBookService.GetExistingBooks)
+                        ? ((List<Book>)result).Where(book => book.Id != deletedOwner.Value).ToList()
+                        : result;
+                }) : BookService, EditionService, Files,
                     Proxy<IMediaCoverProxy>((m, a) => null), providerAliasService: Aliases, logger: logger)
                 { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
             }
@@ -229,7 +235,7 @@ namespace Chaptarr.Core.Test.Api
                         Assert.That(stored.Overview, Is.EqualTo(book.Overview));
                         Assert.That(stored.ReleaseDate, Is.EqualTo(book.ReleaseDate));
                         Assert.That(stored.AnyEditionOk, Is.False);
-                        Assert.That(stored.IsMonitored(), Is.EqualTo(h.Commands.Any()));
+                        Assert.That(stored.IsMonitored(), Is.True);
                         Assert.That(h.Books.Get(sibling.Id).IsMonitored(), Is.False);
                         Assert.That(h.Books.Get(opposite.Id).IsMonitored(), Is.False);
                         Assert.That(h.Authors.Get(h.Author.Id).AudiobookMonitored, Is.False);
@@ -608,18 +614,18 @@ namespace Chaptarr.Core.Test.Api
 
         [TestCase(false)]
         [TestCase(true)]
-        public void orphan_edition_logs_original_lookup_term_and_keeps_remote_fallback(bool postgres)
+        public void edition_owner_deleted_between_lookups_keeps_remote_fallback(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
                 var h = new Harness(database);
-                h.Editions.Insert(new Edition { BookId = 999999, Title = "Orphan edition", ForeignEditionId = "hc:404" });
+                var deleted = h.AddBook(BookMediaType.Audiobook, "hc:999999", "hc:404");
                 using var factory = new LogFactory();
                 var target = new MemoryTarget { Layout = "${level}|${message}|${exception:format=message}" };
                 var config = new LoggingConfiguration();
                 config.AddRule(LogLevel.Warn, LogLevel.Fatal, target);
                 factory.Configuration = config;
-                var lookup = h.LookupController(factory.GetLogger(nameof(BookLookupController)));
+                var lookup = h.LookupController(factory.GetLogger(nameof(BookLookupController)), deletedOwner: deleted.Id);
                 Assert.That(lookup.Search("hc-ed:404", "audiobook").Value, Is.Empty);
                 Assert.That(h.RemoteLookups, Is.EqualTo(1));
                 Assert.That(target.Logs, Has.Count.EqualTo(1));
@@ -636,12 +642,12 @@ namespace Chaptarr.Core.Test.Api
             {
                 var h = new Harness(database);
                 var book = h.AddBook(BookMediaType.Audiobook, "hc:1", "gr:404-audiobook");
-                h.Editions.Insert(new Edition { BookId = 999999, Title = "Orphan edition", ForeignEditionId = "gr:404" });
+                var deleted = h.AddBook(BookMediaType.Audiobook, "hc:999999", "gr:404");
                 h.Aliases.ReplaceAliases("Book", book.Id, "edition", new[] { "gr:405" });
                 h.Aliases.ReplaceAliases("Book", 999999, "edition", new[] { "gr:405" });
                 h.Aliases.ReplaceAliases("Book", book.Id, "work", new[] { "gr:406" });
                 h.Aliases.ReplaceAliases("Book", 999999, "work", new[] { "gr:406" });
-                var lookup = h.LookupController();
+                var lookup = h.LookupController(deletedOwner: deleted.Id);
                 foreach (var term in new[] { "gr-ed:404", "gr-ed:405", "gr:406" })
                 {
                     var response = lookup.Search(term, "audiobook").Value;

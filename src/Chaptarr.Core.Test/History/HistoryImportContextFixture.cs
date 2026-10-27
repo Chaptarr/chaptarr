@@ -136,6 +136,7 @@ namespace Chaptarr.Core.Test.History
                 Events.Downloads = Downloads;
                 var notification = Proxy<INotification>((method, args) =>
                 {
+                    if (method.Name == "get_HasPendingQueue") return false;
                     if (method.Name == "get_Definition")
                     {
                         return new NotificationDefinition { Id = 43 };
@@ -384,6 +385,7 @@ namespace Chaptarr.Core.Test.History
             DualDatabaseFixture.Run(postgres, database =>
             {
                 var h = new Harness(database);
+                h.Results.Add(h.Result(null));
                 var unknown = new TrackedDownload
                 {
                     DownloadItem = h.Item, RemoteBook = h.Remote(), State = TrackedDownloadState.ImportPending
@@ -417,6 +419,7 @@ namespace Chaptarr.Core.Test.History
                 });
 
                 h.Item.DownloadId = Guid.NewGuid().ToString();
+                h.Results.Clear();
                 h.Results.Add(h.Result(h.Book));
                 var newFailure = new TrackedDownload
                 {

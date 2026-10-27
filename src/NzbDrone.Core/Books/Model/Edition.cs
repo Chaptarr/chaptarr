@@ -151,6 +151,14 @@ namespace NzbDrone.Core.Books
             return string.Format("[{0}][{1}]", ForeignEditionId, Title.NullSafe());
         }
 
+        public void UseImagesFrom(Edition other)
+        {
+            var incoming = other.Images?.Where(image => image?.Url.IsValidHttpUrl() == true).ToList();
+            Images = incoming?.Count > 0
+                ? incoming
+                : Images?.Where(image => image?.Url.IsValidHttpUrl() == true).ToList() ?? new List<MediaCover.MediaCover>();
+        }
+
 		        public override void UseMetadataFrom(Edition other)
 		        {
 			            ForeignEditionId = CleanProviderIdForCopy(other.ForeignEditionId, ForeignEditionId);
@@ -207,16 +215,7 @@ namespace NzbDrone.Core.Books
 			                }).ToList()
 			                : Chapters ?? new List<EditionChapter>();
 
-			            // Only keep safe absolute HTTP(S) image URLs (prevents poisoned/invalid values from persisting in the DB).
-		            var otherImages = other.Images?
-		                .Where(i => i?.Url.IsValidHttpUrl() == true)
-		                .ToList();
-
-		            var currentImages = Images?
-		                .Where(i => i?.Url.IsValidHttpUrl() == true)
-		                .ToList();
-
-		            Images = otherImages?.Any() == true ? otherImages : currentImages ?? new List<MediaCover.MediaCover>();
+                UseImagesFrom(other);
 			            Links = other.Links?.Any() == true ? other.Links : Links;
 			            Ratings = other.Ratings;
 			            ReviewCount = other.ReviewCount ?? ReviewCount;

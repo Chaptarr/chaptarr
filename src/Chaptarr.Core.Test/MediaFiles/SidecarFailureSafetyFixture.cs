@@ -518,7 +518,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return null;
             });
             var service = new MetadataFileService(repo, null, s.Disk, recycle, LogManager.GetCurrentClassLogger());
-            service.Handle(new BookDeletedEvent(colocated.Edition.Book, true, false));
+            service.DeleteBookFiles(colocated.Edition.Book, new[] { colocated.Path });
+            service.Handle(new BookDeletedEvent(colocated.Edition.Book, true, false, filesAlreadyDeleted: true));
             Assert.Multiple(() =>
             {
                 Assert.That(File.Exists(other), Is.True, "Book media type does not locate a physically colocated sidecar");

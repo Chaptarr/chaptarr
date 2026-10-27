@@ -173,7 +173,7 @@ namespace Chaptarr.Core.Test.Books
             var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
             var repositoryProxy = (RepositoryProxy)repository;
             var events = new RecordingEventAggregator();
-            var subject = new PendingAuthorImportService(repository, null, events, LogManager.GetCurrentClassLogger());
+            var subject = new PendingAuthorImportService(repository, DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), events, LogManager.GetCurrentClassLogger());
             var item = new PendingAuthorImport
             {
                 Id = 42,
@@ -227,7 +227,7 @@ namespace Chaptarr.Core.Test.Books
             };
             var subject = new PendingAuthorImportService(
                 repository,
-                null,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 new RecordingEventAggregator(),
                 LogManager.GetCurrentClassLogger());
 
@@ -270,7 +270,7 @@ namespace Chaptarr.Core.Test.Books
             };
             var subject = new PendingAuthorImportService(
                 repository,
-                null,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 new RecordingEventAggregator(),
                 LogManager.GetCurrentClassLogger());
 
@@ -328,7 +328,7 @@ namespace Chaptarr.Core.Test.Books
                 };
                 return false;
             };
-            var subject = new PendingAuthorImportService(repository, null, new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+            var subject = new PendingAuthorImportService(repository, DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
 
             Assert.That(subject.UpdateStatus(item, PendingImportStatus.Failed, "excluded", item.Version), Is.False);
             Assert.That(proxy.FencedUpdateCount, Is.EqualTo(1));
@@ -362,7 +362,7 @@ namespace Chaptarr.Core.Test.Books
             };
             var subject = new PendingAuthorImportService(
                 repository,
-                null,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 new RecordingEventAggregator(),
                 LogManager.GetCurrentClassLogger());
 
@@ -818,7 +818,7 @@ namespace Chaptarr.Core.Test.Books
             repositoryProxy.TryUpdate = (_, _) => false;
             var subject = new PendingAuthorImportService(
                 repository,
-                null,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 new RecordingEventAggregator(),
                 LogManager.GetCurrentClassLogger());
             var item = new PendingAuthorImport
@@ -861,7 +861,7 @@ namespace Chaptarr.Core.Test.Books
             repositoryProxy.TryUpdate = (_, _) => ++updateAttempt == 1;
             var subject = new PendingAuthorImportService(
                 repository,
-                null,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 new RecordingEventAggregator(),
                 LogManager.GetCurrentClassLogger());
 
@@ -900,7 +900,7 @@ namespace Chaptarr.Core.Test.Books
             };
             var subject = new PendingAuthorImportService(
                 repository,
-                null,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 new RecordingEventAggregator(),
                 LogManager.GetCurrentClassLogger());
 
@@ -950,7 +950,7 @@ namespace Chaptarr.Core.Test.Books
             };
             var subject = new PendingAuthorImportService(
                 repository,
-                null,
+                DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
                 new RecordingEventAggregator(),
                 LogManager.GetCurrentClassLogger());
 

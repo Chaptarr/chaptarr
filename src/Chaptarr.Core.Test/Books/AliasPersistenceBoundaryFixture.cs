@@ -194,10 +194,21 @@ namespace Chaptarr.Core.Test.Books
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
+                var events = Proxy<IEventAggregator>((_, _) => null);
+                var author = new AuthorRepository(database, events, LogManager.GetCurrentClassLogger()).Insert(new Author
+                {
+                    Name = "Fixture Author", CleanName = "fixtureauthor", TitleSlug = Guid.NewGuid().ToString("N"),
+                    Path = @"C:\Audio\Fixture Author", Added = DateTime.UtcNow
+                });
+                var book = new BookRepository(database, events).Insert(new Book
+                {
+                    AuthorId = author.Id, Title = "Fixture Book", CleanTitle = "fixturebook",
+                    TitleSlug = Guid.NewGuid().ToString("N"), Added = DateTime.UtcNow
+                });
                 using var connection = database.OpenConnection();
                 connection.Execute(@"INSERT INTO ""Editions"" (""BookId"", ""Title"", ""ForeignEditionId"", ""GoodreadsEditionId"", ""Asins"", ""Monitored"")
-                    VALUES (1, 'Malformed collection', 'hc:edition:2001', 123, 'invalid-json', @Monitored),
-                           (1, 'Valid collection', 'hc:edition:2002', 456, '[""B00REGION2""]', @Monitored)", new { Monitored = false });
+                    VALUES (@BookId, 'Malformed collection', 'hc:edition:2001', 123, 'invalid-json', @Monitored),
+                           (@BookId, 'Valid collection', 'hc:edition:2002', 456, '[""B00REGION2""]', @Monitored)", new { BookId = book.Id, Monitored = false });
                 using var factory = new LogFactory();
                 var target = new MemoryTarget { Layout = "${level}|${message}" };
                 var configuration = new LoggingConfiguration(factory);

@@ -189,7 +189,7 @@ class InteractiveImportModalContentConnector extends Component {
     }
   };
 
-  onImportSelectedPress = (selected, importMode) => {
+  onImportSelectedPress = (selected, importMode, confirmedReplacementFiles) => {
     const files = [];
     const previewFiles = this.props.items.map((item) => {
       const {
@@ -199,7 +199,7 @@ class InteractiveImportModalContentConnector extends Component {
       return {
         path: item.path,
         bookId: book && book.id ? book.id : 0,
-        downloadId: this.props.downloadId
+        downloadId: item.downloadId || this.props.downloadId
       };
     });
     let validationError = null;
@@ -272,7 +272,7 @@ class InteractiveImportModalContentConnector extends Component {
           quality,
           releaseGroup,
           indexerFlags,
-          downloadId: this.props.downloadId,
+          downloadId: item.downloadId || this.props.downloadId,
           disableReleaseSwitching
         });
       }
@@ -295,6 +295,7 @@ class InteractiveImportModalContentConnector extends Component {
       previewFiles,
       importMode,
       replaceExistingFiles: this.state.replaceExistingFiles,
+      confirmedReplacementFiles,
       commandFinished: this.props.onImportComplete
     });
 

@@ -85,8 +85,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             var purgedPaths = new List<string>();
             var ingest = AuthorDeletionSafetyFixture.Proxy<IIngestQueueRepository>((method, args) =>
             {
-                if (method.Name != nameof(IIngestQueueRepository.PurgeUnderPath)) throw new NotImplementedException(method.Name);
-                purgedPaths.Add((string)args[0]);
+                if (method.Name != nameof(IIngestQueueRepository.PurgePaths)) throw new NotImplementedException(method.Name);
+                purgedPaths.AddRange((IEnumerable<string>)args[0]);
                 return method.ReturnType == typeof(void) ? null : 1;
             });
             var events = AuthorDeletionSafetyFixture.Proxy<IEventAggregator>((method, args) =>

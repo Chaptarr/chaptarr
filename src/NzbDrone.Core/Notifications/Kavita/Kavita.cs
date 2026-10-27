@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Sockets;
 using FluentValidation.Results;
-using NLog;
+using NzbDrone.Common;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.Notifications.Kavita;
@@ -11,41 +11,70 @@ namespace NzbDrone.Core.Notifications.Kavita;
 public class Kavita : NotificationBase<KavitaSettings>
 {
     private readonly IKavitaService _kavitaService;
-    private readonly Logger _logger;
+    private readonly ICached<HashSet<string>> _pendingFolders;
 
-    public Kavita(IKavitaService kavitaService, Logger logger)
+    public Kavita(IKavitaService kavitaService, ICacheManager cacheManager)
     {
         _kavitaService = kavitaService;
-        _logger = logger;
+        _pendingFolders = cacheManager.GetCache<HashSet<string>>(GetType(), "pendingFolders");
     }
 
     public override string Link => "https://www.kavitareader.com/";
 
     public override void OnReleaseImport(BookDownloadMessage message)
     {
-        var allPaths = message.BookFiles.Select(v => v.Path).Distinct();
-        var path = Directory.GetParent(allPaths.First())?.FullName;
-        Notify(Settings, BOOK_DOWNLOADED_TITLE_BRANDED, path);
+        Notify(message.BookFiles?.FirstOrDefault(file => file?.Path.IsNotNullOrWhiteSpace() == true)?.Path);
     }
 
     public override void OnBookDelete(BookDeleteMessage deleteMessage)
     {
-        var allPaths = deleteMessage.Book.BookFiles.Select(v => v.Path).Distinct();
-        var path = Directory.GetParent(allPaths.First())?.FullName;
-        Notify(Settings, BOOK_FILE_DELETED_TITLE_BRANDED, path);
+        if (deleteMessage.DeletedFiles)
+        {
+            Notify(deleteMessage.Book.BookFiles?.FirstOrDefault(file => file?.Path.IsNotNullOrWhiteSpace() == true)?.Path);
+        }
     }
 
     public override void OnBookFileDelete(BookFileDeleteMessage message)
     {
-        Notify(Settings, BOOK_FILE_DELETED_TITLE_BRANDED, Directory.GetParent(message.BookFile.Path)?.FullName);
+        Notify(message.BookFile?.Path);
     }
 
     public override void OnBookRetag(BookRetagMessage message)
     {
-        Notify(Settings, BOOK_RETAGGED_TITLE_BRANDED, Directory.GetParent(message.BookFile.Path)?.FullName);
+        Notify(message.BookFile?.Path);
     }
 
     public override string Name => "Kavita";
+
+    public override bool HasPendingQueue
+    {
+        get
+        {
+            lock (_pendingFolders)
+            {
+                return _pendingFolders.Find(Definition.Id.ToString())?.Count > 0;
+            }
+        }
+    }
+
+    public override void ProcessQueue()
+    {
+        lock (_pendingFolders)
+        {
+            var key = Definition.Id.ToString();
+            var folders = _pendingFolders.Find(key);
+            if (Settings.Notify && folders != null)
+            {
+                foreach (var folder in folders.ToList())
+                {
+                    _kavitaService.Notify(Settings, folder);
+                    folders.Remove(folder);
+                }
+            }
+
+            _pendingFolders.Remove(key);
+        }
+    }
 
     public override ValidationResult Test()
     {
@@ -56,19 +85,18 @@ public class Kavita : NotificationBase<KavitaSettings>
         return new ValidationResult(failures);
     }
 
-    private void Notify(KavitaSettings settings, string header, string message)
+    private void Notify(string filePath)
     {
-        try
+        if (Settings.Notify && filePath.IsNotNullOrWhiteSpace())
         {
-            if (Settings.Notify)
+            var folder = Directory.GetParent(filePath)?.FullName;
+            if (folder.IsNotNullOrWhiteSpace())
             {
-                _kavitaService.Notify(Settings, $"{header} - {message}");
+                lock (_pendingFolders)
+                {
+                    _pendingFolders.Get(Definition.Id.ToString(), () => new HashSet<string>(PathEqualityComparer.Instance)).Add(folder);
+                }
             }
-        }
-        catch (SocketException ex)
-        {
-            var logMessage = $"Unable to connect to Subsonic Host: {Settings.Host}:{Settings.Port}";
-            _logger.Debug(ex, logMessage);
         }
     }
 }

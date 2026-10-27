@@ -163,7 +163,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private void ExecuteAndAssertNeighbor(ManualImportService service, bool suggested)
         {
-            service.Execute(CreateCommand(suggested));
+            var failure = Assert.Throws<NzbDrone.Core.Messaging.Commands.CommandFailedException>(() => service.Execute(CreateCommand(suggested)));
+            Assert.That(failure.Message, Does.Contain("Imported 1 files; 1 failed or skipped").And.Contain(_vanishedPath).And.Contain("no longer exists"));
             Assert.Multiple(() =>
             {
                 Assert.That(_importCalls, Is.EqualTo(1));
@@ -276,9 +277,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     Assert.That(method.Name, Is.EqualTo(nameof(IImportApprovedBooks.Import)));
                     _importCalls++;
                     _importedDecisions = (List<ImportDecision<LocalBook>>)args[0];
-                    return new List<ImportResult>();
+                    return _importedDecisions.Select(decision => new ImportResult(decision,
+                        decision.Approved ? Array.Empty<string>() : decision.Rejections.Select(rejection => rejection.Reason).ToArray())).ToList();
                 }),
-                [typeof(Logger)] = logger
+                [typeof(NzbDrone.Core.Download.TrackedDownloads.ITrackedDownloadAlreadyImported)] = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()), [typeof(Logger)] = logger
             };
             var constructor = typeof(ManualImportService).GetConstructors().Single();
             return (ManualImportService)constructor.Invoke(constructor.GetParameters()

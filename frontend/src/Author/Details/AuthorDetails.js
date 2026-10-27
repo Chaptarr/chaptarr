@@ -23,6 +23,7 @@ import InteractiveSearchFilterMenuConnector from 'InteractiveSearch/InteractiveS
 import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
 import OrganizePreviewModalConnector from 'Organize/OrganizePreviewModalConnector';
 import RetagPreviewModalConnector from 'Retag/RetagPreviewModalConnector';
+import AddNewAuthorModal from 'Search/Author/AddNewAuthorModal';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
 import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import translate from 'Utilities/String/translate';
@@ -34,7 +35,6 @@ import AuthorDetailsHeaderConnector from './AuthorDetailsHeaderConnector';
 import AuthorDetailsSeasonConnector from './AuthorDetailsSeasonConnector';
 import AuthorDetailsSeriesConnector from './AuthorDetailsSeriesConnector';
 import AuthorDetailsControls from './AuthorDetailsControls';
-import SelectAuthorRootFolderModal from './SelectAuthorRootFolderModal';
 import styles from './AuthorDetails.css';
 
 function getExpandedState(newState) {
@@ -154,8 +154,11 @@ class AuthorDetails extends Component {
     this.setState({ isEditAuthorModalOpen: false });
   };
 
-  onSelectRootFolderModalClose = () => {
+  onSelectRootFolderModalClose = (wasAdded) => {
     this.setState({ isSelectRootFolderModalOpen: false });
+    if (wasAdded === true) {
+      this.props.onAuthorAdded();
+    }
   };
 
   onDeleteAuthorPress = () => {
@@ -647,12 +650,16 @@ class AuthorDetails extends Component {
 	            onDeleteAuthorPress={this.onDeleteAuthorPress}
 	          />
 
-	          <SelectAuthorRootFolderModal
-	            isOpen={isSelectRootFolderModalOpen}
-	            authorId={id}
-	            mediaType={selectRootFolderMediaType || selectedMediaType || 'audiobook'}
-	            onModalClose={this.onSelectRootFolderModalClose}
-	          />
+          <AddNewAuthorModal
+            isOpen={isSelectRootFolderModalOpen}
+            authorId={id}
+            foreignAuthorId={this.props.foreignAuthorId}
+            authorName={authorName}
+            images={this.props.images}
+            folder={authorName}
+            initialMediaType={selectRootFolderMediaType || selectedMediaType || 'audiobook'}
+            onModalClose={this.onSelectRootFolderModalClose}
+          />
 
           <DeleteAuthorModal
             selectedMediaType={selectedMediaType}
@@ -700,6 +707,7 @@ class AuthorDetails extends Component {
 
 AuthorDetails.propTypes = {
   id: PropTypes.number.isRequired,
+  foreignAuthorId: PropTypes.string.isRequired,
   authorName: PropTypes.string.isRequired,
   ratings: PropTypes.object.isRequired,
   path: PropTypes.string.isRequired,
@@ -736,6 +744,7 @@ AuthorDetails.propTypes = {
   filterValue: PropTypes.string,
   onRefreshPress: PropTypes.func.isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
+  onAuthorAdded: PropTypes.func.isRequired,
   onSearchPress: PropTypes.func.isRequired,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,

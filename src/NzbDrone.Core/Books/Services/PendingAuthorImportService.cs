@@ -41,7 +41,8 @@ namespace NzbDrone.Core.Books.Services
         }
     }
 
-    public class PendingAuthorImportService : IPendingAuthorImportService, IHandle<AuthorDeletedEvent>, IHandle<AuthorEditedEvent>
+    public class PendingAuthorImportService : IPendingAuthorImportService, IHandle<AuthorDeletedEvent>, IHandle<AuthorEditedEvent>,
+                                             IHandle<AuthorSetupMetadataRefusedEvent>, IHandle<PendingAuthorImportFailedEvent>, IHandle<PendingAuthorImportCancelledEvent>
     {
         private readonly IPendingAuthorImportRepository _repository;
         private readonly IAuthorService _authorService;
@@ -83,6 +84,7 @@ namespace NzbDrone.Core.Books.Services
                     var rawId = ExtractIdWithoutPrefix(providerId);
                     var existingAuthor = _authorService.FindByProviderId(prefix, rawId);
                     if (existingAuthor != null &&
+                        existingAuthor.AddOptions?.AwaitingMetadata != true &&
                         !(config.CreateAudiobook && !existingAuthor.HasMediaTypeSettings(BookMediaType.Audiobook) &&
                             config.AudiobookQualityProfileId.GetValueOrDefault() > 0 && config.AudiobookMetadataProfileId.GetValueOrDefault() > 0 &&
                             !string.IsNullOrWhiteSpace(config.AudiobookRootFolderPath) ||
@@ -108,6 +110,11 @@ namespace NzbDrone.Core.Books.Services
                 {
                     _logger.Debug("Found existing pending import for {0}, merging configuration", providerId);
 
+                    // Keep explicit author setup choices when automatic list demand shares this request.
+                    var authored = existing.IsAuthorSettingsRequest && !config.IsAuthorSettingsRequest;
+                    var initialChoices = (existing.AudiobookMonitorExistingMode, existing.EbookMonitorExistingMode);
+                    var newChoices = (existing.AudiobookMonitorNewItems, existing.EbookMonitorNewItems);
+                    var gates = (existing.AudiobookMonitored, existing.EbookMonitored);
                     // Merge compatible settings (widen scope if needed)
                     bool updated = false;
                     var nameChanged = !string.IsNullOrWhiteSpace(config.AuthorName) && config.AuthorName != existing.AuthorName;
@@ -172,9 +179,16 @@ namespace NzbDrone.Core.Books.Services
                             config.AudiobookBooksToMonitor,
                             nameof(existing.AudiobookBooksToMonitor),
                             providerId,
-                            out var audiobookBooksToMonitor))
+                            out var audiobookBooksToMonitor, config.AudiobookBooksToAdd))
                     {
                         existing.AudiobookBooksToMonitor = audiobookBooksToMonitor;
+                        updated = true;
+                    }
+
+                    if (config.CreateAudiobook && TryMergeProviderIds(existing.AudiobookBooksToAdd,
+                            config.AudiobookBooksToAdd, nameof(existing.AudiobookBooksToAdd), providerId, out var audiobookBooksToAdd, config.AudiobookBooksToMonitor))
+                    {
+                        existing.AudiobookBooksToAdd = audiobookBooksToAdd;
                         updated = true;
                     }
 
@@ -238,7 +252,7 @@ namespace NzbDrone.Core.Books.Services
                             config.EbookBooksToMonitor,
                             nameof(existing.EbookBooksToMonitor),
                             providerId,
-                            out var ebookBooksToMonitor))
+                            out var ebookBooksToMonitor, config.EbookBooksToAdd))
                     {
                         existing.EbookBooksToMonitor = ebookBooksToMonitor;
                         updated = true;
@@ -267,6 +281,13 @@ namespace NzbDrone.Core.Books.Services
                             out var ebookMonitorNewItems))
                     {
                         existing.EbookMonitorNewItems = ebookMonitorNewItems;
+                        updated = true;
+                    }
+
+                    if (config.CreateEbook && TryMergeProviderIds(existing.EbookBooksToAdd,
+                            config.EbookBooksToAdd, nameof(existing.EbookBooksToAdd), providerId, out var ebookBooksToAdd, config.EbookBooksToMonitor))
+                    {
+                        existing.EbookBooksToAdd = ebookBooksToAdd;
                         updated = true;
                     }
 
@@ -327,6 +348,39 @@ namespace NzbDrone.Core.Books.Services
                         updated = true;
                     }
 
+                    if (authored)
+                    {
+                        existing.AudiobookMonitorExistingMode = initialChoices.AudiobookMonitorExistingMode ?? existing.AudiobookMonitorExistingMode;
+                        existing.EbookMonitorExistingMode = initialChoices.EbookMonitorExistingMode ?? existing.EbookMonitorExistingMode;
+                        existing.AudiobookMonitorNewItems = newChoices.AudiobookMonitorNewItems ?? existing.AudiobookMonitorNewItems;
+                        existing.EbookMonitorNewItems = newChoices.EbookMonitorNewItems ?? existing.EbookMonitorNewItems;
+                        existing.AudiobookMonitored = gates.AudiobookMonitored ?? existing.AudiobookMonitored;
+                        existing.EbookMonitored = gates.EbookMonitored ?? existing.EbookMonitored;
+                    }
+                    if ((config.IsAuthorSettingsRequest || config.RequestedBy == MonitoringConfig.NativeAuthorAddOrigin) &&
+                        config.SyncMonitoredAcrossFormats.HasValue && existing.SyncMonitoredAcrossFormats != config.SyncMonitoredAcrossFormats)
+                    {
+                        existing.SyncMonitoredAcrossFormats = config.SyncMonitoredAcrossFormats;
+                        updated = true;
+                    }
+                    if (config.IsAuthorSettingsRequest)
+                    {
+                        if (!existing.IsAuthorSettingsRequest) { existing.IsAuthorSettingsRequest = true; updated = true; }
+                        if (existing.SyncMonitoredAcrossFormats == true)
+                        {
+                            // Pending requests accumulate demand through the existing widening
+                            // rules. Keep the resulting choices shared without narrowing them.
+                            MergeExistingMonitorMode(existing.AudiobookMonitorExistingMode, existing.EbookMonitorExistingMode, out var initial);
+                            MergeExistingMonitorMode(initial, config.AudiobookMonitorExistingMode ?? config.EbookMonitorExistingMode, out initial);
+                            MergeNewItemMonitorType(existing.AudiobookMonitorNewItems, existing.EbookMonitorNewItems, out var ongoing);
+                            MergeNewItemMonitorType(ongoing, config.AudiobookMonitorNewItems ?? config.EbookMonitorNewItems, out ongoing);
+                            if (existing.HasAudiobook() && existing.AudiobookMonitorExistingMode != initial) { existing.AudiobookMonitorExistingMode = initial; updated = true; }
+                            if (existing.HasEbook() && existing.EbookMonitorExistingMode != initial) { existing.EbookMonitorExistingMode = initial; updated = true; }
+                            if (existing.AudiobookMonitorNewItems != ongoing) { existing.AudiobookMonitorNewItems = ongoing; updated = true; }
+                            if (existing.EbookMonitorNewItems != ongoing) { existing.EbookMonitorNewItems = ongoing; updated = true; }
+                        }
+                    }
+
                     if (updated || nameChanged)
                     {
                         existing.UpdatedAt = DateTime.UtcNow;
@@ -368,6 +422,10 @@ namespace NzbDrone.Core.Books.Services
                     SourceApplication = sourceApplication,
                     RequestedBy = config.RequestedBy,
                     SearchForMissingBooks = config.SearchForMissingBooks ?? false,
+                    SyncMonitoredAcrossFormats = config.SyncMonitoredAcrossFormats,
+                    IsAuthorSettingsRequest = config.IsAuthorSettingsRequest,
+                    AudiobookMonitorNewItems = config.AudiobookMonitorNewItems,
+                    EbookMonitorNewItems = config.EbookMonitorNewItems,
                     LastSelectedMediaType = config.LastSelectedMediaType,
                     Version = 1
                 };
@@ -382,6 +440,7 @@ namespace NzbDrone.Core.Books.Services
                     pending.AudiobookQualityProfileId = config.AudiobookQualityProfileId;
                     pending.AudiobookMetadataProfileId = config.AudiobookMetadataProfileId;
                     pending.AudiobookRootFolderPath = config.AudiobookRootFolderPath;
+                    pending.AudiobookBooksToAdd = config.AudiobookBooksToAdd == null ? null : JsonConvert.SerializeObject(config.AudiobookBooksToAdd);
                     pending.AudiobookTags = SerializeTags(incomingAudiobookTags);
 
                     if (config.AudiobookBooksToMonitor != null)
@@ -405,6 +464,7 @@ namespace NzbDrone.Core.Books.Services
                     pending.EbookQualityProfileId = config.EbookQualityProfileId;
                     pending.EbookMetadataProfileId = config.EbookMetadataProfileId;
                     pending.EbookRootFolderPath = config.EbookRootFolderPath;
+                    pending.EbookBooksToAdd = config.EbookBooksToAdd == null ? null : JsonConvert.SerializeObject(config.EbookBooksToAdd);
                     pending.EbookTags = SerializeTags(incomingEbookTags);
 
                     if (config.EbookBooksToMonitor != null)
@@ -479,8 +539,10 @@ namespace NzbDrone.Core.Books.Services
                 return null;
             }
 
+            var audiobookAdd = ParseRequestedProviderIds(incoming.AudiobookBooksToAdd);
             var audioMonitor = ParseRequestedProviderIds(incoming.AudiobookBooksToMonitor);
             var audioSearch = ParseRequestedProviderIds(incoming.AudiobookBooksToSearch);
+            var ebookAdd = ParseRequestedProviderIds(incoming.EbookBooksToAdd);
             var ebookMonitor = ParseRequestedProviderIds(incoming.EbookBooksToMonitor);
             var ebookSearch = ParseRequestedProviderIds(incoming.EbookBooksToSearch);
             var narrations = ParseRequestedNarrations(incoming.AudiobookNarrations);
@@ -499,6 +561,8 @@ namespace NzbDrone.Core.Books.Services
                         audioSearch.SetEquals(ParseRequestedProviderIds(failed.AudiobookBooksToSearch)) &&
                         ebookMonitor.SetEquals(ParseRequestedProviderIds(failed.EbookBooksToMonitor)) &&
                         ebookSearch.SetEquals(ParseRequestedProviderIds(failed.EbookBooksToSearch)) &&
+                        audiobookAdd.SetEquals(ParseRequestedProviderIds(failed.AudiobookBooksToAdd)) &&
+                        ebookAdd.SetEquals(ParseRequestedProviderIds(failed.EbookBooksToAdd)) &&
                         HaveSameRequestedNarrations(narrations, ParseRequestedNarrations(failed.AudiobookNarrations)))
                     {
                         return failed;
@@ -565,7 +629,7 @@ namespace NzbDrone.Core.Books.Services
 
         private static bool HasRequestedBooks(MonitoringConfig config)
         {
-            return config?.AudiobookNarrations?.Any() == true || config?.AudiobookBooksToMonitor?.Any() == true ||
+            return config?.EbookBooksToAdd?.Any() == true || config?.AudiobookBooksToAdd?.Any() == true || config?.AudiobookNarrations?.Any() == true || config?.AudiobookBooksToMonitor?.Any() == true ||
                    config?.AudiobookBooksToSearch?.Any() == true ||
                    config?.EbookBooksToMonitor?.Any() == true ||
                    config?.EbookBooksToSearch?.Any() == true;
@@ -644,14 +708,16 @@ namespace NzbDrone.Core.Books.Services
             IEnumerable<string> incoming,
             string fieldName,
             string providerId,
-            out string mergedJson)
+            out string mergedJson,
+            IEnumerable<string> removedIds = null)
         {
             mergedJson = existingJson;
+            var removed = new HashSet<string>(removedIds ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             var incomingIds = incoming?
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .ToList();
 
-            if (incomingIds?.Any() != true)
+            if (incomingIds?.Any() != true && removed.Count == 0)
             {
                 return false;
             }
@@ -662,12 +728,13 @@ namespace NzbDrone.Core.Books.Services
                     ? new List<string>()
                     : JsonConvert.DeserializeObject<List<string>>(existingJson) ?? new List<string>();
                 var merged = existingIds
-                    .Concat(incomingIds)
+                    .Concat(incomingIds ?? Enumerable.Empty<string>())
+                    .Where(id => !removed.Contains(id))
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                if (merged.Count == existingIds.Count)
+                if (merged.SequenceEqual(existingIds, StringComparer.OrdinalIgnoreCase))
                 {
                     return false;
                 }
@@ -793,7 +860,9 @@ namespace NzbDrone.Core.Books.Services
 
         public bool SaveProgress(PendingAuthorImport item, PendingAuthorImport previous)
         {
-            if (item.AudiobookBooksToMonitor == previous.AudiobookBooksToMonitor && item.EbookBooksToMonitor == previous.EbookBooksToMonitor &&
+            if (item.EbookBooksToAdd == previous.EbookBooksToAdd &&
+                item.AudiobookBooksToAdd == previous.AudiobookBooksToAdd &&
+                item.AudiobookBooksToMonitor == previous.AudiobookBooksToMonitor && item.EbookBooksToMonitor == previous.EbookBooksToMonitor &&
                 item.AudiobookBooksToSearch == previous.AudiobookBooksToSearch && item.EbookBooksToSearch == previous.EbookBooksToSearch &&
                 item.AudiobookNarrations == previous.AudiobookNarrations && item.SearchForMissingBooks == previous.SearchForMissingBooks)
                 return true;
@@ -804,14 +873,16 @@ namespace NzbDrone.Core.Books.Services
                 if (current == null || !current.IsActive()) return false;
                 var unchanged = current.Version == item.Version;
                 var savedProgress = (current.AudiobookBooksToMonitor, current.EbookBooksToMonitor, current.AudiobookBooksToSearch,
-                    current.EbookBooksToSearch, current.AudiobookNarrations, current.SearchForMissingBooks);
+                    current.EbookBooksToSearch, current.AudiobookNarrations, current.SearchForMissingBooks, current.AudiobookBooksToAdd, current.EbookBooksToAdd);
                 if (unchanged)
                 {
                     CopyProcessedRequestProgress(item, current);
                 }
                 else
                 {
+                    current.AudiobookBooksToAdd = SubtractCompletedIds(current.AudiobookBooksToAdd, previous.AudiobookBooksToAdd, item.AudiobookBooksToAdd);
                     current.AudiobookBooksToMonitor = SubtractCompletedIds(current.AudiobookBooksToMonitor, previous.AudiobookBooksToMonitor, item.AudiobookBooksToMonitor);
+                    current.EbookBooksToAdd = SubtractCompletedIds(current.EbookBooksToAdd, previous.EbookBooksToAdd, item.EbookBooksToAdd);
                     current.EbookBooksToMonitor = SubtractCompletedIds(current.EbookBooksToMonitor, previous.EbookBooksToMonitor, item.EbookBooksToMonitor);
                     current.AudiobookBooksToSearch = SubtractCompletedIds(current.AudiobookBooksToSearch, previous.AudiobookBooksToSearch, item.AudiobookBooksToSearch);
                     current.EbookBooksToSearch = SubtractCompletedIds(current.EbookBooksToSearch, previous.EbookBooksToSearch, item.EbookBooksToSearch);
@@ -847,7 +918,7 @@ namespace NzbDrone.Core.Books.Services
                     }
                 }
                 if ((current.AudiobookBooksToMonitor, current.EbookBooksToMonitor, current.AudiobookBooksToSearch,
-                    current.EbookBooksToSearch, current.AudiobookNarrations, current.SearchForMissingBooks) == savedProgress) return true;
+                    current.EbookBooksToSearch, current.AudiobookNarrations, current.SearchForMissingBooks, current.AudiobookBooksToAdd, current.EbookBooksToAdd) == savedProgress) return true;
                 current.UpdatedAt = DateTime.UtcNow;
                 if (!_repository.TryUpdateRequest(current, current.Version))
                 {
@@ -923,7 +994,9 @@ namespace NzbDrone.Core.Books.Services
             if (!string.IsNullOrWhiteSpace(source.AuthorName)) target.AuthorName = source.AuthorName;
             target.AudiobookStatus = source.AudiobookStatus;
             target.EbookStatus = source.EbookStatus;
+            target.AudiobookBooksToAdd = source.AudiobookBooksToAdd;
             target.AudiobookBooksToMonitor = source.AudiobookBooksToMonitor;
+            target.EbookBooksToAdd = source.EbookBooksToAdd;
             target.EbookBooksToMonitor = source.EbookBooksToMonitor;
             target.AudiobookBooksToSearch = source.AudiobookBooksToSearch;
             target.EbookBooksToSearch = source.EbookBooksToSearch;
@@ -979,6 +1052,157 @@ namespace NzbDrone.Core.Books.Services
             return item?.IsActive() == true && item.Version == version;
         }
 
+        public void Handle(AuthorSetupMetadataRefusedEvent message)
+        {
+            var author = message.Author;
+            var options = author.AddOptions;
+            if (options?.AwaitingMetadata != true) return;
+
+            // Only transfer the side whose persisted initial setup is waiting.
+            // Other configured sides and exact-book demands keep their own lifecycle.
+            var legacyCheckpoint = !options.AudiobookAwaitingMetadata && !options.EbookAwaitingMetadata;
+            var audio = options.AudiobookAwaitingMetadata || legacyCheckpoint && options.AudiobookMonitor.HasValue;
+            var ebook = options.EbookAwaitingMetadata || legacyCheckpoint && options.EbookMonitor.HasValue;
+            if (!audio && !ebook)
+            {
+                _logger.Warn("Author {0} setup was refused but has no media-side ownership; retaining its checkpoint for diagnosis.", author.Id);
+                return;
+            }
+
+            var config = new MonitoringConfig
+            {
+                CreateAudiobook = audio,
+                CreateEbook = ebook,
+                IsAuthorSettingsRequest = true,
+                RequestedBy = "AuthorSetup",
+                AuthorName = author.Name,
+                AudiobookMonitorExistingMode = audio ? options.AudiobookMonitor : null,
+                EbookMonitorExistingMode = ebook ? options.EbookMonitor : null,
+                AudiobookMonitored = audio ? author.AudiobookMonitored : null,
+                EbookMonitored = ebook ? author.EbookMonitored : null,
+                AudiobookMonitorNewItems = audio ? author.AudiobookMonitorNewItems : null,
+                EbookMonitorNewItems = ebook ? author.EbookMonitorNewItems : null,
+                AudiobookQualityProfileId = audio ? author.AudiobookQualityProfileId : null,
+                EbookQualityProfileId = ebook ? author.EbookQualityProfileId : null,
+                AudiobookMetadataProfileId = audio ? author.AudiobookMetadataProfileId : null,
+                EbookMetadataProfileId = ebook ? author.EbookMetadataProfileId : null,
+                AudiobookRootFolderPath = audio ? author.AudiobookRootFolderPath : null,
+                EbookRootFolderPath = ebook ? author.EbookRootFolderPath : null,
+                SearchForMissingBooks = audio && options.AudiobookSetupSearchForMissingBooks || ebook && options.EbookSetupSearchForMissingBooks,
+                SyncMonitoredAcrossFormats = author.SyncMonitoredAcrossFormats
+            };
+            var id = EnqueueAsync(message.ProviderId, config, config.RequestedBy).GetAwaiter().GetResult();
+            if (id <= 0) throw new InvalidOperationException("Unable to retain refused author media-side setup.");
+            if (audio) options.AudiobookSetupPendingImportId = id;
+            if (ebook) options.EbookSetupPendingImportId = id;
+            options.MetadataUnavailable = true;
+            _authorService.SetAddOptions(author);
+
+            var pending = _repository.Find(id);
+            if (pending == null)
+            {
+                SetOwnedSetupState(new PendingAuthorImport { Id = id, ProviderId = message.ProviderId },
+                    cancelledMediaType: null, cancelled: true);
+                return;
+            }
+            if (audio && !pending.HasAudiobook())
+                SetOwnedSetupState(pending, BookMediaType.Audiobook, cancelled: true);
+            if (ebook && !pending.HasEbook())
+                SetOwnedSetupState(pending, BookMediaType.Ebook, cancelled: true);
+            if (!pending.IsActive()) return;
+            var hasIndependentDemand = pending.HasAudiobook() && !audio || pending.HasEbook() && !ebook ||
+                ParseRequestedProviderIds(pending.AudiobookBooksToAdd).Count > 0 ||
+                ParseRequestedProviderIds(pending.AudiobookBooksToMonitor).Count > 0 ||
+                ParseRequestedProviderIds(pending.EbookBooksToAdd).Count > 0 ||
+                ParseRequestedProviderIds(pending.EbookBooksToMonitor).Count > 0 ||
+                ParseRequestedProviderIds(pending.AudiobookBooksToSearch).Count > 0 ||
+                ParseRequestedProviderIds(pending.EbookBooksToSearch).Count > 0 ||
+                ParseRequestedNarrations(pending.AudiobookNarrations, activeRequest: true).Count > 0;
+            if (hasIndependentDemand)
+            {
+                // The existing worker can route and fulfill exact-book demand before
+                // acknowledging the original author's terminal result.
+                ScheduleRetry(pending, message.Refusal.Message);
+            }
+            else if (UpdateStatus(pending, PendingImportStatus.Failed, message.Refusal.Message, pending.Version))
+            {
+                _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(pending));
+            }
+        }
+
+        public void Handle(PendingAuthorImportFailedEvent message) =>
+            SetOwnedSetupState(message.PendingImport, cancelledMediaType: null, cancelled: false);
+
+        public void Handle(PendingAuthorImportCancelledEvent message) =>
+            SetOwnedSetupState(message.PendingImport, cancelledMediaType: null, cancelled: true);
+
+        private void SetOwnedSetupState(PendingAuthorImport item, BookMediaType? cancelledMediaType, bool cancelled)
+        {
+            var author = _authorService.FindByProviderId(ExtractPrefix(item.ProviderId), ExtractIdWithoutPrefix(item.ProviderId));
+            if (author == null) return;
+            lock (BookService.GetWantedEditionLock(author.Id))
+            {
+                author = _authorService.GetAuthor(author.Id);
+                var options = author?.AddOptions;
+                if (options == null) return;
+                var audio = options.AudiobookSetupPendingImportId == item.Id &&
+                    (!cancelledMediaType.HasValue || cancelledMediaType == BookMediaType.Audiobook);
+                var ebook = options.EbookSetupPendingImportId == item.Id &&
+                    (!cancelledMediaType.HasValue || cancelledMediaType == BookMediaType.Ebook);
+                if (!audio && !ebook) return;
+                var currentRequest = _repository.Find(item.Id);
+                if (currentRequest != null) item = currentRequest;
+
+                if (cancelled)
+                {
+                    audio &= currentRequest == null || !currentRequest.HasAudiobook();
+                    ebook &= currentRequest == null || !currentRequest.HasEbook();
+                    options.CancelInitialSearch(audio, ebook);
+                    if (audio)
+                    {
+                        options.AudiobookMonitor = null;
+                        options.AudiobookSetupPending = false;
+                        options.AudiobookAwaitingMetadata = false;
+                        options.AudiobookSetupPendingImportId = null;
+                    }
+                    if (ebook)
+                    {
+                        options.EbookMonitor = null;
+                        options.EbookSetupPending = false;
+                        options.EbookAwaitingMetadata = false;
+                        options.EbookSetupPendingImportId = null;
+                    }
+
+                    if (!options.AudiobookSetupPending && !options.EbookSetupPending &&
+                        !options.AudiobookMonitor.HasValue && !options.EbookMonitor.HasValue && !options.SearchForMissingBooks)
+                    {
+                        author.AddOptions = null;
+                    }
+                    else
+                    {
+                        options.AwaitingMetadata = options.AudiobookAwaitingMetadata || options.EbookAwaitingMetadata;
+                    }
+                }
+                if (author.AddOptions != null)
+                {
+                    // This operation already loaded one owner. With only two media
+                    // sides, at most one distinct remaining owner needs a lookup.
+                    var owners = new Dictionary<int, PendingAuthorImport> { [item.Id] = item };
+                    var otherOwnerId = new[] { options.AudiobookSetupPendingImportId, options.EbookSetupPendingImportId }
+                        .FirstOrDefault(id => id.HasValue && id.Value != item.Id);
+                    if (otherOwnerId.HasValue) owners[otherOwnerId.Value] = _repository.Find(otherOwnerId.Value);
+
+                    bool Refused(int? ownerId, BookMediaType mediaType) => ownerId.HasValue &&
+                        owners.TryGetValue(ownerId.Value, out var owner) && owner != null && !owner.IsActive() &&
+                        (mediaType == BookMediaType.Audiobook ? owner.AudiobookStatus : owner.EbookStatus) == PendingImportStatus.Failed;
+                    options.MetadataUnavailable = Refused(options.AudiobookSetupPendingImportId, BookMediaType.Audiobook) ||
+                        Refused(options.EbookSetupPendingImportId, BookMediaType.Ebook);
+                }
+
+                _authorService.SetAddOptions(author);
+            }
+        }
+
         public void Handle(AuthorDeletedEvent message)
         {
             if (message.PreserveRetainedFileHistory) return;
@@ -1008,25 +1232,27 @@ namespace NzbDrone.Core.Books.Services
 
         public void Cancel(int id) => Cancel(id, null);
 
-        private void Cancel(int id, BookMediaType? mediaType)
+        private PendingAuthorImport Cancel(int id, BookMediaType? mediaType)
         {
             while (true)
             {
                 var item = _repository.Find(id);
                 if (item == null || !item.IsActive())
                 {
-                    return;
+                    return item;
                 }
 
                 if (!mediaType.HasValue || mediaType == BookMediaType.Audiobook)
                 {
                     item.AudiobookStatus = PendingImportStatus.NotRequested;
+                    item.AudiobookBooksToAdd = null;
                     item.AudiobookBooksToMonitor = null;
                     item.AudiobookBooksToSearch = null;
                 }
                 if (!mediaType.HasValue || mediaType == BookMediaType.Ebook)
                 {
                     item.EbookStatus = PendingImportStatus.NotRequested;
+                    item.EbookBooksToAdd = null;
                     item.EbookBooksToMonitor = null;
                     item.EbookBooksToSearch = null;
                 }
@@ -1052,8 +1278,9 @@ namespace NzbDrone.Core.Books.Services
                 }
 
                 _logger.Info("Cancelled pending import {0}", id);
+                SetOwnedSetupState(item, mediaType, cancelled: true);
                 if (!item.IsActive()) _eventAggregator.PublishEvent(new PendingAuthorImportCancelledEvent(item));
-                return;
+                return item;
             }
         }
 
@@ -1090,6 +1317,8 @@ namespace NzbDrone.Core.Books.Services
                 }
 
                 _logger.Info("Scheduled immediate retry for pending import {0}", id);
+                SetOwnedSetupState(item, cancelledMediaType: null, cancelled: false);
+                _eventAggregator.PublishEvent(new PendingAuthorImportRetryingEvent(item));
                 return;
             }
         }
@@ -1103,7 +1332,9 @@ namespace NzbDrone.Core.Books.Services
 
         public void Delete(int id)
         {
+            var item = Cancel(id, null);
             _repository.Delete(id);
+            if (item != null) SetOwnedSetupState(item, cancelledMediaType: null, cancelled: true);
             _logger.Info("Deleted pending author import {0}", id);
         }
 

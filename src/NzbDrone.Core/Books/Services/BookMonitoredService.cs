@@ -7,7 +7,7 @@ namespace NzbDrone.Core.Books
 {
     public interface IBookMonitoredService
     {
-        void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions);
+        void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions, bool initialSetup = false);
     }
 
     public class BookMonitoredService : IBookMonitoredService
@@ -23,13 +23,13 @@ namespace NzbDrone.Core.Books
             _logger = logger;
         }
 
-        public void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions)
+        public void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions, bool initialSetup = false)
         {
+            var initialMediaChoice = initialSetup && monitoringOptions?.MediaType.HasValue == true;
             if (monitoringOptions != null)
             {
                 _logger.Debug("[{0}] Setting book monitored status.", author.Name);
 
-                var initialMediaChoice = author.AddOptions != null && monitoringOptions.MediaType.HasValue;
                 var allBooks = initialMediaChoice
                     ? _bookService.GetBooksByAuthorId(author.Id)
                     : _bookService.GetBooksByAuthor(author.Id);
@@ -61,9 +61,11 @@ namespace NzbDrone.Core.Books
                 var booksWithoutFilesIds = booksWithoutFiles.Select(e => e.Id).ToHashSet();
 
                 var monitoredBooks = monitoringOptions.BooksToMonitor;
-                var requestedBooks = author.AddOptions != null
-                    ? books.Where(book => book.AddOptions?.AddType == BookAddType.Manual && book.IsMonitored()).ToList()
-                    : new List<Book>();
+                var requestedBooks = initialSetup
+                    ? books.Where(book => book.AddOptions?.AddType == BookAddType.Manual &&
+                        (book.IsMonitored() || book.AddOptions.MonitorBook.HasValue))
+                        .Select(book => (Book: book, Monitored: book.IsMonitored())).ToList()
+                    : new List<(Book Book, bool Monitored)>();
 
                 // If specific books are passed use those instead of the monitoring options.
                 if (monitoredBooks.Any())
@@ -128,8 +130,11 @@ namespace NzbDrone.Core.Books
                 }
 
                 // Initial root defaults must not undo a book explicitly requested during import.
-                // Later monitoring edits have no Author.AddOptions and remain authoritative.
-                ToggleBooksMonitoredState(requestedBooks, true);
+                // Explicit monitoring edits remain authoritative even while an initial scan is owed.
+                foreach (var group in requestedBooks.GroupBy(request => request.Monitored))
+                {
+                    ToggleBooksMonitoredState(group.Select(request => request.Book), group.Key);
+                }
 
                 if (initialMediaChoice)
                 {
@@ -147,7 +152,10 @@ namespace NzbDrone.Core.Books
                 }
             }
 
-            _authorService.UpdateAuthor(author);
+            if (!initialMediaChoice)
+            {
+                _authorService.UpdateAuthor(author);
+            }
         }
 
         private void ToggleBooksMonitoredState(IEnumerable<Book> books, bool monitored)

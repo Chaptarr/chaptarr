@@ -50,7 +50,7 @@ namespace Chaptarr.Core.Test.Download
             });
             var processor = new ProcessDownloadDecisions(transport,
                 InterfaceProxy.Proxy<IPrioritizeDownloadDecision>((method, args) => args[0]),
-                InterfaceProxy.Proxy<IPendingReleaseService>((method, args) => null), LogManager.GetCurrentClassLogger());
+                InterfaceProxy.Proxy<IPendingReleaseService>((method, args) => null), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var controller = new ReleasePushController(maker, processor,
                 InterfaceProxy.Proxy<IIndexerFactory>((method, args) => new List<IndexerDefinition>()),
                 InterfaceProxy.Proxy<IDownloadClientFactory>((method, args) => new List<DownloadClientDefinition>()),

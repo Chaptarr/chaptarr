@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using Dapper;
 using NzbDrone.Common.Reflection;
@@ -69,6 +70,7 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(i => i.Priority);
 
             Mapper.Entity<IndexerDefinition>("Indexers").RegisterModel()
+                  .Ignore(i => i.SupportsNarratorMetadata)
                   .Ignore(x => x.ImplementationName)
                   .Ignore(i => i.Enable)
                   .Ignore(i => i.Protocol);
@@ -263,6 +265,9 @@ namespace NzbDrone.Core.Datastore
             RegisterEmbeddedConverter();
             RegisterProviderSettingConverter();
 
+            // SQLite NUMERIC columns can return different numeric storage types in one result.
+            SqlMapper.AddTypeMap(typeof(decimal), DbType.Decimal, useGetFieldValue: true);
+            SqlMapper.AddTypeMap(typeof(decimal?), DbType.Decimal, useGetFieldValue: true);
             SqlMapper.RemoveTypeMap(typeof(DateTime));
             SqlMapper.AddTypeHandler(new DapperUtcConverter());
             SqlMapper.AddTypeHandler(new DapperTimeSpanConverter());

@@ -51,6 +51,7 @@ namespace Chaptarr.Core.Test.Books
             public Book FindByASIN(string asin) => throw new NotImplementedException();
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -62,7 +63,7 @@ namespace Chaptarr.Core.Test.Books
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
@@ -76,6 +77,15 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             public List<BookFile> Files { get; } = new();
             public List<BookFile> UpdatedFiles { get; } = new();
 
@@ -90,6 +100,7 @@ namespace Chaptarr.Core.Test.Books
             {
                 return Files.Where(f => f.Edition != null && bookIds.Contains(f.Edition.BookId)).ToList();
             }
+            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -128,6 +139,7 @@ namespace Chaptarr.Core.Test.Books
                 return Editions.Where(e => e != null && set.Contains(e.BookId)).ToList();
             }
 
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions)
             {
                 UpdatedEditions.AddRange(editions ?? new List<Edition>());
@@ -163,7 +175,7 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubMetadataProfileService : IMetadataProfileService
         {
-            public bool Exists(int id) => true;
+            public bool Exists(int id, MetadataProfileType? profileType = null) => true;
 
             public List<Book> FilterBooks(Author input, int profileId)
             {

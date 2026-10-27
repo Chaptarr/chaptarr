@@ -23,9 +23,11 @@ import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
 import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import createBookSearchFilter from 'Utilities/Book/createBookSearchFilter';
 import isLibraryBook from 'Utilities/Book/isLibraryBook';
 import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
+import createTextSearch from 'Utilities/String/createTextSearch';
 import translate from 'Utilities/String/translate';
 import AuthorDetails from './AuthorDetails';
 
@@ -294,50 +296,7 @@ function createMapStateToProps() {
         let visibleBooks = visibleBooksBase;
 
         if (isFilterActive) {
-          const searchTerm = filterText.toLowerCase();
-          const includes = (value) => typeof value === 'string' && value.toLowerCase().includes(searchTerm);
-          const listIncludes = (list) => Array.isArray(list) && list.some((value) => includes(value));
-
-          const editionMatches = (edition) => {
-            if (!edition) {
-              return false;
-            }
-
-            // Narrator search: use ALL editions (even when the book-level narrator is hidden).
-            // Also include edition title/subtitle so users can search alternate-language variants.
-            return includes(edition.narrator) || includes(edition.title) || includes(edition.subtitle);
-          };
-
-          visibleBooks = visibleBooks.filter((book) => {
-            if (!book) {
-              return false;
-            }
-
-            // Book-level fields
-            if (includes(book.title) || includes(book.authorTitle) || includes(book.seriesTitle) || includes(book.narrator)) {
-              return true;
-            }
-
-            // Aggregated edition narrators (server-provided) so search works even when narrator column is hidden.
-            if (listIncludes(book.availableNarrators)) {
-              return true;
-            }
-
-            // Series (legacy shape)
-            if (Array.isArray(book.seriesLinks)) {
-              const matchesSeries = book.seriesLinks.some((link) => includes(link?.series?.title));
-              if (matchesSeries) {
-                return true;
-              }
-            }
-
-            // Editions (robust narrator search across all editions)
-            if (Array.isArray(book.editions) && book.editions.some(editionMatches)) {
-              return true;
-            }
-
-            return false;
-          });
+          visibleBooks = visibleBooks.filter(createBookSearchFilter(filterText));
         } else if (hideUnmonitoredMissing && visibleBooks.length > 0) {
           // When showing "Monitored", hide only if unmonitored AND missing.
           visibleBooks = visibleBooks.filter((book) => isLibraryBook(book));
@@ -369,16 +328,11 @@ function createMapStateToProps() {
           ? authorBookFiles.filter((file) => file.mediaType === effectiveMediaType)
           : authorBookFiles;
 
-        const visibleBookFiles = isFilterActive
-          ? authorBookFilesForMediaType.filter((file) => {
-            const searchTerm = filterText.toLowerCase();
-            const pathMatch = file.path && file.path.toLowerCase().includes(searchTerm);
-            const titleMatch = file.book && file.book.title && file.book.title.toLowerCase().includes(searchTerm);
-            const authorMatch = file.book && file.book.authorTitle && file.book.authorTitle.toLowerCase().includes(searchTerm);
-
-            return pathMatch || titleMatch || authorMatch;
-          })
-          : authorBookFilesForMediaType;
+        const { matches } = createTextSearch(filterText);
+        const visibleBookFiles = isFilterActive ?
+          authorBookFilesForMediaType.filter((file) =>
+            [file.path, file.book?.title, file.book?.authorTitle].some(matches)) :
+          authorBookFilesForMediaType;
 
         const hasBooksForAuthor = visibleBooksBase.length > 0;
         const hasMonitoredBooksForAuthor = visibleBooksBase.some((book) => {
@@ -700,6 +654,10 @@ class AuthorDetailsConnector extends Component {
     // and call populate() which handles all the fetching with proper parameters
   };
 
+  onAuthorAdded = () => {
+    this.populate();
+  };
+
   //
   // Render
 
@@ -712,6 +670,7 @@ class AuthorDetailsConnector extends Component {
           onSearchPress={this.onSearchPress}
           onSaveSelected={this.onSaveSelected}
           onMediaTypeChange={this.onMediaTypeChange}
+          onAuthorAdded={this.onAuthorAdded}
         />
         <ConfirmModal
           isOpen={this.state.pendingSearch?.authorId === this.props.id}

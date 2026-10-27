@@ -66,6 +66,7 @@ namespace Chaptarr.Core.Test.Books
             public void InsertMany(IList<Edition> model) => throw new NotImplementedException();
             public void InsertMany(IList<Edition> model, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(IList<Edition> model) => throw new NotImplementedException();
+            public void UpdateMany(IList<Edition> model, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new NotImplementedException();
             public void SetFields(IList<Edition> models, params System.Linq.Expressions.Expression<Func<Edition, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> model) => Deleted.AddRange(model);
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
@@ -92,6 +93,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> FindByAuthor(int id, bool onlyMonitored = false) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+            public void UpdateSelection(IList<Edition> editions) => throw new NotImplementedException();
             public HashSet<string> FindExistingTitleSlugsForUniqueness(IEnumerable<string> baseTitleSlugs) => throw new NotImplementedException();
             public int CountMissingMatchingTitles() => throw new NotImplementedException();
             public List<Edition> GetMissingMatchingTitles(int afterId, int limit) => throw new NotImplementedException();
@@ -155,7 +157,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void book_delete_should_reuse_the_hydrated_edition_snapshot()
+        public void edition_delete_should_use_the_supplied_rows_without_reloading_them()
         {
             var edition = new Edition { Id = 123, BookId = 42, Title = "Great Expectations" };
             var book = new Book
@@ -167,7 +169,7 @@ namespace Chaptarr.Core.Test.Books
             var repo = new StubEditionRepository();
             var service = new EditionService(repo, new StubEventAggregator(), LogManager.GetCurrentClassLogger());
 
-            service.Handle(new BookDeletedEvent(book, deleteFiles: false, addImportListExclusion: false));
+            service.DeleteMany(book.Editions);
 
             Assert.Multiple(() =>
             {

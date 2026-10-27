@@ -14,6 +14,7 @@ namespace NzbDrone.Core.Extras.Files
         List<TExtraFile> GetFilesByAuthor(int authorId);
         List<TExtraFile> GetFilesByBook(int authorId, int bookId);
         List<TExtraFile> GetFilesByBookFile(int bookFileId);
+        List<TExtraFile> GetFilesByBookFiles(IEnumerable<int> bookFileIds);
         TExtraFile FindByPath(int authorId, string path);
     }
 
@@ -53,6 +54,12 @@ namespace NzbDrone.Core.Extras.Files
         public List<TExtraFile> GetFilesByBookFile(int bookFileId)
         {
             return Query(c => c.BookFileId == bookFileId);
+        }
+
+        public List<TExtraFile> GetFilesByBookFiles(IEnumerable<int> bookFileIds)
+        {
+            return bookFileIds.Distinct().Select(id => (int?)id).Chunk(SqliteVariableLimit.MaxParameters)
+                .SelectMany(ids => Query(c => ids.Contains(c.BookFileId))).ToList();
         }
 
         public TExtraFile FindByPath(int authorId, string path)

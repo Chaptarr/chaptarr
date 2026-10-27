@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
@@ -39,13 +40,23 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
+            return CheckQueue(subject, _queueService.GetQueue(includeConversionStatus: false));
+        }
+
+        public Func<RemoteBook, Decision> PrepareCheck()
+        {
+            var queue = _queueService.GetQueue(includeConversionStatus: false);
+            return subject => CheckQueue(subject, queue);
+        }
+
+        private Decision CheckQueue(RemoteBook subject, List<Queue.Queue> queue)
+        {
             var subjectBookIds = GetSubjectBookIds(subject);
             if (!subjectBookIds.Any())
             {
                 return Decision.Accept();
             }
 
-            var queue = _queueService.GetQueue();
             var matchingBook = queue.Where(q => GetQueueBookIds(q).Intersect(subjectBookIds).Any())
                                     .ToList();
 

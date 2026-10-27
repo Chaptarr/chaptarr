@@ -26,9 +26,14 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Notifications;
+using NzbDrone.Core.Notifications.Plex.Server;
+using NzbDrone.Core.Notifications.Plex.PlexTv;
+using NzbDrone.Core.Notifications.Subsonic;
 
 namespace Chaptarr.Core.Test.MediaFiles
 {
@@ -51,7 +56,12 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class Events : IEventAggregator
         {
             public List<IEvent> Published { get; } = new();
-            public void PublishEvent<T>(T message) where T : class, IEvent => Published.Add(message);
+            public Action<IEvent> OnPublished { get; set; }
+            public void PublishEvent<T>(T message) where T : class, IEvent
+            {
+                Published.Add(message);
+                OnPublished?.Invoke(message);
+            }
         }
 
         private sealed class Sandbox : IDisposable
@@ -67,6 +77,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<(List<BookFile> Files, CalibreSettings Settings)> CalibreCalls { get; } = new();
             public bool FailCalibre { get; set; }
             public bool FailExclusion { get; set; }
+            public bool FailAuthorDelete { get; set; }
             public bool FailExclusionValidation { get; set; }
             public List<List<Author>> ExcludedAuthorBatches { get; } = new();
             public bool FailDisk { get; set; }
@@ -77,10 +88,17 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<string> FileExistenceChecks { get; } = new();
             public Events Events { get; } = new();
             public AuthorService Service { get; }
+            public List<BookDeleteMessage> BookNotifications { get; } = new();
+            public List<AuthorDeleteMessage> AuthorNotifications { get; } = new();
+            public HashSet<int> NotificationTags { get; } = new();
+            public List<string> PlexPaths { get; } = new();
+            public int BookFileLookups { get; private set; }
+            public int PlexUpdates { get; private set; }
+            public int SubsonicUpdates { get; private set; }
 
             public string P(string relative) => Path.Combine(Temp, relative.AsOsAgnostic());
 
-            public Sandbox()
+            public Sandbox(bool publishBookNotifications = false)
             {
                 Directory.CreateDirectory(Temp);
                 var roots = Proxy<IRootFolderService>((m, a) =>
@@ -105,6 +123,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                     switch (m.Name)
                     {
                         case nameof(IMediaFileService.GetFilePathOwnership): return Files.ToList();
+                        case nameof(IMediaFileService.GetFilesByBooks):
+                            BookFileLookups++;
+                            return Files.Where(f => ((List<int>)a[0]).Contains(f.Edition.BookId)).ToList();
                         case nameof(IMediaFileService.GetFilesByAuthor):
                             FileQueries++;
                             return Files.Where(f => f.Author?.Id == (int)a[0]).ToList();
@@ -124,6 +145,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         case nameof(IAuthorRepository.All): return Authors.ToList();
                         case nameof(IAuthorRepository.Update): return (Author)a[0];
                         case nameof(IAuthorRepository.DeleteMany):
+                            if (FailAuthorDelete) throw new IOException("Synthetic author persistence failure");
                             Authors.RemoveAll(x => ((IEnumerable<int>)a[0]).Contains(x.Id));
                             return null;
                         default: throw new NotImplementedException(m.Name);
@@ -207,10 +229,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                     if (method.Name == nameof(IImportListExclusionService.All)) return new List<ImportListExclusion>();
                     throw new NotImplementedException(method.Name);
                 });
-                var bookRepository = Proxy<IBookRepository>((m, a) => m.Name switch
+                var bookRepository = Proxy<IBookRepository>((m, a) =>
                 {
-                    nameof(IBookRepository.GetBooksByAuthorId) => Books.Where(book => book.AuthorId == (int)a[0]).ToList(),
-                    _ => throw new NotImplementedException(m.Name)
+                    if (m.Name == nameof(IBookRepository.GetBooksByAuthorId)) return Books.Where(book => book.AuthorId == (int)a[0]).ToList();
+                    if (m.Name != nameof(IBookRepository.DeleteManyAtomic)) throw new NotImplementedException(m.Name);
+                    var ids = ((IEnumerable<int>)a[0]).ToHashSet();
+                    Books.RemoveAll(book => ids.Contains(book.Id));
+                    return null;
                 });
                 var books = Proxy<IBookService>((m, a) =>
                 {
@@ -218,6 +243,76 @@ namespace Chaptarr.Core.Test.MediaFiles
                     foreach (var book in (List<Book>)a[0]) Books.Remove(book);
                     return null;
                 });
+                if (publishBookNotifications)
+                {
+                    var editions = Proxy<IEditionService>((m, a) => m.Name == nameof(IEditionService.GetEditionsByBook)
+                        ? Books.Where(b => ((List<int>)a[0]).Contains(b.Id)).SelectMany(b => b.Editions).ToList()
+                        : throw new NotImplementedException(m.Name));
+                    var series = Proxy<ISeriesBookLinkRepository>((m, a) => m.Name == nameof(ISeriesBookLinkRepository.GetLinksByBook)
+                        ? new List<SeriesBookLink>() : throw new NotImplementedException(m.Name));
+                    var realBooks = new BookService(bookRepository, editions, Events, null, media, roots, series, null, LogManager.GetCurrentClassLogger());
+                    books = realBooks;
+                    var notification = Proxy<INotification>((m, a) =>
+                    {
+                        if (m.Name == "get_Definition") return new NotificationDefinition { Tags = NotificationTags };
+                        if (m.Name == "get_HasPendingQueue") return false;
+                        if (m.Name == nameof(INotification.ProcessQueue)) return null;
+                        if (m.Name == nameof(INotification.OnAuthorDelete))
+                        {
+                            AuthorNotifications.Add((AuthorDeleteMessage)a[0]);
+                            return null;
+                        }
+                        if (m.Name != nameof(INotification.OnBookDelete)) throw new NotImplementedException(m.Name);
+                        BookNotifications.Add((BookDeleteMessage)a[0]);
+                        return null;
+                    });
+                    var plexService = Proxy<IPlexServerService>((m, a) =>
+                    {
+                        if (m.Name != nameof(IPlexServerService.UpdateLibrary)) throw new NotImplementedException(m.Name);
+                        PlexUpdates++;
+                        PlexPaths.AddRange(((List<Author>)a[0]).Select(author => author.Path));
+                        return null;
+                    });
+                    var plexTv = Proxy<IPlexTvService>((m, a) => m.Name == nameof(IPlexTvService.Ping)
+                        ? null : throw new NotImplementedException(m.Name));
+                    var plex = new PlexServer(plexService, plexTv, null, new CacheManager(), LogManager.GetCurrentClassLogger())
+                    {
+                        Definition = new NotificationDefinition { Settings = new PlexServerSettings { Host = "fixture.invalid", AuthToken = "fixture" } }
+                    };
+                    var subsonicService = Proxy<ISubsonicService>((m, a) =>
+                    {
+                        if (m.Name != nameof(ISubsonicService.Update)) throw new NotImplementedException(m.Name);
+                        SubsonicUpdates++;
+                        return null;
+                    });
+                    var subsonic = new Subsonic(subsonicService, new CacheManager())
+                    {
+                        Definition = new NotificationDefinition { Settings = new SubsonicSettings { Notify = false, UpdateLibrary = true } }
+                    };
+                    var factory = Proxy<INotificationFactory>((m, a) => m.Name == nameof(INotificationFactory.OnAuthorDeleteEnabled) || m.Name == nameof(INotificationFactory.OnBookDeleteEnabled) ||
+                        m.Name == nameof(INotificationFactory.GetAvailableProviders)
+                        ? new List<INotification> { notification, plex, subsonic } : throw new NotImplementedException(m.Name));
+                    var status = Proxy<INotificationStatusService>((m, a) => m.Name switch
+                    {
+                        nameof(INotificationStatusService.RecordSuccess) => null,
+                        nameof(INotificationStatusService.GetBlockedProviders) => new List<NotificationStatus>(),
+                        _ => throw new NotImplementedException(m.Name)
+                    });
+                    var notifications = new NotificationService(factory, status, editions, LogManager.GetCurrentClassLogger());
+                    Events.OnPublished = message =>
+                    {
+                        if (message is DeleteCompletedEvent completed) notifications.HandleAsync(completed);
+                        if (message is AuthorDeletedEvent authorDeleted)
+                        {
+                            realBooks.Handle(authorDeleted);
+                            notifications.Handle(authorDeleted);
+                        }
+                        if (message is BookDeletedEvent bookDeleted)
+                        {
+                            notifications.Handle(bookDeleted);
+                        }
+                    };
+                }
                 Service = new AuthorService(repository, Events, null, roots, null, new CacheManager(), bookRepository, media,
                     LogManager.GetCurrentClassLogger(), exclusions, deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => deletion),
                     bookService: new Lazy<IBookService>(() => books), mainDatabase: Proxy<NzbDrone.Core.Datastore.IMainDatabase>((_, _) => throw new NotImplementedException()));
@@ -265,7 +360,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var book = Books.FirstOrDefault(item => item.AuthorId == author.Id && item.MediaType == mediaType);
                 if (book == null)
                 {
-                    book = new Book { Id = Books.Count + 1, AuthorId = author.Id, MediaType = mediaType, Title = "The Boyfriend" };
+                    book = new Book { Id = Books.Count + 1, AuthorId = author.Id, Author = author, MediaType = mediaType, Title = "The Boyfriend" };
+                    book.Editions = new List<Edition> { new Edition { Id = book.Id, BookId = book.Id, Book = book } };
                     Books.Add(book);
                 }
                 var file = new BookFile
@@ -275,8 +371,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Author = author,
                     Path = Seed(relative),
                     CalibreId = calibreId,
-                    EditionId = 1,
-                    Edition = new Edition { Id = 1, BookId = book.Id }
+                    EditionId = book.Id,
+                    Edition = book.Editions.Single()
                 };
                 Files.Add(file);
                 return file;
@@ -395,6 +491,179 @@ namespace Chaptarr.Core.Test.MediaFiles
             var result = await SingleController(s, "ebook").DeleteAuthor(1, readdAuthor: true);
             Assert.That(result, Is.TypeOf<ConflictObjectResult>());
             Assert.That(s.Events.Published, Is.Empty);
+        }
+
+        [Test]
+        public async Task author_deletion_reports_completed_file_work_without_repeating_it(
+            [Values(false, true)] bool deleteFiles,
+            [Values(false, true)] bool bulk,
+            [Values("ebook", "audiobook", "both")] string scope)
+        {
+            using var s = new Sandbox(publishBookNotifications: true);
+            s.Root("media");
+            var author = s.Author(@"media\Author", @"media\Author", @"media\Author");
+            var ebook = s.Track(author, @"media\Author\Book.epub");
+            var audio = s.Track(author, @"media\Author\Book.m4b");
+            var shared = s.Seed(@"media\Author\cover.jpg");
+            if (bulk)
+            {
+                new AuthorEditorController(s.Service, null, null, null, null).DeleteAuthor(new AuthorEditorResource
+                {
+                    AuthorIds = new List<int> { author.Id }, DeleteFiles = deleteFiles,
+                    MediaType = scope == "both" ? null : scope, ApplyToBothFormats = scope == "both"
+                });
+            }
+            else
+            {
+                await SingleController(s).DeleteAuthor(author.Id, deleteFiles, mediaType: scope == "both" ? null : scope, applyToBothFormats: scope == "both");
+            }
+
+            var expectedCount = scope == "both" ? 2 : 1;
+            Assert.Multiple(() =>
+            {
+                Assert.That(s.BookNotifications, Has.Count.EqualTo(expectedCount));
+                Assert.That(s.BookNotifications.All(n => n.DeletedFiles == deleteFiles), Is.True);
+                Assert.That(s.Events.Published.OfType<BookDeletedEvent>().All(e => !e.DeleteFiles), Is.True,
+                    "Teardown must not issue another physical deletion instruction");
+                Assert.That(File.Exists(ebook.Path), Is.EqualTo(!deleteFiles || scope == "audiobook"));
+                Assert.That(File.Exists(audio.Path), Is.EqualTo(!deleteFiles || scope == "ebook"));
+                Assert.That(File.Exists(shared), Is.EqualTo(!deleteFiles || scope != "both"));
+                Assert.That(s.Authors.Contains(author), Is.EqualTo(scope != "both"));
+                Assert.That(s.BookFileLookups, Is.EqualTo(deleteFiles ? 0 : 1));
+                Assert.That(s.BookNotifications.SelectMany(n => n.Book.BookFiles).Count(), Is.EqualTo(expectedCount),
+                    "Notification evidence must survive physical deletion and inventory teardown");
+            });
+
+            Assert.That(s.PlexUpdates, Is.EqualTo(deleteFiles ? 1 : 0));
+            Assert.That(s.SubsonicUpdates, Is.EqualTo(deleteFiles ? 1 : 0));
+            Assert.That(s.Events.Published.OfType<DeleteCompletedEvent>().Count(), Is.EqualTo(deleteFiles ? 1 : 0));
+            if (deleteFiles)
+            {
+                Assert.That(s.Events.Published.Last(), Is.TypeOf<DeleteCompletedEvent>());
+            }
+        }
+
+        [Test]
+        public void final_side_delete_keeps_tags_for_notification_filtering([Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType media)
+        {
+            using var s = new Sandbox(publishBookNotifications: true);
+            s.Root("media");
+            var author = s.Author("media/Author");
+            author.Tags = new HashSet<int> { 42 };
+            author.AudiobookTags = media == BookMediaType.Audiobook ? new HashSet<int> { 42 } : null;
+            author.EbookTags = media == BookMediaType.Ebook ? new HashSet<int> { 42 } : null;
+            s.NotificationTags.Add(42);
+            s.Track(author, "media/Author/Book" + (media == BookMediaType.Audiobook ? ".m4b" : ".epub"));
+
+            s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: media);
+
+            Assert.That(s.AuthorNotifications, Has.Count.EqualTo(1));
+            Assert.That(s.AuthorNotifications.Single().Author.Tags, Does.Contain(42));
+            Assert.That(s.BookNotifications, Has.Count.EqualTo(1));
+            Assert.That(s.Authors, Is.Empty);
+        }
+
+        [Test]
+        public void queued_book_notification_keeps_the_deleted_side_path()
+        {
+            using var s = new Sandbox(publishBookNotifications: true);
+            s.Root("audio");
+            s.Root("ebook");
+            var author = s.Author("audio/Author", "audio/Author", "ebook/Author");
+            var originalPath = author.Path;
+            s.Track(author, "audio/Author/Book.m4b");
+            s.Track(author, "ebook/Author/Book.epub");
+
+            s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: BookMediaType.Audiobook);
+
+            Assert.That(author.Path, Is.EqualTo(s.P("ebook/Author")));
+            Assert.That(s.BookNotifications.Single().Book.Author.Path, Is.EqualTo(originalPath));
+            Assert.That(s.PlexPaths, Is.EqualTo(new[] { originalPath }));
+        }
+
+        [Test]
+        public void queued_scans_flush_when_final_author_teardown_fails()
+        {
+            using var s = new Sandbox(publishBookNotifications: true);
+            s.Root("media");
+            var author = s.Author("media/Author");
+            var file = s.Track(author, "media/Author/Book.epub");
+            s.FailAuthorDelete = true;
+
+            Assert.Throws<IOException>(() => s.Service.DeleteAuthors(new List<int> { author.Id }, true, applyToBothFormats: true));
+
+            Assert.That(File.Exists(file.Path), Is.False);
+            Assert.That(s.BookNotifications, Has.Count.EqualTo(1));
+            Assert.That(s.AuthorNotifications, Has.Count.EqualTo(1));
+            Assert.That(s.Events.Published.OfType<DeleteCompletedEvent>().Count(), Is.EqualTo(1));
+            Assert.That(s.PlexUpdates, Is.EqualTo(1));
+            Assert.That(s.SubsonicUpdates, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void completed_physical_phase_is_flushed_even_when_exclusion_persistence_fails()
+        {
+            using var s = new Sandbox(publishBookNotifications: true);
+            s.Root("media");
+            var author = s.Author("media/Author");
+            var file = s.Track(author, "media/Author/Book.epub");
+            s.FailExclusion = true;
+
+            Assert.Throws<IOException>(() => s.Service.DeleteAuthors(new List<int> { author.Id }, true, addImportListExclusion: true, mediaType: BookMediaType.Ebook));
+
+            Assert.That(File.Exists(file.Path), Is.False);
+            Assert.That(s.Events.Published.OfType<DeleteCompletedEvent>().Count(), Is.EqualTo(1));
+            Assert.That(s.BookNotifications, Is.Empty);
+            Assert.That(s.Authors, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void failed_physical_deletion_does_not_send_successful_book_notifications()
+        {
+            using var s = new Sandbox(publishBookNotifications: true);
+            s.Root("media");
+            var author = s.Author(@"media\Author", @"media\Author", @"media\Author");
+            var ebook = s.Track(author, @"media\Author\Book.epub");
+            var audio = s.Track(author, @"media\Author\Book.m4b");
+            s.FailDisk = true;
+
+            Assert.Throws<IOException>(() => s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: BookMediaType.Ebook));
+            Assert.That(s.BookNotifications, Is.Empty);
+            Assert.That(s.Events.Published.OfType<DeleteCompletedEvent>(), Is.Empty);
+            Assert.That(s.PlexUpdates + s.SubsonicUpdates, Is.Zero);
+            Assert.That(File.Exists(ebook.Path) && File.Exists(audio.Path), Is.True);
+        }
+
+        [Test]
+        public void scoped_delete_preserves_legacy_tags_without_filling_an_unconfigured_side(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType removedMedia,
+            [Values(false, true)] bool legacy)
+        {
+            using var s = new Sandbox();
+            s.Root("media");
+            var author = s.Author("media/Author");
+            author.Tags = new HashSet<int> { 10 };
+            author.AudiobookTags = null;
+            author.EbookTags = null;
+            if (!legacy)
+            {
+                if (removedMedia == BookMediaType.Audiobook) author.AudiobookTags = new HashSet<int> { 10 };
+                else author.EbookTags = new HashSet<int> { 10 };
+            }
+
+            var retainedMedia = removedMedia == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            s.Books.Add(new Book { Id = 1, AuthorId = author.Id, MediaType = retainedMedia });
+
+            s.Service.DeleteAuthors(new List<int> { author.Id }, false, mediaType: removedMedia);
+
+            var retainedTags = retainedMedia == BookMediaType.Audiobook ? author.AudiobookTags : author.EbookTags;
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.GetTagsForMediaType(removedMedia), Is.Empty);
+                Assert.That(author.Tags, Is.EquivalentTo(legacy ? new[] { 10 } : Array.Empty<int>()));
+                if (legacy) Assert.That(retainedTags, Is.EquivalentTo(new[] { 10 }));
+                else Assert.That(retainedTags, Is.Null);
+            });
         }
 
         [Test]

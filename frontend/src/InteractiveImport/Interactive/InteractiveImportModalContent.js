@@ -28,8 +28,10 @@ import SelectIndexerFlagsModal from 'InteractiveImport/IndexerFlags/SelectIndexe
 import SelectQualityModal from 'InteractiveImport/Quality/SelectQualityModal';
 import SelectReleaseGroupModal from 'InteractiveImport/ReleaseGroup/SelectReleaseGroupModal';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
+import getRemovedItems from 'Utilities/Object/getRemovedItems';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
+import removeOldSelectedState from 'Utilities/Table/removeOldSelectedState';
 import selectAll from 'Utilities/Table/selectAll';
 import toggleSelected from 'Utilities/Table/toggleSelected';
 import InteractiveImportRow from './InteractiveImportRow';
@@ -146,6 +148,10 @@ class InteractiveImportModalContent extends Component {
   }
 
   componentDidUpdate(prevProps) {
+    if (!this.props.isFetching && prevProps.items !== this.props.items) {
+      this.setState((state) => removeOldSelectedState(state, getRemovedItems(prevProps.items, this.props.items)));
+    }
+
     const selectedIds = this.getSelectedIds();
     const selectedItems = _.filter(this.props.items, (x) => _.includes(selectedIds, x.id));
 
@@ -177,6 +183,10 @@ class InteractiveImportModalContent extends Component {
   };
 
   onSelectedChange = ({ id, value, shiftKey = false }) => {
+    if (value == null && this.props.isFetching) {
+      return;
+    }
+
     this.setState((state) => {
       return toggleSelected(state, this.props.items, id, value, shiftKey);
     });
@@ -207,19 +217,15 @@ class InteractiveImportModalContent extends Component {
       .map((x) => x.book)
       .value();
 
-    // Metadata-only selections have no local book IDs to query for replacement confirmation.
-    if (booksImported.length === 0) {
-      this.onConfirmImportPress();
-      return;
-    }
-
     this.setState({
       booksImported,
+      filesImported: this.props.items.filter((item) => selectedIds.includes(item.id))
+        .map((item) => ({ path: item.path, bookId: item.book?.id || 0 })),
       isConfirmImportModalOpen: true
     });
   };
 
-  onConfirmImportPress = () => {
+  onConfirmImportPress = (confirmedReplacementFiles) => {
     const {
       downloadId,
       showImportMode,
@@ -230,7 +236,7 @@ class InteractiveImportModalContent extends Component {
     const selected = this.getSelectedIds();
     const finalImportMode = downloadId || !showImportMode ? 'auto' : importMode;
 
-    onImportSelectedPress(selected, finalImportMode);
+    onImportSelectedPress(selected, finalImportMode, confirmedReplacementFiles);
   };
 
   onFilterExistingFilesChange = (value) => {
@@ -614,6 +620,7 @@ class InteractiveImportModalContent extends Component {
         <ConfirmImportModal
           isOpen={isConfirmImportModalOpen}
           books={booksImported}
+          files={this.state.filesImported || []}
           onModalClose={this.onConfirmImportModalClose}
           onConfirmImportPress={this.onConfirmImportPress}
         />

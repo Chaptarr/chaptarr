@@ -10,7 +10,6 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MetadataSource;
-using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
 using Swashbuckle.AspNetCore.Annotations;
 
@@ -196,7 +195,7 @@ namespace Chaptarr.Api.V1.Author
                 resource.EbookTags = new HashSet<int>(model.Tags);
             }
 
-            resource.Tags = resource.AudiobookTags.Concat(resource.EbookTags).ToHashSet();
+            resource.Tags = useLegacyTags ? new HashSet<int>(model.Tags) : model.GetCombinedTags();
             ApplyFacadeProjection(resource, model, facadeContext);
 
             // Compute stable hashes for images if not already present
@@ -390,14 +389,14 @@ namespace Chaptarr.Api.V1.Author
             return resource.ToModel((ReadarrFacadeContext)null);
         }
 
-        public static NzbDrone.Core.Books.Author ToModel(this AuthorResource resource, ReadarrFacadeContext facadeContext)
+        public static NzbDrone.Core.Books.Author ToModel(this AuthorResource resource, ReadarrFacadeContext facadeContext, string mediaType = null)
         {
             if (resource == null)
             {
                 return null;
             }
 
-            NormalizeLegacySingleFields(resource, facadeContext);
+            NormalizeLegacySingleFields(resource, facadeContext, mediaType);
 
             // Parse provider IDs from ForeignAuthorId - keep the full ID with prefix
             string hardcoverAuthorId = null;
@@ -486,15 +485,7 @@ namespace Chaptarr.Api.V1.Author
             }
 
             var hasTagInput = resource.Tags != null || resource.AudiobookTags != null || resource.EbookTags != null;
-            var combinedTags = facadeContext != null && !hasTagInput
-                ? null
-                : useLegacyTags
-                    ? new HashSet<int>(resource.Tags)
-                    : (audiobookTags ?? new HashSet<int>())
-                        .Concat(ebookTags ?? new HashSet<int>())
-                        .ToHashSet();
-
-            return new NzbDrone.Core.Books.Author
+            var author = new NzbDrone.Core.Books.Author
             {
                 Id = resource.Id,
                 // ForeignAuthorId is mapped to LocalAuthorId for backward compatibility
@@ -533,7 +524,6 @@ namespace Chaptarr.Api.V1.Author
 
                 AudiobookTags = audiobookTags,
                 EbookTags = ebookTags,
-                Tags = combinedTags,
                 Added = resource.Added,
                 AddOptions = addOptions,
                 LastSelectedMediaType = resource.LastSelectedMediaType == null
@@ -547,6 +537,8 @@ namespace Chaptarr.Api.V1.Author
                 AudnexusAuthorId = audnexusAuthorId
                 // LocalAuthorId removed - using database ID directly
             };
+            author.Tags = facadeContext != null && !hasTagInput ? null : author.GetCombinedTags();
+            return author;
         }
 
         internal static void NormalizeFacadeBooksToMonitor(AddAuthorOptions addOptions, ReadarrFacadeContext facadeContext)
@@ -561,12 +553,14 @@ namespace Chaptarr.Api.V1.Author
                 .ToList();
         }
 
-        internal static void NormalizeLegacySingleFields(AuthorResource resource, ReadarrFacadeContext facadeContext, RootFolder legacyRootFolder = null)
+        internal static void NormalizeLegacySingleFields(AuthorResource resource, ReadarrFacadeContext facadeContext, string mediaType = null)
         {
             if (resource == null)
             {
                 return;
             }
+
+            mediaType = MediaTypeParameterParser.ResolveWriteScope(mediaType, facadeContext?.MediaType);
 
             var audiobookLegacy = TranslateLegacyMediaMonitoring(
                 resource.AudiobookMonitorExisting,
@@ -582,52 +576,63 @@ namespace Chaptarr.Api.V1.Author
             resource.EbookMonitorNewItems ??= ebookLegacy.MonitorNewItems;
             resource.EbookMonitorExistingMode ??= ebookLegacy.MonitorExistingMode;
 
-            if (facadeContext != null)
+            if (mediaType != null)
             {
                 var facadeMonitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems);
-                if (facadeContext.MediaType == "audiobook")
+                if (mediaType == "audiobook")
                 {
                     resource.AudiobookQualityProfileId ??= resource.QualityProfileId;
                     resource.AudiobookMetadataProfileId ??= resource.MetadataProfileId;
                     resource.AudiobookRootFolderPath ??= resource.RootFolderPath;
                     resource.AudiobookTags ??= resource.Tags;
-                    resource.AudiobookMonitored = resource.Monitored;
+                    resource.AudiobookMonitored = facadeContext != null ? resource.Monitored : resource.AudiobookMonitored ?? resource.Monitored;
                     resource.AudiobookMonitorNewItems = facadeMonitorNewItems ?? resource.AudiobookMonitorNewItems;
                 }
-                else if (facadeContext.MediaType == "ebook")
+                else if (mediaType == "ebook")
                 {
                     resource.EbookQualityProfileId ??= resource.QualityProfileId;
                     resource.EbookMetadataProfileId ??= resource.MetadataProfileId;
                     resource.EbookRootFolderPath ??= resource.RootFolderPath;
                     resource.EbookTags ??= resource.Tags;
-                    resource.EbookMonitored = resource.Monitored;
+                    resource.EbookMonitored = facadeContext != null ? resource.Monitored : resource.EbookMonitored ?? resource.Monitored;
                     resource.EbookMonitorNewItems = facadeMonitorNewItems ?? resource.EbookMonitorNewItems;
                 }
 
                 NormalizeFacadeBooksToMonitor(resource.AddOptions, facadeContext);
+                if (resource.AddOptions != null)
+                {
+                    var scope = MediaTypeParameterParser.ParseRequired(mediaType);
+                    if (resource.AddOptions.MediaType.HasValue && resource.AddOptions.MediaType != scope)
+                    {
+                        throw new BadRequestException("addOptions.mediaType must agree with the requested mediaType.");
+                    }
+                    resource.AddOptions.MediaType = scope;
+                }
                 return;
             }
 
+            var legacyMetadataProfileId = resource.AudiobookMetadataProfileId.HasValue || resource.EbookMetadataProfileId.HasValue
+                ? null : resource.MetadataProfileId;
             var hasLegacySingleSettings = resource.QualityProfileId.HasValue ||
-                                          resource.MetadataProfileId.HasValue ||
+                                          legacyMetadataProfileId.HasValue ||
                                           !string.IsNullOrWhiteSpace(resource.RootFolderPath);
             if (!hasLegacySingleSettings)
             {
                 return;
             }
 
-            var targetAudiobook = legacyRootFolder == null
-                ? HasAudiobookSpecificSettings(resource) || !HasEbookSpecificSettings(resource)
-                : RootFolderDefaultResolver.IsCompatibleRootFolder(legacyRootFolder, FolderType.Audiobook);
-            var targetEbook = legacyRootFolder == null
-                ? HasEbookSpecificSettings(resource) || !HasAudiobookSpecificSettings(resource)
-                : RootFolderDefaultResolver.IsCompatibleRootFolder(legacyRootFolder, FolderType.Ebook);
+            var targetAudiobook = HasAudiobookSpecificSettings(resource);
+            var targetEbook = HasEbookSpecificSettings(resource);
+            if (!targetAudiobook && !targetEbook)
+            {
+                return;
+            }
             var monitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems);
 
             if (targetAudiobook)
             {
                 resource.AudiobookQualityProfileId ??= resource.QualityProfileId;
-                resource.AudiobookMetadataProfileId ??= resource.MetadataProfileId;
+                resource.AudiobookMetadataProfileId ??= legacyMetadataProfileId;
                 resource.AudiobookRootFolderPath ??= resource.RootFolderPath;
                 resource.AudiobookMonitored ??= resource.Monitored;
                 resource.AudiobookMonitorNewItems ??= monitorNewItems;
@@ -640,7 +645,7 @@ namespace Chaptarr.Api.V1.Author
             if (targetEbook)
             {
                 resource.EbookQualityProfileId ??= resource.QualityProfileId;
-                resource.EbookMetadataProfileId ??= resource.MetadataProfileId;
+                resource.EbookMetadataProfileId ??= legacyMetadataProfileId;
                 resource.EbookRootFolderPath ??= resource.RootFolderPath;
                 resource.EbookMonitored ??= resource.Monitored;
                 resource.EbookMonitorNewItems ??= monitorNewItems;
@@ -651,26 +656,26 @@ namespace Chaptarr.Api.V1.Author
             }
         }
 
-        private static bool HasAudiobookSpecificSettings(AuthorResource resource)
+        internal static bool HasAudiobookSpecificSettings(AuthorResource resource)
         {
-            return resource.AudiobookQualityProfileId.HasValue ||
+            return resource != null && (resource.AudiobookQualityProfileId.HasValue ||
                    resource.AudiobookMetadataProfileId.HasValue ||
                    resource.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() ||
                    resource.AudiobookMonitored.HasValue ||
                    resource.AudiobookMonitorExistingMode.HasValue ||
                    resource.AudiobookMonitorNewItems.HasValue ||
-                   resource.AudiobookTags != null;
+                   resource.AudiobookTags != null);
         }
 
-        private static bool HasEbookSpecificSettings(AuthorResource resource)
+        internal static bool HasEbookSpecificSettings(AuthorResource resource)
         {
-            return resource.EbookQualityProfileId.HasValue ||
+            return resource != null && (resource.EbookQualityProfileId.HasValue ||
                    resource.EbookMetadataProfileId.HasValue ||
                    resource.EbookRootFolderPath.IsNotNullOrWhiteSpace() ||
                    resource.EbookMonitored.HasValue ||
                    resource.EbookMonitorExistingMode.HasValue ||
                    resource.EbookMonitorNewItems.HasValue ||
-                   resource.EbookTags != null;
+                   resource.EbookTags != null);
         }
 
         private static (bool? Monitored, NewItemMonitorTypes? MonitorNewItems, MonitorTypes? MonitorExistingMode) TranslateLegacyMediaMonitoring(
@@ -731,12 +736,13 @@ namespace Chaptarr.Api.V1.Author
             return resource.ToModel(author, null);
         }
 
-        public static NzbDrone.Core.Books.Author ToModel(this AuthorResource resource, NzbDrone.Core.Books.Author author, ReadarrFacadeContext facadeContext)
+        public static NzbDrone.Core.Books.Author ToModel(this AuthorResource resource, NzbDrone.Core.Books.Author author, ReadarrFacadeContext facadeContext, string mediaType = null)
         {
-            var updatedAuthor = resource.ToModel(facadeContext);
-            if (facadeContext != null)
+            mediaType = MediaTypeParameterParser.ResolveWriteScope(mediaType, facadeContext?.MediaType);
+            var updatedAuthor = resource.ToModel(facadeContext, mediaType);
+            if (mediaType != null)
             {
-                PreserveStoredAuthorStateForFacadeUpdate(resource, author, updatedAuthor, facadeContext);
+                PreserveStoredAuthorStateForScopedUpdate(resource, author, updatedAuthor, mediaType);
             }
 
             if (!resource.SyncMonitoredAcrossFormats.HasValue)
@@ -747,13 +753,8 @@ namespace Chaptarr.Api.V1.Author
             return author;
         }
 
-        private static void PreserveStoredAuthorStateForFacadeUpdate(AuthorResource resource, NzbDrone.Core.Books.Author storedAuthor, NzbDrone.Core.Books.Author updatedAuthor, ReadarrFacadeContext facadeContext)
+        private static void PreserveStoredAuthorStateForScopedUpdate(AuthorResource resource, NzbDrone.Core.Books.Author storedAuthor, NzbDrone.Core.Books.Author updatedAuthor, string mediaType)
         {
-            if (resource == null || storedAuthor == null || updatedAuthor == null || facadeContext == null)
-            {
-                return;
-            }
-
             if (resource.Path == null)
             {
                 updatedAuthor.Path = storedAuthor.Path;
@@ -769,7 +770,7 @@ namespace Chaptarr.Api.V1.Author
                 updatedAuthor.LastSelectedMediaType = storedAuthor.LastSelectedMediaType;
             }
 
-            if (facadeContext.MediaType == "audiobook")
+            if (mediaType == "audiobook")
             {
                 PreserveEbookAuthorState(storedAuthor, updatedAuthor);
 
@@ -798,7 +799,7 @@ namespace Chaptarr.Api.V1.Author
                     updatedAuthor.AudiobookMonitorNewItems = storedAuthor.AudiobookMonitorNewItems;
                 }
             }
-            else if (facadeContext.MediaType == "ebook")
+            else if (mediaType == "ebook")
             {
                 PreserveAudiobookAuthorState(storedAuthor, updatedAuthor);
 
@@ -828,9 +829,7 @@ namespace Chaptarr.Api.V1.Author
                 }
             }
 
-            updatedAuthor.Tags = (updatedAuthor.AudiobookTags ?? new HashSet<int>())
-                .Concat(updatedAuthor.EbookTags ?? new HashSet<int>())
-                .ToHashSet();
+            updatedAuthor.Tags = updatedAuthor.GetCombinedTags();
         }
 
         private static void PreserveAudiobookAuthorState(NzbDrone.Core.Books.Author storedAuthor, NzbDrone.Core.Books.Author updatedAuthor)

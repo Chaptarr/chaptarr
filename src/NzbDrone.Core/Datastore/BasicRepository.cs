@@ -668,10 +668,10 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-        protected void UpdateMany(IList<TModel> models, IDbConnection connection, IDbTransaction transaction)
+        protected int UpdateMany(IList<TModel> models, IDbConnection connection, IDbTransaction transaction)
         {
             if (models.Any(model => model.Id == 0)) throw new InvalidOperationException("Can't update model with ID 0");
-            UpdateFields(connection, transaction, models, GetUpdateProperties());
+            return UpdateFields(connection, transaction, models, GetUpdateProperties());
         }
 
         protected void Delete(Expression<Func<TModel, bool>> where)
@@ -920,7 +920,7 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-        private void UpdateFields(IDbConnection connection, IDbTransaction transaction, IList<TModel> models, List<PropertyInfo> propertiesToUpdate)
+        private int UpdateFields(IDbConnection connection, IDbTransaction transaction, IList<TModel> models, List<PropertyInfo> propertiesToUpdate)
         {
             propertiesToUpdate = PrepareForPersistence(models, propertiesToUpdate);
             var sql = propertiesToUpdate == _properties ? _updateSql : GetUpdateSql(propertiesToUpdate);
@@ -932,7 +932,7 @@ namespace NzbDrone.Core.Datastore
 
             try
             {
-                connection.Execute(sql, models, transaction: transaction);
+                return connection.Execute(sql, models, transaction: transaction);
             }
             catch (Exception e)
             {

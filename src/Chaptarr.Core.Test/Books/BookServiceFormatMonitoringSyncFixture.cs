@@ -73,12 +73,24 @@ namespace Chaptarr.Core.Test.Books
 
             public void InsertMany(IList<Book> model, IDbConnection connection, IDbTransaction transaction) => InsertMany(model);
 
+            public void UpdateManyAtomic(IList<Book> books, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated) => throw new System.NotSupportedException();
             public void UpdateMany(IList<Book> model)
             {
                 UpdatedRowCount += model.Count;
                 foreach (var book in model)
                 {
                     _booksById[book.Id] = book;
+                }
+            }
+
+            public void SetMonitoring(IList<Book> books)
+            {
+                UpdatedRowCount += books.Count;
+                foreach (var book in books)
+                {
+                    var stored = _booksById[book.Id];
+                    stored.AudiobookMonitored = book.AudiobookMonitored;
+                    stored.EbookMonitored = book.EbookMonitored;
                 }
             }
 
@@ -107,6 +119,7 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => _booksById.Remove(id);
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => DeleteMany(model.Select(book => book.Id));
+            public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles) => DeleteMany(ids);
             public void DeleteMany(IEnumerable<int> ids)
             {
                 foreach (var id in ids ?? Enumerable.Empty<int>())
@@ -135,9 +148,7 @@ namespace Chaptarr.Core.Test.Books
             public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
             public List<Book> AuthorBooksBetweenDates(Author author, DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
-            public void SetMonitoredFlat(Book book, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
-            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksBySeries(int seriesId) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
@@ -191,6 +202,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => _editions.AddRange(editions);
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -1066,7 +1078,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void delete_book_should_publish_while_parent_row_is_still_available()
+        public void delete_book_should_publish_after_parent_row_is_deleted()
         {
             var author = BuildAuthor(1);
             var book = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
@@ -1076,8 +1088,7 @@ namespace Chaptarr.Core.Test.Books
             {
                 if (published is BookDeletedEvent deleted)
                 {
-                    Assert.That(repository.Get(deleted.Book.Id), Is.Not.Null,
-                        "Edition deletion handlers need the Book row for the FTS delete trigger");
+                    Assert.That(repository.Get(deleted.Book.Id), Is.Null);
                 }
             };
             var service = BuildService(repository, new StubAuthorService(new[] { author }), events);
@@ -1088,7 +1099,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void delete_many_should_publish_all_events_before_deleting_parent_rows()
+        public void delete_many_should_publish_all_events_after_deleting_parent_rows()
         {
             var author = BuildAuthor(1);
             var first = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
@@ -1099,7 +1110,8 @@ namespace Chaptarr.Core.Test.Books
             {
                 if (published is BookDeletedEvent deleted)
                 {
-                    Assert.That(repository.Get(deleted.Book.Id), Is.Not.Null);
+                    Assert.That(repository.Get(first.Id), Is.Null);
+                    Assert.That(repository.Get(second.Id), Is.Null);
                 }
             };
             var service = BuildService(repository, new StubAuthorService(new[] { author }), events);

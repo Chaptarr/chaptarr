@@ -1,7 +1,6 @@
 using System.Collections.Generic;
-using System.Net.Sockets;
 using FluentValidation.Results;
-using NLog;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaFiles;
@@ -11,12 +10,12 @@ namespace NzbDrone.Core.Notifications.Subsonic
     public class Subsonic : NotificationBase<SubsonicSettings>
     {
         private readonly ISubsonicService _subsonicService;
-        private readonly Logger _logger;
+        private readonly ICached<bool> _pendingUpdates;
 
-        public Subsonic(ISubsonicService subsonicService, Logger logger)
+        public Subsonic(ISubsonicService subsonicService, ICacheManager cacheManager)
         {
             _subsonicService = subsonicService;
-            _logger = logger;
+            _pendingUpdates = cacheManager.GetCache<bool>(GetType(), "pendingUpdates");
         }
 
         public override string Link => "http://subsonic.org/";
@@ -25,14 +24,14 @@ namespace NzbDrone.Core.Notifications.Subsonic
         {
             const string header = "Chaptarr - Grabbed";
 
-            Notify(Settings, header, grabMessage.Message);
+            Notify(header, grabMessage.Message);
         }
 
         public override void OnReleaseImport(BookDownloadMessage message)
         {
             const string header = "Chaptarr - Downloaded";
 
-            Notify(Settings, header, message.Message);
+            Notify(header, message.Message);
             Update();
         }
 
@@ -43,21 +42,21 @@ namespace NzbDrone.Core.Notifications.Subsonic
 
         public override void OnAuthorAdded(Author author)
         {
-            Notify(Settings, AUTHOR_ADDED_TITLE_BRANDED, author.Name);
+            Notify(AUTHOR_ADDED_TITLE_BRANDED, author.Name);
         }
 
         public override void OnBookAdded(Book book)
         {
             const string header = "Chaptarr - Book Added";
 
-            Notify(Settings, header, $"{book.Author.Name} - {book.Title}");
+            Notify(header, $"{book.Author.Name} - {book.Title}");
         }
 
         public override void OnAuthorDelete(AuthorDeleteMessage deleteMessage)
         {
             const string header = "Chaptarr - Author Deleted";
 
-            Notify(Settings, header, deleteMessage.Message);
+            Notify(header, deleteMessage.Message);
 
             if (deleteMessage.DeletedFiles)
             {
@@ -69,7 +68,7 @@ namespace NzbDrone.Core.Notifications.Subsonic
         {
             const string header = "Chaptarr - Book Deleted";
 
-            Notify(Settings, header, deleteMessage.Message);
+            Notify(header, deleteMessage.Message);
 
             if (deleteMessage.DeletedFiles)
             {
@@ -81,18 +80,18 @@ namespace NzbDrone.Core.Notifications.Subsonic
         {
             const string header = "Chaptarr - Book File Deleted";
 
-            Notify(Settings, header, deleteMessage.Message);
+            Notify(header, deleteMessage.Message);
             Update();
         }
 
         public override void OnHealthIssue(HealthCheck.HealthCheck healthCheck)
         {
-            Notify(Settings, HEALTH_ISSUE_TITLE_BRANDED, healthCheck.Message);
+            Notify(HEALTH_ISSUE_TITLE_BRANDED, healthCheck.Message);
         }
 
         public override void OnBookRetag(BookRetagMessage message)
         {
-            Notify(Settings, BOOK_RETAGGED_TITLE_BRANDED, message.Message);
+            Notify(BOOK_RETAGGED_TITLE_BRANDED, message.Message);
         }
 
         public override string Name => "Subsonic";
@@ -106,35 +105,42 @@ namespace NzbDrone.Core.Notifications.Subsonic
             return new ValidationResult(failures);
         }
 
-        private void Notify(SubsonicSettings settings, string header, string message)
+        private void Notify(string header, string message)
         {
-            try
+            if (Settings.Notify)
             {
-                if (Settings.Notify)
-                {
-                    _subsonicService.Notify(Settings, $"{header} - {message}");
-                }
+                _subsonicService.Notify(Settings, $"{header} - {message}");
             }
-            catch (SocketException ex)
+        }
+
+        public override bool HasPendingQueue => _pendingUpdates.Find(Definition.Id.ToString());
+
+        public override void ProcessQueue()
+        {
+            lock (_pendingUpdates)
             {
-                var logMessage = $"Unable to connect to Subsonic Host: {Settings.Host}:{Settings.Port}";
-                _logger.Debug(ex, logMessage);
+                if (!HasPendingQueue)
+                {
+                    return;
+                }
+
+                if (Settings.UpdateLibrary)
+                {
+                    _subsonicService.Update(Settings);
+                }
+
+                _pendingUpdates.Remove(Definition.Id.ToString());
             }
         }
 
         private void Update()
         {
-            try
+            if (Settings.UpdateLibrary)
             {
-                if (Settings.UpdateLibrary)
+                lock (_pendingUpdates)
                 {
-                    _subsonicService.Update(Settings);
+                    _pendingUpdates.Set(Definition.Id.ToString(), true);
                 }
-            }
-            catch (SocketException ex)
-            {
-                var logMessage = $"Unable to connect to Subsonic Host: {Settings.Host}:{Settings.Port}";
-                _logger.Debug(ex, logMessage);
             }
         }
     }

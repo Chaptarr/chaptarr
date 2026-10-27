@@ -9,7 +9,8 @@ function createMapStateToProps() {
     (state, { bookIds }) => bookIds,
     (state) => state.books.items,
     (state) => state.bookFiles.items,
-    (bookIds, allBooks, allBookFiles) => {
+    (state) => state.bookIndex,
+    (bookIds, allBooks, allBookFiles, { isDeleting, deleteError }) => {
       const selectedBook = _.intersectionWith(allBooks, bookIds, (s, id) => {
         return s.id === id;
       });
@@ -31,6 +32,8 @@ function createMapStateToProps() {
 
       return {
         selectedCount: bookIds.length,
+        isDeleting,
+        deleteError,
         book,
         files
       };
@@ -45,9 +48,7 @@ function createMapDispatchToProps(dispatch, props) {
         bookIds: props.bookIds,
         deleteFiles,
         addImportListExclusion
-      }));
-
-      props.onModalClose();
+      })).done(() => props.onModalClose());
     }
   };
 }

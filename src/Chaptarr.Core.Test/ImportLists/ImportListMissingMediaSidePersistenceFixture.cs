@@ -236,7 +236,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 bookAdded.Handle(new BookInfoRefreshedEvent(savedAuthor,
                     savedBooks.Where(book => book.Id != unchanged.Id).ToList(), new List<Book> { unchanged }, new List<Book>()));
                 var scanHandler = new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger),
-                    authorService, queue, bookAdded, events, logger);
+                    authorService, queue, bookAdded, events, logger, books);
                 scanHandler.Handle(new AuthorScannedEvent(savedAuthor));
                 var afterScan = books.GetBooksByAuthor(author.Id);
                 Assert.That(afterScan.Single(book => book.Id == selected.Id).IsMonitored(), Is.True);
@@ -467,7 +467,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     Assert.That(BookEditionIdentity.GetMonitoredEdition(fulfilled)?.Id, Is.EqualTo(fulfilledPin));
                     Assert.That(attemptedSearches, Is.Empty, "The wanted writer must suppress searches for an already fulfilled narration.");
                     new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger), authorService, queue,
-                        new BookAddedService(new CacheManager(), queue, books, logger), events, logger).Handle(new AuthorScannedEvent(authors.Get(author.Id)));
+                        new BookAddedService(new CacheManager(), queue, books, logger), events, logger, books).Handle(new AuthorScannedEvent(authors.Get(author.Id)));
                     Assert.That(commands.OfType<BookSearchCommand>(), Is.Empty);
                     Assert.That(commands.OfType<MissingBookSearchCommand>(), Is.Empty);
                     return;
@@ -503,7 +503,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 var persistedAuthor = authors.Get(author.Id);
                 Assert.That(side == BookMediaType.Audiobook ? persistedAuthor.AudiobookMonitored : persistedAuthor.EbookMonitored, Is.False);
                 var bookAdded = new BookAddedService(new CacheManager(), queue, books, logger);
-                new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger), authorService, queue, bookAdded, events, logger)
+                new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger), authorService, queue, bookAdded, events, logger, books)
                     .Handle(new AuthorScannedEvent(persistedAuthor));
                 Assert.Multiple(() =>
                 {
@@ -1027,7 +1027,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     Quality = new NzbDrone.Core.Qualities.QualityModel(), MediaInfo = new NzbDrone.Core.Parser.Model.MediaInfoModel()
                 });
                 var scanned = new AuthorScannedHandler(new BookMonitoredService(stored.AuthorService, stored.Books, stored.Logger),
-                    stored.AuthorService, stored.Queue, Proxy<IBookAddedService>((method, args) => null), stored.Events, stored.Logger);
+                    stored.AuthorService, stored.Queue, Proxy<IBookAddedService>((method, args) => null), stored.Events, stored.Logger, stored.Books);
                 scanned.Handle(new AuthorScannedEvent(author));
                 Assert.Multiple(() =>
                 {
@@ -1107,7 +1107,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     new EditionMetadataProfileFilter(new TestTermMatcherService()), null, stored.Logger, new EditionSelector(stored.Logger));
                 var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
                 typeof(AuthorLibraryService).GetMethod("NormalizeMonitoringConfigFromExplicitRootFolders", flags)
-                    .Invoke(library, new object[] { config });
+                    .Invoke(library, new object[] { config, null });
                 Assert.That(side == BookMediaType.Audiobook ? config.AudiobookMonitorExistingMode : config.EbookMonitorExistingMode, Is.EqualTo(initialMode));
                 typeof(AuthorLibraryService).GetMethod("ApplyMonitoringConfig", flags).Invoke(library, new object[] { stored.Author, config });
                 stored.Authors.Update(stored.Author);
@@ -1125,7 +1125,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 stored.Save(opposite);
                 var bookAdded = Proxy<IBookAddedService>((method, args) => null);
                 var handler = new AuthorScannedHandler(new BookMonitoredService(stored.AuthorService, stored.Books, stored.Logger),
-                    stored.AuthorService, stored.Queue, bookAdded, stored.Events, stored.Logger);
+                    stored.AuthorService, stored.Queue, bookAdded, stored.Events, stored.Logger, stored.Books);
                 handler.Handle(new AuthorScannedEvent(stored.Authors.Get(stored.Author.Id)));
                 var expectedOther = initialMode == MonitorTypes.All || initialMode != MonitorTypes.None && monitoredBeforeScan;
                 Assert.Multiple(() =>

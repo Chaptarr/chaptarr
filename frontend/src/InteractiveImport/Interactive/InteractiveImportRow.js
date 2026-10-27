@@ -50,8 +50,19 @@ class InteractiveImportRow extends Component {
       book,
       editionId,
       quality,
-      size
+      size,
+      isSelected,
+      selectByDefault
     } = this.props;
+
+    if (isSelected !== undefined) {
+      return;
+    }
+
+    if (selectByDefault === false) {
+      this.props.onSelectedChange({ id, value: false });
+      return;
+    }
 
     const hasAuthor = !!(author && author.id > 0);
     const hasBook = !!(book && book.id > 0);
@@ -59,7 +70,7 @@ class InteractiveImportRow extends Component {
     if (
       quality &&
       size > 0 &&
-      hasAuthor && hasBook && editionId
+      (selectByDefault === true || (hasAuthor && hasBook && editionId))
     ) {
       this.props.onSelectedChange({ id, value: true });
     }
@@ -582,6 +593,7 @@ InteractiveImportRow.propTypes = {
   additionalFile: PropTypes.bool.isRequired,
   isReprocessing: PropTypes.bool,
   isSelected: PropTypes.bool,
+  selectByDefault: PropTypes.bool,
   onSelectedChange: PropTypes.func.isRequired,
   onValidRowChange: PropTypes.func.isRequired
 };

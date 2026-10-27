@@ -33,7 +33,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         private static (ManualImportService Service, Observed Observed, string File) Service(
-            ParsingServiceTitleLookupFixture.Harness harness, ParsedBookInfo parsed, bool folder, Book identified = null, List<Book> identifiedBooks = null)
+            ParsingServiceTitleLookupFixture.Harness harness, ParsedBookInfo parsed, bool folder, Book identified = null, List<Book> identifiedBooks = null, bool alternativeCopies = false)
         {
             var directory = @"C:\Downloads\Test Writer\Paper Lanterns".AsOsAgnostic();
             var file = Path.Combine(directory, "Paper Lanterns.m4b");
@@ -45,7 +45,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 DownloadItem = item, ImportItem = item,
                 RemoteBook = new RemoteBook
                 {
-                    Author = harness.Author, ParsedBookInfo = parsed,
+                    Author = harness.Author, ParsedBookInfo = parsed, AlternativeCopies = alternativeCopies,
                     Books = identifiedBooks ?? (identified == null ? new List<Book>() : new List<Book> { identified })
                 }
             };
@@ -78,7 +78,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var calculator = ParsingServiceTitleLookupFixture.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>());
             var service = new ManualImportService(disk, harness.Parser, null, null, decisions, null, harness.Books,
                 null, null, null, null, null, null, null, null, calculator, downloads, null, null, null, null, null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(NLog.LogManager.GetCurrentClassLogger()));
             return (service, observed, file);
         }
 
@@ -94,6 +94,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var results = service.GetMediaFiles("ignored", "tracked-1", harness.Author, FilterFilesType.None, false,
                 exactPaths: new[] { file });
 
+            Assert.That(observed.Info.TargetBookIds, Is.Empty);
             Assert.That(observed.Overrides.Book, Is.SameAs(audio));
             Assert.That(results.Single().Book, Is.SameAs(audio));
             Assert.That(harness.BookReads, Is.EqualTo(1));
@@ -130,11 +131,23 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var results = service.GetMediaFiles("ignored", "tracked-1", callerAuthor, FilterFilesType.None, false, exactPaths: new[] { file });
 
             Assert.That(observed.Overrides.Author.Id, Is.EqualTo(book.AuthorId));
+            Assert.That(observed.Info.TargetBookIds, Is.EqualTo(new[] { book.Id }));
             Assert.That(observed.Overrides.Book, Is.SameAs(book));
             Assert.That(results.Single().Edition, Is.SameAs(edition));
             Assert.That(harness.BookReads, Is.Zero);
             Assert.That(harness.BookIdReads, Is.EqualTo(1));
             Assert.That(observed.TrackedReads, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void alternative_copy_preview_must_not_use_ordinary_single_grab_context()
+        {
+            var book = ParsingServiceTitleLookupFixture.Make(501, "Paper Lanterns");
+            var harness = new ParsingServiceTitleLookupFixture.Harness(new List<Book> { book });
+            var (service, observed, file) = Service(harness, ParsingServiceTitleLookupFixture.Parsed(book.Title), true,
+                book, alternativeCopies: true);
+            service.GetMediaFiles("ignored", "tracked-1", harness.Author, FilterFilesType.None, false, exactPaths: new[] { file });
+            Assert.That(observed.Info.TargetBookIds, Is.Null);
         }
 
         [TestCase(false)]
@@ -198,6 +211,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(observed.Overrides?.Book, Is.Null);
                 Assert.That(observed.Info?.DownloadClientItem, Is.SameAs(observed.DownloadItem));
                 Assert.That(harness.BookReads + harness.BookIdReads, Is.Zero);
+                Assert.That(observed.Info.TargetBookIds, Is.EqualTo(new[] { first.Id, second.Id }));
             });
         }
     }

@@ -150,7 +150,7 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
 
         [TestCase(DatabaseType.SQLite)]
         [TestCase(DatabaseType.PostgreSQL)]
-        public void statistics_should_preserve_lowest_selected_edition_and_null_fallback_in_one_query(DatabaseType databaseType)
+        public void statistics_should_use_selected_edition_and_null_fallback_in_one_query(DatabaseType databaseType)
         {
             var postgres = databaseType == DatabaseType.PostgreSQL;
             var pgConnection = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
@@ -172,6 +172,7 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
                     ""AudiobookMonitored"" {booleanType}, ""EbookMonitored"" {booleanType}, ""ReleaseDate"" {dateType});
                 CREATE TEMP TABLE ""Editions"" (
                     ""Id"" INTEGER PRIMARY KEY, ""BookId"" INTEGER, ""Monitored"" {booleanType}, ""ReleaseDate"" {dateType});
+                CREATE UNIQUE INDEX ""IX_Editions_OneMonitoredPerBook"" ON ""Editions"" (""BookId"") WHERE ""Monitored"" = TRUE;
                 CREATE TEMP TABLE ""BookFiles"" (""Id"" INTEGER PRIMARY KEY, ""EditionId"" INTEGER, ""Size"" BIGINT);
                 INSERT INTO ""Authors"" VALUES (1), (2);
                 INSERT INTO ""Books"" VALUES
@@ -183,10 +184,10 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
                     (6, 1, 0, TRUE, FALSE, '2099-01-01'),
                     (7, 2, 0, FALSE, FALSE, NULL);
                 INSERT INTO ""Editions"" VALUES
-                    (10, 1, TRUE, '2000-01-01'), (11, 1, TRUE, '2099-01-01'),
-                    (20, 2, TRUE, NULL), (21, 2, TRUE, '2099-01-01'),
+                    (10, 1, TRUE, '2000-01-01'), (11, 1, FALSE, '2099-01-01'),
+                    (20, 2, TRUE, NULL), (21, 2, FALSE, '2099-01-01'),
                     (30, 3, FALSE, '2000-01-01'),
-                    (50, 5, TRUE, '2099-01-01'), (51, 5, TRUE, '2000-01-01'),
+                    (50, 5, TRUE, '2099-01-01'), (51, 5, FALSE, '2000-01-01'),
                     (60, 6, TRUE, '2099-01-01'), (61, 6, FALSE, NULL);
                 INSERT INTO ""BookFiles"" VALUES (1, 60, 10), (2, 61, 20);");
 
@@ -223,7 +224,7 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
         }
 
         [Test]
-        public void should_use_the_composite_index_for_the_monitored_edition_join()
+        public void should_use_one_indexed_lookup_for_the_monitored_edition_join()
         {
             WithRepository((repository, connectionString) =>
             {
@@ -236,9 +237,9 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
                     new { currentDate = DateTime.UtcNow }).ToList();
 
                 Assert.That(
-                    plan.Count(row => row.Detail.Contains("IX_Editions_BookId_Monitored_Id")),
-                    Is.EqualTo(2),
-                    "Both the selected-edition join and earlier-edition check must use the BookId-first index");
+                    plan.Count(row => row.Detail.Contains("IX_Editions_BookId_Monitored_Id") || row.Detail.Contains("IX_Editions_OneMonitoredPerBook")),
+                    Is.EqualTo(1),
+                    "The selected-edition join needs one indexed lookup and no duplicate-selection check");
             });
         }
 
@@ -277,6 +278,7 @@ CREATE TABLE ""Editions"" (
     ""Monitored"" INTEGER NOT NULL,
     ""ReleaseDate"" TEXT NULL
 );
+CREATE UNIQUE INDEX ""IX_Editions_OneMonitoredPerBook"" ON ""Editions"" (""BookId"") WHERE ""Monitored"" = TRUE;
 CREATE TABLE ""BookFiles"" (
     ""Id"" INTEGER PRIMARY KEY,
     ""EditionId"" INTEGER NOT NULL,

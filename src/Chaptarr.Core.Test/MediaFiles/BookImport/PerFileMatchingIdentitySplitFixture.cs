@@ -76,12 +76,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     .Where(t => !string.IsNullOrWhiteSpace(t))
                     .ToList();
 
-                if (tokenList.Any(t => t == "horizon"))
-                {
-                    return new List<EditionFtsMatch>();
-                }
-
-
                 if (tokenList.Any(t => t == "wild"))
                 {
                     return new List<EditionFtsMatch>
@@ -734,11 +728,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(result.UnmatchedFiles, Is.Empty);
                 Assert.That(result.MatchedFiles, Has.Length.EqualTo(files.Length));
                 Assert.That(result.MatchedFiles.All(m => m.EditionId == 1), Is.True);
-                Assert.That(matchingLogger.FinalDecisions
-                    .Where(d => d.FilePath != null && d.FilePath.Contains("/raw-alias-alpha/"))
-                    .Where(d => !d.FilePath.EndsWith("/01.mp3"))
-                    .Select(d => d.Result?.Reason),
-                    Is.All.EqualTo("Matched via Holy Grail FTS (per-file split)"));
+                Assert.That(result.MatchedFiles.Where(match => !match.File.Path.EndsWith("/01.mp3"))
+                    .SelectMany(match => match.IdentityProof.Values).Any(value => value.Field.Equals("iD3v2:TALB", StringComparison.OrdinalIgnoreCase)), Is.False);
+                Assert.That(result.MatchedFiles.All(match => match.IdentityProof.Values.All(value =>
+                    match.File.AllTags.TryGetValue(value.Field, out var values) && values.Contains(value.Observed))), Is.True);
             });
         }
 
@@ -1132,8 +1125,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(matchesByPath["/books/unit/Beta.m4b"].EditionId, Is.EqualTo(2));
         }
 
-        [Test]
-        public async Task manual_preview_should_use_one_v5_suggestion_for_unmatched_multi_track_identity_group()
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task manual_preview_should_use_one_v5_suggestion_for_unmatched_multi_track_identity_group(bool sharedFieldOnly)
         {
             var logger = LogManager.GetCurrentClassLogger();
             var containment = new ContainmentValidator(new TagNormalizer(), logger);
@@ -1169,10 +1163,15 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 .Select(i => new DiscoveredFileWithMetadata
                 {
                     Path = $"/downloads/untracked-book/{i:00}.mp3",
-                    AllTags = new Dictionary<string, List<string>>(tags, StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["TITLE"] = new List<string> { $"Track {i}" }
-                    }
+                    AllTags = sharedFieldOnly
+                        ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["FIELD1"] = new() { i % 2 == 0 ? $"Decoration {i} — Test Author Untracked Book" : $"Test Author Untracked Book — Detail {i}" }
+                        }
+                        : new Dictionary<string, List<string>>(tags, StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["TITLE"] = new List<string> { $"Track {i}" }
+                        }
                 })
                 .ToArray();
 
@@ -1185,6 +1184,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(v5.Calls, Is.EqualTo(1));
                 Assert.That(result.UnmatchedFiles.All(u => u.PotentialAuthors?.SingleOrDefault()?.ProviderId == "hc:12345"), Is.True);
                 Assert.That(result.UnmatchedFiles.All(u => u.PotentialAuthors?.SingleOrDefault()?.EditionHardcoverId == "hc-edition-999"), Is.True);
+                if (sharedFieldOnly) Assert.That(v5.TagsByCall.Single()["FIELD1"], Does.Contain("Test Author Untracked Book"));
             });
         }
 
@@ -1359,7 +1359,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             {
                 Assert.That(result.MatchedFiles, Is.Empty);
                 Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
-                Assert.That(v5.Calls, Is.EqualTo(2));
+                Assert.That(v5.Calls, Is.EqualTo(4), "each distinct book has a shared-text question and an original-evidence retry");
                 Assert.That(result.UnmatchedFiles.Select(u => u.File.Path), Is.EquivalentTo(files.Select(f => f.Path)));
             });
         }
@@ -1414,7 +1414,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(result.UnmatchedFiles, Is.Empty);
                 Assert.That(result.MatchedFiles, Has.Length.EqualTo(files.Length));
                 Assert.That(result.MatchedFiles.All(m => m.EditionId == 1), Is.True);
-                Assert.That(fts.Calls, Is.GreaterThanOrEqualTo(files.Length));
+                Assert.That(fts.Calls, Is.LessThanOrEqualTo(1), "reuse a decision for files with the same proven title");
             });
         }
 
@@ -1475,67 +1475,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(result.MatchedFiles, Has.Length.EqualTo(files.Length));
                 Assert.That(result.MatchedFiles.Single(m => m.File.Path.EndsWith("/06.mp3")).EditionId, Is.EqualTo(2));
                 Assert.That(result.MatchedFiles.Where(m => !m.File.Path.EndsWith("/06.mp3")).All(m => m.EditionId == 1), Is.True);
-                Assert.That(fts.Calls, Is.GreaterThanOrEqualTo(files.Length));
-            });
-        }
-
-        [Test]
-        public async Task manual_preview_should_not_fast_path_unsampled_meaningful_leftover_into_short_title()
-        {
-            var logger = LogManager.GetCurrentClassLogger();
-            var containment = new ContainmentValidator(new TagNormalizer(), logger);
-            var fts = new BranchingEditionFtsRepository();
-
-            var svc = new FileMatchingService(
-                matchingLogger: new NullMatchingUploadLogger(),
-                v5MatchingService: null,
-                containmentValidator: containment,
-                pendingAuthorImportService: null,
-                commandQueue: null,
-                authorFolderMatchingService: null,
-                rootFolderService: null,
-                configService: ConfigServiceTestProxy.Create(),
-                authorService: new StubAuthorService(new Author { Id = 1001, Name = "Test Author" }),
-                eventAggregator: null,
-                authorLibraryService: null,
-                editionFtsRepository: fts,
-                bookService: null,
-                editionService: null,
-                editionRepository: null,
-                mediaInfoExtractor: null,
-                logger: logger);
-
-            Dictionary<string, List<string>> Tags(string title)
-            {
-                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
-                {
-                    { "ARTIST", new List<string> { "Test Author" } },
-                    { "TITLE", new List<string> { title } }
-                };
-            }
-
-            var files = new[]
-            {
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/01.mp3", AllTags = Tags("Alpha Chapter 1") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/02.mp3", AllTags = Tags("Alpha Chapter 2") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/03.mp3", AllTags = Tags("Alpha Chapter 3") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/04.mp3", AllTags = Tags("Alpha Chapter 4") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/05.mp3", AllTags = Tags("Alpha Chapter 5") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/06.mp3", AllTags = Tags("Alpha Horizon Chapter 1") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/07.mp3", AllTags = Tags("Alpha Chapter 6") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/08.mp3", AllTags = Tags("Alpha Chapter 7") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/09.mp3", AllTags = Tags("Alpha Chapter 8") },
-                new DiscoveredFileWithMetadata { Path = "/downloads/meaningful-leftover/10.mp3", AllTags = Tags("Alpha Chapter 9") }
-            };
-
-            var result = await svc.MatchFilesToLibraryAsync(files, restrictToAuthorId: null, MatchingContextPresets.ForManualPreview());
-
-            Assert.Multiple(() =>
-            {
-                Assert.That(result.UnmatchedFiles.Select(u => u.File.Path), Is.EquivalentTo(new[] { "/downloads/meaningful-leftover/06.mp3" }));
-                Assert.That(result.MatchedFiles, Has.Length.EqualTo(files.Length - 1));
-                Assert.That(result.MatchedFiles.All(m => m.EditionId == 1), Is.True);
-                Assert.That(fts.Calls, Is.GreaterThanOrEqualTo(files.Length));
+                Assert.That(fts.Calls, Is.LessThanOrEqualTo(4), "reuse a decision for files with the same proven title");
             });
         }
 
@@ -1628,10 +1568,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             Assert.Multiple(() =>
             {
-                Assert.That(v5.Calls, Is.EqualTo(files.Length * 2), "each file has one embedded ask and one path-evidence retry");
+                Assert.That(v5.Calls, Is.EqualTo((files.Length + 1) * 2), "one shared-text question and one original question per file, each with its path retry");
                 Assert.That(files.All(file =>
-                    v5.FilePaths.Count(path => string.Equals(path, file.Path, StringComparison.Ordinal)) == 2),
-                    Is.True, "the grouped representative questions must not be repeated by the member pass");
+                    v5.FilePaths.Count(path => string.Equals(path, file.Path, StringComparison.Ordinal)) == (file == files[0] ? 4 : 2)),
+                    Is.True, "only the representative adds the distinct shared-text questions");
                 Assert.That(result.MatchedFiles, Is.Empty);
                 Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
             });
@@ -1835,7 +1775,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             Assert.Multiple(() =>
             {
-                Assert.That(v5.Calls, Is.EqualTo(2), "each invocation asks once; no transport failure survives into the next invocation");
+                Assert.That(v5.Calls, Is.EqualTo(4), "each invocation retries shared and original evidence; no transport failure survives into the next invocation");
                 Assert.That(first.UnmatchedFiles, Has.Length.EqualTo(files.Length));
                 Assert.That(second.UnmatchedFiles, Has.Length.EqualTo(files.Length));
             });

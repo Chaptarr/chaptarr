@@ -1205,7 +1205,7 @@ namespace Chaptarr.Core.Test.Books
                 InterfaceProxy.Proxy<IBookMonitoredService>((method, args) => { initialMonitoringApplied = true; return null; }),
                 InterfaceProxy.Proxy<IAuthorService>((method, args) => null), queue,
                 InterfaceProxy.Proxy<IBookAddedService>((method, args) => null),
-                new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+                new RecordingEventAggregator(), LogManager.GetCurrentClassLogger(), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((_, _) => throw new NotSupportedException()));
             void CompleteScan() => scan.Handle(new AuthorScanSkippedEvent(author, AuthorScanSkippedReason.NoFolderEvidence));
             BuildHandler(pendingService, queue, new RecordingEventAggregator(), author: author, bookService: bookService,
                 configCaptured: config =>

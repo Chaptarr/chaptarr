@@ -22,7 +22,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         List<QualityProfile> All();
         List<QualityProfile> GetByType(ProfileType type);
         QualityProfile Get(int id);
-        bool Exists(int id);
+        bool Exists(int id, ProfileType? profileType = null);
         QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed);
     }
 
@@ -111,9 +111,11 @@ namespace NzbDrone.Core.Profiles.Qualities
             return _profileRepository.Get(id);
         }
 
-        public bool Exists(int id)
+        public bool Exists(int id, ProfileType? profileType = null)
         {
-            return _profileRepository.Exists(id);
+            return profileType.HasValue
+                ? _profileRepository.Find(id)?.ProfileType == profileType.Value
+                : _profileRepository.Exists(id);
         }
 
         public void Handle(ApplicationStartedEvent message)

@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text;
 using Dapper;
 using NLog;
-using NzbDrone.Common.EnsureThat;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
@@ -16,6 +15,8 @@ namespace NzbDrone.Core.Books
     public interface IEditionRepository : IBasicRepository<Edition>
     {
         void RefreshProviderAliases(IList<Edition> editions);
+        void UpdateMany(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, Edition selectedEdition = null);
+        void UpdateSelection(IList<Edition> editions);
         List<Edition> GetAllMonitoredEditions();
         Edition FindByForeignEditionId(string foreignEditionId);
         List<Edition> FindAllByForeignEditionId(string foreignEditionId);
@@ -74,6 +75,7 @@ namespace NzbDrone.Core.Books
 
         public override void InsertMany(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction)
         {
+            PrepareSelection(editions, connection, transaction, _database.DatabaseType);
             base.InsertMany(editions, connection, transaction);
             ReplaceEditionAliases(editions, connection, transaction, replaceExisting: false);
         }
@@ -90,9 +92,17 @@ namespace NzbDrone.Core.Books
             if (editions.Count == 0) return;
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
-            base.UpdateMany(editions, connection, transaction);
-            ReplaceEditionAliases(editions, connection, transaction);
+            UpdateMany(editions, connection, transaction, selectedEdition: null);
             transaction.Commit();
+        }
+
+        public void UpdateMany(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, Edition selectedEdition = null)
+        {
+            PrepareSelection(editions, connection, transaction, _database.DatabaseType, selectedEdition);
+            if (editions.Count == 0) return;
+            var updated = base.UpdateMany(editions.OrderBy(edition => edition.Monitored).ToList(), connection, transaction);
+            EnsureEditionsUpdated(editions.Count, updated);
+            ReplaceEditionAliases(editions, connection, transaction);
         }
 
         public override void DeleteMany(IEnumerable<int> ids)
@@ -368,47 +378,106 @@ namespace NzbDrone.Core.Books
         public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false)
         {
             var allEditions = FindByBook(new[] { edition.BookId });
-            allEditions.ForEach(r => {
-                if (r.Id == edition.Id)
-                {
-                    r.Monitored = true;
-                    // CRITICAL: Only mark as manually selected if this was actually a manual selection
-                    // Don't set ManualAdd=true for automatic imports from root folders
-                    if (isManualSelection)
-                    {
-                        r.ManualAdd = true;
-                        _logger.Debug("Setting ManualAdd=true for edition {0} due to manual selection", r.Id);
-                    }
-                }
-                else
-                {
-                    r.Monitored = false;
-                    // ManualAdd is the persisted user-selected edition. It must not
-                    // float independently from the single monitored edition.
-                    r.ManualAdd = false;
-                }
-            });
+            var selected = allEditions.Single(candidate => candidate.Id == edition.Id);
+            var previouslyMonitoredIds = allEditions.Where(candidate => candidate.Monitored).Select(candidate => candidate.Id).ToHashSet();
+            EditionPinPolicy.ApplyExplicitSelection(allEditions, selected.Id, previouslyMonitoredIds, isManualSelection);
+            UpdateSelection(allEditions);
+            return allEditions;
+        }
 
-            // With multi-edition architecture, we might have books with different editions in separate directories
-            // Ensure at least one edition is monitored, but allow for cases where no editions exist yet
-            var monitoredCount = allEditions.Count(x => x.Monitored);
-            if (allEditions.Any())
+        public void UpdateSelection(IList<Edition> editions)
+        {
+            if (editions.Count == 0) return;
+            if (editions.Any(edition => edition.Id <= 0))
             {
-                Ensure.That(monitoredCount <= 1).IsTrue();
-                if (monitoredCount == 0)
+                throw new InvalidOperationException("Cannot update selection for an unsaved edition.");
+            }
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            PersistSelection(editions, connection, transaction, _database.DatabaseType);
+            transaction.Commit();
+        }
+
+        internal static void PersistSelection(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType)
+        {
+            PrepareSelection(editions, connection, transaction, databaseType);
+            var updated = 0;
+            var batchSize = databaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters - 2 : Math.Max(1, editions.Count);
+            var idPredicate = databaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
+            foreach (var group in editions.OrderBy(edition => edition.Monitored).GroupBy(edition => (edition.Monitored, edition.ManualAdd)))
+            {
+                foreach (var ids in group.Select(edition => edition.Id).Chunk(batchSize))
                 {
-                    // If no edition is monitored, monitor the first available edition
-                    var firstEdition = allEditions.FirstOrDefault();
-                    if (firstEdition != null)
-                    {
-                        firstEdition.Monitored = true;
-                        // Note: Don't set ManualAdd here since this is automatic selection
-                    }
+                    updated += connection.Execute($"UPDATE \"Editions\" SET \"Monitored\" = @Monitored, \"ManualAdd\" = @ManualAdd WHERE \"Id\" {idPredicate}",
+                        new { group.Key.Monitored, group.Key.ManualAdd, ids }, transaction);
+                }
+            }
+            EnsureEditionsUpdated(editions.Count, updated);
+        }
+
+        private static void EnsureEditionsUpdated(int expected, int updated)
+        {
+            if (updated != expected)
+            {
+                throw new ModelConflictException(typeof(Edition), 0, "An edition was removed before its selection could be saved. Reload and try again.");
+            }
+        }
+
+        private static void PrepareSelection(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, Edition selectedEdition = null)
+        {
+            var selections = editions.Where(edition => edition.Monitored).ToList();
+            if (selections.Count == 0 && selectedEdition == null) return;
+            if (selections.GroupBy(edition => edition.BookId).Any(group => group.Count() > 1))
+            {
+                throw new InvalidOperationException("A book can have at most one monitored edition.");
+            }
+
+            // Always lock parents before editions, including an unchanged API selection.
+            var selectionBookIds = selections.Select(edition => edition.BookId)
+                .Concat(selectedEdition == null ? Enumerable.Empty<int>() : new[] { selectedEdition.BookId })
+                .Distinct().OrderBy(id => id).ToArray();
+            LockSelectionBooks(selectionBookIds, connection, transaction, databaseType);
+
+            // An unchanged selection still participates in the caller's atomic save.
+            // Lock and validate its owner without rewriting unchanged metadata/aliases.
+            if (selectedEdition != null)
+            {
+                var selectionWillBeWritten = editions.Any(edition => edition.Id == selectedEdition.Id && edition.BookId == selectedEdition.BookId && edition.Monitored);
+                var unchangedSelection = selectionWillBeWritten ? string.Empty : " AND \"Monitored\" = true";
+                var locking = databaseType == DatabaseType.PostgreSQL ? " FOR UPDATE" : string.Empty;
+                var selectedId = connection.QuerySingleOrDefault<int?>(
+                    "SELECT \"Id\" FROM \"Editions\" WHERE \"Id\"=@Id AND \"BookId\"=@BookId" + unchangedSelection + locking,
+                    new { selectedEdition.Id, selectedEdition.BookId }, transaction);
+                if (!selectedId.HasValue)
+                {
+                    throw new ModelConflictException(typeof(Edition), selectedEdition.Id, "was removed, moved, or changed selection before the update could be saved. Reload and try again.");
                 }
             }
 
-            UpdateMany(allEditions);
-            return allEditions;
+            // Release the old selection before enabling its replacement. A failed write
+            // rolls both changes back, including failures while persisting provider aliases.
+            var batchSize = databaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters / 2 : Math.Max(1, selections.Count);
+            foreach (var batch in selections.OrderBy(edition => edition.BookId).Chunk(batchSize))
+            {
+                var bookIds = batch.Select(edition => edition.BookId).ToArray();
+                var editionIds = batch.Select(edition => edition.Id).ToArray();
+
+                var books = databaseType == DatabaseType.PostgreSQL ? "= ANY(@bookIds)" : "IN @bookIds";
+                var selected = databaseType == DatabaseType.PostgreSQL ? "<> ALL(@editionIds)" : "NOT IN @editionIds";
+                connection.Execute($"UPDATE \"Editions\" SET \"Monitored\" = false WHERE \"BookId\" {books} AND \"Monitored\" = true AND \"Id\" {selected}",
+                    new { bookIds, editionIds }, transaction);
+            }
+        }
+
+        internal static void LockSelectionBooks(int[] bookIds, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType)
+        {
+            if (databaseType == DatabaseType.PostgreSQL)
+            {
+                // Parent locks serialize competing choices, including first selections.
+                connection.Execute("SELECT \"Id\" FROM \"Books\" WHERE \"Id\" = ANY(@bookIds) ORDER BY \"Id\" FOR UPDATE",
+                    new { bookIds }, transaction);
+            }
         }
 
         public HashSet<string> FindExistingTitleSlugsForUniqueness(IEnumerable<string> baseTitleSlugs)

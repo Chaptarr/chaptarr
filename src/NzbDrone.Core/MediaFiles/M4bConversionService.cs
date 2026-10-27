@@ -167,6 +167,8 @@ namespace NzbDrone.Core.MediaFiles
                     if (!validation.Success)
                     {
                         SetFailure(result, ConversionFailureCategory.OutputInvalid, validation.ErrorMessage, output);
+                        result.RetainOutputOnFailure = validation.ReadableAudio;
+                        if (result.RetainOutputOnFailure) result.OutputFileSize = GetFileSizeSafely(outputFile);
                         _logger.Error("M4B conversion produced an invalid output: {0}", result.ErrorMessage);
                     }
                     else
@@ -578,7 +580,7 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             var validation = ValidateConvertedOutput(inputFiles, outputFile, options);
-            if (!validation.Success)
+            if (!validation.ReadableAudio)
             {
                 _logger.Warn("Not retaining failed conversion output because validation failed: {0}", validation.ErrorMessage);
                 return;
@@ -628,7 +630,7 @@ namespace NzbDrone.Core.MediaFiles
                 if (actualDifference > allowedDifference)
                 {
                     return ConversionOutputValidationResult.Fail(
-                        $"Converted M4B duration looks wrong. Source duration is about {FormatDuration(expectedDuration)} but output is {FormatDuration(outputDuration)}; allowed difference is {FormatDuration(allowedDifference)}.");
+                        $"Converted M4B duration looks wrong. Source duration is about {FormatDuration(expectedDuration)} but output is {FormatDuration(outputDuration)}; allowed difference is {FormatDuration(allowedDifference)}.", readableAudio: true);
                 }
             }
 
@@ -980,23 +982,25 @@ namespace NzbDrone.Core.MediaFiles
 
     internal sealed class ConversionOutputValidationResult
     {
-        private ConversionOutputValidationResult(bool success, string errorMessage)
+        private ConversionOutputValidationResult(bool success, string errorMessage, bool readableAudio)
         {
             Success = success;
             ErrorMessage = errorMessage;
+            ReadableAudio = readableAudio;
         }
 
         public bool Success { get; }
+        public bool ReadableAudio { get; }
         public string ErrorMessage { get; }
 
         public static ConversionOutputValidationResult Ok()
         {
-            return new ConversionOutputValidationResult(true, null);
+            return new ConversionOutputValidationResult(true, null, true);
         }
 
-        public static ConversionOutputValidationResult Fail(string errorMessage)
+        public static ConversionOutputValidationResult Fail(string errorMessage, bool readableAudio = false)
         {
-            return new ConversionOutputValidationResult(false, errorMessage);
+            return new ConversionOutputValidationResult(false, errorMessage, readableAudio);
         }
     }
 

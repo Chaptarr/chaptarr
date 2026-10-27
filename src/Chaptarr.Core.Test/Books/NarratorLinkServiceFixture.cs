@@ -363,7 +363,7 @@ namespace Chaptarr.Core.Test.Books
                     edition.Title = book.Title;
                     edition.Narrator = edition.NarratorCredits[0].Name;
                     edition.NarratorNames = new List<string> { edition.Narrator };
-                    edition.Monitored = true;
+                    edition.Monitored = ReferenceEquals(edition, editions[0]);
                 }
 
                 new EditionRepository(database, events).InsertMany(editions);
@@ -372,21 +372,9 @@ namespace Chaptarr.Core.Test.Books
 
                 var statements = new List<string>();
                 var observed = InterfaceProxy.Proxy<IMainDatabase>((method, args) =>
-                {
-                    if (method.Name != nameof(IMainDatabase.OpenConnection)) return method.Invoke(database, args);
-                    var connection = database.OpenConnection();
-                    return InterfaceProxy.Proxy<IDbConnection>((connectionMethod, connectionArgs) =>
-                    {
-                        var result = connectionMethod.Invoke(connection, connectionArgs);
-                        if (result is not IDbCommand command) return result;
-                        return InterfaceProxy.Proxy<IDbCommand>((commandMethod, commandArgs) =>
-                        {
-                            if (commandMethod.Name is nameof(IDbCommand.ExecuteReader) or nameof(IDbCommand.ExecuteNonQuery) or nameof(IDbCommand.ExecuteScalar))
-                                statements.Add(command.CommandText);
-                            return commandMethod.Invoke(command, commandArgs);
-                        });
-                    });
-                });
+                    method.Name == nameof(IMainDatabase.OpenConnection)
+                        ? CommandObserver.Wrap(database.OpenConnection(), command => statements.Add(command.CommandText), includeWrites: true)
+                        : method.Invoke(database, args));
                 var service = new NarratorLinkService(new EditionNarratorLinkRepository(observed, events),
                     new BookNarratorLinkRepository(observed, events), new NarratorMetadataRepository(observed, events, logger),
                     new NarratorRepository(observed, events), logger);

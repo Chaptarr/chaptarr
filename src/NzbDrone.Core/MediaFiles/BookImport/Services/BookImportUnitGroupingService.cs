@@ -14,6 +14,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
     public sealed class BookImportIdentitySubgroup
     {
         public string IdentityKey { get; set; }
+        internal FileMatch SeedMatch { get; set; }
         public List<DiscoveredFileWithMetadata> Files { get; set; }
     }
 

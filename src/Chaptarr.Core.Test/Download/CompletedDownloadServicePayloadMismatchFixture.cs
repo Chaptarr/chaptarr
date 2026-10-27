@@ -13,6 +13,7 @@ using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
@@ -139,6 +140,29 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(harness.FailedDownloadService.Failures, Is.Empty);
         }
 
+        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        public void replacement_confirmation_keeps_the_download_in_queue_without_blocklisting()
+        {
+            var harness = new Harness();
+            harness.TrackedDownload.DownloadItem.DownloadForced = true;
+            var decision = new ImportDecision<LocalBook>(new LocalBook
+            {
+                Path = "/downloads/learn-my-lesson/book.m4b",
+                Book = harness.TrackedDownload.RemoteBook.Books.Single(),
+                Quality = new QualityModel(Quality.M4B)
+            });
+            const string reason = "Book already has files. Use Manual Import and select Replace existing files to replace them.";
+            harness.ImportResults = new List<ImportResult> { new(decision, reason) };
+
+            harness.Subject.Import(harness.TrackedDownload);
+
+            Assert.That(harness.TrackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
+            Assert.That(harness.TrackedDownload.StatusMessages.SelectMany(message => message.Messages), Does.Contain(reason));
+            Assert.That(harness.FailedDownloadService.Failures, Is.Empty);
+            Assert.That(harness.EventAggregator.Events.OfType<DownloadCompletedEvent>(), Is.Empty);
+            Assert.That(harness.EventAggregator.Events.OfType<BookImportIncompleteEvent>().Count(), Is.EqualTo(1));
+        }
+
         private sealed class Harness
         {
             public RecordingEventAggregator EventAggregator { get; } = new();
@@ -262,12 +286,12 @@ namespace Chaptarr.Core.Test.Download
         {
             public ImportMode Resolve(ImportMode requestedMode, DownloadClientItem downloadClientItem) => requestedMode;
             public DownloadImportPolicy ResolvePolicy(ImportMode requestedMode, DownloadClientItem downloadClientItem) => new(requestedMode, false);
-            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem) => false;
+            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem, int fallbackIndexerId = 0, bool includeUnmanaged = true) => false;
         }
 
         private sealed class StubTrackedDownloadAlreadyImported : ITrackedDownloadAlreadyImported
         {
-            public bool IsImported(TrackedDownload trackedDownload, List<EntityHistory> historyItems) => false;
+            public bool IsImported(TrackedDownload trackedDownload, List<EntityHistory> historyItems, IReadOnlyCollection<ImportResult> results = null, IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportFile> requestedFiles = null) => TrackedDownloadAlreadyImported.Evaluate(trackedDownload, results, requestedFiles, historyItems).Complete;
         }
 
         private class HistoryServiceProxy : DispatchProxy
@@ -298,16 +322,13 @@ namespace Chaptarr.Core.Test.Download
 
         private static ImportResult BuildResult(Quality quality, Rejection rejection = null)
         {
-            // Imported files carry the book they landed on — that is what completion is verified
-            // against. Gated files never get that far.
+            // The production quality gate runs after matching and retains the matched book.
             var decision = new ImportDecision<LocalBook>(new LocalBook
             {
                 Path = $"/downloads/book.{quality.Name.ToLowerInvariant()}",
                 Quality = new QualityModel(quality),
-                Book = rejection == null
-                    ? new Book { Id = 901, AuthorId = 7, Title = "Learn My Lesson", MediaType = BookMediaType.Ebook }
-                    : null,
-                Author = rejection == null ? new Author { Id = 7, Name = "Katee Robert" } : null
+                Book = new Book { Id = 901, AuthorId = 7, Title = "Learn My Lesson", MediaType = BookMediaType.Ebook },
+                Author = new Author { Id = 7, Name = "Katee Robert" }
             });
 
             if (rejection == null)

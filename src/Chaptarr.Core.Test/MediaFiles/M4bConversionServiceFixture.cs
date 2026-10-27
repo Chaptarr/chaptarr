@@ -417,7 +417,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(result.Success, Is.False);
             Assert.That(result.FailureCategory, Is.EqualTo(ConversionFailureCategory.OutputInvalid));
-            Assert.That(result.RetainOutputOnFailure, Is.False);
+            Assert.That(result.RetainOutputOnFailure, Is.True, "Readable audio remains available for explicit manual import; automatic import stays rejected");
             Assert.That(result.ErrorMessage, Does.Contain("duration looks wrong"));
         }
 

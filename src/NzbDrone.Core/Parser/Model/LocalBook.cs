@@ -42,6 +42,9 @@ namespace NzbDrone.Core.Parser.Model
         public string Narrator { get; set; }
         public bool IsInitialImport { get; set; }
         public bool IsManualImport { get; set; }
+        public bool DisableReleaseSwitching { get; set; }
+        public IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> ConfirmedReplacementFiles { get; set; }
+        public List<string> PendingReplicaPaths { get; set; }
         public MatchProvenance MatchProvenance { get; set; }
         public Dictionary<int, int> AlternativeCopyIncompatibleEditionIds { get; set; }
         public DateTime? AlternativeCopyGrabDate { get; set; }

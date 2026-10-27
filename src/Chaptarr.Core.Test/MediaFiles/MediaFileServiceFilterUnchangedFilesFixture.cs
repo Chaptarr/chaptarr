@@ -46,7 +46,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IIngestQueueRepository.PurgeUnderPath))
+                if (targetMethod?.Name == nameof(IIngestQueueRepository.PurgePaths))
                 {
                     return 0;
                 }

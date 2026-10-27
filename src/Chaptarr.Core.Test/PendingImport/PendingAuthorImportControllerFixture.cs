@@ -42,7 +42,7 @@ namespace Chaptarr.Core.Test.PendingImport
             public void Update(QualityProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
             public QualityProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => _profiles.Any(p => p.Id == id);
+            public bool Exists(int id, ProfileType? profileType = null) => _profiles.Any(p => p.Id == id);
             public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed) => throw new NotImplementedException();
         }
 
@@ -60,7 +60,7 @@ namespace Chaptarr.Core.Test.PendingImport
             public void Update(MetadataProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
             public MetadataProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => _profiles.Any(p => p.Id == id);
+            public bool Exists(int id, MetadataProfileType? profileType = null) => _profiles.Any(p => p.Id == id);
             public List<Book> FilterBooks(Author input, int profileId) => throw new NotImplementedException();
 
             public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>

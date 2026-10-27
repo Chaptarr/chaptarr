@@ -97,7 +97,7 @@ function requestSummary(captured) {
   });
 }
 
-async function openFixture(browser, items, { width = 1440, theme = 'dark', existingFiles = true } = {}) {
+async function openFixture(browser, items, { width = 1440, theme = 'dark', existingFiles = true, replaceExisting = true, failPreview = false, folderMode = false } = {}) {
   const page = await browser.newPage({ viewport: { width, height: 900 }, colorScheme: theme });
   const captured = { manualImports: [], bookFiles: [], commands: [] };
   const errors = [];
@@ -118,11 +118,19 @@ async function openFixture(browser, items, { width = 1440, theme = 'dark', exist
       return route.fulfill({ json: items });
     }
 
-    if (pathname.endsWith('/bookFile')) {
-      const bookIds = url.searchParams.getAll('bookId');
+    if (pathname.endsWith('/manualimport/replacementfiles')) {
+      assert.equal(request.method(), 'POST');
+      const selected = request.postDataJSON().files;
+      const bookIds = [...new Set(selected.map((file) => String(file.bookId)).filter((id) => id !== '0'))];
       captured.bookFiles.push({ url: request.url(), bookIds });
+      if (failPreview) {
+        return route.fulfill({ status: 500, json: { message: 'Preview failed' } });
+      }
+      if (bookIds.length === 0) {
+        return route.fulfill({ json: [] });
+      }
       if (bookIds.length === 1 && bookIds[0] === '20') {
-        return route.fulfill({ json: existingFiles ? [{ id: 500, bookId: 20, path: '/library/Local Book.epub', size: 2048 }] : [] });
+        return route.fulfill({ json: existingFiles ? [{ id: 500, bookId: 20, path: '/library/Local Book.epub', associatedPaths: ['/library/Other Narration/Local Book.epub', '/library/cover.jpg'], size: 2048 }] : [] });
       }
 
       return route.fulfill({
@@ -162,16 +170,27 @@ async function openFixture(browser, items, { width = 1440, theme = 'dark', exist
 
   await page.goto('http://manual-import.test/');
   await page.waitForFunction(() => window.manualImportFixtureReady === true);
-  await page.evaluate((themeName) => window.renderManualImportFixture(themeName), theme);
+  await page.evaluate(({ themeName, folder }) => window.renderManualImportFixture(themeName, folder), { themeName: theme, folder: folderMode });
+  if (!folderMode) {
+    await page.locator('table').getByRole('button').first().click();
+  }
   await page.locator('input[name="1"], input[name="10"]').first().waitFor();
   await page.getByText('Ready now (local):', { exact: false }).waitFor();
+  if (!folderMode) {
+    await page.getByText(strings.InteractiveImportCombineWithExistingMode, { exact: true }).waitFor();
+  }
+  if (replaceExisting) {
+    await page.getByText(strings.InteractiveImportCombineWithExistingMode, { exact: true }).click();
+    await page.getByText(strings.InteractiveImportReplaceExisting, { exact: true }).click();
+    await page.getByText(strings.InteractiveImportReplaceExistingMode, { exact: true }).waitFor();
+  }
   return { page, captured, errors };
 }
 
 function waitForRelevantResponse(page) {
   return page.waitForResponse((response) => {
     const pathname = new URL(response.url()).pathname;
-    return pathname.endsWith('/bookFile') || (pathname.endsWith('/command') && response.request().method() === 'POST');
+    return pathname.endsWith('/manualimport/replacementfiles') || (pathname.endsWith('/command') && response.request().method() === 'POST');
   }, { timeout: 5000 });
 }
 
@@ -206,12 +225,14 @@ async function verifyMetadataOnly(browser, width, theme) {
     await page.keyboard.press('Enter');
     await response;
 
-    assert.equal(captured.bookFiles.length, 0, `Metadata-only import must not query replacement files. Captured requests: ${requestSummary(captured)}`);
+    await page.waitForFunction(() => window.manualImportCloseCount === 1);
+    assert.equal(captured.bookFiles.length, 1, `Metadata-only replacement must confirm an empty local replacement set. ${requestSummary(captured)}`);
     assert.equal(captured.commands.length, 1, `Expected one ManualImport POST after keyboard activation. Captured requests: ${requestSummary(captured)}`);
     const body = captured.commands[0].body;
     assert.equal(body.name, 'ManualImport');
     assert.equal(body.importMode, 'auto');
     assert.equal(body.replaceExistingFiles, true);
+    assert.deepEqual(body.confirmedReplacementFiles, []);
     assert.equal(body.files[0].selectionSource, 'userMetadataSuggestion');
     assert.equal(body.files.length, 1);
     assert.equal(body.files[0].bookId, 0);
@@ -224,6 +245,21 @@ async function verifyMetadataOnly(browser, width, theme) {
     await page.waitForFunction(() => window.manualImportCloseCount === 1);
     assert.deepEqual(errors, [], `Browser errors during metadata-only import. Requests: ${requestSummary(captured)}`);
     return screenshotPath;
+  } finally {
+    await page.close();
+  }
+}
+
+async function verifyReplacementDefaultsOff(browser) {
+  const { page, captured, errors } = await openFixture(browser, [localItem()], { replaceExisting: false });
+  try {
+    await page.getByRole('button', { name: strings.Import, exact: true }).click();
+    await page.waitForFunction(() => window.manualImportCloseCount === 1);
+    assert.equal(captured.commands.length, 1);
+    assert.equal(captured.commands[0].body.replaceExistingFiles, false);
+    assert.equal(captured.commands[0].body.files[0].bookId, 20);
+    assert.equal(captured.bookFiles.length, 0);
+    assert.deepEqual(errors, []);
   } finally {
     await page.close();
   }
@@ -259,11 +295,14 @@ async function verifyMixedProceed(browser) {
     await page.getByRole('button', { name: strings.Import, exact: true }).click();
     await page.getByRole('button', { name: strings.Proceed, exact: true }).waitFor();
     assert.deepEqual(captured.bookFiles.map((request) => request.bookIds), [['20']], `Mixed replacement lookup must include only the selected local book. ${requestSummary(captured)}`);
+    await page.getByText('/library/Other Narration/Local Book.epub', { exact: true }).waitFor();
+    await page.getByText('/library/cover.jpg', { exact: true }).waitFor();
 
     await page.getByRole('button', { name: strings.Proceed, exact: true }).click();
     await page.waitForFunction(() => window.manualImportCloseCount === 1);
     assert.equal(captured.commands.length, 1, `Proceed must send one ManualImport command. ${requestSummary(captured)}`);
     assert.equal(captured.commands[0].body.files.length, 2);
+    assert.deepEqual(captured.commands[0].body.confirmedReplacementFiles, [{ id: 500, bookId: 20, path: '/library/Local Book.epub', associatedPaths: ['/library/Other Narration/Local Book.epub', '/library/cover.jpg'] }]);
     for (const file of captured.commands[0].body.files) {
       assert.equal(file.releaseGroup, 'Selected Audit Group');
       assert.deepEqual(file.quality, quality);
@@ -316,11 +355,90 @@ async function verifyLocalWithoutExistingFiles(browser) {
   }
 }
 
+async function verifyConvertedSelection(browser, successful, chooseOriginals = false) {
+  const originals = [10, 11].map((id) => ({
+    ...localItem(), id, path: `/downloads/Dune - Part ${id - 9}.mp3`,
+    selectByDefault: successful ? false : null
+  }));
+  const converted = { ...localItem(), id: 12, path: '/library/.chaptarr-conversions/queue-download/work/Dune.m4b', selectByDefault: true };
+  const { page, captured, errors } = await openFixture(browser, successful ? [...originals, converted] : originals,
+    { replaceExisting: false });
+  try {
+    for (const original of originals) {
+      await assertEventuallyChecked(page, page.locator(`input[name="${original.id}"]`), !successful);
+    }
+    if (successful) {
+      await assertEventuallyChecked(page, page.locator('input[name="12"]'), true);
+    }
+    if (chooseOriginals) {
+      await page.locator('input[name="12"]').focus();
+      await page.keyboard.press('Space');
+      await assertEventuallyChecked(page, page.locator('input[name="12"]'), false);
+      for (const original of originals) {
+        const checkbox = page.locator(`input[name="${original.id}"]`);
+        await checkbox.focus();
+        await page.keyboard.press('Space');
+        await assertEventuallyChecked(page, checkbox, true);
+      }
+      // A preview refresh remounts rows; it must retain the explicit choice.
+      await page.getByText(strings.InteractiveImportCombineWithExistingMode, { exact: true }).click();
+      await page.getByText(strings.InteractiveImportReplaceExisting, { exact: true }).click();
+      await page.getByText(strings.InteractiveImportReplaceExistingMode, { exact: true }).waitFor();
+      await assertEventuallyChecked(page, page.locator('input[name="12"]'), false);
+      await page.getByText(strings.InteractiveImportReplaceExistingMode, { exact: true }).click();
+      await page.getByText(strings.InteractiveImportCombineWithExisting, { exact: true }).click();
+      await page.getByText(strings.InteractiveImportCombineWithExistingMode, { exact: true }).waitFor();
+    }
+    await page.getByRole('button', { name: strings.Import, exact: true }).click();
+    await page.waitForFunction(() => window.manualImportCloseCount === 1);
+    assert.equal(captured.commands.length, 1);
+    assert.deepEqual(captured.commands[0].body.files.map((file) => file.path),
+      successful && !chooseOriginals ? [converted.path] : originals.map((file) => file.path));
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+}
+
+async function verifyParentFolderConversions(browser) {
+  const items = [
+    { ...localItem(), id: 10, path: '/downloads/Dune/part.mp3', downloadId: 'dune', selectByDefault: false },
+    { ...localItem(), id: 11, path: '/library/.chaptarr-conversions/dune/work/Dune.m4b', downloadId: 'dune', selectByDefault: true },
+    { ...localItem(), id: 12, path: '/downloads/Messiah/part.mp3', downloadId: 'messiah', selectByDefault: false },
+    { ...localItem(), id: 13, path: '/library/.chaptarr-conversions/messiah/work/Messiah.m4b', downloadId: 'messiah', selectByDefault: true }
+  ];
+  const { page, captured, errors } = await openFixture(browser, items, { folderMode: true, replaceExisting: false });
+  try {
+    for (const item of items) {
+      await assertEventuallyChecked(page, page.locator(`input[name="${item.id}"]`), item.selectByDefault);
+    }
+    assert(captured.manualImports.every((url) => !new URL(url).searchParams.get('downloadId')));
+    await page.locator('select[name="importMode"]').selectOption('copy');
+    await page.getByRole('button', { name: strings.Import, exact: true }).click();
+    await page.waitForFunction(() => window.manualImportCloseCount === 1);
+    assert.equal(captured.commands.length, 1);
+    const command = captured.commands[0].body;
+    assert.deepEqual(command.files.map((file) => ({ path: file.path, downloadId: file.downloadId })),
+      items.filter((item) => item.selectByDefault).map((file) => ({ path: file.path, downloadId: file.downloadId })));
+    const ownership = (files) => files.map((file) => ({ path: file.path, downloadId: file.downloadId }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    assert.deepEqual(ownership(command.previewFiles), ownership(items));
+    assert.deepEqual(errors, []);
+    console.log('Parent-folder conversion selection and per-download command payload passed');
+  } finally {
+    await page.close();
+  }
+}
+
 (async() => {
   let browser = null;
   try {
     await compileFixture();
     browser = await chromium.launch();
+    if (process.argv.includes('--parent-conversions')) {
+      await verifyParentFolderConversions(browser);
+      return;
+    }
 
     for (const theme of ['light', 'dark']) {
       for (const width of [320, 1440]) {
@@ -328,10 +446,26 @@ async function verifyLocalWithoutExistingFiles(browser) {
       }
     }
 
+    await verifyReplacementDefaultsOff(browser);
     await verifyScopedConfirmation(browser);
     await verifyMixedProceed(browser);
     await verifySelectionGuards(browser);
     await verifyLocalWithoutExistingFiles(browser);
+    await verifyConvertedSelection(browser, true);
+    await verifyConvertedSelection(browser, true, true);
+    await verifyConvertedSelection(browser, false);
+    await verifyParentFolderConversions(browser);
+    const failedPreview = await openFixture(browser, [localItem()], { failPreview: true });
+    try {
+      await failedPreview.page.getByRole('button', { name: strings.Import, exact: true }).click();
+      await failedPreview.page.getByText(strings.UnableToLoadReplacementFiles, { exact: true }).waitFor();
+      assert.equal(failedPreview.captured.commands.length, 0, 'A failed preview must not submit a replacement');
+      assert.equal(await failedPreview.page.getByRole('button', { name: strings.Import, exact: true }).count(), 1,
+        'The failed confirmation must not offer a Proceed button');
+      assert.deepEqual(failedPreview.errors, []);
+    } finally {
+      await failedPreview.page.close();
+    }
     console.log(`Manual-import browser checks passed. Screenshot evidence: ${artifactRoot}`);
   } finally {
     if (browser) {

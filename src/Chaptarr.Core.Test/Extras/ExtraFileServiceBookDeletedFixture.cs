@@ -85,7 +85,8 @@ namespace Chaptarr.Core.Test.Extras
         {
             _repository.Files.Add(BookCover());
 
-            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false));
+            _subject.DeleteBookFiles(_book, _book.BookFiles.Select(file => file.Path).ToArray());
+            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false, filesAlreadyDeleted: true));
 
             Assert.That(_recycleBin.DeletedFiles, Is.EqualTo(new[] { Path.Combine(AudiobookFolder, "cover.jpg") }));
             Assert.That(_repository.DeletedForBook, Is.EqualTo(new[] { (_author.Id, _book.Id) }));
@@ -138,7 +139,8 @@ namespace Chaptarr.Core.Test.Extras
                 Extension = ".jpg"
             });
 
-            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false));
+            _subject.DeleteBookFiles(_book, _book.BookFiles.Select(file => file.Path).ToArray());
+            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false, filesAlreadyDeleted: true));
 
             Assert.That(_recycleBin.DeletedFiles, Is.EqualTo(new[] { Path.Combine(EbookFolder, "cover.jpg") }));
         }

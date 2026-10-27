@@ -68,7 +68,7 @@ namespace Chaptarr.Api.V1.Books
         [ProducesResponseType(200)]
         [ProducesResponseType(typeof(ApiErrorResource), 400)]
         [ProducesResponseType(typeof(ApiErrorResource), 409)]
-        public void DeleteBook([FromBody] BookEditorResource resource)
+        public object DeleteBook([FromBody] BookEditorResource resource)
         {
             var scope = MediaTypeParameterParser.ParseDeletionScope(false, HttpContext.GetReadarrFacadeContext()?.MediaType, resource.MediaType);
             if (scope.HasValue && _bookService.GetBooks(resource.BookIds).Any(book => book.MediaType != scope.Value))
@@ -81,6 +81,8 @@ namespace Chaptarr.Api.V1.Books
             {
                 _bookService.DeleteBook(bookId, resource.DeleteFiles ?? false, resource.AddImportListExclusion ?? false);
             }
+
+            return new { };
         }
     }
 }

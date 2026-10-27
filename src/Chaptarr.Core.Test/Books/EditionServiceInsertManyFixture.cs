@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics;
 using System.Linq;
 using Chaptarr.Core.Test.Common;
@@ -52,30 +51,15 @@ namespace Chaptarr.Core.Test.Books
 
                 var statements = new List<string>();
                 var observed = Proxy<IMainDatabase>((method, args) =>
-                {
-                    if (method.Name != nameof(IMainDatabase.OpenConnection)) return method.Invoke(database, args);
-                    var connection = database.OpenConnection();
-                    return Proxy<IDbConnection>((connectionMethod, connectionArgs) =>
-                    {
-                        var result = connectionMethod.Invoke(connection, connectionArgs);
-                        if (result is not IDbCommand command) return result;
-                        return Proxy<IDbCommand>((commandMethod, commandArgs) =>
-                        {
-                            if (commandMethod.Name is nameof(IDbCommand.ExecuteReader) or nameof(IDbCommand.ExecuteNonQuery) or nameof(IDbCommand.ExecuteScalar))
-                            {
-                                statements.Add(command.CommandText);
-                            }
-
-                            return commandMethod.Invoke(command, commandArgs);
-                        });
-                    });
-                });
+                    method.Name == nameof(IMainDatabase.OpenConnection)
+                        ? CommandObserver.Wrap(database.OpenConnection(), command => statements.Add(command.CommandText), includeWrites: true)
+                        : method.Invoke(database, args));
                 var repository = new EditionRepository(observed, events);
                 List<Edition> Batch(int start) => Enumerable.Range(start, editionCount).Select(id => new Edition
                 {
                     BookId = book.Id, Title = book.Title, TitleSlug = $"insertion-edition-{id}",
                     ForeignEditionId = foreignIdPresent ? $"gr:{id}" : null, HardcoverEditionId = $"hc:edition:{id}",
-                    ReadingFormatId = 2, Language = "eng", Monitored = true,
+                    ReadingFormatId = 2, Language = "eng", Monitored = id == start,
                     Images = new List<NzbDrone.Core.MediaCover.MediaCover>
                     {
                         new(MediaCoverTypes.Cover, $"https://covers.example.invalid/{id}.jpg"),

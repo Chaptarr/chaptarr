@@ -24,7 +24,7 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => throw new NotImplementedException();
             public List<MetadataProfile> All() => throw new NotImplementedException();
             public MetadataProfile Get(int id) => new MetadataProfile { Id = id, Name = $"Profile {id}" };
-            public bool Exists(int id) => true;
+            public bool Exists(int id, MetadataProfileType? profileType = null) => true;
 
             public List<Book> FilterBooks(Author input, int profileId)
             {

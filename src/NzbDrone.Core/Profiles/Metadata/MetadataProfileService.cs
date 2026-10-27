@@ -24,7 +24,7 @@ namespace NzbDrone.Core.Profiles.Metadata
         void Delete(int id);
         List<MetadataProfile> All();
         MetadataProfile Get(int id);
-        bool Exists(int id);
+        bool Exists(int id, MetadataProfileType? profileType = null);
         List<Book> FilterBooks(Author input, int profileId);
         List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds);
         List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds);
@@ -133,9 +133,12 @@ namespace NzbDrone.Core.Profiles.Metadata
             return _profileRepository.Get(id);
         }
 
-        public bool Exists(int id)
+        public bool Exists(int id, MetadataProfileType? profileType = null)
         {
-            return _profileRepository.Exists(id);
+            if (!profileType.HasValue) return _profileRepository.Exists(id);
+
+            var profile = _profileRepository.Find(id);
+            return profile != null && (profile.ProfileType == MetadataProfileType.General || profile.ProfileType == profileType.Value);
         }
 
         public List<Book> FilterBooks(Author input, int profileId) => FilterBooks(input, profileId, null);

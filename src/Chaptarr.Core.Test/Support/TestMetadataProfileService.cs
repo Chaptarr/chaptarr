@@ -12,7 +12,7 @@ namespace Chaptarr.Core.Test
         public void Delete(int id) => throw new NotImplementedException();
         public List<MetadataProfile> All() => throw new NotImplementedException();
         public MetadataProfile Get(int id) => throw new NotImplementedException();
-        public bool Exists(int id) => id > 0;
+        public bool Exists(int id, MetadataProfileType? profileType = null) => id > 0;
         public List<Book> FilterBooks(Author input, int profileId) => throw new NotImplementedException();
 
         public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>

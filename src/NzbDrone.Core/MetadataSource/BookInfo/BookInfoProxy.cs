@@ -592,7 +592,11 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     {
                         _logger.Warn("Author {0} refresh declared {1}; preserving the existing local snapshot. {2}",
                             authorId, typedTerminal.Code, typedTerminal.Message);
-                        return RefreshResult.NoChanges(etag);
+                        var refused = RefreshResult.NoChanges(etag);
+                        refused.Terminal = typedTerminal;
+                        refused.Message = typedTerminal.Message;
+                        refused.HttpStatus = httpResponse.StatusCode;
+                        return refused;
                     }
 
                     if (httpResponse.StatusCode == HttpStatusCode.NotFound)

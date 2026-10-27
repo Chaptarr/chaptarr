@@ -11,7 +11,7 @@ function createRemoveItemHandler(section, url) {
       ...queryParams
     } = payload;
 
-    dispatch(set({ section, isDeleting: true }));
+    dispatch(set({ section, isDeleting: true, deleteError: null }));
 
     const mergedQueryParams = { ...queryParams };
 

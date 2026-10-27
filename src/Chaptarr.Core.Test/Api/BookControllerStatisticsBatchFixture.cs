@@ -73,6 +73,7 @@ namespace Chaptarr.Core.Test.Api
                     CREATE INDEX ""IX_Books_AuthorId_Id"" ON ""Books"" (""AuthorId"", ""Id"");
                     CREATE TEMP TABLE ""Editions"" (
                         ""Id"" INTEGER PRIMARY KEY, ""BookId"" INTEGER NOT NULL, ""Monitored"" {booleanType}, ""ReleaseDate"" {dateType});
+                    CREATE UNIQUE INDEX ""IX_Editions_OneMonitoredPerBook"" ON ""Editions"" (""BookId"") WHERE ""Monitored"" = TRUE;
                     CREATE INDEX ""IX_Editions_BookId_Monitored_Id"" ON ""Editions"" (""BookId"", ""Monitored"", ""Id"");
                     CREATE INDEX ""IX_Editions_BookId"" ON ""Editions"" (""BookId"");
                     CREATE INDEX ""IX_Editions_Monitored"" ON ""Editions"" (""Monitored"");
@@ -86,7 +87,7 @@ namespace Chaptarr.Core.Test.Api
                         (7, 2, 0, FALSE, FALSE, NULL), (8, 2, 1, FALSE, FALSE, NULL);
                     INSERT INTO ""Editions"" VALUES
                         (10, 1, TRUE, '2000-01-01'), (11, 1, FALSE, NULL), (20, 2, TRUE, NULL),
-                        (30, 3, TRUE, '2099-01-01'), (31, 3, TRUE, '2000-01-01'), (40, 4, TRUE, NULL), (50, 999999, FALSE, NULL);
+                        (30, 3, TRUE, '2099-01-01'), (31, 3, FALSE, '2000-01-01'), (40, 4, TRUE, NULL), (50, 999999, FALSE, NULL);
                     INSERT INTO ""BookFiles"" VALUES (1, 10, 10), (2, 11, 20), (3, 20, 5), (4, 50, 999), (5, 999999, 999);
                 ");
                 Connection.Execute("INSERT INTO \"Authors\" VALUES (@Id)", Enumerable.Range(3, 5000).Select(id => new { Id = id }));
@@ -152,7 +153,7 @@ namespace Chaptarr.Core.Test.Api
                         Assert.That(method.Name, Is.EqualTo(nameof(IMediaFileService.GetFilesByBooks)));
                         FileBatches.Add(((List<int>)args[0]).ToList());
                         return files;
-                    }), Proxy<IMapCoversToLocal>((method, args) => null), null, null, null, null, null, null, null,
+                    }), Proxy<IMapCoversToLocal>((method, args) => null), null, null, null, null, null,
                     new QualityProfileExistsValidator(new TestQualityProfileService()),
                     new MetadataProfileExistsValidator(new TestMetadataProfileService()), LogManager.GetCurrentClassLogger())
                 {

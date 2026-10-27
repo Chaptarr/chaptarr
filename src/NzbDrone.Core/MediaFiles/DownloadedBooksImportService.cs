@@ -125,7 +125,7 @@ namespace NzbDrone.Core.MediaFiles
 
             LogInaccessiblePathError(path);
             _eventAggregator.PublishEvent(new TrackImportFailedEvent(null, null, true, downloadClientItem));
-            return new List<ImportResult> { InaccessiblePathResult(path, downloadClientItem) };
+            return new List<ImportResult> { InaccessiblePathResult(path) };
         }
 
         private List<ImportResult> ProcessFolder(IDirectoryInfo directoryInfo, ImportMode importMode, Author author, DownloadClientItem downloadClientItem, RemoteBook remoteBook, ParsedBookInfo parsedBookInfo = null, bool requireDefaultRootFolderForMissingAuthors = false)
@@ -161,13 +161,14 @@ namespace NzbDrone.Core.MediaFiles
 
             mediaFiles = visibleFiles
                 .Where(f => MediaFileExtensions.AllExtensions.Contains(f.Extension) &&
+                    !DiskScanService.IsExcludedFile(f.FullName) &&
                     (!targetMedia.HasValue || QualityMediaTypeHelper.GetMediaTypeFromPath(f.FullName) == targetMedia))
                 .ToList();
 
             if (!mediaFiles.Any())
             {
                 _logger.Debug("[DOWNLOAD-IMPORT] No media files found in: {0}", directoryInfo.FullName);
-                return new List<ImportResult> { NoSupportedMediaFilesResult(directoryInfo.FullName, visibleFiles, downloadClientItem, targetMedia) };
+                return new List<ImportResult> { NoSupportedMediaFilesResult(directoryInfo.FullName, visibleFiles, targetMedia) };
             }
 
             if (downloadClientItem == null)
@@ -369,16 +370,17 @@ namespace NzbDrone.Core.MediaFiles
                 _logger.Debug("[DOWNLOAD-IMPORT] Processing file: {0}", fileInfo.FullName);
 
             var targetMedia = remoteBook?.GetMediaType();
-            if (targetMedia.HasValue && QualityMediaTypeHelper.GetMediaTypeFromPath(fileInfo.FullName) != targetMedia)
+            if (!MediaFileExtensions.AllExtensions.Contains(fileInfo.Extension) ||
+                (targetMedia.HasValue && QualityMediaTypeHelper.GetMediaTypeFromPath(fileInfo.FullName) != targetMedia))
             {
-                return new List<ImportResult> { NoSupportedMediaFilesResult(fileInfo.FullName, new[] { fileInfo }, downloadClientItem, targetMedia) };
+                return new List<ImportResult> { NoSupportedMediaFilesResult(fileInfo.FullName, new[] { fileInfo }, targetMedia) };
             }
 
-            if (Path.GetFileNameWithoutExtension(fileInfo.Name).StartsWith("._"))
+            if (DiskScanService.IsExcludedFile(fileInfo.FullName))
             {
-                _logger.Debug("[{0}] starts with '._', skipping", fileInfo.FullName);
+                _logger.Debug("[{0}] is excluded by the filename filter, skipping", fileInfo.FullName);
                 var localBook = new LocalBook { Path = fileInfo.FullName };
-                var rejection = new Rejection("Invalid file, filename starts with '._'");
+                var rejection = new Rejection("Invalid file, filename is excluded");
                 return new List<ImportResult>
                 {
                     new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), "Invalid file")
@@ -1330,40 +1332,36 @@ namespace NzbDrone.Core.MediaFiles
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
-        private ImportResult InaccessiblePathResult(string path, DownloadClientItem downloadClientItem)
+        private ImportResult InaccessiblePathResult(string path)
         {
             var reason = $"Download path is not accessible to Chaptarr: {path}. Check the download client path, remote path mapping, and container volume mappings.";
             var localBook = new LocalBook { Path = path };
-            var rejection = CreateMissingMediaRejection(reason, downloadClientItem);
+            var rejection = new Rejection(reason, RejectionType.Temporary);
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
-        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles, DownloadClientItem downloadClientItem, BookMediaType? targetMedia = null)
+        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles, BookMediaType? targetMedia = null)
         {
+            var unsupported = visibleFiles?.Where(file => file != null &&
+                !DiskScanService.IsExcludedFile(file.FullName) &&
+                !MediaFileExtensions.AllExtensions.Contains(file.Extension)).ToList() ?? new List<IFileInfo>();
+            var problem = unsupported.FirstOrDefault(file => FileExtensions.DangerousExtensions.Contains(file.Extension)) ??
+                          unsupported.FirstOrDefault(file => FileExtensions.ExecutableExtensions.Contains(file.Extension)) ??
+                          unsupported.FirstOrDefault(file => FileExtensions.ArchiveExtensions.Contains(file.Extension));
+            if (problem != null)
+            {
+                var message = FileExtensions.ArchiveExtensions.Contains(problem.Extension)
+                    ? $"Found archive file, might need to be extracted: {problem.FullName}"
+                    : $"Caution: Found potentially dangerous or executable file: {problem.FullName}";
+                return new ImportResult(new ImportDecision<LocalBook>(new LocalBook { Path = path }, new Rejection(message)), message);
+            }
+
             var observedFilesMessage = BuildObservedUnsupportedFilesMessage(path, visibleFiles);
             var mediaLabel = targetMedia == BookMediaType.Audiobook ? "audiobook" : targetMedia == BookMediaType.Ebook ? "ebook" : "audio or ebook";
             var reason = $"No supported {mediaLabel} files were found in {path}.{observedFilesMessage} Check that the download contains supported {mediaLabel} files and that Chaptarr can read the completed download folder.";
             var localBook = new LocalBook { Path = path };
-            var rejection = CreateMissingMediaRejection(reason, downloadClientItem, targetMedia);
+            var rejection = new Rejection(reason, RejectionType.Temporary);
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
-        }
-
-        private Rejection CreateMissingMediaRejection(string reason, DownloadClientItem downloadClientItem, BookMediaType? targetMedia = null)
-        {
-            var rejection = new Rejection(reason, GetMissingMediaRejectionType(downloadClientItem, targetMedia));
-            if (rejection.Type == RejectionType.Temporary)
-            {
-                rejection.Category = MissingAuthoritativeMediaFilesRejectionCategory;
-            }
-
-            return rejection;
-        }
-
-        private RejectionType GetMissingMediaRejectionType(DownloadClientItem downloadClientItem, BookMediaType? targetMedia = null)
-        {
-            return GetMissingAuthoritativeMediaPaths(downloadClientItem, targetMedia).Count > 0 ?
-                RejectionType.Temporary :
-                RejectionType.Permanent;
         }
 
         private List<string> GetMissingAuthoritativeMediaPaths(DownloadClientItem downloadClientItem, BookMediaType? targetMedia = null)
@@ -1377,6 +1375,7 @@ namespace NzbDrone.Core.MediaFiles
             return downloadClientItem.FilePaths
                 .Where(filePath =>
                     !string.IsNullOrWhiteSpace(filePath) &&
+                    !DiskScanService.IsExcludedFile(filePath) &&
                     MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(filePath)) &&
                     (!targetMedia.HasValue || QualityMediaTypeHelper.GetMediaTypeFromPath(filePath) == targetMedia) &&
                     !_diskProvider.FileExists(filePath))

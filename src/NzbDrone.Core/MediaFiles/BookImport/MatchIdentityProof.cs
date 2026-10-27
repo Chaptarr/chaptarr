@@ -90,7 +90,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     (proof.Has(MatchIdentityRole.Author) && proof.Has(MatchIdentityRole.Title)));
         }
 
-        public static MatchIdentityProof CommonProof(IEnumerable<MatchIdentityProof> proofs)
+        public static MatchIdentityProof CommonProof(IEnumerable<MatchIdentityProof> proofs, bool requireSameObservedValue = true)
         {
             var all = (proofs ?? Enumerable.Empty<MatchIdentityProof>()).ToList();
             if (all.Count == 0 || all.Any(proof => proof == null))
@@ -99,7 +99,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var common = all[0].Values
-                .Where(value => all.Skip(1).All(proof => proof.Values.Any(candidate => SameTuple(value, candidate))))
+                .Where(value => all.Skip(1).All(proof => proof.Values.Any(candidate => SameTuple(value, candidate, requireSameObservedValue))))
                 .ToList();
             return new MatchIdentityProof(common);
         }
@@ -134,13 +134,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return new MatchIdentityProof(matched);
         }
 
-        private static bool SameTuple(MatchIdentityProofValue left, MatchIdentityProofValue right)
+        private static bool SameTuple(MatchIdentityProofValue left, MatchIdentityProofValue right, bool requireSameObservedValue)
         {
             return left != null && right != null &&
                    left.Role == right.Role &&
                    string.Equals(left.Source, right.Source, StringComparison.OrdinalIgnoreCase) &&
                    string.Equals(left.Field, right.Field, StringComparison.OrdinalIgnoreCase) &&
-                   string.Equals(left.Observed, right.Observed, StringComparison.Ordinal);
+                   string.Equals(requireSameObservedValue ? left.Observed : left.Expected,
+                       requireSameObservedValue ? right.Observed : right.Expected, StringComparison.Ordinal);
         }
     }
 

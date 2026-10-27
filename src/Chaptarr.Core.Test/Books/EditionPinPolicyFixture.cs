@@ -61,6 +61,26 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void explicit_selection_releases_only_the_displaced_choice(bool manual)
+        {
+            var previous = new Edition { Id = 10, Monitored = true, ManualAdd = true };
+            var selected = new Edition { Id = 11 };
+            var retained = new Edition { Id = 12, ManualAdd = true };
+            var editions = new List<Edition> { previous, selected, retained };
+            EditionPinPolicy.ApplyExplicitSelection(editions, selected.Id, new HashSet<int> { previous.Id }, manual);
+            Assert.Multiple(() =>
+            {
+                Assert.That(previous.Monitored, Is.False);
+                Assert.That(previous.ManualAdd, Is.False);
+                Assert.That(selected.Monitored, Is.True);
+                Assert.That(selected.ManualAdd, Is.EqualTo(manual));
+                Assert.That(retained.Monitored, Is.False);
+                Assert.That(retained.ManualAdd, Is.True);
+            });
+        }
+
         [Test]
         public void automatic_selection_never_manufactures_a_preservation_pin()
         {

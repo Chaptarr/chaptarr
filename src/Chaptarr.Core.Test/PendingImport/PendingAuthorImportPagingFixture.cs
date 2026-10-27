@@ -97,7 +97,9 @@ namespace Chaptarr.Core.Test.PendingImport
                     LastError = "Stored diagnostic: not a UI reason"
                 }).ToList();
                 repository.InsertMany(rows);
-                var service = new PendingAuthorImportService(repository, null, InterfaceProxy.Proxy<IEventAggregator>((method, args) => null), LogManager.GetCurrentClassLogger());
+                var authors = InterfaceProxy.Proxy<IAuthorService>((method, _) =>
+                    method.Name == nameof(IAuthorService.FindByProviderId) ? null : throw new NotSupportedException(method.Name));
+                var service = new PendingAuthorImportService(repository, authors, InterfaceProxy.Proxy<IEventAggregator>((method, args) => null), LogManager.GetCurrentClassLogger());
                 commands.Reset();
                 test(new ReadController(service), service, rows, commands);
             });

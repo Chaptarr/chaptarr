@@ -278,7 +278,7 @@ export const actionHandlers = handleThunks({
 
   [FETCH_INTERACTIVE_IMPORT_BOOKS]: createFetchHandler(booksSection, '/book'),
 
-  [FETCH_INTERACTIVE_IMPORT_TRACKFILES]: createFetchHandler(bookFilesSection, '/bookFile')
+  [FETCH_INTERACTIVE_IMPORT_TRACKFILES]: createFetchHandler(bookFilesSection, '/manualimport/replacementfiles', { method: 'POST', contentType: 'application/json' })
 });
 
 //

@@ -212,11 +212,6 @@ namespace Chaptarr.Core.Test.Download
                     return Latest;
                 }
 
-                if (targetMethod?.Name == nameof(IDownloadHistoryService.DownloadAlreadyImported))
-                {
-                    return false;
-                }
-
                 throw new NotImplementedException($"Test proxy does not implement IDownloadHistoryService.{targetMethod?.Name}");
             }
         }

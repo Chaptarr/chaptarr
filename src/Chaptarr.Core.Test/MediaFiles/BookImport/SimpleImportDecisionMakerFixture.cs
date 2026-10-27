@@ -66,6 +66,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private class FileMatchingServiceProxy : DispatchProxy
         {
             public FileMatch GroupedResult { get; set; }
+            public MatchingContext Context { get; set; }
             public List<int?> HolyGrailAuthorIds { get; } = new List<int?>();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -73,6 +74,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 if (targetMethod?.Name == nameof(IFileMatchingService.MatchFilesToLibraryAsync) &&
                     args?[0] is DiscoveredFileWithMetadata[] files)
                 {
+                    Context = (MatchingContext)args[2];
                     if (GroupedResult != null)
                     {
                         GroupedResult.File = files.Single();
@@ -159,7 +161,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
-        public void manual_preview_should_preserve_yellow_suggestion_without_a_late_per_file_rematch()
+        public void manual_preview_should_preserve_yellow_suggestion_without_a_late_per_file_rematch([Values(false, true)] bool tracked)
         {
             var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"manual-preview-{Guid.NewGuid():N}.mp3");
             File.WriteAllText(path, "audio");
@@ -190,7 +192,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 var decisions = sut.GetImportDecisions(
                     new List<IFileInfo> { file },
                     idOverrides: null,
-                    itemInfo: new ImportDecisionMakerInfo(),
+                    itemInfo: new ImportDecisionMakerInfo { TargetBookIds = tracked ? new[] { 501 } : null },
                     config: new ImportDecisionMakerConfig
                     {
                         Filter = FilterFilesType.None,
@@ -202,6 +204,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
                 Assert.Multiple(() =>
                 {
+                    var context = ((FileMatchingServiceProxy)(object)fileMatchingService).Context;
+                    Assert.That(context.TargetBookIds, tracked ? Is.EqualTo(new[] { 501 }) : Is.Null);
+                    Assert.That(context.AllowAuthorImport, Is.False);
+                    Assert.That(context.DeferUnmatchedToAuthorReady, Is.False);
+                    Assert.That(context.AllowGroupedV5Suggestions, Is.True);
                     Assert.That(localBook.Author, Is.Null);
                     Assert.That(localBook.SuggestedForeignAuthorId, Is.EqualTo("hc:123"));
                     Assert.That(localBook.SuggestedAuthorName, Is.EqualTo("Suggested Author"));

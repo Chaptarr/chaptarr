@@ -38,6 +38,7 @@ namespace Chaptarr.Api.V1.ManualImport
         public List<string> Warnings { get; set; }
         public Dictionary<string, List<string>> Tags { get; set; }
         public bool AdditionalFile { get; set; }
+        public bool? SelectByDefault { get; set; }
         public bool ReplaceExistingFiles { get; set; }
         public bool DisableReleaseSwitching { get; set; }
     }
@@ -87,6 +88,7 @@ namespace Chaptarr.Api.V1.ManualImport
                 Tags = model.Tags ?? new Dictionary<string, List<string>>(),
 
                 AdditionalFile = model.AdditionalFile,
+                SelectByDefault = model.SelectByDefault,
                 ReplaceExistingFiles = model.ReplaceExistingFiles,
                 DisableReleaseSwitching = model.DisableReleaseSwitching
             };

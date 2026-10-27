@@ -236,6 +236,98 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
+        public void release_siblings_use_the_monitored_edition_regardless_of_book_monitoring(
+            [Values("interactive", "automatic", "rss")] string route,
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType targetMedia,
+            [Values(false, true)] bool sameMedia,
+            [Values(false, true)] bool siblingMonitored,
+            [Values(false, true)] bool editionMonitored)
+        {
+            var (author, target, _) = MakeJamesHuntCatalog(targetMedia);
+            target.SetMonitored(true);
+            var siblingMedia = sameMedia ? targetMedia :
+                targetMedia == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            var sibling = MakeBook(42407, author, "The Final Homestead", "EMP Survival in a Powerless World", "1", siblingMedia);
+            sibling.SetMonitored(siblingMonitored);
+            sibling.Editions[0].Monitored = editionMonitored;
+            sibling.Editions[0].ReadingFormatId = 1;
+            sibling.Editions.Add(new Edition
+            {
+                Id = 42408, BookId = sibling.Id, Title = "Another Title", Monitored = !editionMonitored, ReadingFormatId = 1
+            });
+            var catalog = new List<Book> { target, sibling };
+            author.Books = catalog;
+            var extension = targetMedia == BookMediaType.Audiobook ? "mp3" : "epub";
+            var release = MakeRelease("releasereplay", "edition-scope",
+                $"James Hunt - The Final Homestead - EMP Survival in a Powerless World ({extension})", 0);
+            release.Categories = new List<int> { targetMedia == BookMediaType.Audiobook ? 3030 : 7020 };
+            var guard = new Program.OfflineReplayHttpDispatcher();
+            List<DownloadDecision> decisions;
+            if (route == "rss")
+            {
+                var recall = new RssRecall { Catalog = new List<Book> { target } };
+                var maker = MakeRssDecisionMaker(author, catalog, recall, guard);
+                decisions = RunRssReplay(maker, MakePrioritizer(), guard, new[] { release }).Decisions;
+            }
+            else
+            {
+                var service = MakeReleaseSearchService(guard);
+                var criteria = service.CreateBookSearchCriteria(author, target, catalog,
+                    userInvokedSearch: route == "interactive", interactiveSearch: route == "interactive");
+                decisions = Program.RunProductionSearchDecision(service, MakePrioritizer(), guard,
+                    new[] { release }, criteria, usedSyntheticInput: true, hasCompleteSourceData: false).Decisions;
+            }
+
+            Assert.That(decisions.Any(decision => decision.Approved && decision.RemoteBook.Books.Contains(target)),
+                Is.EqualTo(!sameMedia || !editionMonitored));
+            Assert.That(decisions.Where(decision => decision.Approved).SelectMany(decision => decision.RemoteBook.Books),
+                Does.Not.Contain(sibling), "A catalog competitor must not become a download target.");
+            Assert.That(guard.BlockedRequestCount, Is.Zero);
+        }
+
+        [Test]
+        public void release_series_explains_a_rival_title_without_becoming_required(
+            [Values("interactive", "automatic", "rss")] string route,
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType media,
+            [Values(false, true)] bool includeSeries)
+        {
+            // Constructed releases with the captured James Hunt catalog's title and series relationship.
+            var author = new Author { Id = 631, Name = "James Hunt" };
+            var target = MakeBook(42407, author, "The Final Homestead", "EMP Survival in a Powerless World", "11", media);
+            var rival = MakeBook(42421, author, "Powerless", null, null, media);
+            target.SetMonitored(true);
+            rival.SetMonitored(false);
+            var catalog = new List<Book> { target, rival };
+            author.Books = catalog;
+            var extension = media == BookMediaType.Audiobook ? "mp3" : "epub";
+            var series = includeSeries ? " - EMP Survival in a Powerless World" : string.Empty;
+            var release = MakeRelease("releasereplay", "series-evidence", $"James Hunt - The Final Homestead{series} ({extension})", 0);
+            release.Categories = new List<int> { media == BookMediaType.Audiobook ? 3030 : 7020 };
+            var guard = new Program.OfflineReplayHttpDispatcher();
+            List<DownloadDecision> decisions;
+            if (route == "rss")
+            {
+                var maker = MakeRssDecisionMaker(author, catalog, new RssRecall { Catalog = new List<Book> { target } }, guard);
+                decisions = RunRssReplay(maker, MakePrioritizer(), guard, new[] { release }).Decisions;
+            }
+            else
+            {
+                var service = MakeReleaseSearchService(guard);
+                var criteria = service.CreateBookSearchCriteria(author, target, catalog,
+                    userInvokedSearch: route == "interactive", interactiveSearch: route == "interactive");
+                decisions = Program.RunProductionSearchDecision(service, MakePrioritizer(), guard,
+                    new[] { release }, criteria, usedSyntheticInput: true, hasCompleteSourceData: false).Decisions;
+            }
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(decisions.Single().Approved, Is.True);
+                Assert.That(decisions.Single().RemoteBook.Books.Single(), Is.SameAs(target));
+                Assert.That(guard.BlockedRequestCount, Is.Zero);
+            });
+        }
+
+        [Test]
         public void swallowed_outbound_http_and_incomplete_input_must_withhold_a_complete_verdict()
         {
             var (author, target, catalog) = MakeJamesHuntCatalog(BookMediaType.Ebook);
@@ -401,7 +493,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 }
                 return new List<ReleaseInfo>();
             });
-            var processor = new ProcessDownloadDecisions(new Program.ReplayDownloadService(), prioritizer, pending,
+            var processor = new ProcessDownloadDecisions(new Program.ReplayDownloadService(), prioritizer, pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(),
                 LogManager.GetCurrentClassLogger());
             return Program.RunProductionRssDecision(maker, prioritizer, guard, reports, pending, processor, hasCompleteSourceData);
         }
@@ -445,7 +537,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
             var downloads = new Program.ReplayDownloadService();
             var prioritizer = MakePrioritizer();
-            var processor = new ProcessDownloadDecisions(downloads, prioritizer, pending, LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(downloads, prioritizer, pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var replay = Program.RunProductionRssDecision(maker, prioritizer, guard, new[] { fresh }, pending, processor);
             Assert.Multiple(() =>
             {

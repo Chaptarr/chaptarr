@@ -515,7 +515,6 @@ class QueueRow extends Component {
           title={title}
           onModalClose={this.onInteractiveImportModalClose}
           showReplaceExistingFiles={true}
-          replaceExistingFiles={true}
         />
 
         <RemoveQueueItemModal

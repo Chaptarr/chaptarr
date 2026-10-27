@@ -16,6 +16,7 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Api.V1.ManualImport
@@ -29,6 +30,7 @@ namespace Chaptarr.Api.V1.ManualImport
         private readonly IManualImportService _manualImportService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IRootFolderService _rootFolderService;
+        private readonly IManualImportReplacementFiles _replacementFiles;
         private readonly Logger _logger;
 
         public ManualImportController(IManualImportService manualImportService,
@@ -37,7 +39,8 @@ namespace Chaptarr.Api.V1.ManualImport
                                   IBookService bookService,
                                   IMediaFileService mediaFileService,
                                   IRootFolderService rootFolderService,
-                                  Logger logger)
+                                  Logger logger,
+                                  IManualImportReplacementFiles replacementFiles = null)
         {
             _authorService = authorService;
             _bookService = bookService;
@@ -46,6 +49,7 @@ namespace Chaptarr.Api.V1.ManualImport
             _mediaFileService = mediaFileService;
             _rootFolderService = rootFolderService;
             _logger = logger;
+            _replacementFiles = replacementFiles;
         }
 
         [HttpPost]
@@ -57,6 +61,29 @@ namespace Chaptarr.Api.V1.ManualImport
             }
 
             return Accepted(UpdateImportItems(resource));
+        }
+
+        [HttpPost("replacementfiles")]
+        public List<ManualImportReplacementFile> GetReplacementFiles([FromBody] ManualImportCommand request)
+        {
+            var files = request?.Files;
+            if (files == null || files.Count == 0 || files.Any(file => file == null || string.IsNullOrWhiteSpace(file.Path)))
+            {
+                throw new BadRequestException("Selected files and their paths are required");
+            }
+
+            var existingFiles = _mediaFileService.GetFilesByBooks(files.Select(file => file.BookId).Where(id => id > 0).Distinct().ToList());
+            var storedSources = _mediaFileService.GetFileWithPath(files.Select(file => file.Path).Distinct(PathEqualityComparer.Instance).ToList());
+            var rootFolders = _rootFolderService.All();
+            var selections = files.Select(file => new LocalBook
+            {
+                Path = file.Path,
+                Book = new NzbDrone.Core.Books.Book { Id = file.BookId },
+                ExistingFile = _rootFolderService.GetBestRootFolder(file.Path, rootFolders) != null
+            }).ToList();
+
+            return (_replacementFiles ?? throw new InvalidOperationException("Replacement preview service is unavailable"))
+                .Describe(ManualImportReplacementFiles.Get(existingFiles, selections, storedSources));
         }
 
         [HttpGet]

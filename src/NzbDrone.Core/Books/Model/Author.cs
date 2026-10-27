@@ -149,6 +149,8 @@ namespace NzbDrone.Core.Books
             }
         }
 
+        internal Author ShallowClone() => (Author)MemberwiseClone();
+
         public override string ToString()
         {
             return string.Format("[{0}][{1}]", Id, Name.NullSafe());
@@ -333,7 +335,7 @@ namespace NzbDrone.Core.Books
                 EbookTags = other.EbookTags;
             }
 
-            Tags = (AudiobookTags ?? new HashSet<int>()).Concat(EbookTags ?? new HashSet<int>()).ToHashSet();
+            Tags = GetCombinedTags();
             AddOptions = other.AddOptions;
             AudiobookRootFolderPath = other.AudiobookRootFolderPath;
             EbookRootFolderPath = other.EbookRootFolderPath;
@@ -365,6 +367,11 @@ namespace NzbDrone.Core.Books
                 SyncMonitoredAcrossFormats = other.SyncMonitoredAcrossFormats;
             }
             LastSelectedMediaType = other.LastSelectedMediaType;
+        }
+
+        public HashSet<int> GetCombinedTags()
+        {
+            return (AudiobookTags ?? Enumerable.Empty<int>()).Concat(EbookTags ?? Enumerable.Empty<int>()).ToHashSet();
         }
 
         public HashSet<int> GetTagsForMediaType(BookMediaType mediaType)
@@ -399,6 +406,14 @@ namespace NzbDrone.Core.Books
         public bool HasMediaTypeSettings(BookMediaType mediaType) => mediaType == BookMediaType.Audiobook
             ? AudiobookQualityProfileId.GetValueOrDefault() > 0 && AudiobookMetadataProfileId.GetValueOrDefault() > 0
             : EbookQualityProfileId.GetValueOrDefault() > 0 && EbookMetadataProfileId.GetValueOrDefault() > 0;
+
+        public List<string> GetScanPaths(string mediaType)
+        {
+            var paths = AudiobookPath.IsNullOrWhiteSpace() && EbookPath.IsNullOrWhiteSpace()
+                ? new[] { Path }
+                : new[] { mediaType == "ebook" ? null : AudiobookPath, mediaType == "audiobook" ? null : EbookPath };
+            return paths.Where(path => path.IsNotNullOrWhiteSpace()).Distinct(NzbDrone.Common.PathEqualityComparer.Instance).ToList();
+        }
 
         public QualityProfile GetQualityProfileForQuality(Quality quality)
         {

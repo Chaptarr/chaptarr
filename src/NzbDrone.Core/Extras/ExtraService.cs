@@ -17,7 +17,7 @@ namespace NzbDrone.Core.Extras
 {
     public interface IExtraService
     {
-        void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly);
+        void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly, bool replaceExisting);
     }
 
     public class ExtraService : IExtraService,
@@ -47,14 +47,14 @@ namespace NzbDrone.Core.Extras
             _logger = logger;
         }
 
-        public void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly)
+        public void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly, bool replaceExisting)
         {
-            ImportExtraFiles(localBook, bookFile, isReadOnly);
+            ImportExtraFiles(localBook, bookFile, isReadOnly, replaceExisting);
 
             CreateAfterImport(localBook.Author, bookFile);
         }
 
-        public void ImportExtraFiles(LocalBook localBook, BookFile bookFile, bool isReadOnly)
+        public void ImportExtraFiles(LocalBook localBook, BookFile bookFile, bool isReadOnly, bool replaceExisting)
         {
             if (!_configService.ImportExtraFiles)
             {
@@ -104,7 +104,7 @@ namespace NzbDrone.Core.Extras
                 {
                     foreach (var extraFileManager in _extraFileManagers)
                     {
-                        var extraFile = extraFileManager.Import(localBook.Author, bookFile, matchingFilename, extension, isReadOnly);
+                        var extraFile = extraFileManager.Import(localBook.Author, bookFile, matchingFilename, extension, isReadOnly, replaceExisting);
 
                         if (extraFile != null)
                         {

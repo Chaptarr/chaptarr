@@ -1,3 +1,4 @@
+import { ConnectedRouter } from 'connected-react-router';
 import { createMemoryHistory } from 'history';
 import PropTypes from 'prop-types';
 import React, { useState } from 'react';
@@ -5,18 +6,26 @@ import ReactDOM from 'react-dom';
 import { Provider } from 'react-redux';
 import { Tab, TabList, TabPanel, Tabs } from 'react-tabs';
 import { applyMiddleware, createStore } from 'redux';
+import { enableBatching } from 'redux-batched-actions';
 import thunk from 'redux-thunk';
 import ApplyTheme from 'App/ApplyTheme';
 import AuthorDetailsConnector from 'Author/Details/AuthorDetailsConnector';
+import EditAuthorModal from 'Author/Edit/EditAuthorModal';
+import EditAuthorModalConnector from 'Author/Edit/EditAuthorModalConnector';
 import AuthorIndexItemConnector from 'Author/Index/AuthorIndexItemConnector';
+import MessagesConnector from 'Components/Page/Sidebar/Messages/MessagesConnector';
 import SignalRConnector from 'Components/SignalRConnector';
 import FilterWarning from 'InteractiveSearch/FilterWarning';
 import InteractiveSearchRow from 'InteractiveSearch/InteractiveSearchRow';
 import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
+import AddNewAuthorModal from 'Search/Author/AddNewAuthorModal';
 import AddNewAuthorSearchResultConnector from 'Search/Author/AddNewAuthorSearchResultConnector';
 import AddNewBookSearchResultConnector from 'Search/Book/AddNewBookSearchResultConnector';
 import AddNewSeriesModal from 'Search/Series/AddNewSeriesModal';
+import { defaultState as appState, reducers as appReducer, showMessage } from 'Store/Actions/appActions';
+import { toggleAuthorMonitored } from 'Store/Actions/authorActions';
 import { set } from 'Store/Actions/baseActions';
+import { defaultState as commandState, fetchCommands, finishCommand, reducers as commandReducer, removeCommand, showCommandProgress, updateCommand } from 'Store/Actions/commandActions';
 import { defaultState as releaseState, grabRelease, reducers as releaseReducer, setAuthorSearchResults, setBypassFilters } from 'Store/Actions/releaseActions';
 import { addBook } from 'Store/Actions/searchActions';
 import createAppStore from 'Store/createAppStore';
@@ -142,18 +151,40 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
   }
   window.searchCommands = [];
   const initialState = {
-    app: { dimensions: { width: innerWidth, height: innerHeight, isSmallScreen: false } },
+    app: { ...appState, dimensions: { width: innerWidth, height: innerHeight, isSmallScreen: false } },
     releases: releaseState,
+    commands: commandState,
     customFilters: { items: [] },
     settings: { ui: { item: { theme: 'light', longDateFormat: 'MMMM D, YYYY', shortDateFormat: 'MMM D, YYYY', timeFormat: 'h:mm A' } } }
   };
-  const store = preserveInstance && fixtureStore ? fixtureStore : createStore((state = initialState, action) => ({
+  const store = preserveInstance && fixtureStore ? fixtureStore : createStore(enableBatching((state = initialState, action) => ({
     ...state,
-    releases: releaseReducer(state.releases, action)
-  }), applyMiddleware(thunk));
+    app: appReducer(state.app, action),
+    releases: releaseReducer(state.releases, action),
+    commands: commandReducer(state.commands, action)
+  })), applyMiddleware(thunk));
   fixtureStore = store;
   window.readReleaseResults = () => ({ items: store.getState().releases.items, hiddenItems: store.getState().releases.hiddenItems });
   window.readAuthorSearchState = () => store.getState().releases.authorSearch;
+  window.readSearchCommands = () => store.getState().commands;
+  const commandSignalR = new SignalR({
+    dispatchFetchCommands: () => store.dispatch(fetchCommands()),
+    dispatchFinishCommand: (payload) => store.dispatch(finishCommand(payload)),
+    dispatchUpdateCommand: (payload) => store.dispatch(updateCommand(payload)),
+    dispatchShowCommandProgress: (payload) => store.dispatch(showCommandProgress(payload)),
+    dispatchFetchAuthor: noop,
+    dispatchSetAppValue: noop
+  });
+  window.reconnectSearchFixture = () => {
+    commandSignalR.onReconnecting();
+    commandSignalR.onReconnected();
+  };
+  window.sendSearchCommand = (resource) => commandSignalR.handleCommand({ action: 'updated', resource });
+  window.sendBookProgress = (body) => commandSignalR.handleBulkauthorbookprogress(body);
+  window.readSidebarMessages = () => store.getState().app.messages.items;
+  window.showSidebarMessage = (payload) => store.dispatch(showMessage(payload));
+  window.removeSearchCommand = (id) => store.dispatch(removeCommand({ id }));
+  window.unmountAuthorSearchFixture = () => ReactDOM.unmountComponentAtNode(document.getElementById('root'));
   window.sendAuthorSearchSignalR = (body) => {
     const handler = new SignalR({
       authorSearch: store.getState().releases.authorSearch,
@@ -184,6 +215,14 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
     hideUnmonitoredMissing: false,
     ...overrides
   };
+  if (view === 'command-messages') {
+    ReactDOM.render(
+      <Provider store={store}>
+        <MessagesConnector />
+      </Provider>, document.getElementById('root')
+    );
+    return;
+  }
   if (view === 'filter-warning') {
     ReactDOM.render(
       <FilterWarning
@@ -247,11 +286,12 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
 };
 
 // Seed the existing search card and connected modal; submit through the actual store thunk.
-window.renderAddAuthorFixture = async(mediaType, family = 'author', capturedResult = null) => {
+window.renderAddAuthorFixture = async(mediaType, family = 'author', capturedResult = null, options = {}) => {
   await fetchTranslations();
   ReactDOM.unmountComponentAtNode(document.getElementById('root'));
   localStorage.clear();
-  const store = createAppStore(createMemoryHistory());
+  const history = createMemoryHistory();
+  const store = createAppStore(history);
   const qualityProfiles = [
     { id: 11, name: 'Audio Default', profileType: 1 }, { id: 12, name: 'None', profileType: 1 },
     { id: 13, name: 'Ebook Default', profileType: 2 }, { id: 14, name: 'None', profileType: 2 }
@@ -277,15 +317,98 @@ window.renderAddAuthorFixture = async(mediaType, family = 'author', capturedResu
     Object.assign(roots[3], { ebookQualityProfileId: 14, ebookMetadataProfileId: 24,
       ebookMonitored: false, ebookMonitorExistingMode: 'none', ebookMonitorNewItems: 'all', ebookTags: [43] });
   }
-  store.dispatch(set({ section: 'app', dimensions: { width: innerWidth, height: innerHeight, isSmallScreen: innerWidth <= 768 } }));
-  store.dispatch(set({ section: 'settings.ui', item: { theme: 'light', addNewDefaultMediaType: mediaType } }));
-  store.dispatch(set({ section: 'settings.rootFolders', isPopulated: true, items: roots }));
+  roots.forEach((folder, index) => Object.assign(folder, options.roots?.[index]));
+  if (options.existingAuthor) {
+    store.dispatch(set({ section: 'authors', items: [options.existingAuthor], itemMap: { [options.existingAuthor.id]: 0 } }));
+  }
+  store.dispatch(set({ section: 'app', ...(options.selectedMediaType ? { selectedMediaType: options.selectedMediaType } : {}), dimensions: { width: innerWidth, height: innerHeight, isSmallScreen: innerWidth <= 768 } }));
+  store.dispatch(set({ section: 'settings.ui', item: { theme: options.theme || 'light', addNewDefaultMediaType: options.defaultMediaType || mediaType } }));
+  store.dispatch(set({ section: 'settings.rootFolders', isPopulated: options.rootsPopulated !== false, items: roots }));
   store.dispatch(set({ section: 'settings.qualityProfiles', isPopulated: true, items: qualityProfiles }));
   store.dispatch(set({ section: 'settings.metadataProfiles', isPopulated: true, items: metadataProfiles }));
   store.dispatch(set({ section: 'tags', isPopulated: true, items: [{ id: 41, label: 'Root Audio' }, { id: 42, label: 'Root Ebook' }, { id: 43, label: 'Chosen Tag' }] }));
   store.dispatch(set({ section: 'system.status', item: { isWindows: false } }));
+  if (options.authorDefaults) {
+    store.dispatch(set({ section: 'search', authorDefaults: { ...store.getState().search.authorDefaults, ...options.authorDefaults } }));
+  }
+  window.openNewAuthorEntryFixture = () => {
+    ReactDOM.unmountComponentAtNode(document.getElementById('root'));
+    ReactDOM.render(
+      <Provider store={store}><ApplyTheme>
+        <AddNewAuthorModal
+          isOpen={true}
+          foreignAuthorId="gr:fixture-new-writer"
+          authorName="New Fixture Writer"
+          folder="New Fixture Writer"
+          images={[]}
+          onModalClose={() => ReactDOM.unmountComponentAtNode(document.getElementById('root'))}
+        />
+      </ApplyTheme></Provider>, document.getElementById('root')
+    );
+  };
+  window.openEditAuthorEntryFixture = (author) => {
+    ReactDOM.unmountComponentAtNode(document.getElementById('root'));
+    store.dispatch(set({ section: 'authors', items: [author], itemMap: { [author.id]: 0 } }));
+    class EditEntry extends React.Component {
+      state = { isOpen: true };
+
+      render() {
+        return (
+          <Provider store={store}><ApplyTheme>
+            <EditAuthorModalConnector isOpen={this.state.isOpen} authorId={author.id}
+              onDeleteAuthorPress={() => this.setState({ isOpen: false })}
+              onModalClose={() => ReactDOM.unmountComponentAtNode(document.getElementById('root'))}
+            />
+          </ApplyTheme></Provider>
+        );
+      }
+    }
+    ReactDOM.render(<EditEntry />, document.getElementById('root'));
+  };
   window.addAuthorFixture = { qualityProfiles, metadataProfiles, roots };
   window.readAddAuthorFixtureState = () => store.getState().search;
+  window.readAuthorSyncState = () => store.getState().authors;
+  window.readAuthorEntryState = () => ({ authors: store.getState().authors, books: store.getState().books, search: store.getState().search, selectedMediaType: store.getState().app.selectedMediaType });
+  window.updateAuthorEntryDefault = (value) => store.dispatch(set({ section: 'settings.ui', item: { ...store.getState().settings.ui.item, addNewDefaultMediaType: value } }));
+  window.toggleAuthorSyncGate = (side, monitored) => store.dispatch(toggleAuthorMonitored({ authorId: options.existingAuthor.id, mediaType: side, monitored }));
+  window.updateAuthorSyncRoots = (changes) => {
+    const items = store.getState().settings.rootFolders.items.map((root, index) => ({ ...root, ...changes[index] }));
+    window.addAuthorFixture.roots = items;
+    store.dispatch(set({ section: 'settings.rootFolders', items }));
+  };
+  if (family === 'author-entry') {
+    ReactDOM.render(
+      <Provider store={store}>
+        <ConnectedRouter history={history}>
+          <ApplyTheme>
+            <AuthorDetailsConnector id={options.existingAuthor.id} />
+          </ApplyTheme>
+        </ConnectedRouter>
+      </Provider>, document.getElementById('root')
+    );
+    return;
+  }
+  if (family === 'sync' || family === 'edit-sync') {
+    const Modal = family === 'sync' ? AddNewAuthorModal : EditAuthorModal;
+    ReactDOM.render(
+      <Provider store={store}>
+        <ApplyTheme>
+          <Modal
+            isOpen={true}
+            authorId={options.existingAuthor?.id}
+            foreignAuthorId="gr:fixture-selected-author"
+            authorName="Selected Search Writer"
+            folder="Selected Search Writer"
+            images={[]}
+            onModalClose={() => {
+              window.authorSyncCloseCount = (window.authorSyncCloseCount || 0) + 1;
+            }}
+          />
+        </ApplyTheme>
+      </Provider>, document.getElementById('root')
+    );
+    return;
+  }
   if (family === 'captured-author' || family === 'captured-book') {
     const Result = family === 'captured-author' ? AddNewAuthorSearchResultConnector : AddNewBookSearchResultConnector;
     ReactDOM.render(

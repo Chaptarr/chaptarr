@@ -147,7 +147,8 @@ namespace Chaptarr.Core.Test.Books
             public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
 
             public Author UpdateAuthor(Author author) => author;
-            public Author GetAuthor(int authorId) => throw new NotImplementedException();
+            public Author GetAuthor(int authorId) => _authorsByProvider.Values.FirstOrDefault(author => author?.Id == authorId)
+                ?? (AddedAuthor?.Id == authorId ? AddedAuthor : null);
             public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
@@ -201,6 +202,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -220,10 +222,10 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
             public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
         }
 
-        private sealed class StubRootFolderService : IRootFolderService
+        internal sealed class StubRootFolderService : IRootFolderService
         {
             private readonly List<RootFolder> _rootFolders;
 
@@ -260,7 +262,7 @@ namespace Chaptarr.Core.Test.Books
             public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders) => GetBestRootFolder(path, allRootFolders)?.Path;
         }
 
-        private sealed class StubAuthorPathBuilder : IBuildAuthorPaths
+        internal sealed class StubAuthorPathBuilder : IBuildAuthorPaths
         {
             public string BuildPath(Author author, bool useExistingRelativeFolder)
             {
@@ -325,7 +327,7 @@ namespace Chaptarr.Core.Test.Books
             public void BulkUpdateSyncMetadata(List<AuthorSyncMetadata> syncMetadata) => throw new NotImplementedException();
         }
 
-        private static RootFolder BuildAudiobookRoot(
+        internal static RootFolder BuildAudiobookRoot(
             string path,
             int qualityProfileId = 2,
             int metadataProfileId = 1,
@@ -353,7 +355,7 @@ namespace Chaptarr.Core.Test.Books
             return root;
         }
 
-        private static RootFolder BuildEbookRoot(
+        internal static RootFolder BuildEbookRoot(
             string path,
             int qualityProfileId = 4,
             int metadataProfileId = 3,
@@ -391,7 +393,7 @@ namespace Chaptarr.Core.Test.Books
             };
         }
 
-        private static AuthorLibraryService BuildService(IAuthorService authorService, IProvideAuthorInfo authorInfo, IRootFolderService rootFolderService, IBookService bookService = null, IEventAggregator eventAggregator = null, IAuthorSyncMetadataService syncMetadataService = null, IPendingAuthorImportService pendingImportService = null, IManageCommandQueue commandQueue = null, IMainDatabase database = null)
+        internal static AuthorLibraryService BuildService(IAuthorService authorService, IProvideAuthorInfo authorInfo, IRootFolderService rootFolderService, IBookService bookService = null, IEventAggregator eventAggregator = null, IAuthorSyncMetadataService syncMetadataService = null, IPendingAuthorImportService pendingImportService = null, IManageCommandQueue commandQueue = null, IMainDatabase database = null)
         {
             return new AuthorLibraryService(
                 authorService: authorService,
@@ -433,9 +435,10 @@ namespace Chaptarr.Core.Test.Books
             public RefreshResult RefreshAuthorInfo(string authorId, string etag = null, bool forceRefresh = false, string expectedPublishedETag = null, bool bypassEtag = false) => throw new NotImplementedException();
         }
 
-        private static AuthorController BuildModalController(IAuthorService authors, IAuthorLibraryService library, IRootFolderService roots, IManageCommandQueue queue, IEventAggregator events, IBookService books)
+        internal static AuthorController BuildModalController(IAuthorService authors, IAuthorLibraryService library, IRootFolderService roots, IManageCommandQueue queue, IEventAggregator events, IBookService books)
         {
-            var controller = new AuthorController(null, authors, books, null, library, null, null, queue, roots, events, null, null,
+            var controller = new AuthorController(Proxy<NzbDrone.SignalR.IBroadcastSignalRMessage>((method, args) =>
+                method.Name == "get_IsConnected" ? false : Task.CompletedTask), authors, books, null, library, null, null, queue, roots, events, null, null,
                 LogManager.GetCurrentClassLogger(), new RecycleBinValidator(null), new RootFolderValidator(roots),
                 new MappedNetworkDriveValidator(null, null), new AuthorPathValidator(authors), new AuthorExistsValidator(authors),
                 new AuthorAncestorValidator(authors), new SystemFolderValidator(),
@@ -541,7 +544,7 @@ namespace Chaptarr.Core.Test.Books
                     null, null, null, null, null, editions, new EditionSelector(logger),
                     new EditionMetadataProfileFilter(new TestTermMatcherService()), new TestMetadataProfileService(), logger, queue);
                 var bookController = new BookController(authors, books, add, editions, new EditionSelector(logger),
-                    null, null, null, null, null, null, queue, events, null, null, roots,
+                    null, null, null, null, null, null, queue, events, roots,
                     new QualityProfileExistsValidator(new TestQualityProfileService()),
                     new MetadataProfileExistsValidator(new TestMetadataProfileService()), logger);
                 bookController.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
@@ -644,7 +647,11 @@ namespace Chaptarr.Core.Test.Books
                         {
                             var requestedWork = provider == "audible" ? "hc:427401" : workId;
                             Assert.That(JsonSerializer.Deserialize<string[]>(audio ? stored.AudiobookBooksToSearch : stored.EbookBooksToSearch, options), Is.EqualTo(new[] { requestedWork }));
-                            Assert.That(JsonSerializer.Deserialize<string[]>(audio ? stored.AudiobookBooksToMonitor : stored.EbookBooksToMonitor, options), Is.EqualTo(new[] { requestedWork }));
+                            var monitorRequested = route == "book-import" || raw["monitor"].Deserialize<MonitorTypes>(options) != MonitorTypes.None;
+                            var monitorIds = audio ? stored.AudiobookBooksToMonitor : stored.EbookBooksToMonitor;
+                            var addIds = audio ? stored.AudiobookBooksToAdd : stored.EbookBooksToAdd;
+                            Assert.That(JsonSerializer.Deserialize<string[]>(monitorRequested ? monitorIds : addIds, options), Is.EqualTo(new[] { requestedWork }));
+                            Assert.That(monitorRequested ? addIds : monitorIds, Is.Null.Or.EqualTo("[]"));
                         }
                     }
                     Assert.That(stored.SearchForMissingBooks, Is.EqualTo(route is "author" or "author-import"));
@@ -663,7 +670,7 @@ namespace Chaptarr.Core.Test.Books
                         row.EbookQualityProfileId, row.EbookMetadataProfileId, row.AudiobookRootFolderPath, row.EbookRootFolderPath,
                         row.AudiobookMonitored, row.EbookMonitored, row.AudiobookMonitorNewItems, row.EbookMonitorNewItems,
                         row.AudiobookTags, row.EbookTags, row.SearchForMissingBooks, row.AudiobookBooksToSearch, row.EbookBooksToSearch,
-                        row.AudiobookBooksToMonitor, row.EbookBooksToMonitor }), metadataRequests, mapped }, options));
+                        row.AudiobookBooksToAdd, row.EbookBooksToAdd, row.AudiobookBooksToMonitor, row.EbookBooksToMonitor }), metadataRequests, mapped }, options));
             });
         }
 
@@ -887,8 +894,13 @@ namespace Chaptarr.Core.Test.Books
                     Assert.That(workerConfig.AudiobookTags, hasAudio ? Is.EquivalentTo(audioTags) : Is.Null);
                     Assert.That(workerConfig.EbookTags, hasEbook ? Is.EquivalentTo(ebookTags) : Is.Null);
                     Assert.That(info.Fetches, Is.EqualTo(bound.Count + 1));
-                    Assert.That(commands.OfType<NzbDrone.Core.IndexerSearch.MissingBookSearchCommand>().Count(), Is.EqualTo(search ? 1 : 0));
+                    Assert.That(commands.OfType<NzbDrone.Core.IndexerSearch.MissingBookSearchCommand>(), Is.Empty);
                 });
+                var scan = new AuthorScannedHandler(new BookMonitoredService(authors, books, logger), authors, queue,
+                    Proxy<IBookAddedService>((_, _) => null), events, logger, books);
+                scan.Handle(new NzbDrone.Core.MediaFiles.Events.AuthorScannedEvent(author));
+                scan.Handle(new NzbDrone.Core.MediaFiles.Events.AuthorScannedEvent(author));
+                Assert.That(commands.OfType<NzbDrone.Core.IndexerSearch.MissingBookSearchCommand>().Count(), Is.EqualTo(search ? 1 : 0));
                 var outputOptions = new JsonSerializerOptions(options) { WriteIndented = false };
                 TestContext.WriteLine("MODAL_SETTINGS_RESULT " + JsonSerializer.Serialize(new
                 {

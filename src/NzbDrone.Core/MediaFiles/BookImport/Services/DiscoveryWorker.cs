@@ -548,6 +548,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 bool discoveredAudiobookFiles,
                 bool discoveredEbookFiles)
             {
+                if (mediaType == BookMediaType.Audiobook && unitFiles?.Count > 1)
+                {
+                    tags = UnitTagConsensusBuilder.BuildConsensus(unitFiles.Select(file => file.AllTags), unitFiles.Count, includeSharedText: true);
+                }
+
                 // Existing-library matching is authoritative whenever the local catalog can explain
                 // the file. Discovery only needs V5 when local evidence cannot identify a book.
                 if (await MatchesExistingLibraryAsync(candidate, tags, unitFiles).ConfigureAwait(false))
@@ -631,11 +636,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     {
                         var oneBook = matches.Select(item => item.BookId).Distinct().Count() == 1;
                         var oneAuthor = matches.Select(item => item.AuthorId).Distinct().Count() == 1;
-                        var commonProof = MatchIdentityProofMembership.CommonProof(matches.Select(item => item.IdentityProof));
+                        var commonProof = MatchIdentityProofMembership.CommonProof(matches.Select(item => item.IdentityProof), requireSameObservedValue: false);
                         if (!oneBook || !oneAuthor || !MatchIdentityProofMembership.HasRequiredIdentity(commonProof))
                         {
                             _logger.Debug(
-                                "[DISCOVERY] Local matches for unit '{0}' did not share an exact author+title field/value proof; trying another unit",
+                                "[DISCOVERY] Local matches for unit '{0}' did not prove the same author+title in consistent fields; trying another unit",
                                 candidate.Path);
                             return false;
                         }
@@ -686,11 +691,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                             author.Name,
                             Array.Empty<string>(),
                             file.AllTags,
-                            _containmentValidator)));
+                            _containmentValidator)), requireSameObservedValue: false);
                     if (!commonAuthorProof.Has(MatchIdentityRole.Author))
                     {
                         _logger.Debug(
-                            "[DISCOVERY] Known author '{0}' was not proved by the same exact field/value across unit '{1}'",
+                            "[DISCOVERY] Known author '{0}' was not proved by the same field across unit '{1}'",
                             author.Name,
                             files[0].Path);
                         return false;
@@ -1205,7 +1210,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 if (!HasHomogeneousDiscoveryIdentity(top, unitFiles, rootFolder?.Path, usedPathEvidence))
                 {
                     _logger.Debug(
-                        "[DISCOVERY] V5 candidate '{0}' / '{1}' was not proved by one exact author field/value and one exact title field/value across unit '{2}'",
+                        "[DISCOVERY] V5 candidate '{0}' / '{1}' was not proved by author and full title in consistent fields across unit '{2}'",
                         top.name,
                         top.edition_title ?? top.work_title,
                         samplePath);
@@ -1713,7 +1718,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return MatchIdentityProofMembership.HasRequiredIdentity(
-                MatchIdentityProofMembership.CommonProof(proofs));
+                MatchIdentityProofMembership.CommonProof(proofs, requireSameObservedValue: false));
         }
 
         private static Dictionary<string, List<string>> FilterMatchableTags(Dictionary<string, List<string>> tags)
@@ -1852,9 +1857,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 if (author.AudiobookTags == null && config.AudiobookTags != null)
                 {
                     author.AudiobookTags = new HashSet<int>(config.AudiobookTags);
-                    author.Tags = (author.AudiobookTags ?? new HashSet<int>())
-                        .Concat(author.EbookTags ?? new HashSet<int>())
-                        .ToHashSet();
+                    author.Tags = author.GetCombinedTags();
                     changed = true;
                 }
             }
@@ -1893,9 +1896,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 if (author.EbookTags == null && config.EbookTags != null)
                 {
                     author.EbookTags = new HashSet<int>(config.EbookTags);
-                    author.Tags = (author.AudiobookTags ?? new HashSet<int>())
-                        .Concat(author.EbookTags ?? new HashSet<int>())
-                        .ToHashSet();
+                    author.Tags = author.GetCombinedTags();
                     changed = true;
                 }
             }

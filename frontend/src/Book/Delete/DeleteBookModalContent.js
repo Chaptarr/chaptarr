@@ -1,15 +1,18 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import FormLabel from 'Components/Form/FormLabel';
 import Button from 'Components/Link/Button';
+import SpinnerButton from 'Components/Link/SpinnerButton';
 import ModalBody from 'Components/Modal/ModalBody';
 import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds } from 'Helpers/Props';
 import formatBytes from 'Utilities/Number/formatBytes';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import styles from './DeleteBookModalContent.css';
 
@@ -78,9 +81,20 @@ class DeleteBookModalContent extends Component {
     this.state = {
       deleteFiles: false,
       addImportListExclusion: true,
-      applyToBothFormats: false
+      applyToBothFormats: false,
+      hasSubmitted: false
     };
   }
+
+  componentDidUpdate(prevProps) {
+    if (this.props.deleteError && !prevProps.deleteError && this.scroller) {
+      this.scroller.scrollTop = 0;
+    }
+  }
+
+  registerScroller = (scroller) => {
+    this.scroller = scroller;
+  };
 
   //
   // Listeners
@@ -102,9 +116,7 @@ class DeleteBookModalContent extends Component {
     const addImportListExclusion = this.state.addImportListExclusion;
     const applyToBothFormats = this.state.applyToBothFormats;
 
-    this.setState({ deleteFiles: false });
-    this.setState({ addImportListExclusion: false });
-    this.setState({ applyToBothFormats: false });
+    this.setState({ hasSubmitted: true });
     this.props.onDeletePress(deleteFiles, addImportListExclusion, applyToBothFormats);
   };
 
@@ -118,6 +130,8 @@ class DeleteBookModalContent extends Component {
       mediaType,
       siblingBook,
       currentBookDeleteInfo,
+      isDeleting,
+      deleteError,
       onModalClose
     } = this.props;
 
@@ -175,7 +189,12 @@ class DeleteBookModalContent extends Component {
           {translate('DeleteBookHeader', { title })}
         </ModalHeader>
 
-        <ModalBody>
+        <ModalBody registerScroller={this.registerScroller}>
+          {this.state.hasSubmitted && deleteError &&
+            <Alert kind={kinds.DANGER} role="alert">
+              {getErrorMessage(deleteError, translate('BookDeleteFailed'))}
+            </Alert>
+          }
 
           <FormGroup>
             <FormLabel>{deleteFilesLabel}</FormLabel>
@@ -184,6 +203,7 @@ class DeleteBookModalContent extends Component {
               type={inputTypes.CHECK}
               name="deleteFiles"
               value={deleteFiles}
+              isDisabled={isDeleting}
               helpText={deleteFilesHelpText}
               kind={kinds.DANGER}
               onChange={this.onDeleteFilesChange}
@@ -199,6 +219,7 @@ class DeleteBookModalContent extends Component {
                   type={inputTypes.CHECK}
                   name="applyToBothFormats"
                   value={applyToBothFormats}
+                  isDisabled={isDeleting}
                   helpText={siblingDeleteHelpText}
                   kind={kinds.DANGER}
                   onChange={this.onApplyToBothFormatsChange}
@@ -215,6 +236,7 @@ class DeleteBookModalContent extends Component {
               type={inputTypes.CHECK}
               name="addImportListExclusion"
               value={addImportListExclusion}
+              isDisabled={isDeleting}
               helpText={addImportListExclusionHelpText}
               kind={kinds.DANGER}
               onChange={this.onAddImportListExclusionChange}
@@ -287,16 +309,18 @@ class DeleteBookModalContent extends Component {
         </ModalBody>
 
         <ModalFooter>
-          <Button onPress={onModalClose}>
+          <Button onPress={onModalClose} isDisabled={isDeleting}>
             {translate('Close')}
           </Button>
 
-          <Button
+          <SpinnerButton
             kind={kinds.DANGER}
+            aria-label={translate('Delete')}
+            isSpinning={isDeleting}
             onPress={this.onDeleteBookConfirmed}
           >
             {translate('Delete')}
-          </Button>
+          </SpinnerButton>
         </ModalFooter>
       </ModalContent>
     );
@@ -309,12 +333,15 @@ DeleteBookModalContent.propTypes = {
   siblingBook: PropTypes.object,
   currentBookDeleteInfo: PropTypes.object,
   statistics: PropTypes.object.isRequired,
+  isDeleting: PropTypes.bool,
+  deleteError: PropTypes.object,
   onDeletePress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };
 
 DeleteBookModalContent.defaultProps = {
   mediaType: 'audiobook',
+  isDeleting: false,
   siblingBook: null,
   currentBookDeleteInfo: null,
   statistics: {

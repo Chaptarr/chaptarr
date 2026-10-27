@@ -181,7 +181,7 @@ namespace NzbDrone.Core.Notifications
                     }
 
                     notification.OnGrab(grabMessage);
-                    _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                    RecordSuccessIfComplete(notification);
                 }
                 catch (Exception ex)
                 {
@@ -195,7 +195,7 @@ namespace NzbDrone.Core.Notifications
         {
             if (!message.NewDownload)
             {
-                _logger.Info("Skipping OnReleaseImport for '{0}' (BookId={1}): import was not from a tracked download",
+                _logger.Info("Skipping OnReleaseImport for '{0}' (BookId={1}): import only relinked existing library files",
                     message.Book?.Title ?? "<unknown>",
                     message.Book?.Id ?? 0);
                 return;
@@ -234,7 +234,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, author))
                     {
                         notification.OnReleaseImport(downloadMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -244,7 +244,7 @@ namespace NzbDrone.Core.Notifications
                 }
             }
 
-            // Some integrations (e.g. Plex, AudioBookShelf) batch work in ProcessQueue
+            // Some integrations (e.g. Plex, Subsonic) batch work in ProcessQueue
             // rather than doing it synchronously in the event handler.
             ProcessQueue();
         }
@@ -258,7 +258,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Author))
                     {
                         notification.OnRename(message.Author, message.RenamedFiles);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -280,7 +280,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Author))
                     {
                         notification.OnAuthorAdded(message.Author);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -305,7 +305,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Book.Author))
                     {
                         notification.OnBookAdded(message.Book);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -327,7 +327,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, deleteMessage.Author))
                     {
                         notification.OnAuthorDelete(deleteMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -340,7 +340,14 @@ namespace NzbDrone.Core.Notifications
 
         public void Handle(BookDeletedEvent message)
         {
-            var deleteMessage = new BookDeleteMessage(message.Book, message.DeleteFiles);
+            // Orphan housekeeping uses the normal book deletion lifecycle, but no
+            // longer has an Author to address notification filters or payloads.
+            if (message.Book?.Author == null)
+            {
+                return;
+            }
+
+            var deleteMessage = new BookDeleteMessage(message.Book, message.DeleteFiles || message.FilesAlreadyDeleted);
 
             foreach (var notification in _notificationFactory.OnBookDeleteEnabled())
             {
@@ -349,7 +356,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, deleteMessage.Book.Author))
                     {
                         notification.OnBookDelete(deleteMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -380,7 +387,7 @@ namespace NzbDrone.Core.Notifications
                         if (ShouldHandleAuthor(notification.Definition, message.BookFile.Author))
                         {
                             notification.OnBookFileDelete(deleteMessage);
-                            _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                            RecordSuccessIfComplete(notification);
                         }
                     }
                 }
@@ -410,7 +417,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleHealthFailure(message.HealthCheck, ((NotificationDefinition)notification.Definition).IncludeHealthWarnings))
                     {
                         notification.OnHealthIssue(message.HealthCheck);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -439,7 +446,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.TrackedDownload.RemoteBook.Author))
                     {
                         notification.OnDownloadFailure(downloadFailedMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -470,7 +477,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.TrackedDownload.RemoteBook.Author))
                     {
                         notification.OnImportFailure(downloadMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -500,7 +507,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Author))
                     {
                         notification.OnBookRetag(retagMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -525,7 +532,7 @@ namespace NzbDrone.Core.Notifications
                 try
                 {
                     notification.OnApplicationUpdate(updateMessage);
-                    _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                    RecordSuccessIfComplete(notification);
                 }
                 catch (Exception ex)
                 {
@@ -554,6 +561,14 @@ namespace NzbDrone.Core.Notifications
 
             _logger.Debug("Processing notification queues for bulk import completion");
             ProcessQueue();
+        }
+
+        private void RecordSuccessIfComplete(INotification notification)
+        {
+            if (!notification.HasPendingQueue)
+            {
+                _notificationStatusService.RecordSuccess(notification.Definition.Id);
+            }
         }
 
         private void ProcessQueue()

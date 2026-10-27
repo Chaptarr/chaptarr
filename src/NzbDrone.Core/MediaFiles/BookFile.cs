@@ -79,6 +79,16 @@ namespace NzbDrone.Core.MediaFiles
         // Calculated manually
         public int PartCount { get; set; }
 
+        internal BookFile CloneForImport()
+        {
+            // Keep lazy relationships unvisited; preparation reassigns them on the detached row.
+            var clone = (BookFile)MemberwiseClone();
+            clone.MediaInfo = MediaInfo?.Clone();
+            clone.MatchProvenance = MatchProvenance?.Clone();
+            clone.ReplicaPaths = ReplicaPaths?.ToList();
+            return clone;
+        }
+
         public override string ToString()
         {
             return string.Format("[{0}] {1}", Id, Path);

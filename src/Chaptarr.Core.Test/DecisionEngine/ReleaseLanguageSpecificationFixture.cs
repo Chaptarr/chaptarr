@@ -319,7 +319,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             public void Delete(int id) => throw new NotImplementedException();
             public List<MetadataProfile> All() => new List<MetadataProfile>(_profiles.Values);
             public MetadataProfile Get(int id) => _profiles.TryGetValue(id, out var profile) ? profile : null;
-            public bool Exists(int id) => _profiles.ContainsKey(id);
+            public bool Exists(int id, MetadataProfileType? profileType = null) => _profiles.ContainsKey(id);
             public List<Book> FilterBooks(Author input, int profileId) => throw new NotImplementedException();
 
             public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>

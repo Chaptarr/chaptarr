@@ -83,7 +83,7 @@ namespace Chaptarr.Core.Test.Books
             public Author Author { get; private set; }
             public MonitoringOptions Options { get; private set; }
 
-            public void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions)
+            public void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions, bool initialSetup = false)
             {
                 Author = author;
                 Options = monitoringOptions;
@@ -211,6 +211,7 @@ namespace Chaptarr.Core.Test.Books
             public List<List<(string Scope, string Provider, string Id)>> ProviderLookupBatches { get; } = new();
             public List<int[]> LookupBookBatches { get; } = new();
 
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book)
             {
                 UpdatedBook = book;
@@ -284,7 +285,11 @@ namespace Chaptarr.Core.Test.Books
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
-            public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
+            public void SetMonitored(IEnumerable<int> ids, bool monitored)
+            {
+                var selected = ids.ToHashSet();
+                AuthorBooks.Where(book => selected.Contains(book.Id)).ToList().ForEach(book => book.SetMonitored(monitored));
+            }
             public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored)
             {
                 foreach (var book in AuthorBooks.Where(book => ids.Contains(book.Id)))
@@ -305,7 +310,7 @@ namespace Chaptarr.Core.Test.Books
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => AddOptionsBooks = books.ToList();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
@@ -360,6 +365,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -382,7 +388,7 @@ namespace Chaptarr.Core.Test.Books
                 _profiles = (profiles ?? Array.Empty<MetadataProfile>()).ToDictionary(p => p.Id);
             }
 
-            public bool Exists(int id) => _profiles.ContainsKey(id);
+            public bool Exists(int id, MetadataProfileType? profileType = null) => _profiles.ContainsKey(id);
             public MetadataProfile Get(int id) => _profiles.TryGetValue(id, out var profile) ? profile : null;
 
             public MetadataProfile Add(MetadataProfile profile) => throw new NotImplementedException();
@@ -1428,9 +1434,9 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(requestedEditionIds, Does.Contain("first"));
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public async Task explicit_narration_on_readded_book_must_use_the_wanted_writer(bool compatiblePin)
+        [Test]
+        public async Task explicit_narration_on_readded_book_must_use_the_wanted_writer(
+            [Values(false, true)] bool compatiblePin, [Values(false, true)] bool monitor)
         {
             var author = new Author { Id = 42, Name = "Requested Author", HardcoverAuthorId = "hc:777" };
             var current = new Edition { Id = 301, BookId = 101, ForeignEditionId = "hc:edition:301", Title = "Requested Work",
@@ -1455,10 +1461,13 @@ namespace Chaptarr.Core.Test.Books
             var requestEdition = RefreshEntityCopy.CloneEdition(narration);
             requestEdition.Monitored = requestEdition.ManualAdd = true;
             var request = new Book { HardcoverBookId = stored.HardcoverBookId, MediaType = stored.MediaType,
-                Author = new Author { HardcoverAuthorId = author.HardcoverAuthorId }, Editions = new List<Edition> { requestEdition },
-                AddOptions = new AddBookOptions { SearchForNewBook = true } };
+                Author = new Author { HardcoverAuthorId = author.HardcoverAuthorId,
+                    AddOptions = new AddAuthorOptions { Monitor = monitor ? MonitorTypes.SpecificBook : MonitorTypes.None } },
+                Editions = new List<Edition> { requestEdition },
+                AddOptions = new AddBookOptions { SearchForNewBook = true, MonitorBook = monitor } };
             var result = await service.AddBook(request);
             Assert.That(result.Id, Is.EqualTo(wanted.Id));
+            Assert.That(result.IsMonitored(), Is.EqualTo(monitor));
             Assert.That(books.WantedRequest, Is.EqualTo((wanted.Id, compatiblePin ? current.Id : wanted.Editions.Single().Id)));
             Assert.That(current.Monitored && current.ManualAdd, Is.True);
             Assert.That(books.AddedBook, Is.Null);
@@ -1978,6 +1987,48 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(config.EbookMonitorExistingMode, Is.EqualTo(MonitorTypes.SpecificBook));
             Assert.That(config.AudiobookBooksToMonitor, Is.Null);
             Assert.That(config.QueueIfUnavailable, Is.True);
+        }
+
+        [Test]
+        public void omitted_book_request_policies_queue_only_the_requested_work(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(false, true)] bool explicitSettings,
+            [Values(null, MonitorTypes.None, MonitorTypes.All)] MonitorTypes? initialPolicy)
+        {
+            var library = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)library).AddedAuthor = new Author { Id = -77 };
+            var service = BuildService(new StubAuthorService(null, (_, _) => null), new StubBookService(),
+                new StubEditionService(Array.Empty<Edition>()), new StubMetadataProfileService(), library,
+                new RecordingBookAddedService(), DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+            var audio = mediaType == BookMediaType.Audiobook;
+            var author = new Author { GoodreadsAuthorId = "777", AddOptions = initialPolicy.HasValue ? new AddAuthorOptions { Monitor = initialPolicy } : null };
+            if (explicitSettings)
+            {
+                author.AudiobookMonitored = false;
+                author.EbookMonitored = false;
+                author.AudiobookMonitorNewItems = NewItemMonitorTypes.New;
+                author.EbookMonitorNewItems = NewItemMonitorTypes.New;
+            }
+
+            Assert.ThrowsAsync<PendingBookRequestException>(() => service.AddBook(new Book
+            {
+                Title = "Dune", HardcoverBookId = "hc:1001", MediaType = mediaType, Author = author
+            }));
+
+            var config = ((AuthorLibraryProxy)library).Config;
+            Assert.Multiple(() =>
+            {
+                Assert.That(audio ? config.AudiobookMonitored : config.EbookMonitored, Is.EqualTo(!explicitSettings));
+                Assert.That(audio ? config.AudiobookMonitorNewItems : config.EbookMonitorNewItems,
+                    Is.EqualTo(explicitSettings ? NewItemMonitorTypes.New : NewItemMonitorTypes.None));
+                Assert.That(audio ? config.AudiobookMonitorExistingMode : config.EbookMonitorExistingMode, Is.EqualTo(initialPolicy ?? MonitorTypes.SpecificBook));
+                Assert.That(config.MonitorMode, Is.EqualTo(initialPolicy ?? MonitorTypes.SpecificBook));
+                Assert.That(audio ? config.AudiobookBooksToMonitor : config.EbookBooksToMonitor,
+                    Is.EqualTo(new[] { "hc:1001" }));
+                Assert.That(audio ? config.AudiobookBooksToAdd : config.EbookBooksToAdd,
+                    Is.Null);
+                Assert.That(audio ? config.EbookBooksToMonitor : config.AudiobookBooksToMonitor, Is.Null);
+            });
         }
 
         [Test]

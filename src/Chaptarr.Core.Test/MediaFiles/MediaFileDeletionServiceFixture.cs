@@ -247,6 +247,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 switch (targetMethod?.Name)
                 {
+                    case nameof(IDiskProvider.FolderEmpty):
+                        return !ExistingFolders.Any(path => ((string)args[0]).IsParentPath(path)) &&
+                            !ExistingFiles.Any(path => ((string)args[0]).IsParentPath(path));
+
                     case nameof(IDiskProvider.GetFileAttributes):
                         return FileAttributes.Directory;
 
@@ -410,6 +414,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var diskProvider = DispatchProxy.Create<IDiskProvider, FolderCleanupDiskProviderProxy>();
             var diskProxy = (FolderCleanupDiskProviderProxy)(object)diskProvider;
+            diskProxy.ExistingFolders.Add("/ebooks");
+            diskProxy.ExistingFolders.Add("/audiobooks");
             diskProxy.ExistingFolders.Add(author.EbookPath);
             diskProxy.ExistingFolders.Add(author.AudiobookPath);
             diskProxy.ExistingFolders.Add(bookFolder);
@@ -418,17 +424,17 @@ namespace Chaptarr.Core.Test.MediaFiles
             diskProxy.ExistingFiles.Add(colocatedFolder + "/Captains Fury.epub");
 
             var recycleBinProvider = new RecordingRecycleBinProvider();
+            var events = new RecordingEventAggregator();
 
             var service = new MediaFileDeletionService(
                 diskProvider,
                 recycleBinProvider,
 
-                // The row purge for this same event runs concurrently, so a query here can come back
-                // empty and silently leave the files on disk. The snapshot must be used instead.
+                // The operation uses the captured inventory without reloading files per book.
                 DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
                 DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, DeleteEmptyFoldersConfigProxy>(),
-                new RecordingEventAggregator(),
+                events,
                 new StubRootFolderService(new RootFolder { Id = 1, Path = "/ebooks" }, new RootFolder { Id = 2, Path = "/audiobooks" }),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
                 LogManager.GetCurrentClassLogger());
@@ -452,16 +458,18 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
             };
 
-            service.HandleAsync(new BookDeletedEvent(book, deleteFiles: true, addImportListExclusion: false));
+            service.DeleteBookFiles(new List<Book> { book });
 
             Assert.That(recycleBinProvider.DeletedFiles, Does.Contain(bookFolder + "/Captains Fury.epub"));
             Assert.That(recycleBinProvider.DeletedFiles, Does.Contain(colocatedFolder + "/Captains Fury.epub"),
-                "colocated replicas are only cleaned from the per-file event, which whole-book deletion never publishes");
+                "whole-book deletion must remove its managed replicas directly");
 
             // Both roots are swept, so the emptied book folders are candidates for removal.
             Assert.That(diskProxy.SubfolderCleanups, Does.Contain(author.EbookPath));
             Assert.That(diskProxy.SubfolderCleanups, Does.Contain(author.AudiobookPath));
             Assert.That(diskProxy.DeletedFolders, Does.Contain(author.EbookPath));
+            Assert.That(events.Events.OfType<DeleteCompletedEvent>(), Is.Empty,
+                "BookService publishes completion after the database removal commits");
         }
 
         [Test]
@@ -1008,7 +1016,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         $"Warn|Stored media file path ({bookFile.Path}) was not found or could not be resolved safely; continuing database cleanup without deleting a file."));
                     Assert.That(recycleBinProvider.DeletedFiles, Is.Empty);
                     Assert.That(mediaProxy.DeletedRecords, Is.EqualTo(new[] { bookFile }));
-                    Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Has.Exactly(1).Items);
+                    Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Empty, "Author teardown owns completion after notification queuing");
                 });
             }
         }

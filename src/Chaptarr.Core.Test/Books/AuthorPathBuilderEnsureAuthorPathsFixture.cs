@@ -24,8 +24,6 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public string BuildBookFileName(Author author, Edition edition, BookFile bookFile, NamingConfig namingConfig = null, List<CustomFormat> customFormats = null) => throw new NotImplementedException();
-            public string BuildBookFilePath(Author author, Edition edition, string fileName, string extension) => throw new NotImplementedException();
-            public string BuildBookPath(Author author) => throw new NotImplementedException();
             public BasicNamingConfig GetBasicNamingConfig(NamingConfig nameSpec) => throw new NotImplementedException();
         }
 

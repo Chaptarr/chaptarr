@@ -27,6 +27,7 @@ namespace NzbDrone.Core.Books
 		        List<Book> GetLastBooks(IEnumerable<int> authorIds);
 		        List<Book> GetNextBooks(IEnumerable<int> authorIds);
 		        List<Book> GetBooksByAuthorId(int authorId);
+        IReadOnlySet<BookMediaType> GetMediaTypesByAuthor(int authorId) => throw new NotImplementedException();
 		        List<Book> GetBooksForRefresh(int authorId, IEnumerable<string> providerIds);
 		        List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
 
@@ -43,9 +44,10 @@ namespace NzbDrone.Core.Books
 		        PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff);
 	        List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored);
 	        List<Book> AuthorBooksBetweenDates(Author author, DateTime startDate, DateTime endDate, bool includeUnmonitored);
-        void SetMonitoredFlat(Book book, bool monitored);
         void SetMonitored(IEnumerable<int> ids, bool monitored);
-        void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored);
+        void SetMonitoring(IList<Book> books) => throw new NotImplementedException();
+        void UpdateManyAtomic(IList<Book> books, Action<IDbConnection, IDbTransaction> writeRelated);
+        void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles);
         List<Book> GetAuthorBooksWithFiles(Author author);
         List<Book> GetBooksBySeries(int seriesId);
 	        void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null);
@@ -72,6 +74,43 @@ namespace NzbDrone.Core.Books
             return _updatePropertiesWithoutAuthorId ??= base.GetUpdateProperties()
                 .Where(property => property.Name != nameof(Book.AuthorId))
                 .ToList();
+        }
+
+        public void UpdateManyAtomic(IList<Book> books, Action<IDbConnection, IDbTransaction> writeRelated)
+        {
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var updated = base.UpdateMany(books, connection, transaction);
+            if (updated != books.Count)
+            {
+                throw new ModelConflictException(typeof(Book), 0, "Books changed before their update could be saved.");
+            }
+
+            writeRelated(connection, transaction);
+            transaction.Commit();
+        }
+
+        public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles)
+        {
+            var bookIds = ids.Distinct().ToArray();
+            if (bookIds.Length == 0) return;
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            foreach (var chunk in bookIds.Chunk(_database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters : bookIds.Length))
+            {
+                var predicate = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
+                var editions = $"SELECT \"Id\" FROM \"Editions\" WHERE \"BookId\" {predicate}";
+                var parameters = new { ids = chunk };
+                var fileAction = deleteFiles ? "DELETE FROM \"BookFiles\"" : "UPDATE \"BookFiles\" SET \"EditionId\" = 0";
+                connection.Execute($"{fileAction} WHERE \"EditionId\" IN ({editions})", parameters, transaction);
+                connection.Execute($"DELETE FROM \"ProviderAliasIndex\" WHERE \"EntityType\" = 'Edition' AND \"EntityId\" IN ({editions})", parameters, transaction);
+                connection.Execute($"DELETE FROM \"Editions\" WHERE \"BookId\" {predicate}", parameters, transaction);
+                connection.Execute($"DELETE FROM \"ProviderAliasIndex\" WHERE \"EntityType\" = 'Book' AND \"EntityId\" {predicate}", parameters, transaction);
+                base.DeleteMany(chunk, connection, transaction);
+            }
+
+            transaction.Commit();
         }
 
         public void SetAuthorId(Book book)
@@ -258,6 +297,13 @@ namespace NzbDrone.Core.Books
             }
 
             return result;
+        }
+
+        public IReadOnlySet<BookMediaType> GetMediaTypesByAuthor(int authorId)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.Query<BookMediaType>(
+                "SELECT DISTINCT \"MediaType\" FROM \"Books\" WHERE \"AuthorId\" = @authorId", new { authorId }).ToHashSet();
         }
 
         public List<Book> GetBooksByAuthorId(int authorId)
@@ -604,93 +650,33 @@ namespace NzbDrone.Core.Books
             return Query(builder);
         }
 
-        public void SetMonitoredFlat(Book book, bool monitored)
-        {
-            // Must check MediaType to set only the appropriate monitoring flag
-            var actualBook = Get(book.Id);
-            if (actualBook.MediaType == BookMediaType.Audiobook)
-            {
-                book.AudiobookMonitored = monitored;
-                book.EbookMonitored = false;
-                SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-            }
-            else if (actualBook.MediaType == BookMediaType.Ebook)
-            {
-                book.AudiobookMonitored = false;
-                book.EbookMonitored = monitored;
-                SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-            }
-
-            ModelUpdated(book, true);
-        }
-
         public void SetMonitored(IEnumerable<int> ids, bool monitored)
         {
-            // Must fetch actual books to check MediaType
-            var actualBooks = Get(ids);
-            foreach (var book in actualBooks)
-            {
-                if (book.MediaType == BookMediaType.Audiobook)
-                {
-                    book.AudiobookMonitored = monitored;
-                    book.EbookMonitored = false;
-                    SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-                }
-                else if (book.MediaType == BookMediaType.Ebook)
-                {
-                    book.AudiobookMonitored = false;
-                    book.EbookMonitored = monitored;
-                    SetFields(book, p => p.AudiobookMonitored, p => p.EbookMonitored);
-                }
-            }
+            var books = Get(ids).Where(book => book.MediaType is BookMediaType.Audiobook or BookMediaType.Ebook).ToList();
+            books.ForEach(book => book.SetMonitored(monitored));
+            SetMonitoring(books);
         }
 
-        public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored)
+        public void SetMonitoring(IList<Book> books)
         {
-            var idList = ids?.Distinct().ToList() ?? new List<int>();
-            if (!idList.Any())
-            {
-                return;
-            }
+            if (books.Count == 0) return;
+            if (books.Any(book => book.Id == 0)) throw new InvalidOperationException("Can't update model with ID 0");
 
-            string sql;
-            if (mediaType == "audiobook")
+            var sql = "UPDATE \"Books\" SET \"AudiobookMonitored\" = @AudiobookMonitored, \"EbookMonitored\" = @EbookMonitored WHERE \"Id\" "
+                + (_database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@Ids)" : "IN @Ids");
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            foreach (var group in books.GroupBy(book => (book.AudiobookMonitored, book.EbookMonitored)))
             {
-                sql = _database.DatabaseType == DatabaseType.PostgreSQL
-                    ? "UPDATE \"Books\" SET \"AudiobookMonitored\" = @monitored, \"EbookMonitored\" = @other WHERE \"Id\" = ANY(@Ids)"
-                    : "UPDATE \"Books\" SET \"AudiobookMonitored\" = @monitored, \"EbookMonitored\" = @other WHERE \"Id\" IN @Ids";
-            }
-            else if (mediaType == "ebook")
-            {
-                sql = _database.DatabaseType == DatabaseType.PostgreSQL
-                    ? "UPDATE \"Books\" SET \"EbookMonitored\" = @monitored, \"AudiobookMonitored\" = @other WHERE \"Id\" = ANY(@Ids)"
-                    : "UPDATE \"Books\" SET \"EbookMonitored\" = @monitored, \"AudiobookMonitored\" = @other WHERE \"Id\" IN @Ids";
-            }
-            else
-            {
-                return;
-            }
-
-            using (var conn = _database.OpenConnection())
-            {
-                // SQLite has a default ~999 bind-variable limit; Dapper expands IN lists into many parameters.
-                if (_database.DatabaseType == DatabaseType.SQLite && idList.Count > SqliteVariableLimit.MaxParameters)
+                var ids = group.Select(book => book.Id).Distinct().ToArray();
+                var batchSize = _database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters - 2 : ids.Length;
+                foreach (var batch in ids.Chunk(batchSize))
                 {
-                    using (var tran = conn.BeginTransaction())
-                    {
-                        foreach (var batch in idList.Chunk(SqliteVariableLimit.MaxParameters))
-                        {
-                            conn.Execute(sql, new { monitored = monitored, other = false, Ids = batch.ToArray() }, tran);
-                        }
-
-                        tran.Commit();
-                    }
-                }
-                else
-                {
-                    conn.Execute(sql, new { monitored = monitored, other = false, Ids = idList.ToArray() });
+                    connection.Execute(sql, new { group.Key.AudiobookMonitored, group.Key.EbookMonitored, Ids = batch }, transaction);
                 }
             }
+
+            transaction.Commit();
         }
 
         public List<Book> GetAuthorBooksWithFiles(Author author)

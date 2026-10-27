@@ -149,8 +149,6 @@ namespace Chaptarr.Core.Test.Api
                 signalRBroadcaster: new DisconnectedSignalRBroadcaster(),
                 commandQueueManager: null,
                 eventAggregator: null,
-                metadataProfileService: null,
-                qualityProfileService: null,
                 rootFolderService: null,
                 qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),

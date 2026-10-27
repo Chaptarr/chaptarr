@@ -174,9 +174,10 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class NoOpDeleteMediaFiles : IDeleteMediaFiles
         {
+            public void DeleteBookFiles(List<Book> books) { }
             public void DeleteTrackFile(Author author, BookFile bookFile) { }
             public void DeleteTrackFile(BookFile bookFile, string subfolder = "") { }
-            public void DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null) { }
+            public List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null) => new();
         }
 
         private static AuthorService CreateSubject(IAuthorRepository repository, Logger logger = null,

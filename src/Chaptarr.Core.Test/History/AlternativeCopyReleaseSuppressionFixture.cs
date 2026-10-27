@@ -21,6 +21,7 @@ using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.DecisionEngine.Specifications.RssSync;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Housekeeping.Housekeepers;
@@ -39,7 +40,7 @@ namespace Chaptarr.Core.Test.History
 {
     [TestFixture]
     [NonParallelizable]
-    public class AlternativeCopyReleaseSuppressionFixture
+    public partial class AlternativeCopyReleaseSuppressionFixture
     {
         private static IEnumerable<TestCaseData> ReadCases()
         {
@@ -186,7 +187,7 @@ namespace Chaptarr.Core.Test.History
                 if (scenario == "unpin") { h.Books[1].AnyEditionOk = true; h.BookRows.Update(h.Books[1]); }
 
                 var different = h.Subject(h.Books[1], "different-release"); var same = h.Subject(h.Books[1]);
-                var spec = h.Specification(); h.Commands.Reset(); Prepare(spec, new[] { different, same });
+                var spec = h.Specification(); h.Commands.Reset(); spec.PrepareAlternativeCopySuppression(new[] { different, same });
                 var differentDecision = spec.IsSatisfiedBy(different, null); var sameDecision = spec.IsSatisfiedBy(same, null);
                 var currentProof = scenario is "proved" or "earlier_ordinary" or "newer_ordinary";
                 Assert.Multiple(() =>
@@ -194,7 +195,7 @@ namespace Chaptarr.Core.Test.History
                     Assert.That(differentDecision.Accepted, Is.EqualTo(scenario is "proved" or "changed_edition" or "unpin"), differentDecision.Reason);
                     Assert.That(sameDecision.Accepted, Is.EqualTo(scenario is "changed_edition" or "unpin"), sameDecision.Reason);
                     Assert.That(sameDecision.CanBypass, Is.EqualTo(currentProof));
-                    Assert.That(h.Commands.Readers, Is.EqualTo(1));
+                    Assert.That(h.Commands.Readers, Is.EqualTo(scenario is "no_proof" or "earlier_ordinary" or "newer_ordinary" or "changed_owner" ? 2 : 1));
                     Assert.That(h.Commands.Nonqueries + h.Commands.Scalars, Is.Zero);
                 });
             });
@@ -273,6 +274,8 @@ namespace Chaptarr.Core.Test.History
                 Assert.That(h.Specification().IsSatisfiedBy(h.Subject(h.Books[1]), null).Accepted, Is.False);
                 new CleanupOrphanedHistoryItems(h.Database).Clean();
                 Assert.That(h.History.Get(rows[1].Id), Is.Not.Null);
+                // BookService publishes synchronous edition teardown before removing the parent row.
+                new EditionRepository(h.Database, h.Events).DeleteMany(h.Books[1].Editions.Select(edition => edition.Id));
                 h.BookRows.Delete(h.Books[1].Id);
                 new CleanupOrphanedHistoryItems(h.Database).Clean();
                 Assert.That(h.History.FindByDownloadId("DOWNLOAD-ONE").Select(row => row.BookId), Is.EqualTo(new[] { h.Books[0].Id }));
@@ -293,7 +296,7 @@ namespace Chaptarr.Core.Test.History
                 equal.EventType = EntityHistoryEventType.BookFileImported; h.History.Insert(equal);
                 var old = h.History.GetByBook(h.Books[1].Id, null).MaxBy(row => row.Date);
                 var subject = h.Subject(h.Books[1]); var spec = h.Specification();
-                Prepare(spec, new[] { subject });
+                spec.PrepareAlternativeCopySuppression(new[] { subject });
                 if (subject.PreparedBookHistory != null) Assert.That(subject.PreparedBookHistory[h.Books[1].Id].Id, Is.EqualTo(old.Id));
                 Assert.That(spec.IsSatisfiedBy(subject, null).Accepted, Is.EqualTo(old.EventType != EntityHistoryEventType.Grabbed));
             });
@@ -318,14 +321,14 @@ namespace Chaptarr.Core.Test.History
                 var subjects = Enumerable.Range(0, reports).Select(index => h.Subject(h.Books.ToArray())).ToArray();
                 var spec = h.Specification(); h.Commands.Reset();
                 var before = GC.GetAllocatedBytesForCurrentThread(); var timer = Stopwatch.StartNew();
-                Prepare(spec, subjects);
+                spec.PrepareAlternativeCopySuppression(subjects);
                 var decisions = subjects.Select(subject => spec.IsSatisfiedBy(subject, null)).ToList();
                 timer.Stop(); var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
                 TestContext.WriteLine($"{database.DatabaseType}: copies={copies}, reports={reports}, eventsPerCopy={eventsPerCopy}, readers={h.Commands.Readers}, nonqueries={h.Commands.Nonqueries}, scalars={h.Commands.Scalars}, returnedHistoryRows={h.Commands.HistoryRows}, allocatedBytes={allocated}, elapsedMs={timer.ElapsedMilliseconds}, retainedLatestRows={subjects[0].PreparedBookHistory?.Count ?? 0}");
                 Assert.Multiple(() =>
                 {
                     Assert.That(decisions.All(decision => decision.Accepted), Is.True);
-                    Assert.That(h.Commands.Readers, Is.EqualTo(1));
+                    Assert.That(h.Commands.Readers, Is.EqualTo(2));
                     Assert.That(h.Commands.Nonqueries + h.Commands.Scalars, Is.Zero);
                     Assert.That(h.Commands.HistoryRows, Is.EqualTo(copies));
                     Assert.That(subjects[0].PreparedBookHistory?.Count, Is.EqualTo(copies));
@@ -360,10 +363,10 @@ namespace Chaptarr.Core.Test.History
                 h.History.Insert(malformed);
                 h.Commands.Reset();
                 var subject = h.Subject(h.Books[1]);
-                Prepare(h.Specification(), new[] { subject });
+                h.Specification().PrepareAlternativeCopySuppression(new[] { subject });
                 Assert.That(subject.PositivelyIncompatibleBookIds, Does.Contain(h.Books[1].Id));
                 Assert.That(subject.PreparedBookHistory[h.Books[1].Id].Id, Is.EqualTo(malformed.Id));
-                Assert.That(h.Commands.Readers, Is.EqualTo(1));
+                Assert.That(h.Commands.Readers, Is.EqualTo(2));
                 Assert.That(h.Commands.HistoryRows, Is.EqualTo(3));
             });
         }
@@ -432,9 +435,45 @@ namespace Chaptarr.Core.Test.History
             });
         }
 
-        private static void Prepare(HistorySpecification spec, IEnumerable<RemoteBook> subjects)
+        [TestCase(false, EntityHistoryEventType.BookImportIncomplete, false)]
+        [TestCase(true, EntityHistoryEventType.BookImportIncomplete, false)]
+        [TestCase(false, EntityHistoryEventType.BookFileImported, false)]
+        [TestCase(true, EntityHistoryEventType.BookFileImported, false)]
+        public void rss_grab_protection_survives_file_and_incomplete_events(bool postgres, EntityHistoryEventType laterEvent, bool accepted)
         {
-            typeof(HistorySpecification).GetMethod("PrepareAlternativeCopySuppression")?.Invoke(spec, new object[] { subjects });
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Library(database, BookMediaType.Audiobook, 1);
+                var grab = h.Grabs(date: DateTime.UtcNow.AddHours(-1)).Single();
+                grab.Data.Clear();
+                h.History.Insert(grab);
+                h.History.Insert(new EntityHistory { BookId = grab.BookId, AuthorId = grab.AuthorId,
+                    EditionId = grab.EditionId, DownloadId = grab.DownloadId, Date = DateTime.UtcNow,
+                    SourceTitle = grab.SourceTitle, Quality = grab.Quality, EventType = laterEvent });
+                var decision = h.Specification().IsSatisfiedBy(h.Subject(h.Books[0]), null);
+                Assert.That(decision.Accepted, Is.EqualTo(accepted));
+                if (!accepted) Assert.That(decision.Reason, Does.Contain("Recent grab"));
+            });
+        }
+
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        public void incomplete_event_does_not_restart_the_twelve_hour_grab_window(bool postgres, bool completedDownloadHandling)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Library(database, BookMediaType.Ebook, 1);
+                var grab = h.Grabs(date: DateTime.UtcNow.AddHours(-13)).Single();
+                grab.Data.Clear();
+                h.History.Insert(grab);
+                h.History.Insert(new EntityHistory { BookId = grab.BookId, AuthorId = grab.AuthorId,
+                    EditionId = grab.EditionId, DownloadId = grab.DownloadId, Date = DateTime.UtcNow,
+                    SourceTitle = grab.SourceTitle, Quality = grab.Quality, EventType = EntityHistoryEventType.BookImportIncomplete });
+                var decision = h.Specification(completedDownloadHandling).IsSatisfiedBy(h.Subject(h.Books[0]), null);
+                Assert.That(decision.Accepted, Is.EqualTo(completedDownloadHandling));
+            });
         }
 
         private sealed class CommandCounts
@@ -525,10 +564,11 @@ namespace Chaptarr.Core.Test.History
                 new AuthorRepository(Database, Events, Logger).Insert(owner);
                 book.AuthorId = owner.Id; book.Author = owner; BookRows.Update(book);
             }
-            public HistorySpecification Specification()
+            public HistorySpecification Specification(bool completedDownloadHandling = true)
             {
-                var config = Proxy<IConfigService>((method, _) => method.Name == "get_EnableCompletedDownloadHandling" ? true : method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
-                return new HistorySpecification(new HistoryService(History, Logger), new UpgradableSpecification(config, Logger),
+                var config = Proxy<IConfigService>((method, _) => method.Name == "get_EnableCompletedDownloadHandling" ? completedDownloadHandling : method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
+                var history = new HistoryService(History, Logger);
+                return new HistorySpecification(history, new DownloadHistoryService(new DownloadHistoryRepository(Database, Events), history), new UpgradableSpecification(config, Logger),
                     Proxy<ICustomFormatCalculationService>((_, _) => new List<CustomFormat>()), config, Logger);
             }
             private static QualityProfile Profile(BookMediaType side)

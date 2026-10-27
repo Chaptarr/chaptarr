@@ -54,7 +54,9 @@ namespace Chaptarr.Core.Test.PendingImport
                 var aggregator = InterfaceProxy.Proxy<IEventAggregator>((method, args) => { events.Add(args[0]); return null; });
                 var commands = new Commands();
                 var repository = new PendingAuthorImportRepository(commands.Wrap(database), aggregator);
-                var service = new PendingAuthorImportService(repository, null, aggregator, LogManager.GetCurrentClassLogger());
+                var authors = InterfaceProxy.Proxy<IAuthorService>((method, _) =>
+                    method.Name == nameof(IAuthorService.FindByProviderId) ? null : throw new NotSupportedException(method.Name));
+                var service = new PendingAuthorImportService(repository, authors, aggregator, LogManager.GetCurrentClassLogger());
                 var controller = new PendingAuthorImportController(
                     InterfaceProxy.Proxy<IBroadcastSignalRMessage>((method, args) => method.ReturnType == typeof(Task) ? Task.CompletedTask : false),
                     service, null, null, null, null);

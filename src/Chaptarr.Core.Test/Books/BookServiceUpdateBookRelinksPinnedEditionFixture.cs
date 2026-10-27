@@ -72,6 +72,7 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateManyAtomic(IList<Book> books, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated) => throw new System.NotSupportedException();
             public void UpdateMany(IList<Book> model)
             {
                 UpdateManyCallCount++;
@@ -82,6 +83,7 @@ namespace Chaptarr.Core.Test.Books
             }
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => throw new NotImplementedException();
+            public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles) => throw new NotImplementedException();
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
             public void Purge(bool vacuum = false) => throw new NotImplementedException();
             public bool HasItems() => throw new NotImplementedException();
@@ -105,9 +107,7 @@ namespace Chaptarr.Core.Test.Books
             public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
             public List<Book> AuthorBooksBetweenDates(Author author, DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
-            public void SetMonitoredFlat(Book book, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
-            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksBySeries(int seriesId) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
@@ -166,6 +166,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions) => UpdatedEditions.AddRange(editions);
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -230,6 +231,15 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             private readonly List<BookFile> _files;
 
             public List<BookFile> UpdatedFiles { get; } = new();
@@ -248,6 +258,7 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public List<BookFile> GetFilesByEdition(int editionId) => _files.Where(f => f.EditionId == editionId).ToList();
+            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -366,7 +377,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_relink_existing_book_files_to_pinned_monitored_edition()
+        public void ordinary_save_must_not_relink_existing_book_files_to_the_monitored_edition()
         {
             var author = new Author
             {
@@ -411,7 +422,7 @@ namespace Chaptarr.Core.Test.Books
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
-            // Simulate a user update that pins a specific edition (AnyEditionOk=false) and selects newEdition.
+            // A general save can change selection settings without correcting existing file identity.
             var requestBook = new Book
             {
                 Id = 1,
@@ -428,9 +439,8 @@ namespace Chaptarr.Core.Test.Books
 
             service.UpdateBook(requestBook);
 
-            Assert.That(mediaFiles.UpdatedFiles, Has.Count.EqualTo(1));
-            Assert.That(mediaFiles.UpdatedFiles[0].Id, Is.EqualTo(file.Id));
-            Assert.That(mediaFiles.UpdatedFiles[0].EditionId, Is.EqualTo(newEdition.Id));
+            Assert.That(mediaFiles.UpdatedFiles, Is.Empty);
+            Assert.That(file.EditionId, Is.EqualTo(oldEdition.Id));
         }
 
         [Test]
@@ -487,7 +497,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void update_many_with_lifecycle_should_preserve_narrator_cleanup_and_pinned_file_relinking()
+        public void update_many_with_lifecycle_should_preserve_narrator_cleanup_without_relinking_files()
         {
             var author = new Author
             {
@@ -563,8 +573,8 @@ namespace Chaptarr.Core.Test.Books
             Assert.Multiple(() =>
             {
                 Assert.That(repository.Get(changedEbook.Id).Narrator, Is.Null);
-                Assert.That(mediaFiles.UpdatedFiles, Has.Count.EqualTo(1));
-                Assert.That(mediaFiles.UpdatedFiles[0].EditionId, Is.EqualTo(pinnedEdition.Id));
+                Assert.That(mediaFiles.UpdatedFiles, Is.Empty);
+                Assert.That(file.EditionId, Is.EqualTo(oldEdition.Id));
                 Assert.That(mediaFiles.BulkBookLookupCount, Is.EqualTo(1));
                 Assert.That(mediaFiles.SingleBookLookupCount, Is.Zero);
             });

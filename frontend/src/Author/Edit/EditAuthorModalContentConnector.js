@@ -9,6 +9,8 @@ import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import selectSettings from 'Store/Selectors/selectSettings';
+import getLinkedAuthorMonitoringChanges from 'Utilities/Author/getLinkedAuthorMonitoringChanges';
+import { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
 import EditAuthorModalContent from './EditAuthorModalContent';
 
 function createIsPathChangingSelector() {
@@ -66,6 +68,11 @@ function createMapStateToProps() {
 
       const settings = selectSettings(authorSettings, pendingChanges, saveError);
 
+      const item = settings.settings;
+      const hasMonitoringPolicyChange = ['syncMonitoredAcrossFormats', 'audiobookMonitorNewItems', 'ebookMonitorNewItems']
+        .some((key) => Object.prototype.hasOwnProperty.call(pendingChanges, key));
+      const hasConflictingMonitoringPolicies = hasMonitoringPolicyChange && item.syncMonitoredAcrossFormats?.value === true &&
+        normalizeMonitorNewItemsOption(item.audiobookMonitorNewItems?.value) !== normalizeMonitorNewItemsOption(item.ebookMonitorNewItems?.value);
       const rootFolderItems = rootFolders.items || [];
 
       // Global availability: do compatible root folders exist in the system?
@@ -85,6 +92,7 @@ function createMapStateToProps() {
         saveError,
         isPathChanging,
         originalPath: author.path,
+        hasConflictingMonitoringPolicies,
         item: settings.settings,
         showMetadataProfile: metadataProfiles.items.length > 1,
         isWindows: systemStatus.isWindows,
@@ -123,10 +131,14 @@ class EditAuthorModalContentConnector extends Component {
   // Listeners
 
   onInputChange = ({ name, value }) => {
-    this.props.dispatchSetAuthorValue({ name, value });
+    const changes = getLinkedAuthorMonitoringChanges(name, value, this.props.item.syncMonitoredAcrossFormats?.value === true);
+    Object.entries(changes).forEach(([field, fieldValue]) => this.props.dispatchSetAuthorValue({ name: field, value: fieldValue }));
   };
 
   onSavePress = (moveFiles) => {
+    if (this.props.hasConflictingMonitoringPolicies) {
+      return;
+    }
     this.props.dispatchSaveAuthor({
       id: this.props.authorId,
       moveFiles
@@ -152,6 +164,8 @@ EditAuthorModalContentConnector.propTypes = {
   authorId: PropTypes.number,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
+  item: PropTypes.object.isRequired,
+  hasConflictingMonitoringPolicies: PropTypes.bool.isRequired,
   dispatchSetAuthorValue: PropTypes.func.isRequired,
   dispatchSaveAuthor: PropTypes.func.isRequired,
   dispatchFetchRootFolders: PropTypes.func.isRequired,

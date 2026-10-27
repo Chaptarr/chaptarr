@@ -10,6 +10,8 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
+using NzbDrone.Core.MediaFiles.Events;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.RootFolders;
@@ -43,6 +45,7 @@ namespace Chaptarr.Core.Test.Books
             public Author AddAuthor(Author newAuthor, bool doRefresh)
             {
                 newAuthor.Id = _nextId++;
+                ExistingAuthor = newAuthor;
                 return newAuthor;
             }
 
@@ -148,7 +151,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => ExistingBooks.Concat(InsertedBooks).ToList();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooksByAuthorId(int authorId) => GetBooksByAuthor(authorId);
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
@@ -164,10 +167,18 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
-            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored) => throw new NotImplementedException();
+            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored)
+            {
+                var selectedIds = ids.ToHashSet();
+                var selectedMediaType = mediaType == "ebook" ? BookMediaType.Ebook : BookMediaType.Audiobook;
+                var rows = ExistingBooks.Concat(InsertedBooks).Where(book => selectedIds.Contains(book.Id) && book.MediaType == selectedMediaType).ToList();
+                rows.ForEach(book => book.SetMonitored(monitored));
+                UpdatedBooks.AddRange(rows);
+            }
             public void UpdateLastSearchTime(List<Book> books) => throw new NotImplementedException();
             public NzbDrone.Core.Datastore.PagingSpec<Book> BooksWithoutFiles(NzbDrone.Core.Datastore.PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime start, DateTime end, bool includeUnmonitored) => throw new NotImplementedException();
@@ -182,7 +193,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
             public PagedBookResource GetBooksPaged(int offset, int pageSize, string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
         }
 
         private sealed class StubEditionService : IEditionService
@@ -205,6 +216,7 @@ namespace Chaptarr.Core.Test.Books
                 return _editions.Where(e => idSet.Contains(e.BookId)).ToList();
             }
 
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions)
             {
             }
@@ -242,7 +254,7 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => throw new NotImplementedException();
             public List<MetadataProfile> All() => throw new NotImplementedException();
             public MetadataProfile Get(int id) => new MetadataProfile { Id = id, Name = $"Profile {id}" };
-            public bool Exists(int id) => true;
+            public bool Exists(int id, MetadataProfileType? profileType = null) => true;
             public List<Book> FilterBooks(Author input, int profileId)
             {
                 FilterProfileIds.Add(profileId);
@@ -330,6 +342,18 @@ namespace Chaptarr.Core.Test.Books
                 ReconcileAuthorBlob(localAuthor, authoritativeRemoteAuthor);
         }
 
+        private static void CompleteInitialScan(Author author, StubAuthorService authors, StubBookService books)
+        {
+            if (author.AddOptions == null) return;
+            Assert.That(author.AddOptions.AwaitingMetadata, Is.False);
+            var logger = LogManager.GetCurrentClassLogger();
+            var queue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IManageCommandQueue>((_, args) =>
+                new CommandModel { Body = (Command)args[0] });
+            var added = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookAddedService>((_, _) => null);
+            new AuthorScannedHandler(new BookMonitoredService(authors, books, logger), authors, queue, added,
+                new StubEventAggregator(), logger, books).Handle(new AuthorScannedEvent(author));
+        }
+
         [Test]
         public async Task existing_author_should_reconcile_media_scoped_pending_target_from_the_author_blob(
             [Values(false, true)] bool configured,
@@ -395,8 +419,12 @@ namespace Chaptarr.Core.Test.Books
             if (!hasCatalogRows)
             {
                 Assert.That(bookService.InsertedBooks, Has.Count.EqualTo(2));
+                if (!configured)
+                    Assert.That(bookService.InsertedBooks.All(book => !book.IsMonitored()), Is.True,
+                        "New initial policy waits for the author scan; ongoing None must not replace it.");
+                CompleteInitialScan(existingAuthor, authorService, bookService);
                 Assert.That(bookService.InsertedBooks.All(book => book.IsMonitored()), Is.True,
-                    "The initial All policy must run before ongoing None can initialize the missing catalog.");
+                    "The post-scan initial All policy must not be replaced by ongoing None.");
             }
         }
 
@@ -617,6 +645,10 @@ namespace Chaptarr.Core.Test.Books
 
             var insertedBook = bookService.InsertedBooks.Single();
 
+            if (!hasManualTargetSettings)
+                Assert.That(insertedBook.AudiobookMonitored, Is.False, "Initial monitoring waits until the scan.");
+            CompleteInitialScan(authorService.ExistingAuthor, authorService, bookService);
+
             var expectedQualityProfileId = hasManualTargetSettings ? 77 : 2;
             var expectedMetadataProfileId = hasManualTargetSettings ? 78 : 1;
             var expectedRootFolderPath = hasManualTargetSettings ? "/manual-audiobooks" : "/audiobooks";
@@ -717,8 +749,9 @@ namespace Chaptarr.Core.Test.Books
             };
 
             var bookService = new StubBookService();
+            var authorService = new StubAuthorService();
             var service = new AuthorLibraryService(
-                authorService: new StubAuthorService(),
+                authorService: authorService,
                 authorInfo: new StubAuthorInfo(remoteAuthor),
                 bookService: bookService,
                 refreshSeriesService: null,
@@ -752,6 +785,9 @@ namespace Chaptarr.Core.Test.Books
             });
 
             Assert.That(bookService.InsertedBooks, Has.Count.EqualTo(2));
+            Assert.That(bookService.InsertedBooks.All(book => !book.AudiobookMonitored), Is.True,
+                "Initial All intent waits for the scan and is not replaced by the rescue target.");
+            CompleteInitialScan(authorService.ExistingAuthor, authorService, bookService);
             Assert.That(bookService.InsertedBooks.All(book => book.AudiobookMonitored), Is.True);
         }
 

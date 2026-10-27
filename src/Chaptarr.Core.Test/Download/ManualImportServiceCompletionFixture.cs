@@ -39,16 +39,16 @@ namespace Chaptarr.Core.Test.Download
             var imported = CreateImportResultForPath(10, media, ownPath);
             var companion = CreateImportResultForPath(20, opposite, companionPath);
             var previews = new[] { CreatePreviewFile(10, ownPath), CreatePreviewFile(20, companionPath) };
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported, companion }, previews), Is.True);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported, companion }, previews).Complete, Is.True);
 
             var unrelated = CreateImportResultForPath(30, media, "/downloads/unrelated" + (media == BookMediaType.Audiobook ? ".m4b" : ".epub"));
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported, companion, unrelated }, previews), Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported, companion, unrelated }, previews).Complete, Is.False);
             var failed = CreateImportResultForPath(10, media, ownPath, "Transfer failed");
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { failed, companion }, previews), Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { failed, companion }, previews).Complete, Is.False);
             if (media == BookMediaType.Audiobook)
             {
-                Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported, companion },
-                    previews.Append(CreatePreviewFile(10, "/downloads/expected-part2.m4b")).ToList()), Is.False);
+                Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported, companion },
+                    previews.Append(CreatePreviewFile(10, "/downloads/expected-part2.m4b")).ToList()).Complete, Is.False);
             }
         }
 
@@ -60,12 +60,12 @@ namespace Chaptarr.Core.Test.Download
                 new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook },
                 new Book { Id = 11, AuthorId = 7, Title = "Expected Ebook", MediaType = BookMediaType.Ebook });
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
                     CreateImportResult(10, BookMediaType.Audiobook)
-                });
+                }).Complete;
 
             Assert.That(result, Is.True);
         }
@@ -75,12 +75,12 @@ namespace Chaptarr.Core.Test.Download
         {
             var trackedDownload = CreateTrackedDownload(new QualityModel(Quality.UnknownAudio));
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
                     CreateImportResult(10, BookMediaType.Audiobook)
-                });
+                }).Complete;
 
             Assert.That(result, Is.True);
         }
@@ -90,13 +90,13 @@ namespace Chaptarr.Core.Test.Download
         {
             var trackedDownload = CreateTrackedDownload(new QualityModel(Quality.UnknownAudio));
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
                     CreateImportResult(10, BookMediaType.Audiobook),
                     CreateImportResult(11, BookMediaType.Audiobook, "Import failed")
-                });
+                }).Complete;
 
             Assert.That(result, Is.False);
         }
@@ -108,12 +108,12 @@ namespace Chaptarr.Core.Test.Download
                 new QualityModel(Quality.MP3),
                 new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook });
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
                     CreateImportResult(99, BookMediaType.Audiobook)
-                });
+                }).Complete;
 
             Assert.That(result, Is.False);
         }
@@ -125,7 +125,7 @@ namespace Chaptarr.Core.Test.Download
                 new QualityModel(Quality.MP3),
                 new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook });
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
@@ -135,7 +135,7 @@ namespace Chaptarr.Core.Test.Download
                 {
                     CreatePreviewFile(10, "/downloads/Babbitt 01.m4b"),
                     CreatePreviewFile(10, "/downloads/Babbitt 02.m4b")
-                });
+                }).Complete;
 
             Assert.That(result, Is.False);
         }
@@ -147,7 +147,7 @@ namespace Chaptarr.Core.Test.Download
                 new QualityModel(Quality.MP3),
                 new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook });
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
@@ -158,7 +158,7 @@ namespace Chaptarr.Core.Test.Download
                     CreatePreviewFile(10, "/downloads/Book A.m4b"),
                     CreatePreviewFile(20, "/downloads/Book B.m4b"),
                     CreatePreviewFile(30, "/downloads/Book C.m4b")
-                });
+                }).Complete;
 
             Assert.That(result, Is.True);
         }
@@ -170,7 +170,7 @@ namespace Chaptarr.Core.Test.Download
                 new QualityModel(Quality.EPUB),
                 new Book { Id = 10, AuthorId = 7, Title = "Expected Ebook", MediaType = BookMediaType.Ebook });
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
@@ -180,7 +180,7 @@ namespace Chaptarr.Core.Test.Download
                 {
                     CreatePreviewFile(10, "/downloads/Book A.epub"),
                     CreatePreviewFile(10, "/downloads/Book A.azw3")
-                });
+                }).Complete;
 
             Assert.That(result, Is.True);
         }
@@ -192,7 +192,7 @@ namespace Chaptarr.Core.Test.Download
                 new QualityModel(Quality.MP3),
                 new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook });
 
-            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+            var result = TrackedDownloadAlreadyImported.Evaluate(
                 trackedDownload,
                 new List<ImportResult>
                 {
@@ -202,7 +202,7 @@ namespace Chaptarr.Core.Test.Download
                 {
                     CreatePreviewFile(10, "/downloads/Babbitt 01.mp3"),
                     CreatePreviewFile(10, "/downloads/Babbitt 02.mp3")
-                });
+                }).Complete;
 
             Assert.That(result, Is.True);
         }
@@ -341,12 +341,12 @@ namespace Chaptarr.Core.Test.Download
             var tracked = CreateTrackedDownload(new QualityModel(media == BookMediaType.Audiobook ? Quality.M4B : Quality.EPUB),
                 new Book { Id = 10, AuthorId = 7, MediaType = media }, new Book { Id = 11, AuthorId = 7, MediaType = media });
             tracked.RemoteBook.AlternativeCopies = true;
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { CreateImportResult(selected, media) }), Is.True);
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { CreateImportResult(99, media) }), Is.False);
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked,
-                new[] { CreateImportResult(10, media), CreateImportResult(11, media, "Import failed") }), Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { CreateImportResult(selected, media) }).Complete, Is.True);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { CreateImportResult(99, media) }).Complete, Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked,
+                new[] { CreateImportResult(10, media), CreateImportResult(11, media, "Import failed") }).Complete, Is.False);
             tracked.RemoteBook.AlternativeCopies = false;
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { CreateImportResult(selected, media) }), Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { CreateImportResult(selected, media) }).Complete, Is.False);
         }
 
         [Test]
@@ -356,10 +356,10 @@ namespace Chaptarr.Core.Test.Download
                 new Book { Id = 11, AuthorId = 7, MediaType = BookMediaType.Audiobook });
             tracked.RemoteBook.AlternativeCopies = true;
             var previews = new[] { CreatePreviewFile(10, "/downloads/one.mp3"), CreatePreviewFile(0, "/downloads/two.mp3") };
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked,
-                new[] { CreateImportResultForPath(10, BookMediaType.Audiobook, "/downloads/one.mp3") }, previews), Is.False);
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked,
-                new[] { CreateGeneratedConversionResult(10, "/downloads/one.mp3", "/downloads/two.mp3") }, previews), Is.True);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked,
+                new[] { CreateImportResultForPath(10, BookMediaType.Audiobook, "/downloads/one.mp3") }, previews).Complete, Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked,
+                new[] { CreateGeneratedConversionResult(10, "/downloads/one.mp3", "/downloads/two.mp3") }, previews).Complete, Is.True);
         }
 
         [TestCase(false, BookMediaType.Audiobook)] [TestCase(true, BookMediaType.Audiobook)]
@@ -411,13 +411,15 @@ namespace Chaptarr.Core.Test.Download
                 });
                 var modes=Proxy<IDownloadImportModeResolver>((method,args)=>ImportMode.Copy);
                 var constructor=typeof(ManualImportService).GetConstructors().Single();
-                var dependencies=new Dictionary<Type,object>{[typeof(Logger)]=logger,[typeof(IDiskProvider)]=disk,[typeof(IRootFolderService)]=root,
+                var dependencies=new Dictionary<Type,object>{[typeof(NzbDrone.Core.Download.TrackedDownloads.ITrackedDownloadAlreadyImported)] = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()), [typeof(Logger)]=logger,[typeof(IDiskProvider)]=disk,[typeof(IRootFolderService)]=root,
                     [typeof(IAuthorService)]=authorService,[typeof(IBookService)]=bookService,[typeof(IEditionService)]=editionService,
                     [typeof(IMetadataTagService)]=tags,[typeof(ITrackedDownloadService)]=tracker,[typeof(IImportApprovedBooks)]=importer,
-                    [typeof(IDownloadImportModeResolver)]=modes,[typeof(IEventAggregator)]=events};
+                    [typeof(IDownloadClientFileSnapshotService)]=new DownloadClientFileSnapshotService(new DownloadClientFileSnapshotRepository(database,events),disk,logger),
+                    [typeof(IDownloadImportModeResolver)]=modes,[typeof(IEventAggregator)]=events,[typeof(IHistoryService)]=history};
                 var subject=(ManualImportService)constructor.Invoke(constructor.GetParameters().Select(parameter=>dependencies.GetValueOrDefault(parameter.ParameterType)).ToArray());
-                subject.Execute(new ManualImportCommand {Files=new List<ManualImportFile>{new(){Path=path,AuthorId=author.Id,BookId=c.Id,EditionId=edition.Id,
-                    DownloadId=tracked.DownloadItem.DownloadId,Quality=quality,DisableReleaseSwitching=true}},ImportMode=ImportMode.Copy});
+                var failure = Assert.Throws<NzbDrone.Core.Messaging.Commands.CommandFailedException>(() => subject.Execute(new ManualImportCommand {Files=new List<ManualImportFile>{new(){Path=path,AuthorId=author.Id,BookId=c.Id,EditionId=edition.Id,
+                    DownloadId=tracked.DownloadItem.DownloadId,Quality=quality,DisableReleaseSwitching=true}},ImportMode=ImportMode.Copy}));
+                Assert.That(failure.Message, Does.Contain("Imported 0 files").And.Contain(path).And.Contain("Outside original target"));
                 Assert.Multiple(()=>{Assert.That(updates,Is.Zero);Assert.That(importWrites,Is.Zero);Assert.That(books.Get(c.Id).AnyEditionOk,Is.True);
                     Assert.That(files.All(),Is.Empty);Assert.That(histories.All(),Is.Empty);});
                 TestContext.Progress.WriteLine($"C20_MANUAL_OUTSIDE database={database.DatabaseType} media={media} outsideBook={c.Id} settingsWrites={updates} fileHistoryWrites={importWrites}");
@@ -435,14 +437,14 @@ namespace Chaptarr.Core.Test.Download
             imported.ImportDecision.Item.Edition = new Edition { Id = 100, BookId = 10 };
             duplicate.ImportDecision.Item.Edition = new Edition { Id = 100, BookId = 10 };
             duplicate.ImportDecision.Reject(new NzbDrone.Core.DecisionEngine.Rejection("Skipped duplicate ebook format") { Category = "EbookAlternative" });
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked,new[]{imported,duplicate}),Is.True);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked,new[]{imported,duplicate}).Complete,Is.True);
             var previews = new[] { CreatePreviewFile(10, imported.ImportDecision.Item.Path), CreatePreviewFile(0, duplicate.ImportDecision.Item.Path) };
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported }, previews), Is.False);
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported, duplicate }, previews), Is.True);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported }, previews).Complete, Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported, duplicate }, previews).Complete, Is.True);
             duplicate.ImportDecision.Item.Edition.Id = 101;
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported, duplicate }, previews), Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported, duplicate }, previews).Complete, Is.False);
             var other=CreateImportResultForPath(11,BookMediaType.Ebook,"/downloads/other.mobi","Import failed");
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked,new[]{imported,other}),Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked,new[]{imported,other}).Complete,Is.False);
         }
 
         [TestCase(BookMediaType.Audiobook)]
@@ -455,10 +457,10 @@ namespace Chaptarr.Core.Test.Download
             var ownPath = "/downloads/book" + (media == BookMediaType.Audiobook ? ".m4b" : ".epub");
             var oppositePath = "/downloads/book" + (media == BookMediaType.Audiobook ? ".epub" : ".m4b");
             var imported = CreateImportResultForPath(10, media, ownPath);
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported },
-                new[] { CreatePreviewFile(10, ownPath), CreatePreviewFile(0, oppositePath), CreatePreviewFile(0, "/downloads/cover.jpg") }), Is.True);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported },
+                new[] { CreatePreviewFile(10, ownPath), CreatePreviewFile(0, oppositePath), CreatePreviewFile(0, "/downloads/cover.jpg") }).Complete, Is.True);
             var failed = CreateImportResultForPath(10, media, ownPath + (media == BookMediaType.Audiobook ? ".mp3" : ".mobi"), "Transfer failed");
-            Assert.That(ManualImportService.AreAllTrackedDownloadItemsImported(tracked, new[] { imported, failed }), Is.False);
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported, failed }).Complete, Is.False);
         }
 
         [TestCase("author-failure")]
@@ -502,7 +504,7 @@ namespace Chaptarr.Core.Test.Download
                     observed = (NzbDrone.Core.MediaFiles.BookImport.Identification.IdentificationOverrides)args[1];
                     return new List<ImportDecision<LocalBook>>();
                 }),
-                [typeof(Logger)] = LogManager.GetCurrentClassLogger()
+                [typeof(NzbDrone.Core.Download.TrackedDownloads.ITrackedDownloadAlreadyImported)] = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()), [typeof(Logger)] = LogManager.GetCurrentClassLogger()
             };
             var constructor = typeof(ManualImportService).GetConstructors().Single();
             var subject = (ManualImportService)constructor.Invoke(constructor.GetParameters().Select(parameter => dependencies.GetValueOrDefault(parameter.ParameterType)).ToArray());
@@ -599,7 +601,7 @@ namespace Chaptarr.Core.Test.Download
                         if (method.Name == nameof(IMediaFileService.Update)) { mediaWrites++; return files.Update((BookFile)args[0]); }
                         if (method.Name == nameof(IMediaFileService.GetFilesByBook)) return files.GetFilesByBook((int)args[0]);
                         if (method.Name == nameof(IMediaFileService.GetFilesByEdition)) return files.GetFilesByEdition((int)args[0]);
-                        if (method.Name == nameof(IMediaFileService.GetFileWithPath)) return files.GetFileWithPath((string)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFileWithPath)) return args[0] is List<string> paths ? files.GetFileWithPath(paths) : files.GetFileWithPath((string)args[0]);
                         throw new InvalidOperationException("Unexpected media operation " + method.Name);
                     });
                     var fileSystem = new System.IO.Abstractions.FileSystem();
@@ -623,7 +625,7 @@ namespace Chaptarr.Core.Test.Download
                     var editionService = new EditionService(editions, events, logger);
                     var dependencies = new Dictionary<Type, object>
                     {
-                        [typeof(Logger)] = logger, [typeof(IEventAggregator)] = events, [typeof(IMediaFileService)] = mediaFiles,
+                        [typeof(NzbDrone.Core.Download.TrackedDownloads.ITrackedDownloadAlreadyImported)] = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()), [typeof(Logger)] = logger, [typeof(IEventAggregator)] = events, [typeof(IMediaFileService)] = mediaFiles,
                         [typeof(IDiskProvider)] = disk, [typeof(IMetadataTagService)] = tags, [typeof(IBookService)] = bookService,
                         [typeof(IAuthorService)] = authorService, [typeof(IEditionService)] = editionService,
                         [typeof(IHistoryService)] = history
@@ -688,7 +690,7 @@ namespace Chaptarr.Core.Test.Download
             });
             var dependencies = new Dictionary<Type, object>
             {
-                [typeof(Logger)] = LogManager.GetCurrentClassLogger(),
+                [typeof(NzbDrone.Core.Download.TrackedDownloads.ITrackedDownloadAlreadyImported)] = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()), [typeof(Logger)] = LogManager.GetCurrentClassLogger(),
                 [typeof(IDiskProvider)] = Proxy<IDiskProvider>((method, args) => file)
             };
             var constructor = typeof(ManualImportService).GetConstructors().Single();
@@ -717,7 +719,7 @@ namespace Chaptarr.Core.Test.Download
             });
             var dependencies = new Dictionary<Type, object>
             {
-                [typeof(Logger)] = LogManager.GetCurrentClassLogger(),
+                [typeof(NzbDrone.Core.Download.TrackedDownloads.ITrackedDownloadAlreadyImported)] = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()), [typeof(Logger)] = LogManager.GetCurrentClassLogger(),
                 [typeof(IDiskProvider)] = Proxy<IDiskProvider>((method, args) => Proxy<IFileInfo>((property, values) => null)),
                 [typeof(IMakeImportDecision)] = Proxy<IMakeImportDecision>((method, args) => new List<ImportDecision<LocalBook>> { decision })
             };
@@ -833,7 +835,7 @@ namespace Chaptarr.Core.Test.Download
                         [typeof(ITrackedDownloadService)] = Proxy<ITrackedDownloadService>((method, args) => tracked),
                         [typeof(IMakeImportDecision)] = decisionMaker,
                         [typeof(NzbDrone.Core.CustomFormats.ICustomFormatCalculationService)] = Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) => new List<NzbDrone.Core.CustomFormats.CustomFormat>()),
-                        [typeof(Logger)] = logger
+                        [typeof(NzbDrone.Core.Download.TrackedDownloads.ITrackedDownloadAlreadyImported)] = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()), [typeof(Logger)] = logger
                     };
                     var constructor = typeof(ManualImportService).GetConstructors().Single();
                     var subject = (ManualImportService)constructor.Invoke(constructor.GetParameters().Select(parameter => dependencies.GetValueOrDefault(parameter.ParameterType)).ToArray());
@@ -875,7 +877,7 @@ namespace Chaptarr.Core.Test.Download
 
         private static ImportResult CreateImportResult(int bookId, BookMediaType mediaType, params string[] errors)
         {
-            return CreateImportResultForPath(bookId, mediaType, null, errors);
+            return CreateImportResultForPath(bookId, mediaType, "/downloads/book-" + bookId + (mediaType == BookMediaType.Audiobook ? ".m4b" : ".epub"), errors);
         }
 
         private static ImportResult CreateImportResultForPath(int bookId, BookMediaType mediaType, string path, params string[] errors)

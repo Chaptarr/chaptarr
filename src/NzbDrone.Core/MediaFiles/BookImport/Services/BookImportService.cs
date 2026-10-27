@@ -11,7 +11,6 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Datastore;
-using NzbDrone.Core.MediaFiles.BookImport.Aggregation;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Messaging.Events;
@@ -27,9 +26,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         private readonly IEditionService _editionService;
         private readonly IMediaFileService _mediaFileService;
         private readonly ICached<CalibreBook> _calibreBookCache;
-        private readonly IUpgradeMediaFiles _upgradeMediaFiles;
         private readonly NzbDrone.Core.Configuration.IConfigService _configService;
-        private readonly IAugmentingService _augmentingService;
         private readonly IDiskProvider _diskProvider;
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
         private readonly IEventAggregator _eventAggregator;
@@ -41,8 +38,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             IEditionService editionService,
             IMediaFileService mediaFileService,
             ICacheManager cacheManager,
-            IUpgradeMediaFiles upgradeMediaFiles,
-            IAugmentingService augmentingService,
             IDiskProvider diskProvider,
             IMediaInfoExtractor mediaInfoExtractor,
             IEventAggregator eventAggregator,
@@ -54,192 +49,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             _editionService = editionService;
             _mediaFileService = mediaFileService;
             _calibreBookCache = cacheManager.GetCache<CalibreBook>(typeof(CalibreProxy));
-            _upgradeMediaFiles = upgradeMediaFiles;
-            _augmentingService = augmentingService;
             _diskProvider = diskProvider;
             _mediaInfoExtractor = mediaInfoExtractor;
             _eventAggregator = eventAggregator;
             _configService = configService;
             _authorService = authorService;
             _logger = logger;
-        }
-
-        public Task ImportFileAsync(string path, int bookId, string quality)
-        {
-            // Backward-compatible overload: no tags provided
-            return ImportFileAsync(path, bookId, quality, null);
-        }
-
-        public Task ImportFileAsync(string path, int bookId, string quality, System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> tags)
-        {
-            return ImportFileAsync(path, bookId, null, quality, tags);
-        }
-
-        public Task ImportFileAsync(string path, int bookId, int? editionId, string quality, System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> tags)
-        {
-            try
-            {
-                // Verify file exists
-                if (!_diskProvider.FileExists(path))
-                {
-                    _logger.Error("File does not exist: {0}", path);
-                    return Task.CompletedTask;
-                }
-
-                // Get the book
-                var book = _bookService.GetBook(bookId);
-                if (book == null)
-                {
-                    _logger.Error("Book not found: {0}", bookId);
-                    return Task.CompletedTask;
-                }
-
-                var allEditions = _editionService.GetEditionsByBook(book.Id) ?? new List<Edition>();
-                var requestedEdition = editionId.HasValue && editionId.Value > 0
-                    ? _editionService.GetEdition(editionId.Value)
-                    : null;
-
-                if (requestedEdition != null && requestedEdition.BookId != book.Id)
-                {
-                    _logger.Warn("[IMPORT] Edition {0} is not owned by BookId={1}; refusing legacy apply", requestedEdition.Id, book.Id);
-                    return Task.CompletedTask;
-                }
-
-                if (requestedEdition != null)
-                {
-                    var conflictingProtectedEdition = EditionPinPolicy.FindConflictingProtectedEdition(book, allEditions, requestedEdition.Id);
-                    if (conflictingProtectedEdition != null)
-                    {
-                        _logger.Warn("[EDITION-PIN-PROTECTION] Refusing legacy apply of EditionId={0} to pinned BookId={1}; protected EditionId={2}",
-                            requestedEdition.Id,
-                            book.Id,
-                            conflictingProtectedEdition.Id);
-                        return Task.CompletedTask;
-                    }
-                }
-
-                // Create LocalBook for import
-                var localBook = new LocalBook
-                {
-                    Path = path,
-                    Book = book,
-                    Author = book.Author,
-                    Size = _diskProvider.GetFileSize(path),
-                    Modified = _diskProvider.FileGetLastWrite(path),
-                    Quality = ParseQuality(quality)
-                };
-
-                // Populate RawTags when available (from staging), so augmenting/parsing has inputs
-                if (tags != null && tags.Count > 0)
-                {
-                    localBook.RawTags = new RawFileTags { AllTags = tags };
-                }
-
-                // Augment metadata (format, quality, etc.)
-                _augmentingService.Augment(localBook, false);
-
-                // Ensure we have an edition
-                if (requestedEdition != null)
-                {
-                    localBook.Edition = requestedEdition;
-                }
-
-                if (localBook.Edition == null)
-                {
-                    // Use preferred edition or monitored edition
-                    localBook.Edition = allEditions.FirstOrDefault(e => e.Monitored) ?? allEditions.FirstOrDefault();
-                    
-                    if (localBook.Edition == null)
-                    {
-                        _logger.Error("No edition found for book: {0}", book.Title);
-                        return Task.CompletedTask;
-                    }
-                }
-
-                if (localBook.Edition.BookId != book.Id)
-                {
-                    _logger.Warn("[IMPORT] Edition {0} is not owned by BookId={1}; refusing legacy apply", localBook.Edition.Id, book.Id);
-                    return Task.CompletedTask;
-                }
-
-                // Check if file already exists in library (global path-level idempotency)
-                var existingFile = _mediaFileService.GetFileWithPath(path);
-                
-                if (existingFile != null)
-                {
-                    _logger.Debug("[IMPORT] File already exists in library (global path match): {0}", path);
-                    return Task.CompletedTask;
-                }
-
-                // Create BookFile entity
-                var bookFile = new BookFile
-                {
-                    Path = path,
-                    Size = localBook.Size,
-                    Modified = localBook.Modified,
-                    DateAdded = DateTime.UtcNow,
-                    // Prefer extension-based quality detection; fall back to parsed quality
-                    Quality = DetermineQualityByExtension(path) ?? localBook.Quality ?? new QualityModel { Quality = Quality.Unknown },
-                    // Ensure non-null MediaInfo to satisfy DB constraint; extractor can enrich later
-                    MediaInfo = new MediaInfoModel(),
-                    EditionId = localBook.Edition.Id,
-                    Part = localBook.Part,
-                    MediaType = book.MediaType == 0 ? "audiobook" : "ebook",
-                    AllTags = tags,
-                    DurationSeconds = GetDurationSeconds(path)
-                };
-
-                // Use UpgradeMediaFiles to respect Media Management (rename + move/copy/hardlink)
-                // Determine copyOnly based on context:
-                // - If the file is already under the author's folder, moving is safe (copyOnly=false)
-                // - Otherwise default to copyOnly=true to preserve source (download folder/manual import)
-                bool copyOnly = true;
-                try
-                {
-                    var authorFolder = book.Author?.Path;
-                    if (!string.IsNullOrWhiteSpace(authorFolder) && path.StartsWith(authorFolder, StringComparison.OrdinalIgnoreCase))
-                    {
-                        copyOnly = false;
-                    }
-                }
-                catch { /* default to copyOnly=true */ }
-                var moveResult = _upgradeMediaFiles.UpgradeBookFile(bookFile, localBook, copyOnly);
-                if (moveResult?.BookFile != null)
-                {
-                    bookFile = moveResult.BookFile;
-                }
-
-                // Add the file to database
-                _mediaFileService.Add(bookFile);
-
-                // Ensure the matched edition is monitored so UI/APIs resolve the correct title
-                try
-                {
-                    if (localBook.Edition != null)
-                    {
-                        _editionService.SetMonitored(localBook.Edition, false); // automatic selection during import
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "[IMPORT] Failed to set monitored edition for bookId={0}", bookId);
-                }
-
-                // Update book statistics
-                // Update book statistics are handled by event handlers
-
-                // Publish import event
-                _eventAggregator.PublishEvent(new BookFileAddedEvent(bookFile));
-
-                _logger.Info("Successfully imported file: {0} for book: {1}", path, book.Title);
-                
-                return Task.CompletedTask;
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Failed to import file: {0} for book: {1}", path, bookId);
-                throw;
-            }
         }
 
         // Import a file that already resides within the user's library (root-folder scan)
@@ -352,6 +167,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	                        }
 
 	                        existing.Author = book.Author;
+	                        ApplyCalibreIdentity(existing, path);
 	                        RefreshTrackedFileMetadata(existing, file, book);
                         ApplySuccessfulMatchState(existing, provenance, book.Author, book, targetEdition);
 
@@ -381,9 +197,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     if (existing.EditionId == targetEdition.Id)
                     {
                         var fileChanged = MediaFileFreshness.HasChanged(existing, GetObservedSize(file), GetObservedModified(file));
+                        var calibreIdChanged = ApplyCalibreIdentity(existing, path);
                         var needsRefresh = fileChanged ||
                                            !string.Equals(existing.MediaType, GetMediaType(book), StringComparison.OrdinalIgnoreCase) ||
-                                           (file?.Quality != null && existing.Quality != file.Quality);
+                                           (file?.Quality != null && existing.Quality != file.Quality) ||
+                                           calibreIdChanged;
 
                         if (!needsRefresh)
                         {
@@ -423,6 +241,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     DurationSeconds = detectedDuration
                 };
 
+                ApplyCalibreIdentity(bf, path);
                 _mediaFileService.Add(bf);
 
                 var added = VerifyAppliedFile(path, targetEdition.Id, null, provenance, book.Author, book, targetEdition);
@@ -636,17 +455,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 resolvedFiles.Select(item => (item.Request.File.Path, (int?)item.Edition.Id)),
                 defaultEdition?.Id ?? 0);
 
-            // Resolve existing DB rows per path (list size is per-book and should be small).
-            // Avoid MediaFileRepository.GetFileWithPath(List<>) which materializes the entire table.
-            var existingByPath = new Dictionary<string, BookFile>(StringComparer.OrdinalIgnoreCase);
-            foreach (var p in resolvedFiles.Select(item => item.Request.File.Path).Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                var existing = _mediaFileService.GetFileWithPath(p);
-                if (existing != null && !string.IsNullOrWhiteSpace(existing.Path))
-                {
-                    existingByPath[existing.Path] = existing;
-                }
-            }
+            // The repository bounds and chunks this lookup to the original book batch.
+            var paths = resolvedFiles.Select(item => item.Request.File.Path).Distinct(PathEqualityComparer.Instance).ToList();
+            var existingByPath = (_mediaFileService.GetFileWithPath(paths) ?? new List<BookFile>())
+                .Where(file => file.Path.IsNotNullOrWhiteSpace())
+                .ToDictionary(file => file.Path, PathEqualityComparer.Instance);
 
             var newFiles = new List<BookFile>();
             var pendingUpdates = new List<(BookFile File, string Path, int EditionId, int Part, bool RelinkedFromUnmapped, bool IdentityAlreadyLinked, MatchProvenance Provenance, Edition Edition)>();
@@ -660,17 +473,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 var file = request.File;
                 var edition = resolvedFiles[i].Edition;
                 var assignment = partAssignments[file.Path];
-                var calibreId = _calibreBookCache.Find(file.Path)?.Id ?? 0;
 
                 // Check if this path already exists in DB
                 if (existingByPath.TryGetValue(file.Path, out var existingFile))
                 {
-                    var previousEditionId = existingFile.EditionId;
-                    var calibreIdChanged = calibreId > 0 && existingFile.CalibreId != calibreId;
-                    if (calibreIdChanged)
+                    // The bulk path deliberately joins only Edition. Reuse the operation's loaded
+                    // target navigation rather than triggering lazy Book/Author reads per file.
+                    if (existingFile.EditionId == edition.Id)
                     {
-                        existingFile.CalibreId = calibreId;
+                        existingFile.Edition = edition;
+                        existingFile.Author = author;
+                        edition.Book ??= book;
                     }
+
+                    existingFile.PartCount = assignment.PartCount;
+                    var previousEditionId = existingFile.EditionId;
+                    var calibreIdChanged = ApplyCalibreIdentity(existingFile, file.Path);
 
                     // Identity is already satisfied. Refresh mutable metadata only when the shared
                     // file-freshness predicate (or deterministic grouping metadata) says it changed.
@@ -678,7 +496,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     {
                         var fileChanged = MediaFileFreshness.HasChanged(existingFile, GetObservedSize(file), GetObservedModified(file));
                         var needsRefresh = fileChanged ||
-                                           existingFile.PartCount != assignment.PartCount ||
                                            !string.Equals(existingFile.MediaType, GetMediaType(book), StringComparison.OrdinalIgnoreCase) ||
                                            (file.Quality != null && existingFile.Quality != file.Quality) ||
                                            calibreIdChanged;
@@ -727,7 +544,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         DateAdded = DateTime.UtcNow,
                         Quality = file.Quality ?? DetermineQualityByExtension(file.Path) ?? new QualityModel { Quality = Quality.Unknown },
                         MediaInfo = MediaDuration.CreateMediaInfo(detectedDuration),
-                        CalibreId = calibreId,
                         EditionId = edition.Id,
                         Part = assignment.Part,
                         PartCount = assignment.PartCount,
@@ -741,43 +557,30 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         bf.Edition.Book = book;
                     }
                     bf.Author = author;
+                    ApplyCalibreIdentity(bf, file.Path);
                     newFiles.Add(bf);
                     pendingAdds.Add((bf, file.Path, edition.Id, assignment.Part, request.Provenance, edition));
                 }
             }
 
+            var failedUpdates = new HashSet<string>(PathEqualityComparer.Instance);
             foreach (var pending in pendingUpdates)
             {
                 try
                 {
                     _mediaFileService.Update(pending.File);
-                    var applied = VerifyAppliedFile(pending.Path, pending.EditionId, pending.Part, pending.Provenance, author, book, pending.Edition);
-                    if (pending.IdentityAlreadyLinked && applied.IsApplied)
-                    {
-                        applied = BookImportFileResult.AlreadyLinked(pending.Path, applied.BookFileId);
-                        PublishBookFileUpdated(pending.File);
-                    }
-                    results.Add(applied);
-
-                    if (applied.IsApplied)
-                    {
-                        editionsTouched.Add(pending.EditionId);
-                        if (pending.RelinkedFromUnmapped)
-                        {
-                            relinkedFromUnmapped.Add(pending.File);
-                        }
-                    }
                 }
                 catch (Exception ex)
                 {
                     _logger.Warn(ex, "[TRACK] Failed updating existing file: {0}", pending.Path);
+                    failedUpdates.Add(pending.Path);
                     results.Add(BookImportFileResult.Failed(pending.Path, "UPDATE_FAILED_AT_APPLY"));
                 }
             }
 
+            Exception addException = null;
             if (newFiles.Count > 0)
             {
-                Exception addException = null;
                 try
                 {
                     _mediaFileService.AddMany(newFiles);
@@ -785,22 +588,64 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 catch (Exception ex)
                 {
                     addException = ex;
-                    _logger.Warn(ex, "[TRACK] Failed batch-adding {0} files for book {1}; verifying each path", newFiles.Count, book.Title);
+                    _logger.Warn(ex, "[TRACK] Failed batch-adding {0} files for book {1}; verifying persisted paths", newFiles.Count, book.Title);
+                }
+            }
+
+            var verifyPaths = pendingUpdates.Where(pending => !failedUpdates.Contains(pending.Path)).Select(pending => pending.Path)
+                .Concat(pendingAdds.Select(pending => pending.Path)).ToList();
+            var verifyTimer = System.Diagnostics.Stopwatch.StartNew();
+            var persistedByPath = new Dictionary<string, BookFile>(PathEqualityComparer.Instance);
+            try
+            {
+                if (verifyPaths.Count > 0)
+                {
+                    persistedByPath = (_mediaFileService.GetFileWithPath(verifyPaths) ?? new List<BookFile>())
+                        .ToDictionary(file => file.Path, PathEqualityComparer.Instance);
+                }
+            }
+            catch (Exception ex) when (pendingAdds.Count == 0)
+            {
+                _logger.Warn(ex, "[TRACK] Failed verifying updated files for book {0}", book.Id);
+                foreach (var pending in pendingUpdates.Where(pending => !failedUpdates.Contains(pending.Path)))
+                {
+                    results.Add(BookImportFileResult.Failed(pending.Path, "UPDATE_FAILED_AT_APPLY"));
+                    failedUpdates.Add(pending.Path);
+                }
+            }
+            _logger.Debug("[APPLY-VERIFY] Loaded {0}/{1} paths in {2}ms", persistedByPath.Count, verifyPaths.Count, verifyTimer.ElapsedMilliseconds);
+            foreach (var pending in pendingUpdates.Where(pending => !failedUpdates.Contains(pending.Path)))
+            {
+                var applied = VerifyAppliedFile(pending.Path, pending.EditionId, pending.Part, pending.Provenance, author, book, pending.Edition, persistedByPath);
+                if (pending.IdentityAlreadyLinked && applied.IsApplied)
+                {
+                    applied = BookImportFileResult.AlreadyLinked(pending.Path, applied.BookFileId);
+                    PublishBookFileUpdated(pending.File);
+                }
+                results.Add(applied);
+
+                if (applied.IsApplied)
+                {
+                    editionsTouched.Add(pending.EditionId);
+                    if (pending.RelinkedFromUnmapped)
+                    {
+                        relinkedFromUnmapped.Add(pending.File);
+                    }
+                }
+            }
+
+            foreach (var pending in pendingAdds)
+            {
+                var applied = VerifyAppliedFile(pending.Path, pending.EditionId, pending.Part, pending.Provenance, author, book, pending.Edition, persistedByPath);
+                if (!applied.IsApplied && addException != null)
+                {
+                    applied = BookImportFileResult.Failed(pending.Path, "ADD_FAILED_AT_APPLY");
                 }
 
-                foreach (var pending in pendingAdds)
+                results.Add(applied);
+                if (applied.IsApplied)
                 {
-                    var applied = VerifyAppliedFile(pending.Path, pending.EditionId, pending.Part, pending.Provenance, author, book, pending.Edition);
-                    if (!applied.IsApplied && addException != null)
-                    {
-                        applied = BookImportFileResult.Failed(pending.Path, "ADD_FAILED_AT_APPLY");
-                    }
-
-                    results.Add(applied);
-                    if (applied.IsApplied)
-                    {
-                        editionsTouched.Add(pending.EditionId);
-                    }
+                    editionsTouched.Add(pending.EditionId);
                 }
             }
 
@@ -884,6 +729,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return _diskProvider.FileGetLastWrite(file?.Path).ToUniversalTime();
+        }
+
+        private bool ApplyCalibreIdentity(BookFile file, string sourcePath)
+        {
+            var calibreId = _calibreBookCache.Find(sourcePath)?.Id ?? 0;
+            if (calibreId <= 0 || file.CalibreId == calibreId)
+            {
+                return false;
+            }
+
+            file.CalibreId = calibreId;
+            return true;
         }
 
         private void RefreshTrackedFileMetadata(
@@ -1009,9 +866,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             MatchProvenance provenance = null,
             Author author = null,
             Book book = null,
-            Edition edition = null)
+            Edition edition = null,
+            IReadOnlyDictionary<string, BookFile> persistedByPath = null)
         {
-            var persisted = _mediaFileService.GetFileWithPath(path);
+            var persisted = persistedByPath == null ? _mediaFileService.GetFileWithPath(path) : persistedByPath.GetValueOrDefault(path);
             if (persisted == null)
             {
                 _logger.Error("[APPLY-VERIFY] No BookFile row found after apply: {0}", path);
@@ -1060,19 +918,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return results;
-        }
-
-        private QualityModel ParseQuality(string quality)
-        {
-            // Parse quality string if provided, otherwise use Unknown
-            if (string.IsNullOrWhiteSpace(quality))
-            {
-                return new QualityModel { Quality = Quality.Unknown };
-            }
-
-            // Try to parse from string representation
-            // This is simplified - in reality you'd use QualityParser
-            return new QualityModel { Quality = Quality.Unknown };
         }
 
         private QualityModel DetermineQualityByExtension(string filePath)

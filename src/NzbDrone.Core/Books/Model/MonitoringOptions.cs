@@ -11,9 +11,9 @@ namespace NzbDrone.Core.Books
             BooksToMonitor = new List<string>();
         }
 
-        // Omitting an unset policy would restore legacy All when persisted options reload.
+        // An omitted policy leaves existing monitoring unchanged.
         [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
-        public MonitorTypes? Monitor { get; set; } = MonitorTypes.All;
+        public MonitorTypes? Monitor { get; set; }
         // Optional: when set, apply monitoring changes only to this media type (audiobook/ebook).
         // When null, apply to all books (legacy behavior).
         public BookMediaType? MediaType { get; set; }

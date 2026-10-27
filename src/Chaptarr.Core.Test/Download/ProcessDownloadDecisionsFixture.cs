@@ -25,7 +25,7 @@ namespace Chaptarr.Core.Test.Download
             var subject = new ProcessDownloadDecisions(
                 downloadService,
                 new ApprovedFirstPrioritizer(),
-                new NoopPendingReleaseService(),
+                new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(),
                 LogManager.GetLogger("ProcessDownloadDecisionsFixture"));
 
             var book = new Book { Id = 5792, Title = "Best Served Cold", MediaType = BookMediaType.Ebook };
@@ -46,15 +46,15 @@ namespace Chaptarr.Core.Test.Download
             var subject = new ProcessDownloadDecisions(
                 new MamSlotBlockedDownloadService(),
                 new ApprovedFirstPrioritizer(),
-                pending,
+                pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(),
                 LogManager.GetLogger("ProcessDownloadDecisionsFixture"));
             var decision = BuildDecision(new Book { Id = 5792, Title = "Book", MediaType = BookMediaType.Ebook }, "Book", Quality.EPUB);
 
-            var result = await subject.ProcessDecision(decision, null);
+            var result = await subject.ProcessDecisions(new List<DownloadDecision> { decision }, null);
 
             Assert.Multiple(() =>
             {
-                Assert.That(result, Is.EqualTo(ProcessedDecisionResult.Pending));
+                Assert.That(result.Pending, Is.EqualTo(new[] { decision }));
                 Assert.That(pending.Added.Single().Decision, Is.SameAs(decision));
                 Assert.That(pending.Added.Single().Reason, Is.EqualTo(PendingReleaseReason.Delay));
             });
@@ -64,7 +64,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task eligible_copy_should_include_only_its_same_release_delay_only_top_choice(bool delayedFirst)
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var approved = Copy(1, "shared");
             var delayed = new DownloadDecision(Copy(2, "shared").RemoteBook, new Rejection("Waiting", RejectionType.Temporary, false, "Delay"));
             var reports = delayedFirst ? new List<DownloadDecision> { delayed, approved } : new List<DownloadDecision> { approved, delayed };
@@ -80,7 +80,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task eligible_copy_should_not_bypass_any_other_check_or_copy_preference(string difference)
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var approved = Copy(1, "shared"); var copy = Copy(2, "shared");
             if (difference == "other_release") copy.RemoteBook.Release.Guid = "different";
             if (difference == "other_work") copy.RemoteBook.Books[0].HardcoverBookId = "hc:other";
@@ -107,7 +107,7 @@ namespace Chaptarr.Core.Test.Download
                 }
             };
             var pending = new RecordingPendingReleaseService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), pending, LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var delayed = new DownloadDecision(Copy(1, "shared").RemoteBook, new Rejection("Waiting", RejectionType.Temporary, false, "Delay"));
             var eligible = Copy(2, "shared");
             eligible.RemoteBook.Release = delayed.RemoteBook.Release;
@@ -137,7 +137,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task successful_grab_should_skip_later_delay_for_the_same_book()
         {
             var transport = new RecordingDownloadService(); var pending = new RecordingPendingReleaseService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), pending, LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var delayed = new DownloadDecision(Copy(2, "preferred").RemoteBook, new Rejection("Waiting", RejectionType.Temporary, false, "Delay"));
             var approved = Copy(2, "other");
             var result = await processor.ProcessDecisions(new List<DownloadDecision> { delayed, approved });
@@ -151,7 +151,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task selected_manual_views_should_share_grouping_without_adding_unselected_targets(bool selectBoth)
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var first = Copy(1, "shared"); var second = Copy(2, "shared");
             first.RemoteBook.DownloadAllowed = false; second.RemoteBook.DownloadAllowed = false;
             await processor.ProcessSelectedDecisions(selectBoth ? new List<RemoteBook> { first.RemoteBook, second.RemoteBook } : new() { first.RemoteBook }, 9);
@@ -165,7 +165,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task manual_bulk_should_preserve_distinct_selected_reports_for_the_same_book()
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             await processor.ProcessSelectedDecisions(new List<RemoteBook> { Copy(1, "first").RemoteBook, Copy(1, "second").RemoteBook }, 9);
             Assert.That(transport.Downloaded.Select(remote => remote.Release.Guid), Is.EqualTo(new[] { "first", "second" }));
             Assert.That(transport.ClientIds, Is.EqualTo(new int?[] { 9, 9 }));
@@ -175,7 +175,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task identical_selected_required_context_should_dispatch_once()
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var collection = Copy(1, "required").RemoteBook;
             collection.AlternativeCopies = false;
             collection.Books.Add(Copy(2, "required").RemoteBook.Books.Single());
@@ -188,7 +188,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task selected_captured_group_should_merge_with_an_explicit_singleton_using_each_current_score()
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var group = Copy(1, "shared").RemoteBook;
             var second = Copy(2, "shared").RemoteBook;
             group.Books.Add(second.Books.Single());
@@ -215,7 +215,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task every_member_of_a_captured_group_should_pass_the_existing_copy_gate(string difference)
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var group = Copy(1, "shared").RemoteBook;
             var second = Copy(2, "shared").RemoteBook.Books.Single();
             group.Books.Add(second);
@@ -231,7 +231,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task an_unaccepted_source_group_should_not_consume_other_explicitly_selected_copies()
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var group = Copy(1, "shared").RemoteBook;
             var second = Copy(2, "shared").RemoteBook.Books.Single();
             second.HardcoverBookId = "hc:other";
@@ -245,7 +245,7 @@ namespace Chaptarr.Core.Test.Download
         public async Task every_member_of_a_captured_group_should_remain_at_its_current_queue_head()
         {
             var transport = new RecordingDownloadService();
-            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), LogManager.GetCurrentClassLogger());
+            var processor = new ProcessDownloadDecisions(transport, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
             var group = Copy(1, "shared").RemoteBook;
             group.Books.Add(Copy(2, "shared").RemoteBook.Books.Single());
             group.TargetEditionIds[2] = 12;
@@ -282,7 +282,7 @@ namespace Chaptarr.Core.Test.Download
             var prioritizer = new DownloadDecisionPriorizationService(config, delays, null, LogManager.GetCurrentClassLogger());
             var downloads = 0;
             var transport = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDownloadService>((method, args) => { downloads++; return Task.CompletedTask; });
-            new ProcessDownloadDecisions(transport, prioritizer, pending, LogManager.GetCurrentClassLogger()).ProcessDecisions(reports).GetAwaiter().GetResult();
+            new ProcessDownloadDecisions(transport, prioritizer, pending, new Chaptarr.Core.Test.Download.EmptyQueueSpecification(), LogManager.GetCurrentClassLogger()).ProcessDecisions(reports).GetAwaiter().GetResult();
             Assert.That(downloads, Is.Zero);
             if (difference == "shared_original")
             {
@@ -300,6 +300,60 @@ namespace Chaptarr.Core.Test.Download
                 Assert.That(written.All(pair => pair.Item1.RemoteBook.Books.Count == 1), Is.True);
                 Assert.That(written, Has.Count.EqualTo(difference == "permanent" ? 1 : 2));
             }
+        }
+
+        [Test]
+        public async Task dispatch_uses_current_queue_without_waiting_for_initial_poll()
+        {
+            var events = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((method, args) => null);
+            var history = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.History.IHistoryService>((method, args) => new List<NzbDrone.Core.History.EntityHistory>());
+            var jobReads = 0;
+            var tracking = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaFiles.IConversionTrackingService>((method, args) => null);
+            var jobs = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaFiles.IConversionJobService>((method, args) => { jobReads++; return null; });
+            var queue = new NzbDrone.Core.Queue.QueueService(events, history, null, tracking, null, jobs);
+            queue.Handle(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadRefreshedEvent(new()));
+            var downloads = new RecordingDownloadService();
+            var pending = new RecordingPendingReleaseService();
+            var processor = new ProcessDownloadDecisions(downloads, new ApprovedFirstPrioritizer(), pending, new NzbDrone.Core.DecisionEngine.Specifications.QueueSpecification(queue, null, null, null, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger());
+            var decision = BuildDecision(new Book { Id = 17, MediaType = BookMediaType.Ebook }, "Book", Quality.EPUB);
+
+            var ready = await processor.ProcessDecisions(new List<DownloadDecision> { decision });
+            Assert.That(ready.Grabbed, Has.Count.EqualTo(1));
+            Assert.That(downloads.Downloaded, Has.Count.EqualTo(1));
+            Assert.That(ready.Pending, Is.Empty);
+            Assert.That(pending.Added, Is.Empty);
+
+            queue.Handle(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadRefreshedEvent(new()
+            {
+                new NzbDrone.Core.Download.TrackedDownloads.TrackedDownload
+                {
+                    DownloadClient = 1, IsTrackable = true, RemoteBook = decision.RemoteBook,
+                    State = NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadState.Downloading,
+                    DownloadItem = new DownloadClientItem { DownloadId = "existing-grab", Title = "Book",
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "Client" } }
+                }
+            }));
+            var readsBeforeDecision = jobReads;
+            var staleDecision = await processor.ProcessDecisions(new List<DownloadDecision> { decision });
+            Assert.That(jobReads, Is.EqualTo(readsBeforeDecision), "Acquisition must not fetch conversion status for queue rows");
+            queue.GetQueue();
+            Assert.That(jobReads, Is.EqualTo(readsBeforeDecision + 1), "Queue display must still refresh conversion status");
+            Assert.That(staleDecision.Grabbed, Is.Empty, "A decision prepared before the first poll must use the recovered queue");
+            Assert.That(staleDecision.Rejected, Has.Count.EqualTo(1));
+            Assert.That(downloads.Downloaded, Has.Count.EqualTo(1));
+            queue.Handle(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadRefreshedEvent(new()));
+        }
+
+        [Test]
+        public async Task explicit_manual_selection_does_not_consult_queue()
+        {
+            var queue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Queue.IQueueService>((method, args) => throw new InvalidOperationException("Explicit selection must not consult the queue"));
+            var specification = new NzbDrone.Core.DecisionEngine.Specifications.QueueSpecification(queue, null, null, null, LogManager.GetCurrentClassLogger());
+            var downloads = new RecordingDownloadService();
+            var processor = new ProcessDownloadDecisions(downloads, new ApprovedFirstPrioritizer(), new NoopPendingReleaseService(), specification, LogManager.GetCurrentClassLogger());
+            var decision = BuildDecision(new Book { Id = 17, MediaType = BookMediaType.Ebook }, "Book", Quality.EPUB);
+            await processor.ProcessSelectedDecisions(new List<RemoteBook> { decision.RemoteBook });
+            Assert.That(downloads.Downloaded, Has.Count.EqualTo(1));
         }
 
         private static DownloadDecision Copy(int id, string guid)

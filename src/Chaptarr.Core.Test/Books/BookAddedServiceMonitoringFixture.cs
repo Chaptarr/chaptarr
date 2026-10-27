@@ -149,7 +149,7 @@ namespace Chaptarr.Core.Test.Books
             subject.Handle(new BookInfoRefreshedEvent(author, new List<Book> { automatic }, new List<Book>(), new List<Book>()));
             queue.RejectPush = 1;
             var events = new RecordingEventAggregator();
-            var handler = new AuthorScannedHandler(null, null, queue, subject, events, LogManager.GetCurrentClassLogger());
+            var handler = new AuthorScannedHandler(null, null, queue, subject, events, LogManager.GetCurrentClassLogger(), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((_, _) => throw new NotSupportedException()));
 
             Assert.DoesNotThrow(() =>
             {

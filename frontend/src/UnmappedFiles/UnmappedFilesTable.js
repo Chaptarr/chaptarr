@@ -864,7 +864,7 @@ class UnmappedFilesTable extends Component {
               label={translate('UnmappedFilesSendLogsButton')}
               iconName={icons.BUG}
               title={translate('UnmappedFilesSendLogsHeader')}
-              isDisabled={!isPopulated || !filteredItems.length}
+              isDisabled={true}
               isSpinning={this.props.isSendingLogs}
               onPress={this.onSendLogsForReview}
             />

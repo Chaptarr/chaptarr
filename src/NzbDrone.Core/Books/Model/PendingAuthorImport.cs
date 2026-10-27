@@ -47,6 +47,9 @@ namespace NzbDrone.Core.Books
         // Audiobook configuration. The author-side gate is a simple yes/no; new-item
         // policy is independent so an exact-book request cannot accidentally select
         // the old three-state "existing" mode.
+        public bool? SyncMonitoredAcrossFormats { get; set; }
+        public bool IsAuthorSettingsRequest { get; set; }
+
         public bool? AudiobookMonitored { get; set; }
         public NewItemMonitorTypes? AudiobookMonitorNewItems { get; set; }
         // One-time seed policy for books already in the imported catalog. This is
@@ -55,6 +58,7 @@ namespace NzbDrone.Core.Books
         public int? AudiobookQualityProfileId { get; set; }
         public int? AudiobookMetadataProfileId { get; set; }
         public string AudiobookRootFolderPath { get; set; }
+        public string AudiobookBooksToAdd { get; set; } // JSON serialized List<string>; add without monitoring
         public string AudiobookBooksToMonitor { get; set; } // JSON serialized List<string>
         public string AudiobookBooksToSearch { get; set; } // JSON serialized List<string>
         public string AudiobookNarrations { get; set; } // JSON serialized List<RequestedNarration>
@@ -68,6 +72,7 @@ namespace NzbDrone.Core.Books
         public int? EbookQualityProfileId { get; set; }
         public int? EbookMetadataProfileId { get; set; }
         public string EbookRootFolderPath { get; set; }
+        public string EbookBooksToAdd { get; set; } // JSON serialized List<string>; add without monitoring
         public string EbookBooksToMonitor { get; set; } // JSON serialized List<string>
         public string EbookBooksToSearch { get; set; } // JSON serialized List<string>
         public string EbookTags { get; set; } // JSON serialized HashSet<int>

@@ -483,7 +483,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                     new TitleMatchProblem { Code = TitleMatchProblemCode.SiblingTitleContradiction, Value = "Other Title" }
                 }
             };
-            var identity = new ReleaseIdentityEvidence { HasPositiveIdentityEvidence = true };
+            var identity = new ReleaseIdentityEvidence { HasAuthorIdentityEvidence = true };
 
             var accepted = ReleaseTitleMatchSpecification.IsAcceptedMatch(
                 match,
@@ -729,17 +729,13 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 }
             };
 
-            var authorProven = new ReleaseIdentityEvidence { HasPositiveIdentityEvidence = true, HasAuthorIdentityEvidence = true };
-            var narratorOrSeriesOnly = new ReleaseIdentityEvidence { HasPositiveIdentityEvidence = true, HasAuthorIdentityEvidence = false };
+            var authorProven = new ReleaseIdentityEvidence { HasAuthorIdentityEvidence = true };
             var unproven = new ReleaseIdentityEvidence();
 
             foreach (var strictness in new[] { BookMatchingStrictness.Balanced, BookMatchingStrictness.Aggressive })
             {
                 // No identity at all: another publisher's numbered product, no tolerance.
                 Assert.That(ReleaseTitleMatchSpecification.IsAcceptedMatch(match, unproven, strictness), Is.False, strictness.ToString());
-
-                // A known narrator or series is corroboration, not authorship, so it earns no tolerance.
-                Assert.That(ReleaseTitleMatchSpecification.IsAcceptedMatch(match, narratorOrSeriesOnly, strictness), Is.False, strictness.ToString());
 
                 // Proven author identity keeps the tolerance.
                 Assert.That(ReleaseTitleMatchSpecification.IsAcceptedMatch(match, authorProven, strictness), Is.True, strictness.ToString());

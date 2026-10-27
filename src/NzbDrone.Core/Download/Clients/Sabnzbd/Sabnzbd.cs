@@ -21,6 +21,7 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
     public class Sabnzbd : UsenetClientBase<SabnzbdSettings>
     {
         private readonly ISabnzbdProxy _proxy;
+        private readonly IDownloadClientFileSnapshotService _fileSnapshots;
 
         public Sabnzbd(ISabnzbdProxy proxy,
                        IHttpClient httpClient,
@@ -28,10 +29,12 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
                        IDiskProvider diskProvider,
                        IRemotePathMappingService remotePathMappingService,
                        IValidateNzbs nzbValidationService,
+                       IDownloadClientFileSnapshotService fileSnapshots,
                        Logger logger)
             : base(httpClient, configService, diskProvider, remotePathMappingService, nzbValidationService, logger)
         {
             _proxy = proxy;
+            _fileSnapshots = fileSnapshots;
         }
 
         // patch can be a number (releases) or 'x' (git)
@@ -192,6 +195,57 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
                     yield return downloadClientItem;
                 }
             }
+        }
+
+        public override DownloadClientItem GetImportItem(DownloadClientItem item, DownloadClientItem previousImportAttempt)
+        {
+            var result = item.Clone();
+            if (item.Status != DownloadItemStatus.Completed || item.OutputPath.IsEmpty)
+            {
+                return result;
+            }
+
+            if (previousImportAttempt != null && previousImportAttempt.DownloadId == item.DownloadId &&
+                previousImportAttempt.DownloadClientInfo?.Id == item.DownloadClientInfo?.Id &&
+                previousImportAttempt.OutputPath == item.OutputPath &&
+                previousImportAttempt.FileListConfidence == DownloadClientFileListConfidence.Authoritative &&
+                previousImportAttempt.FilePaths?.Count > 0)
+            {
+                result.FilePaths = previousImportAttempt.FilePaths;
+                result.FileListConfidence = previousImportAttempt.FileListConfidence;
+                return result;
+            }
+
+            // Imports can move source files. Restore the captured list after a restart
+            // before asking SAB for a directory that may now contain only the leftovers.
+            _fileSnapshots.ApplySnapshot(result);
+            if (result.FileListConfidence == DownloadClientFileListConfidence.Authoritative && result.FilePaths?.Count > 0)
+            {
+                return result;
+            }
+
+            List<string> paths;
+            try
+            {
+                paths = _proxy.GetFiles(RemapLocalToRemote(item.OutputPath), item.Title, Settings)
+                    .Select(path => RemapRemoteToLocal(path).FullPath).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to fetch SABnzbd final file list for {0}; using existing output path.", item.Title);
+                return result;
+            }
+
+            // Older SAB versions only list directories. An empty response must not
+            // replace an inventory or claim that there are no required media files.
+            if (paths.Count > 0)
+            {
+                result.FilePaths = paths;
+                result.FileListConfidence = DownloadClientFileListConfidence.Authoritative;
+                _fileSnapshots.CaptureClientList(result);
+            }
+
+            return result;
         }
 
         private bool IsConfiguredCategory(string itemCategory)

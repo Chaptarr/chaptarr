@@ -104,7 +104,7 @@ namespace Chaptarr.Core.Test.Books
             builder.Services.AddCors(options => options.AddPolicy("ApiCorsPolicy", policy => policy.AllowAnyOrigin()));
             builder.Services.AddControllers().AddApplicationPart(typeof(BookController).Assembly).AddControllersAsServices();
             builder.Services.AddTransient(_ => new BookController(authors, books, add, editions, new EditionSelector(logger),
-                null, null, null, null, null, null, null, null, null, null, roots,
+                null, null, null, null, null, null, null, null, roots,
                 new QualityProfileExistsValidator(new TestQualityProfileService()),
                 new MetadataProfileExistsValidator(new TestMetadataProfileService()), logger));
             builder.Services.AddTransient(_ => new AuthorController(null, authors, books, null, library, null, null, null, roots, null, null, names,

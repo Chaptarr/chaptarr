@@ -68,6 +68,64 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [Test]
+        public void provider_suggestion_does_not_replace_surviving_selection(
+            [Values(false, true)] bool postgres, [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(false, true)] bool anyEditionOk)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var harness = new RefreshHarness(database, mediaType);
+                harness.SetAnyEditionOk(anyEditionOk);
+                var selected = harness.Edition("selected", 1, monitored: true);
+                var retentionPin = harness.Edition("retained-pin", 2, manualAdd: true);
+                harness.Seed(selected, retentionPin);
+                var remote = harness.RemoteBook(harness.Edition("selected", 1),
+                    harness.Edition("suggestion", 10000, monitored: true));
+
+                harness.Refresh(remote);
+                Assert.That(harness.AssertSelection("selected"), Is.EqualTo(selected.Id));
+                Assert.That(harness.Editions().Single(edition => edition.Id == retentionPin.Id).ManualAdd, Is.True);
+                harness.AssertUnchangedRefresh(remote, selected.Id);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void strict_selected_edition_survives_remote_removal_without_manual_flag(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var harness = new RefreshHarness(database, BookMediaType.Audiobook);
+                harness.SetAnyEditionOk(false);
+                var selected = harness.Edition("strict", 1, monitored: true);
+                harness.Seed(selected);
+                var remote = harness.RemoteBook(harness.Edition("suggestion", 10000, monitored: true));
+
+                harness.Refresh(remote);
+                Assert.That(harness.AssertSelection("strict"), Is.EqualTo(selected.Id));
+                Assert.That(harness.Editions().Single(edition => edition.Id == selected.Id).ManualAdd, Is.False);
+                harness.AssertUnchangedRefresh(remote, selected.Id);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void genuine_unsaved_manual_selection_is_not_discarded_as_provider_hint(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var harness = new RefreshHarness(database, BookMediaType.Audiobook);
+                harness.Seed(harness.Edition("old", 10000, monitored: true));
+                var remote = harness.RemoteBook(harness.Edition("old", 10000),
+                    harness.Edition("manual", 1, monitored: true, manualAdd: true));
+
+                harness.Refresh(remote);
+                harness.AssertSelection("manual");
+                Assert.That(harness.Editions().Single(edition => edition.Monitored).ManualAdd, Is.True);
+            });
+        }
+
         [TestCase(false, BookMediaType.Audiobook)]
         [TestCase(true, BookMediaType.Audiobook)]
         [TestCase(false, BookMediaType.Ebook)]
@@ -311,6 +369,12 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public void Seed(params Edition[] editions) => _editions.InsertMany(editions.ToList());
+
+            public void SetAnyEditionOk(bool anyEditionOk)
+            {
+                _book.AnyEditionOk = anyEditionOk;
+                _books.Update(_book);
+            }
 
             public void ClearSelection()
             {

@@ -1,3 +1,4 @@
+using System.Data;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -28,9 +29,8 @@ namespace NzbDrone.Core.MediaFiles
         BookFile GetFileWithPath(string path);
         int InsertManyIgnoreDuplicatePaths(List<BookFile> files);
         void ReplaceMany(List<BookFile> filesToAdd, List<BookFile> filesToDelete);
-        void DeleteFilesByBook(int bookId);
-        void UnlinkFilesByBook(int bookId);
-        void UnlinkFilesByEdition(int editionId);
+        void ReplaceMany(List<BookFile> filesToAdd, List<BookFile> filesToDelete, IDbConnection connection, IDbTransaction transaction);
+        int RelinkFilesByBook(int bookId, int editionId, IDbConnection connection, IDbTransaction transaction);
     }
 
     public class MediaFileRepository : BasicRepository<BookFile>, IMediaFileRepository
@@ -217,24 +217,12 @@ namespace NzbDrone.Core.MediaFiles
             return builder;
         }
 
-        public void DeleteFilesByBook(int bookId)
+        public int RelinkFilesByBook(int bookId, int editionId, IDbConnection connection, IDbTransaction transaction)
         {
-            var fileIds = GetFilesByBook(bookId).Select(x => x.Id).ToList();
-            Delete(x => fileIds.Contains(x.Id));
-        }
-
-        public void UnlinkFilesByBook(int bookId)
-        {
-            var files = GetFilesByBook(bookId);
-            files.ForEach(x => x.EditionId = 0);
-            SetFields(files, f => f.EditionId);
-        }
-
-        public void UnlinkFilesByEdition(int editionId)
-        {
-            var files = GetFilesByEdition(editionId);
-            files.ForEach(x => x.EditionId = 0);
-            SetFields(files, f => f.EditionId);
+            return connection.Execute(@"UPDATE ""BookFiles"" SET ""EditionId"" = @editionId
+                WHERE ""EditionId"" <> @editionId AND ""EditionId"" IN
+                    (SELECT ""Id"" FROM ""Editions"" WHERE ""BookId"" = @bookId)",
+                new { bookId, editionId }, transaction);
         }
 
         public List<BookFile> GetFilesWithBasePath(string path)
@@ -459,24 +447,14 @@ namespace NzbDrone.Core.MediaFiles
             filesToAdd ??= new List<BookFile>();
             filesToDelete ??= new List<BookFile>();
 
-            if (filesToAdd.Any(file => file == null || file.Id != 0))
-            {
-                throw new System.InvalidOperationException("Replacement inserts require new BookFile rows with Id 0");
-            }
-
-            var deletedIds = filesToDelete
-                .Where(file => file?.Id > 0)
-                .Select(file => file.Id)
-                .Distinct()
-                .ToList();
+            var newFiles = filesToAdd.Where(file => file?.Id == 0).ToList();
 
             using var conn = _database.OpenConnection();
             using var transaction = conn.BeginTransaction();
 
             try
             {
-                DeleteMany(deletedIds, conn, transaction);
-                InsertMany(filesToAdd, conn, transaction);
+                ReplaceMany(filesToAdd, filesToDelete, conn, transaction);
                 transaction.Commit();
             }
             catch
@@ -492,13 +470,42 @@ namespace NzbDrone.Core.MediaFiles
 
                 // InsertMany assigns generated IDs before the caller commits. A rolled-back
                 // replacement must remain retryable as a set of new rows.
-                foreach (var file in filesToAdd)
+                foreach (var file in newFiles)
                 {
                     file.Id = 0;
                 }
 
                 throw;
             }
+        }
+
+        public void ReplaceMany(List<BookFile> filesToAdd, List<BookFile> filesToDelete, IDbConnection connection, IDbTransaction transaction)
+        {
+            filesToAdd ??= new List<BookFile>();
+            filesToDelete ??= new List<BookFile>();
+
+            if (filesToAdd.Any(file => file == null || file.Id < 0))
+            {
+                throw new System.InvalidOperationException("Replacement requires valid BookFile rows");
+            }
+
+            var newFiles = filesToAdd.Where(file => file.Id == 0).ToList();
+            var updatedFiles = filesToAdd.Where(file => file.Id > 0).ToList();
+
+            var deletedIds = filesToDelete
+                .Where(file => file?.Id > 0)
+                .Select(file => file.Id)
+                .Distinct()
+                .ToList();
+
+            if (updatedFiles.Any(file => deletedIds.Contains(file.Id)))
+            {
+                throw new System.InvalidOperationException("A replacement cannot delete and update the same BookFile row");
+            }
+
+            DeleteMany(deletedIds, connection, transaction);
+            UpdateMany(updatedFiles, connection, transaction);
+            InsertMany(newFiles, connection, transaction);
         }
 
         private BookFile MapTrack(BookFile file, Edition book)

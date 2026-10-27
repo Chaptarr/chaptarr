@@ -414,7 +414,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 var owner = h.Authors.Get(local.AuthorId);
                 var added = new BookAddedService(new CacheManager(), h.Queue, h.Books, h.Logger);
                 var scanned = new AuthorScannedHandler(new BookMonitoredService(h.AuthorService, h.Books, h.Logger),
-                    h.AuthorService, h.Queue, added, h.Events, h.Logger);
+                    h.AuthorService, h.Queue, added, h.Events, h.Logger, h.Books);
                 for (var pass = 0; pass < 2; pass++)
                 {
                     added.Handle(new BookInfoRefreshedEvent(owner, new List<Book>(), new List<Book> { after }, new List<Book>()));

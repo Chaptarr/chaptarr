@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
@@ -19,7 +18,7 @@ namespace NzbDrone.Core.Extras.Files
         IEnumerable<ExtraFile> CreateAfterBookImport(Author author, BookFile bookFile);
         IEnumerable<ExtraFile> CreateAfterBookImport(Author author, Book book, string authorFolder, string bookFolder);
         IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<RenamedBookFile> bookFiles);
-        ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly);
+        ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly, bool replaceExisting);
     }
 
     public abstract class ExtraFileManager<TExtraFile> : IManageExtraFiles
@@ -46,21 +45,11 @@ namespace NzbDrone.Core.Extras.Files
         public abstract IEnumerable<ExtraFile> CreateAfterBookImport(Author author, BookFile bookFile);
         public abstract IEnumerable<ExtraFile> CreateAfterBookImport(Author author, Book book, string authorFolder, string bookFolder);
         public abstract IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<RenamedBookFile> bookFiles);
-        public abstract ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly);
+        public abstract ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly, bool replaceExisting);
 
-        protected TExtraFile ImportFile(Author author, BookFile bookFile, string path, bool readOnly, string extension, string fileNameSuffix = null)
+        protected TExtraFile ImportFile(Author author, BookFile bookFile, string path, bool readOnly, string extension, bool replaceExisting)
         {
-            var newFolder = Path.GetDirectoryName(bookFile.Path);
-            var filenameBuilder = new StringBuilder(Path.GetFileNameWithoutExtension(bookFile.Path));
-
-            if (fileNameSuffix.IsNotNullOrWhiteSpace())
-            {
-                filenameBuilder.Append(fileNameSuffix);
-            }
-
-            filenameBuilder.Append(extension);
-
-            var newFileName = Path.Combine(newFolder, filenameBuilder.ToString());
+            var newFileName = Path.ChangeExtension(bookFile.Path, extension);
             var transferMode = TransferMode.Move;
 
             if (readOnly)
@@ -68,7 +57,7 @@ namespace NzbDrone.Core.Extras.Files
                 transferMode = _configService.CopyUsingHardlinks ? TransferMode.HardLinkOrCopy : TransferMode.Copy;
             }
 
-            _diskTransferService.TransferFile(path, newFileName, transferMode, true);
+            _diskTransferService.TransferFile(path, newFileName, transferMode, replaceExisting);
 
             var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
             if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))

@@ -371,6 +371,45 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(grResources.Single().ForeignEditionId, Is.EqualTo("199400410"));
         }
 
+        [TestCase("gr")]
+        [TestCase("hc")]
+        public void facade_exposes_one_local_choice_per_projected_id_and_keeps_the_selection(string dialect)
+        {
+            var context = new ReadarrFacadeContext(dialect, "ebook", "/readarr/" + dialect + "/ebook");
+            var book = new Book
+            {
+                Id = 10, Title = "Shared Projection", MediaType = BookMediaType.Ebook, Author = new Author(),
+                Editions = new List<Edition>
+                {
+                    new() { Id = 1, BookId = 10, Title = "Earlier", ForeignEditionId = "hc:edition:100", HardcoverEditionId = "100", GoodreadsEditionId = 200 },
+                    new() { Id = 2, BookId = 10, Title = "Chosen", ForeignEditionId = "hc:edition:100", HardcoverEditionId = "100", GoodreadsEditionId = 200, Monitored = true },
+                    new() { Id = 3, BookId = 10, Title = "Other", ForeignEditionId = "hc:edition:101", HardcoverEditionId = "101", GoodreadsEditionId = 201 }
+                }
+            };
+            var projected = book.Editions.ToResource(context);
+            Assert.That(projected.Select(edition => edition.Id), Is.EqualTo(new[] { 2, 3 }));
+            Assert.That(book.Editions, Has.Count.EqualTo(3));
+            var selectedForeignId = projected.Single(edition => edition.Monitored).ForeignEditionId;
+            projected.ForEach(edition => edition.Monitored = edition.ForeignEditionId == selectedForeignId);
+            var mapped = new BookResource { Id = book.Id, Editions = projected }.ToModel(book, context);
+            Assert.That(mapped.Editions.Single(edition => edition.Monitored).Id, Is.EqualTo(2));
+            Assert.That(mapped.Editions.Select(edition => (edition.Id, edition.HardcoverEditionId, edition.GoodreadsEditionId)),
+                Is.EquivalentTo(new[] { (1, "100", (long?)200), (2, "100", (long?)200), (3, "101", (long?)201) }));
+        }
+
+        [Test]
+        public void facade_projection_does_not_deduplicate_different_local_books()
+        {
+            var context = new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook");
+            var editions = new[]
+            {
+                new Edition { Id = 1, BookId = 10, GoodreadsEditionId = 200 },
+                new Edition { Id = 2, BookId = 11, GoodreadsEditionId = 200 }
+            };
+            Assert.That(editions.ToResource(context).Select(edition => edition.Id), Is.EqualTo(new[] { 1, 2 }));
+            Assert.That(editions.ToResource().Select(edition => edition.Id), Is.EqualTo(new[] { 1, 2 }));
+        }
+
         [Test]
         public void should_log_one_aggregate_warning_for_facade_book_identity_gaps()
         {

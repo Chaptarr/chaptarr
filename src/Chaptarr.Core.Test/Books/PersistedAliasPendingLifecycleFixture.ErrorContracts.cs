@@ -72,6 +72,7 @@ namespace Chaptarr.Core.Test.Books
                 var rejectWrite = true;
                 var injected = new InvalidOperationException("Injected storage failure during selection persistence");
                 var callbackErrors = new List<Exception>();
+                var rejectedMonitoringWrites = 0;
                 var editionWriter = Proxy<IEditionService>((method, args) =>
                 {
                     if (rejectWrite && failure == "storage" && method.Name == nameof(IEditionService.UpdateSelection) && ((List<Edition>)args[0]).Any(edition => edition.BookId == failed.Id))
@@ -80,8 +81,11 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var bookWriter = Proxy<IBookRepository>((method, args) =>
                 {
-                    if (rejectWrite && failure == "postcondition" && method.Name == nameof(IBookRepository.UpdateMany) && ((List<Book>)args[0]).Any(book => book.Id == failed.Id))
+                    if (rejectWrite && failure == "postcondition" && method.Name == nameof(IBookRepository.SetMonitoring) && ((IEnumerable<Book>)args[0]).Any(book => book.Id == failed.Id))
+                    {
+                        rejectedMonitoringWrites++;
                         return null;
+                    }
                     return method.Invoke(h.Books, args);
                 });
                 var writer = new BookService(bookWriter, editionWriter, h.EventAggregator, h.AuthorService,
@@ -116,6 +120,7 @@ namespace Chaptarr.Core.Test.Books
                 var saved = h.Requests.Get(pending.Id);
                 Assert.Multiple(() =>
                 {
+                    Assert.That(rejectedMonitoringWrites, Is.EqualTo(failure == "postcondition" ? 1 : 0));
                     Assert.That(callbackErrors, Has.Count.EqualTo(failure == "silent" ? 0 : 1));
                     if (failure == "storage") Assert.That(callbackErrors.Single(), Is.SameAs(injected));
                     if (failure == "postcondition") Assert.That(callbackErrors.Single(), Is.InstanceOf<InvalidOperationException>());

@@ -149,15 +149,18 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(fields.Single(field => field.Key == "SECOND[0]").ResidualValue, Is.EqualTo("2012"));
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void author_consumption_prefers_clean_physical_credit_without_spending_its_generated_alias(bool reverseOrder)
+        [TestCase("MP4:©ART", "ARTIST", false)]
+        [TestCase("MP4:©ART", "ARTIST", true)]
+        [TestCase("author", "authors", false)]
+        [TestCase("author", "authors", true)]
+        public void author_consumption_prefers_clean_physical_credit_without_spending_its_generated_alias(
+            string sourceField, string aliasField, bool reverseOrder)
         {
             var tags = new Dictionary<string, List<string>>
             {
                 ["TITLE"] = new() { "Hugh Howey Free Short Stories" },
-                ["MP4:©ART"] = new() { "Hugh Howey" },
-                ["ARTIST"] = new() { "Hugh Howey" }
+                [sourceField] = new() { "Hugh Howey" },
+                [aliasField] = new() { "Hugh Howey" }
             };
             if (reverseOrder)
             {
@@ -167,6 +170,50 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var fields = ResidualFields(CreateService(), tags, new[] { "Hugh Howey" });
             Assert.That(fields.Select(field => (field.Key, field.ResidualValue)),
                 Is.EqualTo(new[] { ("TITLE[0]", "Hugh Howey Free Short Stories") }));
+        }
+
+        [TestCase("creator_aut", false)]
+        [TestCase("creator_aut", true)]
+        [TestCase("creator_creator", false)]
+        [TestCase("creator_creator", true)]
+        public void epub_author_views_must_not_duplicate_a_creator_credit(string sourceField, bool reverseOrder)
+        {
+            var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["title"] = new() { "The Richest Man in Babylon" },
+                ["author"] = new() { "George S. Clason" },
+                ["authors"] = new() { "George S. Clason" },
+                ["all_authors"] = new() { "George S. Clason" },
+                [sourceField] = new() { "George S. Clason" }
+            };
+            if (reverseOrder)
+            {
+                tags = tags.Reverse().ToDictionary(pair => pair.Key, pair => pair.Value);
+            }
+
+            var fields = ResidualFields(CreateService(), tags, new[] { "George S. Clason" });
+            Assert.That(fields.Select(field => (field.Key, field.ResidualValue)),
+                Is.EqualTo(new[] { ("title[0]", "The Richest Man in Babylon") }));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void author_alias_suppression_preserves_distinct_values_and_independent_credits(bool sourcePresent)
+        {
+            var tags = new Dictionary<string, List<string>>
+            {
+                ["authors"] = new() { "Ursula Le Guin", "Other Writer" },
+                ["title"] = new() { "Ursula Le Guin" },
+                ["narrator"] = new() { "Ursula Le Guin" }
+            };
+            if (sourcePresent)
+            {
+                tags["author"] = new() { "Ursula Le Guin" };
+            }
+
+            var fields = ResidualFields(CreateService(), tags, new[] { "Ursula Le Guin" });
+            Assert.That(fields.Select(field => field.ResidualValue),
+                Is.EquivalentTo(new[] { "Other Writer", "Ursula Le Guin", "Ursula Le Guin" }));
         }
 
         [TestCase(false)]

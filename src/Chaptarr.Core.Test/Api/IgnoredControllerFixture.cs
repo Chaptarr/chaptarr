@@ -133,8 +133,8 @@ namespace Chaptarr.Core.Test.Api
 
             public List<int> RemovedIds { get; }
 
-            public bool DownloadAlreadyImported(string downloadId) => throw new NotImplementedException();
             public DownloadHistory GetLatestDownloadHistoryItem(string downloadId) => throw new NotImplementedException();
+            public List<DownloadHistory> GetLatestDownloadHistoryItems(IEnumerable<string> downloadIds) => throw new NotImplementedException();
             public DownloadHistory GetLatestGrab(string downloadId) => throw new NotImplementedException();
 
             public PagingSpec<DownloadHistory> CurrentlyIgnored(PagingSpec<DownloadHistory> pagingSpec)

@@ -12,6 +12,8 @@ using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Localization;
 using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
 using NzbDrone.Http.REST.Attributes;
@@ -108,7 +110,7 @@ namespace Chaptarr.Api.V1.RootFolders
                 .WithMessage($"A {mediaLabel} quality profile is required")
                 .GreaterThan(0)
                 .WithMessage($"A valid {mediaLabel} quality profile is required")
-                .SetValidator(qualityProfileExistsValidator)
+                .SetValidator(qualityProfileExistsValidator.ForType(mediaType == BookMediaType.Audiobook ? ProfileType.Audiobook : ProfileType.Ebook))
                 .When(resource => RequiresMediaSettings(resource, mediaType))
                 .WithName($"{mediaLabel}QualityProfileId");
 
@@ -118,7 +120,7 @@ namespace Chaptarr.Api.V1.RootFolders
                 .WithMessage($"An {mediaLabel} metadata profile is required")
                 .GreaterThan(0)
                 .WithMessage($"A valid {mediaLabel} metadata profile is required")
-                .SetValidator(metadataProfileExistsValidator)
+                .SetValidator(metadataProfileExistsValidator.ForType(mediaType == BookMediaType.Audiobook ? MetadataProfileType.Audiobook : MetadataProfileType.Ebook))
                 .When(resource => RequiresMediaSettings(resource, mediaType))
                 .WithName($"{mediaLabel}MetadataProfileId");
         }

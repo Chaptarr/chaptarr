@@ -1,4 +1,6 @@
 using System;
+using System.Data;
+using NzbDrone.Common.Extensions;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -31,7 +33,7 @@ using NzbDrone.Core.Qualities;
 namespace Chaptarr.Core.Test.MediaFiles
 {
     [TestFixture]
-    public class ImportApprovedBooksAdditionalCopyFixture
+    public partial class ImportApprovedBooksAdditionalCopyFixture
     {
         private sealed class StaticCustomFormatService : ICustomFormatService
         {
@@ -91,6 +93,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     FilesByBook[existingIndex] = bookFile;
                 }
             }
+            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -99,7 +102,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Update(bookFile);
                 }
             }
-            public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason)
+            public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason, IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles = null)
             {
                 ReplaceCalls++;
                 BeforeReplace?.Invoke();
@@ -113,7 +116,19 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Delete(replacedFile, reason);
                 }
 
-                AddMany(bookFiles ?? new List<BookFile>());
+                Update((bookFiles ?? new List<BookFile>()).Where(file => file.Id > 0).ToList());
+                AddMany((bookFiles ?? new List<BookFile>()).Where(file => file.Id == 0).ToList());
+            }
+            public void ValidateReplacementFiles(List<BookFile> replacedFiles, IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+            {
+                if ((replacedFiles ?? new()).Any(file => !NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFiles.IsConfirmed(file, confirmedFiles)))
+                    throw new InvalidOperationException("Existing files changed since confirmation");
+            }
+            public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason,
+                IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                Action<Action<IDbConnection, IDbTransaction>> persist)
+            {
+                persist((connection, transaction) => ReplaceMany(bookFiles, replacedFiles, reason, confirmedFiles));
             }
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason)
             {
@@ -124,7 +139,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public List<System.IO.Abstractions.IFileInfo> FilterUnchangedFiles(List<System.IO.Abstractions.IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
             public List<BookFile> GetFilesByAuthor(int authorId) => throw new NotImplementedException();
-            public List<BookFile> GetFilesByBook(int bookId) => FilesByBook.Where(f => f.Edition?.BookId == bookId || f.EditionId == bookId || f.Edition?.Book?.Id == bookId).ToList();
+            public List<BookFile> GetFilesByBook(int bookId) => FilesByBook.Where(f => f.Edition?.BookId == bookId || f.Edition?.Book?.Id == bookId).ToList();
             public List<BookFile> GetFilesByBooks(List<int> bookIds) => throw new NotImplementedException();
             public List<BookFile> GetFilesByEdition(int editionId) => throw new NotImplementedException();
             public List<BookFile> GetUnmappedFiles() => throw new NotImplementedException();
@@ -132,7 +147,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<BookFile> Get(IEnumerable<int> ids) => throw new NotImplementedException();
             public List<BookFile> GetFilesWithBasePath(string path) => throw new NotImplementedException();
             public List<BookFile> GetFilesWithBasePath(string path, string mediaType) => throw new NotImplementedException();
-            public List<BookFile> GetFileWithPath(List<string> path) => throw new NotImplementedException();
+            public List<BookFile> GetFileWithPath(List<string> paths) => paths.Select(GetFileWithPath).Where(file => file != null).ToList();
             public BookFile GetFileWithPath(string path) => FilesByPath.TryGetValue(path, out var file) ? file : null;
             public void UpdateMediaInfo(List<BookFile> bookFiles) => throw new NotImplementedException();
             public List<BookFile> GetFilesByAuthorAndMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -141,6 +156,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubMoveBookFiles : IMoveBookFiles
         {
             public string DestinationPath { get; set; }
+            public Func<LocalBook, string> DestinationForFile { get; set; }
+            public string FailSourcePath { get; set; }
             public int MoveCalls { get; private set; }
             public int CopyCalls { get; private set; }
             public int PreviewCalls { get; private set; }
@@ -158,7 +175,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile MoveBookFile(BookFile bookFile, LocalBook localBook)
             {
                 MoveCalls++;
-                bookFile.Path = DestinationPath ?? bookFile.Path;
+                bookFile.Path = DestinationForFile?.Invoke(localBook) ?? DestinationPath ?? bookFile.Path;
                 TransferFile(localBook.Path, bookFile.Path, copy: false);
                 return bookFile;
             }
@@ -166,19 +183,26 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile CopyBookFile(BookFile bookFile, LocalBook localBook)
             {
                 CopyCalls++;
-                bookFile.Path = DestinationPath ?? bookFile.Path;
+                bookFile.Path = DestinationForFile?.Invoke(localBook) ?? DestinationPath ?? bookFile.Path;
                 TransferFile(localBook.Path, bookFile.Path, copy: true);
                 return bookFile;
             }
 
+            public bool CompleteImportReplicas(BookFile bookFile, LocalBook localBook) => false;
+
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook)
             {
                 PreviewCalls++;
-                return DestinationPath;
+                return DestinationForFile?.Invoke(localBook) ?? DestinationPath;
             }
 
             private void TransferFile(string sourcePath, string destinationPath, bool copy)
             {
+                if (sourcePath == FailSourcePath)
+                {
+                    throw new IOException("Source unavailable during transfer");
+                }
+
                 if (!TransferFilesOnDisk || string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
                 {
                     return;
@@ -187,11 +211,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
                 if (copy)
                 {
-                    File.Copy(sourcePath, destinationPath, overwrite: true);
+                    File.Copy(sourcePath, destinationPath, overwrite: false);
                 }
                 else
                 {
-                    File.Move(sourcePath, destinationPath, overwrite: true);
+                    File.Move(sourcePath, destinationPath, overwrite: false);
                 }
             }
         }
@@ -425,6 +449,15 @@ namespace Chaptarr.Core.Test.MediaFiles
                     return ExistingBooks.FirstOrDefault(book => book.Id == bookId);
                 }
 
+                if (targetMethod?.Name == nameof(IBookService.UpdateBook) && args?.Length == 4)
+                {
+                    ((Action<IDbConnection, IDbTransaction>)args[3])?.Invoke(null, null);
+                    var book = (Book)args[0];
+                    var index = ExistingBooks.FindIndex(existing => existing.Id == book.Id);
+                    if (index >= 0) ExistingBooks[index] = book;
+                    return book;
+                }
+
                 if (targetMethod?.Name == nameof(IBookService.UpdateBook) &&
                     args?.Length == 1 &&
                     args[0] is Book updatedBook)
@@ -464,6 +497,11 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (typeof(T) == typeof(IHistoryService) && targetMethod.Name == nameof(IHistoryService.FindByDownloadId))
+                {
+                    return new List<EntityHistory>();
+                }
+
                 throw new NotImplementedException($"Unexpected call to {typeof(T).Name}.{targetMethod?.Name}");
             }
         }
@@ -593,6 +631,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string FailedDownloadId { get; private set; }
 
             public ConversionJob Get(string downloadId) => Job;
+            public ConversionJobRequest GetCompletedConversion(string downloadId) => null;
+            public List<ConversionJobRequest> GetCompletedConversions(IEnumerable<string> downloadIds) => new();
+            public List<ConversionJob> Get(IEnumerable<string> downloadIds) => Job == null ? new() : new() { Job };
+            public Action PrepareArtifactRemoval(string downloadId) => () => RemoveArtifacts(downloadId);
 
             public ConversionJob Enqueue(ConversionJobRequest request)
             {
@@ -602,6 +644,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Id = 1,
                     DownloadId = request.DownloadId,
                     Status = ConversionJobStatus.Queued,
+                    RequestJson = JsonSerializer.Serialize(request),
                     WorkRoot = request.WorkRoot,
                     WorkFolder = request.WorkFolder,
                     OutputPath = request.OutputPath
@@ -616,6 +659,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Id = 1,
                     DownloadId = downloadId,
                     Status = status,
+                    RequestJson = Request == null ? null : JsonSerializer.Serialize(Request),
                     WorkRoot = workRoot,
                     WorkFolder = workFolder,
                     OutputPath = outputPath
@@ -627,6 +671,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                                                         Job.Status == ConversionJobStatus.Converting ||
                                                         Job.Status == ConversionJobStatus.ReadyToImport ||
                                                         Job.Status == ConversionJobStatus.Cancelling);
+            public bool IsRunning(string downloadId) => false;
             public bool Cancel(string downloadId) => false;
 
             public void Complete(string downloadId)
@@ -641,7 +686,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Job.Status = ConversionJobStatus.Failed;
                 Job.Error = error;
             }
-            public void Reset(string downloadId) => Job = null;
+            public void Reset(string downloadId, ConversionJob expectedJob = null) => Job = null;
+            public void RemoveArtifacts(string downloadId) => throw new NotImplementedException();
         }
 
         private static T Proxy<T>() where T : class
@@ -721,6 +767,190 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
 
             return (qualityProfile, author, book, edition);
+        }
+
+        [TestCase(false, false, false, true)]
+        [TestCase(false, true, false, true)]
+        [TestCase(false, true, true, true)]
+        [TestCase(true, false, false, true)]
+        [TestCase(true, true, false, true)]
+        [TestCase(true, true, true, true)]
+        [TestCase(false, true, false, false)]
+        [TestCase(true, true, false, false)]
+        [TestCase(false, true, true, false)]
+        [TestCase(true, true, true, false)]
+        public void multipart_import_must_keep_old_recording_on_failed_replace_and_resume_new_downloads(bool postgres, bool retry, bool publishHistory, bool existingRecording)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var root = Path.Combine(Path.GetTempPath(), "multipart-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(root);
+                try
+                {
+                    var logger = LogManager.GetCurrentClassLogger();
+                    var noEvents = new NoOpEventAggregator();
+                    var histories = new HistoryRepository(database, noEvents);
+                    var history = new HistoryService(histories, logger);
+                    var events = InterfaceProxy.Proxy<IEventAggregator>((method, args) =>
+                    {
+                        if (publishHistory && args[0] is NzbDrone.Core.MediaFiles.Events.TrackImportedEvent imported)
+                        {
+                            history.Handle(imported);
+                        }
+
+                        return null;
+                    });
+                    var (profile, author, book, edition) = CreateAudiobookConversionGraph(199);
+                    profile.UpgradeAllowed = false;
+                    author.Id = 0;
+                    author.Path = root;
+                    author.CleanName = "testwriter";
+                    author.SortName = "testwriter";
+                    author.TitleSlug = "test-writer";
+                    author.Added = DateTime.UtcNow;
+                    new AuthorRepository(database, noEvents, logger).Insert(author);
+                    book.Id = 0;
+                    book.CleanTitle = "blacksheep";
+                    book.AnyEditionOk = true;
+                    book.AuthorId = author.Id;
+                    book.Added = DateTime.UtcNow;
+                    var books = new BookRepository(database, noEvents);
+                    books.Insert(book);
+                    edition.Id = 0;
+                    edition.BookId = book.Id;
+                    var editions = new EditionRepository(database, noEvents);
+                    editions.Insert(edition);
+                    book.Editions = new List<Edition> { edition };
+                    var sourceDir = Path.Combine(root, "download");
+                    var libraryDir = Path.Combine(root, "library");
+                    Directory.CreateDirectory(sourceDir);
+                    Directory.CreateDirectory(libraryDir);
+                    var sources = Enumerable.Range(1, 2).Select(part => Path.Combine(sourceDir, $"Book Part {part:00}.m4b")).ToList();
+                    var files = new MediaFileRepository(database, noEvents);
+                    for (var i = 0; i < sources.Count; i++)
+                    {
+                        File.WriteAllText(sources[i], "new part " + (i + 1));
+                        if (!existingRecording)
+                        {
+                            continue;
+                        }
+
+                        var destination = Path.Combine(libraryDir, Path.GetFileName(sources[i]));
+                        File.WriteAllText(destination, "old part " + (i + 1));
+                        files.Insert(new BookFile { Path = destination, EditionId = edition.Id, Edition = edition,
+                            Quality = new QualityModel(Quality.M4B), Part = i + 1, PartCount = 2,
+                            MediaInfo = new MediaInfoModel(), DateAdded = DateTime.UtcNow.AddDays(-1), Modified = DateTime.UtcNow });
+                    }
+
+                    var reads = 0;
+                    var replaces = 0;
+                    var media = InterfaceProxy.Proxy<IMediaFileService>((method, args) =>
+                    {
+                        switch (method.Name)
+                        {
+                            case nameof(IMediaFileService.GetFilesByBook): reads++; return files.GetFilesByBook((int)args[0]);
+                            case nameof(IMediaFileService.GetFilesByBooks): return files.GetFilesByBooks((List<int>)args[0]);
+                            case nameof(IMediaFileService.GetFileWithPath): return args[0] is List<string> paths ? files.GetFileWithPath(paths) : files.GetFileWithPath((string)args[0]);
+                            case nameof(IMediaFileService.GetFilesByEdition): return files.GetFilesByEdition((int)args[0]);
+                            case nameof(IMediaFileService.ReplaceMany):
+                                replaces++;
+                                if (args.Length == 5)
+                                    ((Action<Action<IDbConnection, IDbTransaction>>)args[4])((connection, transaction) =>
+                                        files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1], connection, transaction));
+                                else
+                                    files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1]);
+                                return null;
+                            case nameof(IMediaFileService.Update): files.Update((BookFile)args[0]); return null;
+                            default: throw new InvalidOperationException("Unexpected file operation " + method.Name);
+                        }
+                    });
+                    var mover = new StubMoveBookFiles { TransferFilesOnDisk = true,
+                        DestinationForFile = local => Path.Combine(libraryDir, Path.GetFileName(local.Path)),
+                        FailSourcePath = retry ? sources[1] : null };
+                    var recycle = new StubRecycleBinProvider();
+                    var editionService = new EditionService(editions, events, logger);
+                    var authorService = InterfaceProxy.Proxy<IAuthorService>((method, args) => method.Name == nameof(IAuthorService.GetAuthors) ? new List<Author> { author } : author);
+                    var bookService = new BookService(books, editionService, events, authorService, media,
+                        Proxy<NzbDrone.Core.RootFolders.IRootFolderService>(), null, null, logger);
+                    ImportApprovedBooks CreateService() => new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
+                        authorService, bookService, editionService,
+                        recycle, Proxy<IExtraService>(), mover, history,
+                        Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
+                        Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
+                    ImportDecision<LocalBook> Decision(string path, bool manual) => new(new LocalBook
+                    {
+                        Path = path, Author = author, Book = book, Edition = edition, IsManualImport = manual,
+                        DisableReleaseSwitching = manual,
+                        Quality = new QualityModel(Quality.M4B), Size = new FileInfo(path).Length, Modified = File.GetLastWriteTimeUtc(path)
+                    });
+                    var download = new DownloadClientItem { DownloadId = "multipart", DownloadForced = true, Title = "Multipart download",
+                        FilePaths = sources.Append(Path.Combine(sourceDir, "cover.jpg")).ToList() };
+                    var results = CreateService().Import(sources.Select(path => Decision(path, true)).ToList(), true, download, ImportMode.Copy);
+                    Assert.That(results.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(retry ? (existingRecording ? 0 : 1) : 2));
+                    Assert.That(reads, Is.EqualTo(1), "Load existing files once for the book group, not once for every part");
+                    Assert.That(replaces, Is.EqualTo(retry && existingRecording ? 0 : 1));
+                    var hasSuccessfulCommit = !retry || !existingRecording;
+                    Assert.That(books.Get(book.Id).AnyEditionOk, Is.EqualTo(!hasSuccessfulCommit),
+                        "Manual selection settings must change only with committed successful files");
+                    Assert.That(editions.Get(edition.Id).Monitored, Is.EqualTo(hasSuccessfulCommit),
+                        "A failed complete replacement must not select its edition");
+                    var first = files.GetFilesByBook(book.Id).Single(file => file.Part == 1);
+                    if (retry && existingRecording)
+                    {
+                        Assert.That(files.GetFilesByBook(book.Id).OrderBy(file => file.Part).Select(file => File.ReadAllText(file.Path)),
+                            Is.EqualTo(new[] { "old part 1", "old part 2" }));
+                        Assert.That(histories.All(), Is.Empty);
+                        Assert.That(Directory.EnumerateFiles(libraryDir, "*.chaptarr-upgrade~*"), Is.Empty);
+                    }
+                    else
+                    {
+                        Assert.That(File.ReadAllText(first.Path), Is.EqualTo("new part 1"));
+                        Assert.That(first.MatchProvenance.ImportDownloadId, Is.EqualTo(download.DownloadId));
+                        Assert.That(first.MatchProvenance.ImportSourcePaths, Is.EqualTo(new[] { sources[0] }));
+                    }
+                    var tracked = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownload
+                    {
+                        DownloadItem = download,
+                        RemoteBook = new RemoteBook { Books = new List<Book> { book }, ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.M4B) } }
+                    };
+                    var completion = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger, media);
+                    Assert.That(completion.IsImported(tracked, history.FindByDownloadId(download.DownloadId)), Is.EqualTo(!retry));
+                    if (retry)
+                    {
+                        Assert.That(tracked.StatusMessages.Any(message => message.Title == sources[1]), Is.True, "Name the missing part");
+                        mover.FailSourcePath = null;
+                        // Recreate the import service and read committed rows, with no in-memory first-pass results.
+                        var resumed = CreateService().Import(sources.Select(path => Decision(path, existingRecording)).ToList(), true, download, ImportMode.Copy);
+                        Assert.That(resumed.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(existingRecording ? 2 : 1));
+                        Assert.That(resumed.Count(result => result.Result == ImportResultType.Skipped), Is.EqualTo(existingRecording ? 0 : 1));
+                        Assert.That(mover.CopyCalls, Is.EqualTo(existingRecording ? 4 : 3));
+                        if (!existingRecording)
+                        {
+                            Assert.That(files.Get(first.Id).Path, Is.EqualTo(first.Path), "A retry must retain its own earlier file row");
+                        }
+                        Assert.That(completion.IsImported(tracked, history.FindByDownloadId(download.DownloadId)), Is.True);
+                    }
+
+                    var saved = files.GetFilesByBook(book.Id).OrderBy(file => file.Part).ToList();
+                    Assert.That(saved.Select(file => file.Part), Is.EqualTo(new[] { 1, 2 }));
+                    PartAssignmentHelper.NormalizeBookFilesByEdition(saved);
+                    Assert.That(saved.Select(file => file.PartCount), Is.All.EqualTo(2));
+                    Assert.That(saved.Select(file => File.ReadAllText(file.Path)), Is.EqualTo(new[] { "new part 1", "new part 2" }));
+                    Assert.That(books.All(), Has.Count.EqualTo(1), "Resuming the grab must not create an alternative book row");
+                    Assert.That(books.Get(book.Id).AnyEditionOk, Is.False);
+                    Assert.That(editions.Get(edition.Id).Monitored, Is.True);
+                    Assert.That(saved.SelectMany(file => file.MatchProvenance.ImportSourcePaths), Is.EquivalentTo(sources));
+                    if (!publishHistory)
+                    {
+                        Assert.That(histories.All(), Is.Empty, "Coverage must survive a restart between the file commit and history publication");
+                    }
+                }
+                finally
+                {
+                    Directory.Delete(root, true);
+                }
+            });
         }
 
         [Test]
@@ -1135,9 +1365,227 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         }
 
+        [TestCase(false, false, BookMediaType.Audiobook)]
+        [TestCase(false, true, BookMediaType.Audiobook)]
+        [TestCase(true, false, BookMediaType.Audiobook)]
+        [TestCase(true, true, BookMediaType.Audiobook)]
+        [TestCase(false, false, BookMediaType.Ebook)]
+        [TestCase(false, true, BookMediaType.Ebook)]
+        [TestCase(true, false, BookMediaType.Ebook)]
+        [TestCase(true, true, BookMediaType.Ebook)]
+        public void manual_grab_requires_confirmation_only_for_its_local_book_row(bool upgradeAllowed, bool targetHasFiles, BookMediaType siblingMedia)
+        {
+            var temp = Path.Combine(TestContext.CurrentContext.WorkDirectory, "grab-confirmation-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(temp);
+            try
+            {
+                var source = Path.Combine(temp, "incoming.mp3");
+                var oldPath = Path.Combine(temp, "existing.m4b");
+                File.WriteAllText(source, "incoming audio");
+                File.WriteAllText(oldPath, "existing recording");
+                var (profile, author, book, edition) = CreateAudiobookConversionGraph(97);
+                profile.UpgradeAllowed = upgradeAllowed;
+                book.HardcoverBookId = "hc:100";
+                var sibling = new Book { Id = book.Id + 1, AuthorId = author.Id, Author = author, HardcoverBookId = book.HardcoverBookId, MediaType = siblingMedia };
+                var siblingEdition = new Edition { Id = edition.Id + 1, BookId = sibling.Id, Book = sibling, ForeignEditionId = edition.ForeignEditionId };
+                var media = new StubMediaFileService();
+                media.Add(new BookFile { Id = 21, EditionId = siblingEdition.Id, Edition = siblingEdition, Path = oldPath, Quality = new QualityModel(Quality.M4B) });
+                if (targetHasFiles)
+                {
+                    media.Add(new BookFile { Id = 22, EditionId = edition.Id, Edition = edition, Path = Path.Combine(temp, "target.m4b"), Quality = new QualityModel(Quality.M4B) });
+                    File.WriteAllText(media.FilesByBook.Last().Path, "target recording");
+                }
+
+                var mover = new StubMoveBookFiles { DestinationPath = Path.Combine(temp, "output.m4b") };
+                var jobs = new RecordingConversionJobService();
+                var converter = new SuccessfulM4bConversionService();
+                var service = new ImportApprovedBooks(media, new StubMetadataTagService(), Proxy<IMediaInfoExtractor>(),
+                    Proxy<IAuthorService>(), Proxy<IBookService>(), CreateEditionService(new List<Edition> { edition, siblingEdition }),
+                    new StubRecycleBinProvider(), Proxy<IExtraService>(), mover, Proxy<IHistoryService>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
+                    Proxy<IQualityProfileService>(), converter, LogManager.GetCurrentClassLogger(), conversionJobService: jobs);
+                var local = new LocalBook { Path = source, Author = author, Book = book, Edition = edition,
+                    Quality = new QualityModel(Quality.MP3), Size = new FileInfo(source).Length, Modified = File.GetLastWriteTimeUtc(source) };
+
+                var result = service.Import(new List<ImportDecision<LocalBook>> { new(local) }, true,
+                    new DownloadClientItem { DownloadId = "manual-grab", DownloadForced = true }, ImportMode.Copy).Single();
+
+                Assert.That(result.Result, Is.EqualTo(targetHasFiles ? ImportResultType.Skipped : ImportResultType.Pending));
+                if (targetHasFiles)
+                {
+                    Assert.That(result.Errors.Single(), Does.Contain("Manual Import"));
+                    Assert.That(jobs.Request, Is.Null, "Waiting for confirmation must precede conversion scheduling");
+                    Assert.That(File.ReadAllText(Path.Combine(temp, "target.m4b")), Is.EqualTo("target recording"));
+                }
+                else
+                {
+                    Assert.That(jobs.Request, Is.Not.Null, "Another local row's shared provider IDs cannot block an empty target");
+                }
+
+                Assert.That(media.DeletedFiles, Is.Empty);
+                Assert.That(media.ReplaceCalls, Is.Zero);
+                Assert.That(mover.CopyCalls + mover.MoveCalls, Is.Zero);
+                Assert.That(converter.ConvertCalls, Is.Zero);
+                Assert.That(File.ReadAllText(source), Is.EqualTo("incoming audio"));
+                Assert.That(File.ReadAllText(oldPath), Is.EqualTo("existing recording"));
+            }
+            finally
+            {
+                Directory.Delete(temp, true);
+            }
+        }
+
+        [TestCase(false, "independent", BookMediaType.Audiobook)]
+        [TestCase(true, "independent", BookMediaType.Audiobook)]
+        [TestCase(false, "independent", BookMediaType.Ebook)]
+        [TestCase(true, "independent", BookMediaType.Ebook)]
+        [TestCase(false, "stale", BookMediaType.Audiobook)]
+        [TestCase(true, "stale", BookMediaType.Audiobook)]
+        [TestCase(false, "concurrent", BookMediaType.Audiobook)]
+        [TestCase(true, "concurrent", BookMediaType.Audiobook)]
+        public void confirmed_replacement_must_preserve_other_local_books(bool postgres, string collision, BookMediaType otherMedia)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var temp = Path.Combine(TestContext.CurrentContext.WorkDirectory, "replacement-ownership-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(temp);
+                try
+                {
+                    var logger = LogManager.GetCurrentClassLogger();
+                    var events = new NoOpEventAggregator();
+                    var (profile, author, book, edition) = CreateAudiobookConversionGraph(98);
+                    profile.ConvertToQualityId = null;
+                    profile.UpgradeAllowed = false;
+                    author.Id = 0;
+                    author.Path = temp;
+                    author.CleanName = "testwriter";
+                    author.SortName = "testwriter";
+                    author.TitleSlug = "test-writer";
+                    author.Added = DateTime.UtcNow;
+                    new AuthorRepository(database, events, logger).Insert(author);
+                    book.Id = 0;
+                    book.CleanTitle = "blacksheep";
+                    book.AuthorId = author.Id;
+                    book.Added = DateTime.UtcNow;
+                    book.HardcoverBookId = "hc:100";
+                    var books = new BookRepository(database, events);
+                    books.Insert(book);
+                    var other = books.Insert(new Book { AuthorId = author.Id, Author = author, Title = book.Title,
+                        TitleSlug = "other-copy", CleanTitle = book.CleanTitle, MediaType = otherMedia, Added = DateTime.UtcNow,
+                        HardcoverBookId = book.HardcoverBookId });
+                    edition.Id = 0;
+                    edition.BookId = book.Id;
+                    var editions = new EditionRepository(database, events);
+                    editions.Insert(edition);
+                    var otherEdition = editions.Insert(new Edition { BookId = other.Id, Book = other, Title = edition.Title,
+                        ForeignEditionId = edition.ForeignEditionId, ReadingFormatId = otherMedia == BookMediaType.Audiobook ? 2 : 3 });
+                    var source = Path.Combine(temp, "incoming.m4b");
+                    var old = Path.Combine(temp, "old.m4b");
+                    var destination = Path.Combine(temp, "new.m4b");
+                    var independent = Path.Combine(temp, otherMedia == BookMediaType.Audiobook ? "other.m4b" : "other.epub");
+                    File.WriteAllText(source, "incoming recording");
+                    File.WriteAllText(old, "old target recording");
+                    File.WriteAllText(independent, "other recording");
+                    var files = new MediaFileRepository(database, events);
+                    BookFile FileRow(Edition owner, string path) => new()
+                    {
+                        Edition = owner, EditionId = owner.Id, Path = path, Size = 18,
+                        Quality = new QualityModel(owner.Book.MediaType == BookMediaType.Audiobook ? Quality.M4B : Quality.EPUB),
+                        MediaType = owner.Book.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook", DurationSeconds = 120,
+                        MediaInfo = new MediaInfoModel(),
+                        DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow
+                    };
+                    var oldRow = files.Insert(FileRow(edition, old));
+                    var otherRow = FileRow(otherEdition, collision == "independent" ? independent : destination);
+                    if (collision != "concurrent")
+                    {
+                        files.Insert(otherRow);
+                    }
+
+                    var replaceCalls = 0;
+                    var media = InterfaceProxy.Proxy<IMediaFileService>((method, args) =>
+                    {
+                        switch (method.Name)
+                        {
+                            case nameof(IMediaFileService.GetFilesByBook): return files.GetFilesByBook((int)args[0]);
+                            case nameof(IMediaFileService.GetFilesByBooks): return files.GetFilesByBooks((List<int>)args[0]);
+                            case nameof(IMediaFileService.GetFileWithPath): return args[0] is List<string> paths ? files.GetFileWithPath(paths) : files.GetFileWithPath((string)args[0]);
+                            case nameof(IMediaFileService.GetFilesByEdition): return files.GetFilesByEdition((int)args[0]);
+                            case nameof(IMediaFileService.ReplaceMany):
+                                replaceCalls++;
+                                if (collision == "concurrent" && replaceCalls == 1)
+                                {
+                                    files.Insert(otherRow);
+                                }
+
+                                if (args.Length == 5)
+                                    ((Action<Action<IDbConnection, IDbTransaction>>)args[4])((connection, transaction) =>
+                                        files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1], connection, transaction));
+                                else
+                                    files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1]);
+                                return null;
+                            case nameof(IMediaFileService.Update): files.Update((BookFile)args[0]); return null;
+                            default: throw new InvalidOperationException("Unexpected file operation " + method.Name);
+                        }
+                    });
+                    var mover = new StubMoveBookFiles { DestinationPath = destination, TransferFilesOnDisk = true };
+                    var recycle = new StubRecycleBinProvider();
+                    var editionService = new EditionService(editions, events, logger);
+                    var authorService = InterfaceProxy.Proxy<IAuthorService>((method, args) => method.Name == nameof(IAuthorService.GetAuthors) ? new List<Author> { author } : author);
+                    var bookService = new BookService(books, editionService, events, authorService, media,
+                        Proxy<NzbDrone.Core.RootFolders.IRootFolderService>(), null, null, logger);
+                    var service = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
+                        authorService, bookService, editionService,
+                        recycle, Proxy<IExtraService>(), mover, Proxy<IHistoryService>(),
+                        Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
+                        Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
+                    var local = new LocalBook { Path = source, Author = author, Book = book, Edition = edition,
+                        Quality = new QualityModel(Quality.M4B), IsManualImport = true,
+                        Size = new FileInfo(source).Length, Modified = File.GetLastWriteTimeUtc(source) };
+                    List<NzbDrone.Core.MediaFiles.BookImport.ImportResult> Apply() => service.Import(new List<ImportDecision<LocalBook>> { new(local) }, true,
+                        new DownloadClientItem { DownloadId = "confirmed-manual", DownloadForced = true }, ImportMode.Copy);
+
+                    if (collision == "independent")
+                    {
+                        Assert.That(Apply().Single().Result, Is.EqualTo(ImportResultType.Imported));
+                        Assert.That(files.GetFilesByBook(book.Id).Single().Path, Is.EqualTo(destination));
+                        Assert.That(File.Exists(old), Is.False);
+                        Assert.That(File.ReadAllText(destination), Is.EqualTo("incoming recording"));
+                    }
+                    else
+                    {
+                        if (collision == "concurrent")
+                        {
+                            Assert.That(Assert.Throws<InvalidOperationException>(() => Apply()).Message, Does.Contain("another book"));
+                        }
+                        else
+                        {
+                            Assert.That(Apply().Single().Errors.Single(), Does.Contain("another book"));
+                        }
+
+                        Assert.That(files.GetFilesByBook(book.Id).Single().Id, Is.EqualTo(oldRow.Id));
+                        Assert.That(File.ReadAllText(old), Is.EqualTo("old target recording"));
+                        Assert.That(File.Exists(destination), Is.False);
+                        Assert.That(recycle.DeletedFiles, Is.Empty);
+                    }
+
+                    Assert.That(files.Get(otherRow.Id).EditionId, Is.EqualTo(otherEdition.Id));
+                    Assert.That(files.GetFilesByBook(other.Id).Single().Id, Is.EqualTo(otherRow.Id));
+                    Assert.That(File.ReadAllText(independent), Is.EqualTo("other recording"));
+                    Assert.That(File.ReadAllText(source), Is.EqualTo("incoming recording"));
+                }
+                finally
+                {
+                    Directory.Delete(temp, true);
+                }
+            });
+        }
+
         [TestCase(true, false, false, TestName = "manual_replace_should_commit_when_optional_tag_write_fails")]
         [TestCase(false, true, false, TestName = "manual_replace_should_restore_old_files_and_rows_when_atomic_persistence_fails")]
-        [TestCase(false, false, true, TestName = "interactive_grab_should_replace_despite_upgrade_profile_and_lower_revision")]
+        [TestCase(false, false, true, TestName = "interactive_grab_should_wait_for_explicit_manual_replacement")]
         public void explicit_user_replace_should_be_failure_safe_across_tagging_and_persistence(bool throwOnTagWrite, bool throwOnReplace, bool downloadForced)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"manual-replace-{Guid.NewGuid():N}");
@@ -1193,6 +1641,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Book = book,
                     Title = "Best Served Cold",
                     IsEbook = true,
+                    Monitored = true,
                     ReadingFormatId = 3
                 };
 
@@ -1206,6 +1655,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     ReadingFormatId = 3
                 };
 
+                book.Editions = new List<Edition> { existingEdition, incomingEdition };
                 var mediaFileService = new StubMediaFileService { ThrowOnReplace = throwOnReplace };
                 mediaFileService.FilesByBook.AddRange(new[]
                 {
@@ -1239,7 +1689,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 	                    metadataTagService,
                     new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(),
-                    Proxy<IBookService>(),
+                    CreateBookService(new List<Book> { book }).Service,
                     CreateEditionService(new List<Edition> { existingEdition, incomingEdition }),
                     recycleBin,
                     Proxy<IExtraService>(),
@@ -1265,6 +1715,24 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Size = new FileInfo(sourcePath).Length,
                     Modified = File.GetLastWriteTimeUtc(sourcePath)
                 };
+
+                if (downloadForced)
+                {
+                    var waiting = service.Import(
+                        new List<ImportDecision<LocalBook>> { new(localBook) },
+                        replaceExisting: true,
+                        downloadClientItem: new DownloadClientItem { DownloadId = "interactive-grab", DownloadForced = true },
+                        importMode: ImportMode.Copy);
+
+                    Assert.That(waiting.Single().Result, Is.EqualTo(ImportResultType.Skipped));
+                    Assert.That(waiting.Single().Errors.Single(), Does.Contain("Manual Import"));
+                    Assert.That(mediaFileService.ReplaceCalls, Is.Zero);
+                    Assert.That(mover.CopyCalls, Is.Zero);
+                    Assert.That(File.ReadAllText(oldEpub), Is.EqualTo("old epub"));
+                    Assert.That(File.ReadAllText(oldMobi), Is.EqualTo("old mobi"));
+                    Assert.That(File.ReadAllText(sourcePath), Is.EqualTo("incoming"));
+                    localBook.IsManualImport = true;
+                }
 
                 if (throwOnReplace)
                 {
@@ -1575,82 +2043,98 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_not_convert_tracked_download_when_any_file_was_rejected_by_matching()
+        public void conversion_requires_every_source_for_its_book_but_not_another_book(
+            [Values(false, true)] bool postgres, [Values(0, 50, 51)] int failedBookId)
         {
-            var tempPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-match-gate-{Guid.NewGuid():N}.mp3");
-            File.WriteAllText(tempPath, "fake mp3");
-
-            try
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
             {
-                var (_, author, book, edition) = CreateAudiobookConversionGraph(50);
-                var conversion = new FailingM4bConversionService();
-                var mover = new StubMoveBookFiles
+                var tempPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-match-gate-{Guid.NewGuid():N}.mp3");
+                File.WriteAllText(tempPath, "fake mp3");
+
+                try
                 {
-                    DestinationPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-match-gate-destination-{Guid.NewGuid():N}", "Black Sheep.m4b")
-                };
-
-                var service = new ImportApprovedBooks(
-                    new StubMediaFileService(),
-                    new StubMetadataTagService(),
-                    Proxy<IMediaInfoExtractor>(),
-                    Proxy<IAuthorService>(),
-                    Proxy<IBookService>(),
-                    CreateEditionService(new List<Edition> { edition }),
-                    Proxy<IRecycleBinProvider>(),
-                    Proxy<IExtraService>(),
-                    mover,
-                    Proxy<IHistoryService>(),
-                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
-                    Proxy<IManageCommandQueue>(),
-                    Proxy<ISeriesBookLinkService>(),
-                    Proxy<ISeriesService>(),
-                    Proxy<IQualityProfileService>(),
-                    conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
-
-                var matched = new LocalBook
-                {
-                    Path = tempPath,
-                    Book = book,
-                    Author = author,
-                    Edition = edition,
-                    Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
-                };
-
-                var unmatched = new LocalBook
-                {
-                    Path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-match-gate-unmatched-{Guid.NewGuid():N}.mp3"),
-                    Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
-                };
-
-                var results = service.Import(
-                    new List<ImportDecision<LocalBook>>
+                    var (_, author, book, edition) = CreateAudiobookConversionGraph(50);
+                    var conversion = new FailingM4bConversionService();
+                    var mover = new StubMoveBookFiles
                     {
-                        new(matched),
-                        new(unmatched, new Rejection("NO_MATCH"))
-                    },
-                    replaceExisting: true,
-                    downloadClientItem: new DownloadClientItem { DownloadId = "conversion-match-gate" },
-                    importMode: ImportMode.Move,
-                    cancellationToken: CancellationToken.None);
+                        DestinationPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-match-gate-destination-{Guid.NewGuid():N}", "Black Sheep.m4b")
+                    };
 
-                Assert.That(results, Has.Count.EqualTo(2));
-                Assert.That(results.SelectMany(r => r.Errors), Has.Some.Contains("Fix the match failure"));
-                Assert.That(conversion.ConvertCalls, Is.EqualTo(0));
-                Assert.That(mover.PreviewCalls, Is.EqualTo(0));
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
+                    var service = new ImportApprovedBooks(
+                        new StubMediaFileService(),
+                        new StubMetadataTagService(),
+                        Proxy<IMediaInfoExtractor>(),
+                        Proxy<IAuthorService>(),
+                        Proxy<IBookService>(),
+                        CreateEditionService(new List<Edition> { edition }),
+                        Proxy<IRecycleBinProvider>(),
+                        Proxy<IExtraService>(),
+                        mover,
+                        Proxy<IHistoryService>(),
+                        Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
+                        new NoOpEventAggregator(),
+                        Proxy<IManageCommandQueue>(),
+                        Proxy<ISeriesBookLinkService>(),
+                        Proxy<ISeriesService>(),
+                        Proxy<IQualityProfileService>(),
+                        conversion,
+                            LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                        conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService(), database));
+
+                    var matched = new LocalBook
+                    {
+                        IsManualImport = false,
+                        Path = tempPath,
+                        Book = book,
+                        Author = author,
+                        Edition = edition,
+                        Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
+                    };
+
+                    var unmatched = new LocalBook
+                    {
+                        IsManualImport = false,
+                        Path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-match-gate-unmatched-{Guid.NewGuid():N}.mp3"),
+                        Book = failedBookId == 0 ? null : new Book { Id = failedBookId, MediaType = BookMediaType.Audiobook },
+                        Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
+                    };
+
+                    var results = ImportWithConversionWorker(service,
+                        new List<ImportDecision<LocalBook>>
+                        {
+                            new(matched),
+                            new(unmatched, new Rejection("NO_MATCH"))
+                        },
+                        replaceExisting: true,
+                        downloadClientItem: new DownloadClientItem { DownloadId = "conversion-match-gate" },
+                        importMode: ImportMode.Move,
+                        cancellationToken: CancellationToken.None);
+
+                    Assert.That(results, Has.Count.EqualTo(2));
+                    Assert.That(results.SelectMany(r => r.Errors), Has.Some.Contains("NO_MATCH"));
+                    var blocked = failedBookId == 0 || failedBookId == book.Id;
+                    Assert.That(results.SelectMany(r => r.Errors).Any(error => error.Contains("required file")), Is.EqualTo(blocked));
+                    if (blocked)
+                    {
+                        var error = results.SelectMany(result => result.Errors).Single(message => message.Contains("required file"));
+                        Assert.That(error, Does.Contain(unmatched.Path).And.Contain("NO_MATCH"));
+                        Assert.That(error, Does.Not.Contain("delete").IgnoreCase);
+                    }
+                    Assert.That(conversion.ConvertCalls, Is.EqualTo(blocked ? 0 : 1));
+                    if (blocked) Assert.That(mover.PreviewCalls, Is.Zero);
                 }
-            }
+                finally
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(tempPath);
+                    }
+                }
+            });
         }
 
         [Test]
-        public void should_convert_tracked_manual_confirmed_download()
+        public void should_convert_tracked_automatic_download()
         {
             var tempPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-manual-confirm-{Guid.NewGuid():N}.mp3");
             var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-manual-confirm-destination-{Guid.NewGuid():N}");
@@ -1684,19 +2168,20 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService()));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
                     Edition = edition,
-                    Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() },
-                    IsManualImport = true
+                    Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-manual-confirm" },
@@ -1710,7 +2195,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(conversion.LastInputFiles, Is.EquivalentTo(new[] { tempPath }));
                 Assert.That(conversion.LastOutputFile, Does.StartWith(Path.Combine(destinationDir, ".chaptarr-conversions")));
                 Assert.That(conversion.LastOutputFile, Does.EndWith("Black Sheep.m4b"));
-                Assert.That(mover.PreviewCalls, Is.EqualTo(1));
+                Assert.That(mover.PreviewCalls, Is.EqualTo(2), "The initial enqueue and the post-worker import sweep each preview the destination.");
             }
             finally
             {
@@ -1805,10 +2290,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService()));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -1816,7 +2303,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-fails" },
@@ -1832,7 +2319,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(conversion.LastOutputFile, Does.EndWith("Black Sheep.m4b"));
                 Assert.That(conversion.LastOptions.TempDirectory, Does.StartWith(Path.Combine(destinationDir, ".chaptarr-conversions")));
                 Assert.That(Directory.Exists(Path.Combine(destinationDir, ".chaptarr-conversions")), Is.False);
-                Assert.That(mover.PreviewCalls, Is.EqualTo(1));
+                Assert.That(mover.PreviewCalls, Is.EqualTo(2), "The initial enqueue and the post-worker import sweep each preview the destination.");
             }
             finally
             {
@@ -1897,10 +2384,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<IQualityProfileService>(),
                     conversion,
                         LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
-                    configService: CreateConfigService(concurrentDownloads, maxCpuThreads));
+                    configService: CreateConfigService(concurrentDownloads, maxCpuThreads),
+                    conversionJobService: CreateConversionJobs(conversion, null, CreateConfigService(concurrentDownloads, maxCpuThreads), new StubMediaFileService()));
 
                 var decisions = paths.Select(path => new ImportDecision<LocalBook>(new LocalBook
                 {
+                    IsManualImport = false,
                     Path = path,
                     Book = book,
                     Author = author,
@@ -1908,7 +2397,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 })).ToList();
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     decisions,
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = $"conversion-thread-plan-{Guid.NewGuid():N}" },
@@ -2025,10 +2514,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                         LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
                     null,
                     diskProvider,
-                    configService);
+                    configService,
+                    conversionJobService: CreateConversionJobs(conversion, null, configService, new StubMediaFileService()));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -2036,7 +2527,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-space" },
@@ -2101,10 +2592,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService()));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -2112,7 +2605,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-destination-exists" },
@@ -2185,10 +2678,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, mediaFileService));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -2196,7 +2691,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: true,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-destination-unmapped" },
@@ -2268,10 +2763,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, mediaFileService));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -2279,7 +2776,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: true,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-destination-stale" },
@@ -2318,6 +2815,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             try
             {
                 var (qualityProfile, author, book, edition) = CreateAudiobookConversionGraph(21);
+                book.Editions = new List<Edition> { edition };
                 qualityProfile.UpgradeAllowed = true;
                 book.CleanTitle = "black sheep";
                 var staleRow = new BookFile
@@ -2343,7 +2841,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMetadataTagService(),
                     new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(),
-                    Proxy<IBookService>(),
+                    CreateBookService(new List<Book> { book }).Service,
                     CreateEditionService(new List<Edition> { edition }),
                     Proxy<IRecycleBinProvider>(),
                     Proxy<IExtraService>(),
@@ -2356,10 +2854,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, mediaFileService));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -2373,7 +2873,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     }
                 };
 
-                var results = service.Import(
+                var results = ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: true,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-destination-reuse" },
@@ -2443,10 +2943,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService()));
 
                 LocalBook LocalBookFor(string path) => new()
                 {
+                    IsManualImport = false,
                     Path = path,
                     Book = book,
                     Author = author,
@@ -2454,7 +2956,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                service.Import(
+                ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>>
                     {
                         new(LocalBookFor(part10)),
@@ -2532,10 +3034,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<IQualityProfileService>(),
                     conversion,
                         LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
-                    coverMapper: coverMapper);
+                    coverMapper: coverMapper,
+                    conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService()));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = sourcePath,
                     Book = book,
                     Author = author,
@@ -2543,7 +3047,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                service.Import(
+                ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-cover" },
@@ -2607,7 +3111,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMetadataTagService(),
                     mediaInfo,
                     Proxy<IAuthorService>(),
-                    Proxy<IBookService>(),
+                    CreateBookService(new List<Book> { book }).Service,
                     CreateEditionService(new List<Edition> { edition }),
                     Proxy<IRecycleBinProvider>(),
                     Proxy<IExtraService>(),
@@ -2620,10 +3124,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService()));
 
                 LocalBook LocalBookFor(string path) => new()
                 {
+                    IsManualImport = false,
                     Path = path,
                     Book = book,
                     Author = author,
@@ -2631,7 +3137,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                service.Import(
+                ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>>
                     {
                         new(LocalBookFor(part1)),
@@ -2713,10 +3219,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     conversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(conversion, null, null, new StubMediaFileService()));
 
                 var localBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = part1,
                     Book = book,
                     Author = author,
@@ -2724,7 +3232,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                service.Import(
+                ImportWithConversionWorker(service,
                     new List<ImportDecision<LocalBook>> { new(localBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-provider-chapters-mismatch" },
@@ -2749,8 +3257,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        [Test]
-        public void should_retain_and_reuse_converted_artifact_when_import_fails_after_conversion()
+        [TestCase(0)]
+        [TestCase(8)]
+        public void should_retain_and_reuse_converted_artifact_when_import_fails_after_conversion(int ageInDays)
         {
             var tempPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-retain-{Guid.NewGuid():N}.mp3");
             var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
@@ -2785,10 +3294,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     firstConversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(firstConversion, null, null, new StubMediaFileService()));
 
                 var firstLocalBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -2796,7 +3307,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                var firstResults = firstService.Import(
+                var firstResults = ImportWithConversionWorker(firstService,
                     new List<ImportDecision<LocalBook>> { new(firstLocalBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-retain" },
@@ -2808,6 +3319,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(File.Exists(firstConversion.LastOutputFile), Is.True);
                 Assert.That(File.Exists(Path.Combine(Path.GetDirectoryName(firstConversion.LastOutputFile), "conversion-artifact.json")), Is.True);
 
+                Directory.SetLastWriteTimeUtc(Path.GetDirectoryName(firstConversion.LastOutputFile), DateTime.UtcNow.AddDays(-ageInDays));
+
                 var secondConversion = new SuccessfulM4bConversionService();
                 var secondService = new ImportApprovedBooks(
                     new StubMediaFileService(),
@@ -2827,10 +3340,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     secondConversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"),
+                    conversionJobService: CreateConversionJobs(secondConversion, null, null, new StubMediaFileService()));
 
                 var secondLocalBook = new LocalBook
                 {
+                    IsManualImport = false,
                     Path = tempPath,
                     Book = book,
                     Author = author,
@@ -2838,7 +3353,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
                 };
 
-                secondService.Import(
+                ImportWithConversionWorker(secondService,
                     new List<ImportDecision<LocalBook>> { new(secondLocalBook) },
                     replaceExisting: false,
                     downloadClientItem: new DownloadClientItem { DownloadId = "conversion-retain" },
@@ -2847,120 +3362,6 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 Assert.That(secondConversion.ConvertCalls, Is.EqualTo(0));
                 Assert.That(File.Exists(firstConversion.LastOutputFile), Is.True);
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
-
-                if (Directory.Exists(destinationDir))
-                {
-                    Directory.Delete(destinationDir, recursive: true);
-                }
-            }
-        }
-
-        [Test]
-        public void should_not_reuse_expired_retained_conversion_artifact()
-        {
-            var tempPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-retain-expired-{Guid.NewGuid():N}.mp3");
-            var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
-            var destinationPath = Path.Combine(destinationDir, "Black Sheep.m4b");
-            File.WriteAllText(tempPath, "fake mp3");
-            Directory.CreateDirectory(destinationDir);
-
-            try
-            {
-                var (_, author, book, edition) = CreateAudiobookConversionGraph(22);
-                var mover = new StubMoveBookFiles
-                {
-                    DestinationPath = destinationPath
-                };
-
-                var firstConversion = new SuccessfulM4bConversionService();
-                var firstService = new ImportApprovedBooks(
-                    new StubMediaFileService(),
-                    new StubMetadataTagService(),
-                    Proxy<IMediaInfoExtractor>(),
-                    Proxy<IAuthorService>(),
-                    Proxy<IBookService>(),
-                    CreateEditionService(new List<Edition> { edition }),
-                    Proxy<IRecycleBinProvider>(),
-                    Proxy<IExtraService>(),
-                    mover,
-                    Proxy<IHistoryService>(),
-                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
-                    Proxy<IManageCommandQueue>(),
-                    Proxy<ISeriesBookLinkService>(),
-                    Proxy<ISeriesService>(),
-                    Proxy<IQualityProfileService>(),
-                    firstConversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
-
-                firstService.Import(
-                    new List<ImportDecision<LocalBook>>
-                    {
-                        new(new LocalBook
-                        {
-                            Path = tempPath,
-                            Book = book,
-                            Author = author,
-                            Edition = edition,
-                            Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
-                        })
-                    },
-                    replaceExisting: false,
-                    downloadClientItem: new DownloadClientItem { DownloadId = "conversion-retain-expired" },
-                    importMode: ImportMode.Move,
-                    cancellationToken: CancellationToken.None);
-
-                var oldOutput = firstConversion.LastOutputFile;
-                var oldAttemptFolder = Path.GetDirectoryName(oldOutput);
-                Directory.SetLastWriteTimeUtc(oldAttemptFolder, DateTime.UtcNow.AddDays(-8));
-
-                var secondConversion = new SuccessfulM4bConversionService();
-                var secondService = new ImportApprovedBooks(
-                    new StubMediaFileService(),
-                    new StubMetadataTagService(),
-                    Proxy<IMediaInfoExtractor>(),
-                    Proxy<IAuthorService>(),
-                    Proxy<IBookService>(),
-                    CreateEditionService(new List<Edition> { edition }),
-                    Proxy<IRecycleBinProvider>(),
-                    Proxy<IExtraService>(),
-                    mover,
-                    Proxy<IHistoryService>(),
-                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
-                    Proxy<IManageCommandQueue>(),
-                    Proxy<ISeriesBookLinkService>(),
-                    Proxy<ISeriesService>(),
-                    Proxy<IQualityProfileService>(),
-                    secondConversion,
-                        LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
-
-                secondService.Import(
-                    new List<ImportDecision<LocalBook>>
-                    {
-                        new(new LocalBook
-                        {
-                            Path = tempPath,
-                            Book = book,
-                            Author = author,
-                            Edition = edition,
-                            Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() }
-                        })
-                    },
-                    replaceExisting: false,
-                    downloadClientItem: new DownloadClientItem { DownloadId = "conversion-retain-expired" },
-                    importMode: ImportMode.Move,
-                    cancellationToken: CancellationToken.None);
-
-                Assert.That(secondConversion.ConvertCalls, Is.EqualTo(1));
-                Assert.That(File.Exists(oldOutput), Is.False);
             }
             finally
             {
@@ -3123,6 +3524,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 File.WriteAllText(request.OutputPath, "converted m4b");
                 var manifest = new ConversionArtifactManifest
                 {
+                    EncoderSucceeded = true, OutputSize = new FileInfo(request.OutputPath).Length,
                     CreatedUtc = DateTime.UtcNow,
                     OutputPath = request.OutputPath,
                     TargetQualityId = request.TargetQualityId,
@@ -3360,7 +3762,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         if (method.Name == nameof(IMediaFileService.ReplaceMany)) { files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1]); return null; }
                         if (method.Name == nameof(IMediaFileService.GetFilesByBook)) return files.GetFilesByBook((int)args[0]);
                         if (method.Name == nameof(IMediaFileService.GetFilesByEdition)) return files.GetFilesByEdition((int)args[0]);
-                        if (method.Name == nameof(IMediaFileService.GetFileWithPath)) return files.GetFileWithPath((string)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFileWithPath)) return args[0] is List<string> paths ? files.GetFileWithPath(paths) : files.GetFileWithPath((string)args[0]);
                         throw new InvalidOperationException("Unexpected media file operation " + method.Name);
                     });
                     var eventWriter = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) =>

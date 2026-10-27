@@ -1,5 +1,10 @@
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using FluentValidation.Results;
+using NzbDrone.Common;
+using NzbDrone.Common.Cache;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -10,10 +15,14 @@ namespace NzbDrone.Core.Notifications.Synology
     public class SynologyIndexer : NotificationBase<SynologyIndexerSettings>
     {
         private readonly ISynologyIndexerProxy _indexerProxy;
+        private readonly IDiskProvider _diskProvider;
+        private readonly ICached<Dictionary<string, bool>> _pendingDeletes;
 
-        public SynologyIndexer(ISynologyIndexerProxy indexerProxy)
+        public SynologyIndexer(ISynologyIndexerProxy indexerProxy, IDiskProvider diskProvider, ICacheManager cacheManager)
         {
             _indexerProxy = indexerProxy;
+            _diskProvider = diskProvider;
+            _pendingDeletes = cacheManager.GetCache<Dictionary<string, bool>>(GetType(), "pendingDeletes");
         }
 
         public override string Link => "https://www.synology.com";
@@ -49,9 +58,9 @@ namespace NzbDrone.Core.Notifications.Synology
 
         public override void OnAuthorDelete(AuthorDeleteMessage deleteMessage)
         {
-            if (Settings.UpdateLibrary)
+            if (Settings.UpdateLibrary && deleteMessage.DeletedFiles)
             {
-                _indexerProxy.DeleteFolder(deleteMessage.Author.Path);
+                QueueDelete(deleteMessage.Author.Path, true);
             }
         }
 
@@ -61,7 +70,7 @@ namespace NzbDrone.Core.Notifications.Synology
             {
                 foreach (var bookFile in deleteMessage.Book.BookFiles)
                 {
-                    _indexerProxy.DeleteFile(bookFile.Path);
+                    QueueDelete(bookFile.Path, false);
                 }
             }
         }
@@ -70,7 +79,7 @@ namespace NzbDrone.Core.Notifications.Synology
         {
             if (Settings.UpdateLibrary)
             {
-                _indexerProxy.DeleteFile(deleteMessage.BookFile.Path);
+                QueueDelete(deleteMessage.BookFile.Path, false);
             }
         }
 
@@ -80,6 +89,72 @@ namespace NzbDrone.Core.Notifications.Synology
             {
                 _indexerProxy.UpdateFolder(message.Author.Path);
             }
+        }
+
+        public override bool HasPendingQueue
+        {
+            get
+            {
+                lock (_pendingDeletes)
+                {
+                    return _pendingDeletes.Find(Definition.Id.ToString())?.Count > 0;
+                }
+            }
+        }
+
+        public override void ProcessQueue()
+        {
+            lock (_pendingDeletes)
+            {
+                var key = Definition.Id.ToString();
+                var pending = _pendingDeletes.Find(key);
+                if (Settings.UpdateLibrary && pending != null)
+                {
+                    var deletedFolders = pending.Where(item => item.Value && !_diskProvider.FolderExists(item.Key))
+                        .Select(item => item.Key).ToHashSet(PathEqualityComparer.Instance);
+                    var groups = pending.GroupBy(item => GetDeletionTarget(item.Key, deletedFolders), PathEqualityComparer.Instance).ToList();
+                    foreach (var group in groups)
+                    {
+                        if (deletedFolders.Contains(group.Key))
+                        {
+                            _indexerProxy.DeleteFolder(group.Key);
+                        }
+                        else if (!pending[group.Key] && !_diskProvider.FileExists(group.Key))
+                        {
+                            _indexerProxy.DeleteFile(group.Key);
+                        }
+
+                        foreach (var item in group)
+                        {
+                            pending.Remove(item.Key);
+                        }
+                    }
+                }
+
+                _pendingDeletes.Remove(key);
+            }
+        }
+
+        private void QueueDelete(string path, bool isFolder)
+        {
+            lock (_pendingDeletes)
+            {
+                _pendingDeletes.Get(Definition.Id.ToString(), () => new Dictionary<string, bool>(PathEqualityComparer.Instance))[Path.GetFullPath(path)] = isFolder;
+            }
+        }
+
+        private static string GetDeletionTarget(string path, HashSet<string> deletedFolders)
+        {
+            var target = path;
+            for (var parent = path; parent != null; parent = parent.GetParentPath())
+            {
+                if (deletedFolders.Contains(parent))
+                {
+                    target = parent;
+                }
+            }
+
+            return target;
         }
 
         public override ValidationResult Test()

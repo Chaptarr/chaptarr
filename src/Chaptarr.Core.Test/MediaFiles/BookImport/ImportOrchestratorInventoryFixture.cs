@@ -97,12 +97,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
         }
 
-        [Test]
+        [TestCase("misplaced.m4b", FolderType.Ebook, true)]
+        [TestCase("._Dune Part 01.mp3", FolderType.Audiobook, false)]
+        [TestCase("._Dune.epub", FolderType.Ebook, false)]
 #pragma warning disable SYSLIB0050
-        public async Task stage_should_inventory_but_not_match_a_root_type_mismatched_media_file()
+        public async Task stage_should_exclude_junk_but_inventory_root_type_mismatched_media(string filename, FolderType folderType, bool inventoried)
         {
             const string rootPath = "/books";
-            const string filePath = "/books/misplaced.m4b";
+            var filePath = rootPath + "/" + filename;
             var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
             var diskProxy = (DiskProviderProxy)(object)diskProvider;
             diskProxy.RootPath = rootPath;
@@ -123,7 +125,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var task = (Task)method.Invoke(sut, new object[]
             {
                 rootPath,
-                new RootFolder { Path = rootPath, FolderType = FolderType.Ebook },
+                new RootFolder { Path = rootPath, FolderType = folderType },
                 null,
                 null,
                 FilterFilesType.Known
@@ -135,8 +137,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var seenPaths = (IEnumerable<string>)stageResult.GetType().GetProperty("SeenFilePaths")?.GetValue(stageResult);
             var stagedCount = (int)stageResult.GetType().GetProperty("StagedCount")?.GetValue(stageResult);
 
-            Assert.That(seenPaths, Is.EqualTo(new[] { filePath }));
-            Assert.That(stagedCount, Is.EqualTo(0), "Root-type mismatches must stay visible but must not enter matching/import");
+            Assert.That(seenPaths, Is.EqualTo(inventoried ? new[] { filePath } : Array.Empty<string>()));
+            Assert.That(stagedCount, Is.EqualTo(0), "Neither excluded junk nor root-type mismatches should enter matching/import");
             Assert.That(ingestProxy.Inserted, Is.Empty);
         }
 #pragma warning restore SYSLIB0050

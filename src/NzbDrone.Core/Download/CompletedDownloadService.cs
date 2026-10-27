@@ -28,9 +28,6 @@ namespace NzbDrone.Core.Download
 
 	    public class CompletedDownloadService : ICompletedDownloadService
 	    {
-	        // Restore the pre-d60 three-cycle grace for files arriving through a remote
-	        // mount, but never keep a completed download retrying for missing files forever.
-	        private const int MissingAuthoritativeMediaFileBlockThreshold = 3;
 	        private readonly IEventAggregator _eventAggregator;
 	        private readonly IHistoryService _historyService;
 	        private readonly IProvideImportItemService _provideImportItemService;
@@ -113,13 +110,6 @@ namespace NzbDrone.Core.Download
                 _downloadClientFileSnapshotService.CaptureCompletedOutput(trackedDownload.ImportItem);
                 _downloadClientFileSnapshotService.ApplySnapshot(trackedDownload.DownloadItem);
 
-                var expectedBookIds = GetExpectedTrackedBookIds(trackedDownload);
-                if (HasGrabHistory(trackedDownload) && expectedBookIds.Count == 0)
-                {
-                    _logger.Debug("[STRICT-IMPORT] Grab history exists for {0}, but target book context is missing; falling back to best-effort import matching.",
-                        trackedDownload.DownloadItem.Title);
-                }
-
                 var parsedBookInfo = trackedDownload.RemoteBook?.ParsedBookInfo;
                 _logger.Debug("[IMPORT-TRIGGER] CompletedDownloadService.Import calling ProcessPath for completed download: {0}, path: {1}", trackedDownload.DownloadItem.Title, outputPath);
                 var importMode = _downloadImportModeResolver.Resolve(ImportMode.Auto, trackedDownload.DownloadItem);
@@ -128,7 +118,6 @@ namespace NzbDrone.Core.Download
 
                 if (importResults.Any(result => result.Result == ImportResultType.Pending))
                 {
-                    trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
                     trackedDownload.State = TrackedDownloadState.ImportPending;
                     trackedDownload.ClearStatus();
                     PublishTrackedDownloadUpdated(trackedDownload);
@@ -142,6 +131,19 @@ namespace NzbDrone.Core.Download
                     _logger.Debug("Passing narrator information to import service: {0} for download: {1}", parsedBookInfo.Narrator, trackedDownload.DownloadItem.Title);
                 }
 
+                var history = _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId);
+                var hasGrabHistory = history?.Any(row => row.EventType == EntityHistoryEventType.Grabbed) == true;
+                if (hasGrabHistory && GetExpectedTrackedBookIds(trackedDownload).Count == 0)
+                {
+                    _logger.Debug("[STRICT-IMPORT] Grab history exists for {0}, but target book context is missing; falling back to best-effort import matching.",
+                        trackedDownload.DownloadItem.Title);
+                }
+
+                if (VerifyImport(trackedDownload, importResults, history))
+                {
+                    return;
+                }
+
                 if (importResults.Empty())
                 {
                     var statusMessages = new[]
@@ -150,35 +152,11 @@ namespace NzbDrone.Core.Download
                         new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, string.Format("No files found are eligible for import in {0}", outputPath))
                     };
 
-                    BlockImport(trackedDownload, statusMessages);
-                    return;
-                }
-
-                if (AreAllImportRejectionsMissingAuthoritativeMediaFiles(importResults))
-                {
-                    trackedDownload.MissingAuthoritativeMediaFileAttempts++;
-                    var statusMessages = importResults
-                        .Where(result => result.ImportDecision.Item != null)
-                        .Select(result => new TrackedDownloadStatusMessage(Path.GetFileName(result.ImportDecision.Item.Path), result.Errors))
-                        .ToArray();
-
-                    trackedDownload.Warn(statusMessages);
-
-                    if (trackedDownload.MissingAuthoritativeMediaFileAttempts >= MissingAuthoritativeMediaFileBlockThreshold)
-                    {
-                        _logger.Warn("Declared download files did not become readable for {0} after {1} attempts; blocking automatic retries until user action.",
-                            trackedDownload.DownloadItem.Title,
-                            trackedDownload.MissingAuthoritativeMediaFileAttempts);
-                        BlockImportWithCurrentStatus(trackedDownload);
-                        return;
-                    }
-
+                    trackedDownload.Warn(trackedDownload.StatusMessages.Concat(statusMessages).ToArray());
                     trackedDownload.State = TrackedDownloadState.ImportPending;
                     PublishTrackedDownloadUpdated(trackedDownload);
                     return;
                 }
-
-                trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
 
                 if (AreAllImportRejectionsTemporary(importResults))
                 {
@@ -193,12 +171,7 @@ namespace NzbDrone.Core.Download
                     return;
                 }
 
-                if (VerifyImport(trackedDownload, importResults))
-                {
-                    return;
-                }
-
-                var strictVerificationFailure = GetStrictVerificationFailure(trackedDownload, importResults);
+                var strictVerificationFailure = GetStrictVerificationFailure(trackedDownload, importResults, hasGrabHistory);
                 if (strictVerificationFailure != null)
                 {
                     var statusMessages = new[]
@@ -207,7 +180,7 @@ namespace NzbDrone.Core.Download
                         new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, strictVerificationFailure)
                     };
 
-                    BlockImport(trackedDownload, statusMessages);
+                    BlockImport(trackedDownload, trackedDownload.StatusMessages.Concat(statusMessages).ToArray());
                     return;
                 }
 
@@ -249,13 +222,11 @@ namespace NzbDrone.Core.Download
                         .Select(v => new TrackedDownloadStatusMessage(Path.GetFileName(v.ImportDecision.Item.Path), v.Errors))
                         .ToArray();
 
-                    BlockImport(trackedDownload, statusMessages);
+                    BlockImport(trackedDownload, trackedDownload.StatusMessages.Concat(statusMessages).ToArray());
                     return;
                 }
 
-                BlockImport(trackedDownload,
-                    new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, "IMPORT_VERIFICATION_INCOMPLETE"),
-                    new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, "Imported files did not satisfy every expected book in the download. Use Retry Import after correcting the match or files."));
+                BlockImportWithCurrentStatus(trackedDownload);
             }
             catch (Exception e)
             {
@@ -303,16 +274,6 @@ namespace NzbDrone.Core.Download
                 result.Result != ImportResultType.Imported &&
                 result.ImportDecision?.Rejections?.Any() == true &&
                 result.ImportDecision.Rejections.All(rejection => rejection.Type == RejectionType.Temporary));
-        }
-
-        private static bool AreAllImportRejectionsMissingAuthoritativeMediaFiles(List<ImportResult> importResults)
-        {
-            return AreAllImportRejectionsTemporary(importResults) &&
-                   importResults.All(result => result.ImportDecision.Rejections.All(rejection =>
-                       string.Equals(
-                           rejection.Category,
-                           DownloadedBooksImportService.MissingAuthoritativeMediaFilesRejectionCategory,
-                           StringComparison.Ordinal)));
         }
 
         private static IEnumerable<string> GetDisallowedFormatSummary(List<ImportResult> importResults)
@@ -371,103 +332,31 @@ namespace NzbDrone.Core.Download
 
         public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults)
         {
-            var expectedBooks = GetExpectedTrackedBooks(trackedDownload);
-            var strictExpectedBooks = GetStrictExpectedTrackedBooks(expectedBooks);
-            var strictExpectedBookIds = strictExpectedBooks.Select(book => book.Id).Distinct().ToList();
-            var importedBookIds = importResults.Where(c => c.Result == ImportResultType.Imported)
-                                               .Select(c => c.ImportDecision.Item?.Book?.Id ?? 0)
-                                               .Where(id => id > 0)
-                                               .Distinct()
-                                               .ToList();
-
-            var allItemsImported = trackedDownload.RemoteBook?.AlternativeCopies == true
-                ? NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportService.AreAllTrackedDownloadItemsImported(trackedDownload, importResults)
-                : strictExpectedBookIds.Count > 0
-                ? strictExpectedBookIds.All(importedBookIds.Contains) && importedBookIds.All(strictExpectedBookIds.Contains)
-                : importedBookIds.Count >= Math.Max(1, expectedBooks.Count);
-
-            if (allItemsImported)
-            {
-                _logger.Debug("All books were imported for {0}", trackedDownload.DownloadItem.Title);
-                trackedDownload.State = TrackedDownloadState.Imported;
-                _downloadClientFileSnapshotService.Delete(trackedDownload.DownloadItem);
-                _downloadClientFileSnapshotService.Delete(trackedDownload.ImportItem);
-                PublishTrackedDownloadUpdated(trackedDownload);
-
-                var importedAuthorIds = importResults.Where(x => x.Result == ImportResultType.Imported)
-                    .Select(c => c.ImportDecision.Item?.Author?.Id ?? c.ImportDecision.Item?.Book?.AuthorId ?? 0);
-
-                _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload, ResolveCompletedAuthorId(trackedDownload, importedAuthorIds)));
-                return true;
-            }
-
-            // Double check if all episodes were imported by checking the history if at least one
-            // file was imported. This will allow the decision engine to reject already imported
-            // episode files and still mark the download complete when all files are imported.
-
-            // EDGE CASE: This process relies on EpisodeIds being consistent between executions, if a series is updated
-            // and an episode is removed, but later comes back with a different ID then Sonarr will treat it as incomplete.
-            // Since imports should be relatively fast and these types of data changes are infrequent this should be quite
-            // safe, but commenting for future benefit.
-            var atLeastOneEpisodeImported = importResults.Any(c => c.Result == ImportResultType.Imported);
-
-            var historyItems = _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId)
-                                              .OrderByDescending(h => h.Date)
-                                              .ToList();
-
-            var allEpisodesImportedInHistory = (trackedDownload.RemoteBook?.AlternativeCopies != true ||
-                importResults.All(result => result.ImportDecision?.Item?.Book?.Id > 0 ||
-                    (!string.IsNullOrWhiteSpace(result.ImportDecision?.Item?.Path) &&
-                     QualityMediaTypeHelper.GetMediaTypeFromPath(result.ImportDecision.Item.Path) != trackedDownload.RemoteBook.GetMediaType()))) &&
-                _trackedDownloadAlreadyImported.IsImported(trackedDownload, historyItems);
-
-            if (allEpisodesImportedInHistory)
-            {
-                // Log different error messages depending on the circumstances, but treat both as fully imported, because that's the reality.
-                // The second message shouldn't be logged in most cases, but continued reporting would indicate an ongoing issue.
-                if (atLeastOneEpisodeImported)
-                {
-                    _logger.Debug("All books were imported in history for {0}", trackedDownload.DownloadItem.Title);
-                }
-                else
-                {
-                    var historyAuthorId = ResolveCompletedAuthorId(
-                        trackedDownload,
-                        historyItems.Where(x => x.EventType == EntityHistoryEventType.BookFileImported).Select(x => x.AuthorId),
-                        historyItems.Select(x => x.AuthorId));
-
-                    _logger.ForDebugEvent()
-                           .Message("No books were just imported, but all books were previously imported, possible issue with download history.")
-                           .Property("AuthorId", historyAuthorId)
-                           .Property("DownloadId", trackedDownload.DownloadItem.DownloadId)
-                           .Property("Title", trackedDownload.DownloadItem.Title)
-                           .Property("Path", trackedDownload.DownloadItem.OutputPath.ToString())
-                           .WriteSentryWarn("DownloadHistoryIncomplete")
-                           .Log();
-                }
-
-                trackedDownload.State = TrackedDownloadState.Imported;
-                _downloadClientFileSnapshotService.Delete(trackedDownload.DownloadItem);
-                _downloadClientFileSnapshotService.Delete(trackedDownload.ImportItem);
-                PublishTrackedDownloadUpdated(trackedDownload);
-
-                _eventAggregator.PublishEvent(new DownloadCompletedEvent(
-                    trackedDownload,
-                    ResolveCompletedAuthorId(
-                        trackedDownload,
-                        historyItems.Where(x => x.EventType == EntityHistoryEventType.BookFileImported).Select(x => x.AuthorId),
-                        historyItems.Select(x => x.AuthorId))));
-
-                return true;
-            }
-
-            _logger.Debug("Not all books have been imported for {0}", trackedDownload.DownloadItem.Title);
-            return false;
+            return VerifyImport(trackedDownload, importResults, _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId));
         }
 
-        private string GetStrictVerificationFailure(TrackedDownload trackedDownload, List<ImportResult> importResults)
+        private bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults, List<EntityHistory> history)
         {
-            if (!HasGrabHistory(trackedDownload))
+            if (!_trackedDownloadAlreadyImported.IsImported(trackedDownload, history, importResults))
+            {
+                return false;
+            }
+
+            _logger.Debug("All required source files were imported for {0}", trackedDownload.DownloadItem.Title);
+            trackedDownload.State = TrackedDownloadState.Imported;
+            trackedDownload.ClearStatus();
+            PublishTrackedDownloadUpdated(trackedDownload);
+            var authorIds = importResults.Where(result => result.Result == ImportResultType.Imported)
+                .Select(result => result.ImportDecision.Item?.Author?.Id ?? result.ImportDecision.Item?.Book?.AuthorId ?? 0);
+            _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload,
+                ResolveCompletedAuthorId(trackedDownload, authorIds,
+                    (history ?? new List<EntityHistory>()).Where(row => row.EventType == EntityHistoryEventType.BookFileImported).Select(row => row.AuthorId))));
+            return true;
+        }
+
+        private string GetStrictVerificationFailure(TrackedDownload trackedDownload, List<ImportResult> importResults, bool hasGrabHistory)
+        {
+            if (!hasGrabHistory)
             {
                 return null;
             }
@@ -521,21 +410,9 @@ namespace NzbDrone.Core.Download
             return book.Id > 0 ? $"BookId {book.Id}" : "unknown book";
         }
 
-        private bool HasGrabHistory(TrackedDownload trackedDownload)
-        {
-            var downloadId = trackedDownload?.DownloadItem?.DownloadId;
-            if (downloadId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            var historyItems = _historyService.FindByDownloadId(downloadId);
-            return historyItems?.Any(h => h.EventType == EntityHistoryEventType.Grabbed) == true;
-        }
-
         private static List<int> GetExpectedTrackedBookIds(TrackedDownload trackedDownload)
         {
-            return GetExpectedTrackedBooks(trackedDownload)
+            return TrackedDownloadAlreadyImported.GetExpectedBooks(trackedDownload)
                 .Select(book => book.Id)
                 .Distinct()
                 .ToList();
@@ -543,7 +420,7 @@ namespace NzbDrone.Core.Download
 
         private static List<Book> GetStrictExpectedTrackedBooks(TrackedDownload trackedDownload)
         {
-            return GetStrictExpectedTrackedBooks(GetExpectedTrackedBooks(trackedDownload));
+            return GetStrictExpectedTrackedBooks(TrackedDownloadAlreadyImported.GetExpectedBooks(trackedDownload));
         }
 
         private static List<Book> GetStrictExpectedTrackedBooks(IEnumerable<Book> expectedBooks)
@@ -558,14 +435,6 @@ namespace NzbDrone.Core.Download
             return book != null &&
                    book.Id > 0 &&
                    (!book.AnyEditionOk || book.Editions?.Any(edition => edition?.ManualAdd == true) == true);
-        }
-
-        private static List<Book> GetExpectedTrackedBooks(TrackedDownload trackedDownload)
-        {
-            return trackedDownload?.RemoteBook?
-                .GetBooksMatchingReleaseMediaType()
-                .Where(book => book != null && book.Id > 0)
-                .ToList() ?? new List<Book>();
         }
 
         private static int ResolveCompletedAuthorId(TrackedDownload trackedDownload, params IEnumerable<int>[] candidateAuthorIds)
@@ -611,7 +480,7 @@ namespace NzbDrone.Core.Download
             // Imported items are only seeding, ignored items will never import, and blocked items
             // wait for the user's Retry (which re-resolves its own import item) - refreshing their
             // file lists every monitoring cycle costs a client API call plus a snapshot write per
-            // item, and resurrects snapshots that were deliberately deleted when the import completed.
+            // item.
             if (trackedDownload.State == TrackedDownloadState.Imported ||
                 trackedDownload.State == TrackedDownloadState.ImportBlocked ||
                 trackedDownload.State == TrackedDownloadState.Ignored)
@@ -622,7 +491,8 @@ namespace NzbDrone.Core.Download
             trackedDownload.ImportItem = _provideImportItemService.ProvideImportItem(trackedDownload.DownloadItem, trackedDownload.ImportItem);
             _downloadClientFileSnapshotService.CaptureClientList(trackedDownload.ImportItem);
             _downloadClientFileSnapshotService.ApplySnapshot(trackedDownload.ImportItem);
-            _downloadClientFileSnapshotService.ApplySnapshot(trackedDownload.DownloadItem);
+            trackedDownload.DownloadItem.FilePaths = trackedDownload.ImportItem.FilePaths;
+            trackedDownload.DownloadItem.FileListConfidence = trackedDownload.ImportItem.FileListConfidence;
         }
 
         private void PublishTrackedDownloadUpdated(TrackedDownload trackedDownload)

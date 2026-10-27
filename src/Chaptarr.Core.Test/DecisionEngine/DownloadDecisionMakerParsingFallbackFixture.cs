@@ -217,6 +217,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                     Editions = new List<Edition> { new Edition { Id = id, BookId = id, Title = title, Monitored = true } }
                 };
                 var target = MakeBook(1, "Dune", true);
+                target.Editions[0].Narrator = "Scott Brick";
                 target.SeriesName = "Dune";
                 target.SeriesPosition = "1";
                 var catalog = new List<Book> { target, MakeBook(2, "Dune Messiah", false), MakeBook(3, "Children of Dune", false) };
@@ -247,10 +248,15 @@ namespace Chaptarr.Core.Test.DecisionEngine
                     ("Frank Herbert Dune series du02 Dune Messiah MP3", false),
                     ("Frank Herbert - Children of Dune MP3", false),
                     ("Frank Herbert - Dune FLAC", false)
-                };
+                }.Select(item => (item.Item1, item.Item2, Author: author.Name)).Concat(new[]
+                {
+                    ("Dune - Scott Brick MP3", false, Author: (string)null),
+                    ("Dune - Dune MP3", false, Author: (string)null),
+                    ("Frank Herbert - Dune - Scott Brick MP3", true, Author: (string)null)
+                }).ToArray();
                 var reports = cases.Select((item, index) => new ReleaseInfo
                 {
-                    Guid = index.ToString(), Title = item.Item1, Author = author.Name, Indexer = "Generic",
+                    Guid = index.ToString(), Title = item.Item1, Author = item.Author, Indexer = "Generic",
                     Categories = new List<int> { 3030 }, PublishDate = DateTime.UtcNow
                 }).ToList();
                 var decisions = path == 0 ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
@@ -2142,7 +2148,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Categories = new List<int> { 7020 },
                 PublishDate = DateTime.UtcNow
             });
-            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, decision.RemoteBook.SearchCriteriaMatch);
             var resource = decision.ToResource();
 
             Assert.Multiple(() =>
@@ -2238,7 +2244,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Categories = new List<int> { 7020 },
                 PublishDate = DateTime.UtcNow
             });
-            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, decision.RemoteBook.SearchCriteriaMatch);
             var resource = decision.ToResource();
 
             Assert.Multiple(() =>
@@ -2364,7 +2370,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Categories = new List<int> { 7020 },
                 PublishDate = DateTime.UtcNow
             });
-            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, decision.RemoteBook.SearchCriteriaMatch);
 
             Assert.Multiple(() =>
             {
@@ -2410,7 +2416,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 PublishDate = DateTime.UtcNow
             });
             var match = decision.RemoteBook.SearchCriteriaMatch;
-            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, match);
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, match);
 
             Assert.Multiple(() =>
             {
@@ -2435,7 +2441,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Categories = new List<int> { 7020 },
                 PublishDate = DateTime.UtcNow
             });
-            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, decision.RemoteBook.SearchCriteriaMatch);
 
             Assert.Multiple(() =>
             {
@@ -2505,7 +2511,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                         Categories = new List<int> { 7020 },
                         PublishDate = DateTime.UtcNow
                     });
-                    var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+                    var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, decision.RemoteBook.SearchCriteriaMatch);
                     Assert.Multiple(() =>
                     {
                         Assert.That(identity.HasAuthorIdentityEvidence, Is.EqualTo(accepted), $"author structured={structured}, numbered={numbered}");
@@ -2629,12 +2635,12 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 PublishDate = DateTime.UtcNow
             });
 
-            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, book, decision.RemoteBook.SearchCriteriaMatch);
+            var identity = ReleaseIdentityEvidence.Analyze(decision.RemoteBook.Release, author, decision.RemoteBook.SearchCriteriaMatch);
             Assert.Multiple(() =>
             {
                 Assert.That(decision.RemoteBook.ParsedBookInfo.AuthorName, Is.Empty);
                 Assert.That(decision.RemoteBook.SearchCriteriaMatch.IsMatch, Is.False, "the title scorer must not manufacture expected-author evidence");
-                Assert.That(identity.HasPositiveIdentityEvidence, Is.False, "the identity layer must not mistake unrelated metadata for author/series evidence");
+                Assert.That(identity.HasAuthorIdentityEvidence, Is.False, "the identity layer must not mistake unrelated metadata for author evidence");
                 Assert.That(decision.Rejected, Is.True);
             });
         }
@@ -3141,8 +3147,9 @@ namespace Chaptarr.Core.Test.DecisionEngine
             };
         }
 
-        [Test]
-        public void should_accept_series_boundary_identity_without_structured_author()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void series_boundary_requires_author_evidence(bool structuredAuthor)
         {
             var author = new Author { Name = "J.K. Rowling" };
             var book = new Book
@@ -3160,13 +3167,13 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decision = RunSingleSearchDecision(author, book, new ReleaseInfo
             {
                 Title = "Harry Potter 4 - Harry Potter and the Goblet of Fire",
-                Author = string.Empty,
+                Author = structuredAuthor ? author.Name : null,
                 Indexer = "Generic",
                 Categories = new List<int> { 3030 },
                 PublishDate = DateTime.UtcNow
             });
 
-            Assert.That(decision.Rejections, Is.Empty);
+            Assert.That(decision.Approved, Is.EqualTo(structuredAuthor));
         }
 
         [Test]

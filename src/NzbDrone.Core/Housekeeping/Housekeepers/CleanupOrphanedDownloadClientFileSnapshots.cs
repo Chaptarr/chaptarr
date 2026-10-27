@@ -1,20 +1,19 @@
-using System;
 using NzbDrone.Core.Download;
 
 namespace NzbDrone.Core.Housekeeping.Housekeepers
 {
-    public class CleanupOldDownloadClientFileSnapshots : IHousekeepingTask
+    public class CleanupOrphanedDownloadClientFileSnapshots : IHousekeepingTask
     {
         private readonly IDownloadClientFileSnapshotRepository _repository;
 
-        public CleanupOldDownloadClientFileSnapshots(IDownloadClientFileSnapshotRepository repository)
+        public CleanupOrphanedDownloadClientFileSnapshots(IDownloadClientFileSnapshotRepository repository)
         {
             _repository = repository;
         }
 
         public void Clean()
         {
-            _repository.DeleteOlderThan(DateTime.UtcNow.AddDays(-14));
+            _repository.DeleteOrphanedClients();
         }
     }
 }

@@ -71,7 +71,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.RejectSoftFilter("Title/Author mismatch", "Matching");
             }
 
-            var identity = ReleaseIdentityEvidence.Analyze(subject.Release, context.Author, best.Book, best);
+            var identity = ReleaseIdentityEvidence.Analyze(subject.Release, context.Author, best);
             if (identity.HasStructuredAuthorMismatch)
             {
                 return Decision.RejectSoftFilter("Author mismatch: {0}", "Matching", subject.Release.Author);
@@ -104,7 +104,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         internal static bool IsAcceptedMatch(TitleMatchResult match, ReleaseIdentityEvidence identity, BookMatchingStrictness strictness)
         {
             if (match?.IsMatch == true ||
-                (identity?.HasPositiveIdentityEvidence == true && match?.ProblemCode == TitleMatchProblemCode.None))
+                (identity?.HasAuthorIdentityEvidence == true && match?.ProblemCode == TitleMatchProblemCode.None))
             {
                 return true;
             }

@@ -318,7 +318,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 completeInitialScan = scannedAuthor =>
                 {
                     new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger), authorService, queue,
-                        new BookAddedService(new CacheManager(), queue, books, logger), events, logger)
+                        new BookAddedService(new CacheManager(), queue, books, logger), events, logger, books)
                         .Handle(new AuthorScanSkippedEvent(scannedAuthor, AuthorScanSkippedReason.NoFolderEvidence));
                     initialScanTargets.AddRange(bookRows.GetMissingBookSearchTargets(null, scannedAuthor.Id).Select(target => target.BookId));
                 };
@@ -350,7 +350,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         var heldAuthor = authorService.FindByProviderId("gr", author.GoodreadsAuthorId);
                         Assert.That(bookRows.GetMissingBookSearchTargets(null, heldAuthor.Id), Is.Empty);
                         new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger), authorService, queue,
-                            new BookAddedService(new CacheManager(), queue, books, logger), events, logger).Handle(new AuthorScannedEvent(heldAuthor));
+                            new BookAddedService(new CacheManager(), queue, books, logger), events, logger, books).Handle(new AuthorScannedEvent(heldAuthor));
                         Assert.That(authors.Get(heldAuthor.Id).AddOptions, Is.Null);
                     }
                     Assert.That(commands.OfType<BookSearchCommand>(), Is.Empty);
@@ -389,7 +389,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     Assert.That(savedAuthor.EbookRootFolderPath, Is.EqualTo(@"C:\Ebooks".AsOsAgnostic()));
                 });
                 new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger), authorService, queue,
-                    new BookAddedService(new CacheManager(), queue, books, logger), events, logger).Handle(new AuthorScannedEvent(savedAuthor));
+                    new BookAddedService(new CacheManager(), queue, books, logger), events, logger, books).Handle(new AuthorScannedEvent(savedAuthor));
                 Assert.That(commands.OfType<MissingBookSearchCommand>().ToList(), Has.Count.EqualTo(newAuthor || consumeHeldSearchBeforeRetry ? 1 : 0));
                 if (newAuthor && !consumeHeldSearchBeforeRetry)
                 {

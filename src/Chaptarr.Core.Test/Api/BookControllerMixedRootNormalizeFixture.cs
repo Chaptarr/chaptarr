@@ -2,9 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using Chaptarr.Core.Test;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.Books;
+using Chaptarr.Api.V1.MediaTypes;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using FluentValidation;
 using NLog;
 using NUnit.Framework;
@@ -76,19 +80,49 @@ namespace Chaptarr.Core.Test.Api
                     signalRBroadcaster: null,
                     commandQueueManager: null,
                     eventAggregator: null,
-                    metadataProfileService: null,
-                    qualityProfileService: null,
                     rootFolderService: rootFolderService,
                     qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                     metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
                     logger: LogManager.GetCurrentClassLogger())
             {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
             }
 
             public void Normalize(BookResource bookResource, bool wantAudiobook, bool wantEbook)
             {
                 NormalizeMethod.Invoke(this, new object[] { bookResource, wantAudiobook, wantEbook });
             }
+        }
+
+        [Test]
+        public async Task unscoped_single_profile_book_add_should_fail_before_any_lookup_or_write()
+        {
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder>()));
+            var result = await controller.AddBook(null, new BookResource
+            {
+                ForeignBookId = "hc:42",
+                Author = new AuthorResource { ForeignAuthorId = "gr:130698", QualityProfileId = 1, MetadataProfileId = 2, RootFolderPath = "/books" }
+            });
+            Assert.That(result.Result, Is.TypeOf<BadRequestObjectResult>());
+            Assert.That(((BadRequestObjectResult)result.Result).Value, Is.EqualTo(MediaTypeParameterParser.FormatRequiredMessage));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void explicit_media_scope_maps_shared_profiles_without_guessing_from_profile_type(bool ebook)
+        {
+            var root = new RootFolder { Path = "/books", FolderType = ebook ? FolderType.Ebook : FolderType.Audiobook };
+            root.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
+            root.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 3, MetadataProfileId = 4 });
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { root }));
+            var resource = new BookResource
+            {
+                Author = new AuthorResource { RootFolderPath = root.Path, QualityProfileId = 7, MetadataProfileId = 8 }
+            };
+            controller.Normalize(resource, wantAudiobook: !ebook, wantEbook: ebook);
+            Assert.That(ebook ? resource.Author.EbookQualityProfileId : resource.Author.AudiobookQualityProfileId, Is.EqualTo(7));
+            Assert.That(ebook ? resource.Author.EbookMetadataProfileId : resource.Author.AudiobookMetadataProfileId, Is.EqualTo(8));
+            Assert.That(ebook ? resource.Author.AudiobookQualityProfileId : resource.Author.EbookQualityProfileId, Is.Null);
         }
 
         [Test]
@@ -207,54 +241,27 @@ namespace Chaptarr.Core.Test.Api
             });
         }
 
-        [Test]
-        public void omitted_media_type_should_allow_ebook_only_shared_root()
+        [TestCase(FolderType.Ebook)]
+        [TestCase(FolderType.Mixed)]
+        public void explicit_both_formats_should_not_silently_drop_a_side_with_an_incompatible_or_incomplete_root(FolderType folderType)
         {
-            var ebookRoot = new RootFolder
+            var root = new RootFolder
             {
                 Path = @"C:\Books".AsOsAgnostic(),
-                FolderType = FolderType.Ebook
+                FolderType = folderType
             };
-            ebookRoot.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 2 });
-            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { ebookRoot }));
-            var resource = new BookResource { Author = new AuthorResource { RootFolderPath = ebookRoot.Path } };
-
-            controller.Normalize(resource, wantAudiobook: true, wantEbook: true);
-
-            Assert.Multiple(() =>
+            if (folderType == FolderType.Mixed) root.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 10 });
+            root.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 11, MetadataProfileId = 21 });
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { root }));
+            var resource = new BookResource
             {
-                Assert.That(resource.Author.AudiobookRootFolderPath, Is.Null);
-                Assert.That(resource.Author.AudiobookQualityProfileId, Is.Null);
-                Assert.That(resource.Author.EbookRootFolderPath, Is.EqualTo(ebookRoot.Path));
-                Assert.That(resource.Author.EbookQualityProfileId, Is.EqualTo(1));
-                Assert.That(resource.Author.EbookMetadataProfileId, Is.EqualTo(2));
-            });
-        }
-
-        [Test]
-        public void omitted_media_type_should_skip_incomplete_side_of_shared_mixed_root()
-        {
-            var mixedRoot = new RootFolder
-            {
-                Path = @"C:\Books".AsOsAgnostic(),
-                FolderType = FolderType.Mixed,
-                DefaultSyncMonitoredAcrossFormats = true
+                Author = new AuthorResource { RootFolderPath = root.Path, AudiobookMonitored = true, EbookMonitored = true }
             };
-            mixedRoot.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 10 });
-            mixedRoot.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 11, MetadataProfileId = 21 });
-            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { mixedRoot }));
-            var resource = new BookResource { Author = new AuthorResource { RootFolderPath = mixedRoot.Path } };
 
-            controller.Normalize(resource, wantAudiobook: true, wantEbook: true);
-
-            Assert.Multiple(() =>
-            {
-                Assert.That(resource.Author.AudiobookRootFolderPath, Is.Null);
-                Assert.That(resource.Author.AudiobookQualityProfileId, Is.Null);
-                Assert.That(resource.Author.EbookRootFolderPath, Is.EqualTo(mixedRoot.Path));
-                Assert.That(resource.Author.EbookQualityProfileId, Is.EqualTo(11));
-                Assert.That(resource.Author.EbookMetadataProfileId, Is.EqualTo(21));
-            });
+            var error = Assert.Throws<TargetInvocationException>(() => controller.Normalize(resource, wantAudiobook: true, wantEbook: true));
+            Assert.That(error.InnerException, Is.TypeOf<ValidationException>());
+            Assert.That(((ValidationException)error.InnerException).Errors.Single().PropertyName, Is.EqualTo("author.audiobookRootFolderPath"));
+            Assert.That(resource.Author.EbookRootFolderPath, Is.Null, "Neither side should be set up when the requested root fails validation");
         }
 
         [Test]

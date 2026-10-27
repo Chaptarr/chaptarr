@@ -54,6 +54,23 @@ namespace Chaptarr.Api.V1.Author
                 return BadRequest(validationError);
             }
 
+            var linkedChoices = authorsToUpdate.ToDictionary(author => author.Id, author =>
+            {
+                var projected = new NzbDrone.Core.Books.Author
+                {
+                    SyncMonitoredAcrossFormats = author.SyncMonitoredAcrossFormats,
+                    AudiobookMonitorNewItems = author.AudiobookMonitorNewItems,
+                    EbookMonitorNewItems = author.EbookMonitorNewItems,
+                    AudiobookRootFolderPath = resource.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() ? resource.AudiobookRootFolderPath : author.AudiobookRootFolderPath,
+                    EbookRootFolderPath = resource.EbookRootFolderPath.IsNotNullOrWhiteSpace() ? resource.EbookRootFolderPath : author.EbookRootFolderPath
+                };
+                var eligible = AuthorMonitoringSyncPolicy.IsEligible(projected, rootFolders);
+                AuthorMonitoringSyncPolicy.ApplyNewItemChoices(projected,
+                    eligible ? resource.SyncMonitoredAcrossFormats : false,
+                    resource.AudiobookMonitorNewItems, resource.EbookMonitorNewItems);
+                return (projected.AudiobookMonitorNewItems, projected.EbookMonitorNewItems);
+            });
+
             var syncEnabledCount = 0;
             var syncSkippedCount = 0;
 
@@ -64,12 +81,12 @@ namespace Chaptarr.Api.V1.Author
 
                 if (audiobookConfigured && resource.AudiobookMonitored.HasValue)
                     author.AudiobookMonitored = resource.AudiobookMonitored.Value;
-                if (audiobookConfigured && resource.AudiobookMonitorNewItems.HasValue)
-                    author.AudiobookMonitorNewItems = resource.AudiobookMonitorNewItems.Value;
+                if (audiobookConfigured)
+                    author.AudiobookMonitorNewItems = linkedChoices[author.Id].AudiobookMonitorNewItems;
                 if (ebookConfigured && resource.EbookMonitored.HasValue)
                     author.EbookMonitored = resource.EbookMonitored.Value;
-                if (ebookConfigured && resource.EbookMonitorNewItems.HasValue)
-                    author.EbookMonitorNewItems = resource.EbookMonitorNewItems.Value;
+                if (ebookConfigured)
+                    author.EbookMonitorNewItems = linkedChoices[author.Id].EbookMonitorNewItems;
 
                 if (resource.AudiobookQualityProfileId.HasValue)
                 {
@@ -160,7 +177,7 @@ namespace Chaptarr.Api.V1.Author
                 {
                     if (resource.SyncMonitoredAcrossFormats.Value)
                     {
-                        if (HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders))
+                        if (AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders))
                         {
                             author.SyncMonitoredAcrossFormats = true;
                             syncEnabledCount++;
@@ -200,7 +217,7 @@ namespace Chaptarr.Api.V1.Author
 
                     author.AudiobookTags = audiobookTags;
                     author.EbookTags = ebookTags;
-                    author.Tags = audiobookTags.Concat(ebookTags).ToHashSet();
+                    author.Tags = author.GetCombinedTags();
                 }
             }
 
@@ -245,7 +262,7 @@ namespace Chaptarr.Api.V1.Author
 
             var shouldReconcileEnabledAuthors = resource.SyncMonitoredAcrossFormats == true;
             var authorIdsToReconcile = updatedAuthors
-                .Where(author => author.SyncMonitoredAcrossFormats == true && HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders))
+                .Where(author => author.SyncMonitoredAcrossFormats == true && AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders))
                 .Where(author => shouldReconcileEnabledAuthors || !previousSyncByAuthorId.GetValueOrDefault(author.Id))
                 .Select(author => author.Id)
                 .Distinct()
@@ -266,14 +283,14 @@ namespace Chaptarr.Api.V1.Author
 
         private string GetValidationError(AuthorEditorResource resource, List<RootFolder> rootFolders)
         {
-            if (resource.AudiobookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.AudiobookQualityProfileId.Value))
+            if (resource.AudiobookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.AudiobookQualityProfileId.Value, ProfileType.Audiobook))
             {
-                return $"Audiobook quality profile {resource.AudiobookQualityProfileId.Value} does not exist";
+                return $"Audiobook quality profile {resource.AudiobookQualityProfileId.Value} does not exist or is incompatible with audiobook";
             }
 
-            if (resource.EbookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.EbookQualityProfileId.Value))
+            if (resource.EbookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.EbookQualityProfileId.Value, ProfileType.Ebook))
             {
-                return $"Ebook quality profile {resource.EbookQualityProfileId.Value} does not exist";
+                return $"Ebook quality profile {resource.EbookQualityProfileId.Value} does not exist or is incompatible with ebook";
             }
 
             if (resource.MetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.MetadataProfileId.Value))
@@ -281,14 +298,14 @@ namespace Chaptarr.Api.V1.Author
                 return $"Metadata profile {resource.MetadataProfileId.Value} does not exist";
             }
 
-            if (resource.AudiobookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.AudiobookMetadataProfileId.Value))
+            if (resource.AudiobookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.AudiobookMetadataProfileId.Value, MetadataProfileType.Audiobook))
             {
-                return $"Audiobook metadata profile {resource.AudiobookMetadataProfileId.Value} does not exist";
+                return $"Audiobook metadata profile {resource.AudiobookMetadataProfileId.Value} does not exist or is incompatible with audiobook";
             }
 
-            if (resource.EbookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.EbookMetadataProfileId.Value))
+            if (resource.EbookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.EbookMetadataProfileId.Value, MetadataProfileType.Ebook))
             {
-                return $"Ebook metadata profile {resource.EbookMetadataProfileId.Value} does not exist";
+                return $"Ebook metadata profile {resource.EbookMetadataProfileId.Value} does not exist or is incompatible with ebook";
             }
 
             if (resource.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() && !rootFolders.Any(rootFolder => rootFolder.Path.PathEquals(resource.AudiobookRootFolderPath)))
@@ -313,39 +330,6 @@ namespace Chaptarr.Api.V1.Author
         private static bool IsMediaTypeConfigured(string existingRootFolderPath, string requestedRootFolderPath)
         {
             return existingRootFolderPath.IsNotNullOrWhiteSpace() || requestedRootFolderPath.IsNotNullOrWhiteSpace();
-        }
-
-        private static bool HasSyncMonitoredAcrossFormatsEligibility(NzbDrone.Core.Books.Author author, List<RootFolder> rootFolders)
-        {
-            return HasCompatibleRootFolder(author, rootFolders, BookMediaType.Audiobook) &&
-                   HasCompatibleRootFolder(author, rootFolders, BookMediaType.Ebook);
-        }
-
-        private static bool HasCompatibleRootFolder(NzbDrone.Core.Books.Author author, List<RootFolder> rootFolders, BookMediaType mediaType)
-        {
-            if (author == null || rootFolders == null || rootFolders.Count == 0)
-            {
-                return false;
-            }
-
-            var rootFolderPath = mediaType == BookMediaType.Audiobook
-                ? author.AudiobookRootFolderPath
-                : author.EbookRootFolderPath;
-
-            if (rootFolderPath.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            var rootFolder = rootFolders.FirstOrDefault(r => r.Path.PathEquals(rootFolderPath));
-            if (rootFolder == null)
-            {
-                return false;
-            }
-
-            return rootFolder.FolderType == FolderType.Mixed ||
-                   (mediaType == BookMediaType.Audiobook && rootFolder.FolderType == FolderType.Audiobook) ||
-                   (mediaType == BookMediaType.Ebook && rootFolder.FolderType == FolderType.Ebook);
         }
 
         [HttpDelete]

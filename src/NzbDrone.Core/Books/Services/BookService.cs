@@ -15,6 +15,7 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.Events;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
@@ -74,6 +75,7 @@ namespace NzbDrone.Core.Books
 
     public interface IBookService
     {
+        void SyncMonitoredAcrossFormats(List<int> authorIds) => throw new NotSupportedException();
         Book GetBook(int bookId);
         List<Book> GetBooks(IEnumerable<int> bookIds);
         List<Book> GetExistingBooks(IEnumerable<int> bookIds) => GetBooks(bookIds);
@@ -82,6 +84,7 @@ namespace NzbDrone.Core.Books
         List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds);
         List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds);
         List<Book> GetBooksByAuthorId(int authorId);
+        IReadOnlySet<BookMediaType> GetMediaTypesByAuthor(int authorId) => throw new NotImplementedException();
         List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds);
         List<Book> GetBooksByFileIds(IEnumerable<int> fileIds);
         Book AddBook(Book newBook, bool doRefresh = true);
@@ -97,6 +100,7 @@ namespace NzbDrone.Core.Books
         void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false);
         List<Book> GetAllBooks();
         Book UpdateBook(Book book);
+        Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, Action<IDbConnection, IDbTransaction> writeRelated = null);
         void UpdateManyWithLifecycle(List<Book> books)
         {
             foreach (var book in books ?? new List<Book>())
@@ -122,7 +126,7 @@ namespace NzbDrone.Core.Books
         void ReassignAuthor(Book book, int authorId) { throw new NotImplementedException(); }
         void ReassignAuthor(List<Book> books, int authorId) { throw new NotImplementedException(); }
         void RefreshProviderAliases(Book book) { }
-        void DeleteMany(List<Book> books);
+        void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<BookFile> deletedBookFiles = null);
         void SetAddOptions(IEnumerable<Book> books);
         List<Book> GetAuthorBooksWithFiles(Author author);
             List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null);
@@ -152,6 +156,7 @@ namespace NzbDrone.Core.Books
         private readonly IMultiCopySeriesService _multiCopySeriesService;
         private readonly IProviderAliasService _providerAliasService;
         private readonly IEditionSelector _editionSelector;
+        private readonly Lazy<IDeleteMediaFiles> _deleteMediaFiles;
         private readonly Logger _logger;
 
         private sealed class MonitoredStateSnapshot
@@ -176,7 +181,8 @@ namespace NzbDrone.Core.Books
                            IMultiCopySeriesService multiCopySeriesService,
                            Logger logger,
                            IEditionSelector editionSelector = null,
-                           IProviderAliasService providerAliasService = null)
+                           IProviderAliasService providerAliasService = null,
+                           Lazy<IDeleteMediaFiles> deleteMediaFiles = null)
         {
             _bookRepository = bookRepository;
             _editionService = editionService;
@@ -189,6 +195,7 @@ namespace NzbDrone.Core.Books
             _logger = logger;
             _editionSelector = editionSelector ?? new EditionSelector(logger);
             _providerAliasService = providerAliasService;
+            _deleteMediaFiles = deleteMediaFiles;
         }
 
         private void EnsureBookDbFields(Book book)
@@ -278,7 +285,7 @@ namespace NzbDrone.Core.Books
 
         private void RefreshBookProviderAliases(Book book) => RefreshBookProviderAliases(new[] { book });
 
-        private void WriteBookProviderAliases(Book book)
+        private void WriteBookProviderAliases(Book book, IDbConnection connection = null, IDbTransaction transaction = null)
         {
             var workIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var editionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -296,8 +303,16 @@ namespace NzbDrone.Core.Books
             AddHardcoverEditionAliases(editionIds, book.Editions);
             AddRemoteProviderAliases(workIds, editionIds, book.RemoteProviderIds);
 
-            _providerAliasService.ReplaceAliases("Book", book.Id, "work", workIds);
-            _providerAliasService.ReplaceAliases("Book", book.Id, "edition", editionIds);
+            if (connection == null)
+            {
+                _providerAliasService.ReplaceAliases("Book", book.Id, "work", workIds);
+                _providerAliasService.ReplaceAliases("Book", book.Id, "edition", editionIds);
+            }
+            else
+            {
+                _providerAliasService.ReplaceAliases("Book", book.Id, "work", workIds, connection, transaction);
+                _providerAliasService.ReplaceAliases("Book", book.Id, "edition", editionIds, connection, transaction);
+            }
         }
 
         public void RefreshProviderAliases(Book book)
@@ -457,82 +472,35 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            // Capture related data before deleting the row so downstream event handlers (notifications, etc.)
-            // can access author/edition details without issuing additional queries.
-            HydrateBookForDeleteEvent(book);
-
-            var deletedBooks = new List<Book>();
-
-            if (applyToBothFormats && book.AuthorId > 0)
-            {
-                var siblingBooks = GetBooksByAuthor(book.AuthorId)
-                    .Where(candidate =>
-                        candidate != null &&
-                        candidate.Id != book.Id &&
-                        WorkIdMatcher.WorkProviderIdMatches(book, candidate))
-                    .OrderBy(candidate => candidate.Id)
-                    .ToList();
-
-                foreach (var sibling in siblingBooks)
-                {
-                    HydrateBookForDeleteEvent(sibling);
-                    deletedBooks.Add(sibling);
-                    DeleteBook(sibling.Id, deleteFiles, addImportListExclusion: false, applyToBothFormats: false);
-                }
-            }
-
+            var deletedBooks = applyToBothFormats && book.AuthorId > 0
+                ? GetBooksByAuthor(book.AuthorId)
+                    .Where(candidate => candidate != null && candidate.Id != book.Id && WorkIdMatcher.WorkProviderIdMatches(book, candidate))
+                    .OrderBy(candidate => candidate.Id).ToList()
+                : new List<Book>();
             deletedBooks.Add(book);
-
-            _eventAggregator.PublishEvent(new BookDeletedEvent(book, deleteFiles, addImportListExclusion, applyToBothFormats, deletedBooks));
-            _providerAliasService?.DeleteAliases("Book", bookId);
-            _bookRepository.Delete(bookId);
-        }
-
-        private void HydrateBookForDeleteEvent(Book book)
-        {
-            if (book == null)
+            HydrateBooksForDeleteEvent(deletedBooks);
+            if (deleteFiles)
             {
-                return;
+                (_deleteMediaFiles?.Value ?? throw new InvalidOperationException("Book file deletion service is unavailable"))
+                    .DeleteBookFiles(deletedBooks);
             }
 
-            if (book.AuthorId > 0 && (book.Author == null || book.Author.Id != book.AuthorId))
+            _bookRepository.DeleteManyAtomic(deletedBooks.Select(item => item.Id), deleteFiles);
+
+            foreach (var deletedBook in deletedBooks)
             {
-                try
-                {
-                    book.Author = _authorService.GetAuthor(book.AuthorId);
-                }
-                catch (ModelNotFoundException)
-                {
-                    // Author may have been deleted/merged while commands are still running.
-                }
+                _eventAggregator.PublishEvent(new BookDeletedEvent(deletedBook, deleteFiles,
+                    deletedBook.Id == bookId && addImportListExclusion,
+                    deletedBook.Id == bookId && applyToBothFormats, deletedBooks, filesAlreadyDeleted: deleteFiles));
             }
 
-            book.Editions = _editionService.GetEditionsByBook(book.Id) ?? new List<Edition>();
-
-            try
+            if (deleteFiles)
             {
-                var bookFiles = _mediaFileService.GetFilesByBook(book.Id) ?? new List<BookFile>();
-                book.BookFiles = bookFiles;
-
-                var filesByEdition = bookFiles
-                    .GroupBy(file => file.EditionId)
-                    .ToDictionary(group => group.Key, group => group.ToList());
-
-                foreach (var edition in book.Editions)
-                {
-                    edition.BookFiles = filesByEdition.TryGetValue(edition.Id, out var editionFiles)
-                        ? editionFiles
-                        : new List<BookFile>();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "Failed to hydrate book files for deleted book event: {0}", book.Id);
-                book.BookFiles = new List<BookFile>();
+                _eventAggregator.PublishEvent(new DeleteCompletedEvent());
             }
         }
 
-        private void HydrateBooksForDeleteEvent(List<Book> books)
+        private void HydrateBooksForDeleteEvent(List<Book> books, List<BookFile> deletedBookFiles = null)
         {
             var booksToHydrate = (books ?? new List<Book>())
                 .Where(book => book != null && book.Id > 0)
@@ -565,6 +533,7 @@ namespace NzbDrone.Core.Books
 
                 if (author != null)
                 {
+                    author = author.ShallowClone();
                     foreach (var book in authorBooks)
                     {
                         book.Author = author;
@@ -572,49 +541,39 @@ namespace NzbDrone.Core.Books
                 }
             }
 
-            try
-            {
-                var bookIds = booksToHydrate.Select(book => book.Id).ToList();
-                var editions = _editionService?.GetEditionsByBook(bookIds) ?? new List<Edition>();
-                var bookFiles = _mediaFileService?.GetFilesByBooks(bookIds) ?? new List<BookFile>();
-                var editionsByBook = editions
-                    .Where(edition => edition != null)
-                    .GroupBy(edition => edition.BookId)
-                    .ToDictionary(group => group.Key, group => group.ToList());
-                var filesByEdition = bookFiles
-                    .Where(file => file != null)
-                    .GroupBy(file => file.EditionId)
-                    .ToDictionary(group => group.Key, group => group.ToList());
+            var bookIds = booksToHydrate.Select(book => book.Id).ToList();
+            var editions = _editionService?.GetEditionsByBook(bookIds) ?? new List<Edition>();
+            var bookFiles = deletedBookFiles ?? _mediaFileService?.GetFilesByBooks(bookIds) ?? new List<BookFile>();
+            var editionsByBook = editions
+                .Where(edition => edition != null)
+                .GroupBy(edition => edition.BookId)
+                .ToDictionary(group => group.Key, group => group.ToList());
+            var filesByEdition = bookFiles
+                .Where(file => file != null)
+                .GroupBy(file => file.EditionId)
+                .ToDictionary(group => group.Key, group => group.ToList());
 
-                foreach (var book in booksToHydrate)
-                {
-                    book.Editions = editionsByBook.TryGetValue(book.Id, out var bookEditions)
-                        ? bookEditions
-                        : new List<Edition>();
-                    book.BookFiles = book.Editions
-                        .SelectMany(edition => filesByEdition.TryGetValue(edition.Id, out var editionFiles)
-                            ? editionFiles
-                            : Enumerable.Empty<BookFile>())
-                        .DistinctBy(file => file.Id)
-                        .ToList();
-
-                    foreach (var edition in book.Editions)
-                    {
-                        edition.BookFiles = filesByEdition.TryGetValue(edition.Id, out var editionFiles)
-                            ? editionFiles
-                            : new List<BookFile>();
-                    }
-                }
-            }
-            catch (Exception ex)
+            foreach (var book in booksToHydrate)
             {
-                _logger.Debug(ex, "Bulk hydration failed before book deletion; falling back to per-book hydration");
-                foreach (var book in booksToHydrate)
+                book.Editions = editionsByBook.TryGetValue(book.Id, out var bookEditions)
+                    ? bookEditions
+                    : new List<Edition>();
+                book.BookFiles = book.Editions
+                    .SelectMany(edition => filesByEdition.TryGetValue(edition.Id, out var editionFiles)
+                        ? editionFiles
+                        : Enumerable.Empty<BookFile>())
+                    .DistinctBy(file => file.Id)
+                    .ToList();
+
+                foreach (var edition in book.Editions)
                 {
-                    HydrateBookForDeleteEvent(book);
+                    edition.BookFiles = filesByEdition.TryGetValue(edition.Id, out var editionFiles)
+                        ? editionFiles
+                        : new List<BookFile>();
                 }
             }
         }
+
         public Book FindBySlug(string titleSlug)
         {
             return _bookRepository.FindBySlug(titleSlug);
@@ -1135,6 +1094,11 @@ namespace NzbDrone.Core.Books
             return _bookRepository.GetLastBooks(authorIds).ToList();
         }
 
+        public IReadOnlySet<BookMediaType> GetMediaTypesByAuthor(int authorId)
+        {
+            return _bookRepository.GetMediaTypesByAuthor(authorId);
+        }
+
         public List<Book> GetBooksByAuthorId(int authorId)
         {
             var books = _bookRepository.GetBooksByAuthorId(authorId).ToList();
@@ -1294,6 +1258,7 @@ namespace NzbDrone.Core.Books
                 TitleSlug = book.TitleSlug,
                 MediaType = book.MediaType,
                 AuthorId = book.AuthorId,
+                LazyAuthor = book.LazyAuthor,
                 Narrator = book.Narrator,
                 Monitored = book.Monitored,
                 AudiobookMonitored = book.AudiobookMonitored,
@@ -1689,6 +1654,7 @@ namespace NzbDrone.Core.Books
                         continue;
                     }
 
+                    pair.Value.Author = author;
                     syncUpdates.Add(new BookMonitoringSyncUpdate
                     {
                         Book = pair.Value,
@@ -1810,6 +1776,7 @@ namespace NzbDrone.Core.Books
                         continue;
                     }
 
+                    book.Author = author;
                     syncUpdates.Add(new BookMonitoringSyncUpdate
                     {
                         Book = book,
@@ -1826,18 +1793,23 @@ namespace NzbDrone.Core.Books
             var updateList = updates?.ToList() ?? new List<BookMonitoringSyncUpdate>();
             var authorsById = updateList
                 .SelectMany(update => new[] { update.Book, update.Stored })
-                .Where(book => book?.AuthorId > 0 && book.Author?.Id == book.AuthorId)
+                .Where(book => book?.AuthorId > 0 && book.LazyAuthor?.IsLoaded == true && book.Author?.Id == book.AuthorId)
                 .GroupBy(book => book.AuthorId)
                 .ToDictionary(group => group.Key, group => group.First().Author);
 
-            foreach (var authorId in updateList
-                         .SelectMany(update => new[] { update.Book, update.Stored })
-                         .Where(book => book?.AuthorId > 0)
-                         .Select(book => book.AuthorId)
-                         .Distinct()
-                         .Where(authorId => !authorsById.ContainsKey(authorId)))
+            var missingAuthorIds = updateList
+                .SelectMany(update => new[] { update.Book, update.Stored })
+                .Where(book => book?.AuthorId > 0)
+                .Select(book => book.AuthorId)
+                .Distinct()
+                .Where(authorId => !authorsById.ContainsKey(authorId))
+                .ToList();
+            if (missingAuthorIds.Count > 0)
             {
-                authorsById[authorId] = _authorService.GetAuthor(authorId);
+                foreach (var author in _authorService.GetAuthors(missingAuthorIds))
+                {
+                    authorsById[author.Id] = author;
+                }
             }
 
             var changes = new List<BookEditedEvent>();
@@ -1952,7 +1924,8 @@ namespace NzbDrone.Core.Books
             PersistWithLifecycle(books);
         }
 
-        private List<Book> PersistWithLifecycle(List<Book> books)
+        private List<Book> PersistWithLifecycle(List<Book> books, List<Edition> editionUpdates = null, string monitoredMediaType = null,
+            Action<IDbConnection, IDbTransaction> writeRelated = null)
         {
             var changedBooks = (books ?? new List<Book>())
                 .Where(book => book?.Id > 0)
@@ -2013,10 +1986,9 @@ namespace NzbDrone.Core.Books
                 .Where(item => item.BookId > 0)
                 .GroupBy(item => item.BookId)
                 .ToDictionary(group => group.Key, group => group.Select(item => item.File).ToList());
-            var requestedPinnedEditionIds = changedBooks.ToDictionary(book => book.Id, GetPinnedEditionSelectionId);
             var manualEditionUpdates = new List<Edition>();
             var narratorChangedBookIds = changedBooks
-                .Where(book => storedById[book.Id].Narrator != book.Narrator &&
+                .Where(book => editionUpdates == null && storedById[book.Id].Narrator != book.Narrator &&
                                !string.IsNullOrWhiteSpace(book.Narrator))
                 .Select(book => book.Id)
                 .ToList();
@@ -2042,10 +2014,11 @@ namespace NzbDrone.Core.Books
                 var narratorChanged = storedBook.Narrator != book.Narrator &&
                                       !string.IsNullOrWhiteSpace(book.Narrator);
 
-                if (narratorChanged)
+                if (narratorChanged && (editionUpdates == null || !book.AnyEditionOk))
                 {
                     _logger.Info("User manually selected narrator '{0}' for book '{1}' (ID: {2})", book.Narrator, book.Title, book.Id);
-                    var monitoredEdition = (persistedEditionsForNarratorByBook.GetValueOrDefault(book.Id) ?? new List<Edition>())
+                    var monitoredEdition = (editionUpdates != null ? book.Editions :
+                        persistedEditionsForNarratorByBook.GetValueOrDefault(book.Id) ?? new List<Edition>())
                         .FirstOrDefault(edition => edition.Monitored);
                     if (monitoredEdition != null && !monitoredEdition.ManualAdd)
                     {
@@ -2073,12 +2046,15 @@ namespace NzbDrone.Core.Books
                 EnsureBookDbFields(book);
             }
 
-            if (manualEditionUpdates.Any())
+            if (editionUpdates == null && manualEditionUpdates.Any())
             {
                 _editionService.UpdateMany(manualEditionUpdates.DistinctBy(edition => edition.Id).ToList());
             }
 
-            var syncUpdates = GetSyncUpdatesForMutations(changedBooks, storedById);
+            var syncUpdates = monitoredMediaType == null
+                ? GetSyncUpdatesForMutations(changedBooks, storedById)
+                : PrepareScopedMonitoring(changedBooks, storedById, monitoredMediaType, true, synchronizeRequest: true)
+                    .Where(update => !storedById.ContainsKey(update.Book.Id)).ToList();
 
             var persistedBooks = changedBooks
                 .Concat(syncUpdates.Select(update => update.Book))
@@ -2086,50 +2062,36 @@ namespace NzbDrone.Core.Books
                 .Select(group => group.First())
                 .ToList();
 
-            _bookRepository.UpdateMany(persistedBooks);
-
-            RefreshBookProviderAliases(persistedBooks);
-
-            var filesToRelink = new List<BookFile>();
-            var relinkedFileCounts = new List<(int BookId, int EditionId, int FileCount)>();
-            foreach (var book in changedBooks)
+            if (editionUpdates == null)
             {
-                var pinnedEditionId = requestedPinnedEditionIds[book.Id];
-                if (pinnedEditionId == null || pinnedEditionId <= 0)
-                {
-                    continue;
-                }
-
-                var filesForBook = filesByBook.GetValueOrDefault(book.Id) ?? new List<BookFile>();
-                var relinkedFileCount = 0;
-                foreach (var file in filesForBook)
-                {
-                    if (file.EditionId == pinnedEditionId.Value)
+                _bookRepository.UpdateMany(persistedBooks);
+                RefreshBookProviderAliases(persistedBooks);
+            }
+            else
+            {
+                // Share the normal lifecycle and alias writers; publish only after both models commit.
+                var editionsToSave = editionUpdates.Concat(manualEditionUpdates)
+                    .GroupBy(edition => edition.Id).Select(group =>
                     {
-                        continue;
+                        var edition = group.First();
+                        if (group.Skip(1).Any(item => item.ManualAdd)) edition.ManualAdd = true;
+                        return edition;
+                    }).ToList();
+                LoadBookWorkProviderAliases(persistedBooks);
+                _bookRepository.UpdateManyAtomic(persistedBooks, (connection, transaction) =>
+                {
+                    _editionService.UpdateMany(editionsToSave, connection, transaction,
+                        changedBooks.Count == 1 ? changedBooks[0].Editions.SingleOrDefault(edition => edition.Monitored) : null);
+                    if (_providerAliasService != null)
+                    {
+                        foreach (var book in persistedBooks)
+                        {
+                            WriteBookProviderAliases(book, connection, transaction);
+                        }
                     }
 
-                    file.EditionId = pinnedEditionId.Value;
-                    file.Edition = null;
-                    filesToRelink.Add(file);
-                    relinkedFileCount++;
-                }
-
-                if (relinkedFileCount > 0)
-                {
-                    relinkedFileCounts.Add((book.Id, pinnedEditionId.Value, relinkedFileCount));
-                }
-            }
-
-            if (filesToRelink.Any())
-            {
-                _mediaFileService.Update(filesToRelink.DistinctBy(file => file.Id).ToList());
-
-                foreach (var relinked in relinkedFileCounts)
-                {
-                    _logger.Info("Relinked {0} book files for BookId={1} to EditionId={2} due to pinned edition selection",
-                        relinked.FileCount, relinked.BookId, relinked.EditionId);
-                }
+                    writeRelated?.Invoke(connection, transaction);
+                });
             }
 
             var editedBooks = changedBooks
@@ -2141,7 +2103,23 @@ namespace NzbDrone.Core.Books
                 .Concat(syncUpdates)
                 .ToList();
 
-            PublishBookEditedEvents(editedBooks);
+            if (editionUpdates == null)
+            {
+                PublishBookEditedEvents(editedBooks);
+            }
+            else
+            {
+                try
+                {
+                    PublishBookEditedEvents(editedBooks);
+                }
+                catch (Exception error)
+                {
+                    // Persistence has committed; an observer failure must not undo transferred files.
+                    _logger.Error(error, "Book update committed for BookIds={0}, but publishing edit notifications failed",
+                        string.Join(",", persistedBooks.Select(book => book.Id)));
+                }
+            }
 
             return changedBooks;
         }
@@ -2216,7 +2194,7 @@ namespace NzbDrone.Core.Books
                 .ToList() ?? new List<Book>();
         }
 
-        public void DeleteMany(List<Book> books)
+        public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<BookFile> deletedBookFiles = null)
         {
             var booksToDelete = (books ?? new List<Book>())
                 .Where(book => book != null)
@@ -2224,67 +2202,31 @@ namespace NzbDrone.Core.Books
                 .Select(group => group.First())
                 .ToList();
 
-            HydrateBooksForDeleteEvent(booksToDelete);
+            HydrateBooksForDeleteEvent(booksToDelete, deletedBookFiles);
 
+            _bookRepository.DeleteManyAtomic(booksToDelete.Select(book => book.Id), deleteFiles: filesAlreadyDeleted);
             foreach (var book in booksToDelete)
             {
-                _eventAggregator.PublishEvent(new BookDeletedEvent(book, false, false));
-
-                _providerAliasService?.DeleteAliases("Book", book.Id);
-            }
-
-            if (booksToDelete.Any())
-            {
-                _bookRepository.DeleteMany(booksToDelete);
+                _eventAggregator.PublishEvent(new BookDeletedEvent(book, false, false, filesAlreadyDeleted: filesAlreadyDeleted));
             }
         }
 
-        public Book UpdateBook(Book book)
+        public Book UpdateBook(Book book) => UpdateBook(book, null);
+
+        public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, Action<IDbConnection, IDbTransaction> writeRelated = null)
         {
             if (book == null)
             {
                 throw new ArgumentNullException(nameof(book));
             }
 
-            var persisted = PersistWithLifecycle(new List<Book> { book });
+            var persisted = PersistWithLifecycle(new List<Book> { book }, editionUpdates ?? (writeRelated == null ? null : new List<Edition>()), monitoredMediaType, writeRelated);
             if (!persisted.Any())
             {
                 throw new ModelNotFoundException(typeof(Book), book.Id);
             }
 
             return persisted[0];
-        }
-
-        private static int? GetPinnedEditionSelectionId(Book book)
-        {
-            if (book == null)
-            {
-                return null;
-            }
-
-            if (book.AnyEditionOk)
-            {
-                return null;
-            }
-
-            if (book.Editions == null || book.Editions.Count == 0)
-            {
-                return null;
-            }
-
-            var monitoredEditions = book.Editions.Where(e => e != null && e.Monitored).ToList();
-            if (monitoredEditions.Count != 1)
-            {
-                return null;
-            }
-
-            var monitoredEditionId = monitoredEditions[0].Id;
-            if (monitoredEditionId <= 0)
-            {
-                return null;
-            }
-
-            return monitoredEditionId;
         }
 
         private bool IsAudiobookExtension(string extension)
@@ -2299,11 +2241,7 @@ namespace NzbDrone.Core.Books
             book.SetMonitored(monitored);
             var syncUpdates = GetSyncUpdatesForMutations(new List<Book> { book }, new Dictionary<int, Book> { { book.Id, storedBook } });
 
-            _bookRepository.Update(book);
-            if (syncUpdates.Any())
-            {
-                _bookRepository.UpdateMany(syncUpdates.Select(update => update.Book).ToList());
-            }
+            _bookRepository.SetMonitoring(new[] { book }.Concat(syncUpdates.Select(update => update.Book)).ToList());
 
             PublishBookEditedEvents(new[]
             {
@@ -2332,7 +2270,7 @@ namespace NzbDrone.Core.Books
 
             if (booksToUpdate.Any())
             {
-                _bookRepository.UpdateMany(booksToUpdate);
+                _bookRepository.SetMonitoring(booksToUpdate);
             }
 
             PublishBookEditedEvents(books.Select(book => new BookMonitoringSyncUpdate
@@ -2361,12 +2299,24 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
+            var books = _bookRepository.Get(ids).ToList();
+            var storedById = books.ToDictionary(book => book.Id, CloneStoredBook);
+            var updates = PrepareScopedMonitoring(books, storedById, mediaType, monitored, synchronizeRequest);
+            if (updates.Any())
+            {
+                _bookRepository.SetMonitoring(updates.Select(update => update.Book).ToList());
+            }
+
+            PublishBookEditedEvents(updates);
+        }
+
+        private List<BookMonitoringSyncUpdate> PrepareScopedMonitoring(List<Book> books,
+            Dictionary<int, Book> storedById, string mediaType, bool monitored, bool synchronizeRequest)
+        {
             var requestedMediaType = string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase)
                 ? BookMediaType.Ebook
                 : BookMediaType.Audiobook;
-            var books = _bookRepository.Get(ids).ToList();
             var rootFolders = monitored ? _rootFolderService?.All() : null;
-            var storedById = books.ToDictionary(book => book.Id, CloneStoredBook);
             var authorIds = books.Where(book => book.AuthorId > 0 && (!synchronizeRequest || book.MediaType == requestedMediaType))
                 .Select(book => book.AuthorId).Distinct().ToList();
             var authorsById = authorIds.Any() ? _authorService.GetAuthors(authorIds).ToDictionary(author => author.Id) : new Dictionary<int, Author>();
@@ -2415,21 +2365,11 @@ namespace NzbDrone.Core.Books
                 syncUpdates = GetSyncUpdatesForMutations(booksToMutate, requestBaselineById, authorsById);
             }
 
-            var booksToUpdate = booksToMutate
-                .Concat(syncUpdates.Select(update => update.Book))
-                .GroupBy(book => book.Id)
-                .Select(group => group.First())
-                .ToList();
-            if (booksToUpdate.Any())
-            {
-                _bookRepository.UpdateMany(booksToUpdate);
-            }
-
-            PublishBookEditedEvents(booksToMutate.Select(book => new BookMonitoringSyncUpdate
+            return booksToMutate.Select(book => new BookMonitoringSyncUpdate
             {
                 Book = book,
                 Stored = storedById[book.Id]
-            }).Concat(syncUpdates));
+            }).Concat(syncUpdates).ToList();
         }
 
         public void UpdateLastSearchTime(List<Book> books)
@@ -2441,22 +2381,27 @@ namespace NzbDrone.Core.Books
         {
             var books = GetBooksByAuthorId(message.Author.Id);
 
-            DeleteMany(books);
+            DeleteMany(books, filesAlreadyDeleted: message.DeleteFiles, deletedBookFiles: message.DeletedBookFiles);
         }
 
         public void Execute(BulkSyncFormatMonitoringCommand message)
         {
-            var syncUpdates = BuildReconcileSyncUpdates(message.AuthorIds);
+            SyncMonitoredAcrossFormats(message.AuthorIds);
+        }
+
+        public void SyncMonitoredAcrossFormats(List<int> authorIds)
+        {
+            var syncUpdates = BuildReconcileSyncUpdates(authorIds);
             if (!syncUpdates.Any())
             {
-                _logger.Info("No monitored format sync reconciliation was required for {0} authors", message.AuthorIds?.Count ?? 0);
+                _logger.Info("No monitored format sync reconciliation was required for {0} authors", authorIds?.Count ?? 0);
                 return;
             }
 
-            _bookRepository.UpdateMany(syncUpdates.Select(update => update.Book).ToList());
+            _bookRepository.SetMonitoring(syncUpdates.Select(update => update.Book).ToList());
             PublishBookEditedEvents(syncUpdates);
 
-            _logger.Info("Reconciled monitored format sync across {0} book rows for {1} authors", syncUpdates.Count, message.AuthorIds?.Count ?? 0);
+            _logger.Info("Reconciled monitored format sync across {0} book rows for {1} authors", syncUpdates.Count, authorIds?.Count ?? 0);
         }
 
         public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null)

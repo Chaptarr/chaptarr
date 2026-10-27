@@ -16,6 +16,7 @@ using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.MetadataSource;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
 using NzbDrone.Core.Messaging.Commands;
@@ -383,82 +384,95 @@ namespace NzbDrone.Core.Books
 
                 // Delete against one complete selection while ownership still exists. A physical
                 // failure must not be swallowed by events and followed by database teardown.
+                List<BookFile> deletedBookFiles = null;
                 if (deleteFiles)
                 {
-                    (_deleteMediaFiles?.Value ?? throw new InvalidOperationException("Author file deletion service is unavailable"))
+                    deletedBookFiles = (_deleteMediaFiles?.Value ?? throw new InvalidOperationException("Author file deletion service is unavailable"))
                         .DeleteAuthorFiles(authors, mediaType);
                 }
 
-                if (addImportListExclusion)
+                try
                 {
-                    _importListExclusionService.AddAuthorExclusions(authors, mediaType);
-                }
-
-                if (mediaType.HasValue)
-                {
-                    ClearAuthorCache();
-                    bookService.DeleteMany(booksByAuthor.Values.SelectMany(books => books)
-                        .Where(book => book.MediaType == mediaType.Value).ToList());
-                    var removedAuthors = new List<Author>();
-                    foreach (var author in authors)
+                    if (addImportListExclusion)
                     {
-                        ClearMediaTypeSettings(author, mediaType.Value);
-                        var otherRoot = mediaType == BookMediaType.Audiobook ? author.EbookRootFolderPath : author.AudiobookRootFolderPath;
-                        if (otherRoot.IsNotNullOrWhiteSpace() || booksByAuthor[author.Id].Any(book => book.MediaType != mediaType.Value))
-                        {
-                            author.Path = (mediaType == BookMediaType.Audiobook ? author.EbookPath : author.AudiobookPath) ?? author.Path;
-                            author.LastSelectedMediaType = mediaType == BookMediaType.Audiobook ? "ebook" : "audiobook";
-                            UpdateAuthor(author);
-                        }
-                        else
-                        {
-                            removedAuthors.Add(author);
-                        }
+                        _importListExclusionService.AddAuthorExclusions(authors, mediaType);
                     }
 
-                    // Removing the final side may remove the author record, but never widens file permission.
-                    authors = removedAuthors;
+                    if (mediaType.HasValue)
+                    {
+                        ClearAuthorCache();
+                        bookService.DeleteMany(booksByAuthor.Values.SelectMany(books => books)
+                            .Where(book => book.MediaType == mediaType.Value).ToList(), filesAlreadyDeleted: deleteFiles, deletedBookFiles: deletedBookFiles);
+                        var removedAuthors = new List<Author>();
+                        foreach (var author in authors)
+                        {
+                            var otherRoot = mediaType == BookMediaType.Audiobook ? author.EbookRootFolderPath : author.AudiobookRootFolderPath;
+                            if (otherRoot.IsNotNullOrWhiteSpace() || booksByAuthor[author.Id].Any(book => book.MediaType != mediaType.Value))
+                            {
+                                ClearMediaTypeSettings(author, mediaType.Value);
+                                author.Path = (mediaType == BookMediaType.Audiobook ? author.EbookPath : author.AudiobookPath) ?? author.Path;
+                                author.LastSelectedMediaType = mediaType == BookMediaType.Audiobook ? "ebook" : "audiobook";
+                                UpdateAuthor(author);
+                            }
+                            else
+                            {
+                                removedAuthors.Add(author);
+                            }
+                        }
+
+                        // Removing the final side may remove the author record, but never widens file permission.
+                        authors = removedAuthors;
+                    }
+
+                    var deletedFilesByAuthor = deletedBookFiles?.ToLookup(file => file.Author.Id);
+                    // Keep every parent row alive while synchronous handlers remove Books and Editions.
+                    // Besides satisfying the PostgreSQL FK, this lets the SQLite edition_fts delete trigger
+                    // read the original Book and Author values before its Edition row disappears.
+                    foreach (var author in authors)
+                    {
+                        var retainedBookFiles = preserveRetainedFileHistory
+                            ? _mediaFileService.GetFilesByAuthor(author.Id)
+                                .Where(file => file != null && file.Id > 0)
+                                .ToList()
+                            : new List<BookFile>();
+                        var authorRetainedBookFileIds = retainedBookFiles
+                            .Select(file => file.Id)
+                            .Distinct()
+                            .ToList();
+                        retainedBookFileIds.AddRange(authorRetainedBookFileIds);
+                        var retainedBookFileEditionIds = retainedBookFiles
+                            .Where(file => !string.IsNullOrWhiteSpace(file.Edition?.ForeignEditionId))
+                            .GroupBy(file => file.Id)
+                            .ToDictionary(group => group.Key, group => group.First().Edition.ForeignEditionId);
+
+                        _eventAggregator.PublishEvent(new AuthorDeletedEvent(
+                            author,
+                            deleteFiles,
+                            addImportListExclusion,
+                            preserveRetainedFileHistory,
+                            authorRetainedBookFileIds,
+                            retainedBookFileEditionIds,
+                            deletedFilesByAuthor?[author.Id].ToList()));
+                        _providerAliasService?.DeleteAliases("Author", author.Id);
+                    }
+
+                    _authorRepository.DeleteMany(authors.Select(author => author.Id));
+                    InvalidateAuthorCatalog();
+                    foreach (var authorId in distinctIds)
+                    {
+                        _authorByIdCache.Remove(authorId.ToString());
+                    }
+
+                    return retainedBookFileIds.Distinct().ToList();
                 }
-
-	            // Keep every parent row alive while synchronous handlers remove Books and Editions.
-	            // Besides satisfying the PostgreSQL FK, this lets the SQLite edition_fts delete trigger
-	            // read the original Book and Author values before its Edition row disappears.
-	            foreach (var author in authors)
-	            {
-	                var retainedBookFiles = preserveRetainedFileHistory
-	                    ? _mediaFileService.GetFilesByAuthor(author.Id)
-	                        .Where(file => file != null && file.Id > 0)
-	                        .ToList()
-	                    : new List<BookFile>();
-	                var authorRetainedBookFileIds = retainedBookFiles
-	                    .Select(file => file.Id)
-	                    .Distinct()
-	                    .ToList();
-	                retainedBookFileIds.AddRange(authorRetainedBookFileIds);
-	                var retainedBookFileEditionIds = retainedBookFiles
-	                    .Where(file => !string.IsNullOrWhiteSpace(file.Edition?.ForeignEditionId))
-	                    .GroupBy(file => file.Id)
-	                    .ToDictionary(group => group.Key, group => group.First().Edition.ForeignEditionId);
-
-	                _eventAggregator.PublishEvent(new AuthorDeletedEvent(
-	                    author,
-	                    deleteFiles,
-	                    addImportListExclusion,
-	                    preserveRetainedFileHistory,
-	                    authorRetainedBookFileIds,
-	                    retainedBookFileEditionIds));
-	                _providerAliasService?.DeleteAliases("Author", author.Id);
-	            }
-
-	            _authorRepository.DeleteMany(authors.Select(author => author.Id));
-	            InvalidateAuthorCatalog();
-	            foreach (var authorId in distinctIds)
-	            {
-	                _authorByIdCache.Remove(authorId.ToString());
-	            }
-
-	            return retainedBookFileIds.Distinct().ToList();
-	        }
+                finally
+                {
+                    if (deleteFiles)
+                    {
+                        _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+                    }
+                }
+        }
 
         public Author FindByProviderId(string provider, string providerId)
         {
@@ -606,6 +620,13 @@ namespace NzbDrone.Core.Books
         private static void ClearMediaTypeSettings(Author author, BookMediaType mediaType)
         {
             author.SyncMonitoredAcrossFormats = false;
+            if (author.AudiobookTags == null && author.EbookTags == null)
+            {
+                var legacyTags = author.GetTagsForMediaType(mediaType);
+                author.AudiobookTags = legacyTags;
+                author.EbookTags = legacyTags;
+            }
+
             if (mediaType == BookMediaType.Audiobook)
             {
                 // NOTE: AudiobookMetadataProfileId is the refresh gate for remote audiobook children.
@@ -632,6 +653,8 @@ namespace NzbDrone.Core.Books
                 author.EbookSettingsManuallyOverridden = false;
                 author.EbookTags = new HashSet<int>();
             }
+
+            author.Tags = author.GetCombinedTags();
         }
 
         public List<Author> GetAllAuthors(bool bypassCache = false)
@@ -1100,32 +1123,6 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private static bool HasCompatibleRootFolder(Author author, List<RootFolder> rootFolders, BookMediaType mediaType)
-        {
-            if (author == null || rootFolders == null || rootFolders.Count == 0)
-            {
-                return false;
-            }
-
-            var rootFolderPath = mediaType == BookMediaType.Audiobook
-                ? author.AudiobookRootFolderPath
-                : author.EbookRootFolderPath;
-
-            if (rootFolderPath.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            var rootFolder = GetRootFolderForPath(rootFolders, rootFolderPath);
-            return IsCompatibleRootFolder(rootFolder, mediaType);
-        }
-
-        private static bool HasSyncMonitoredAcrossFormatsEligibility(Author author, List<RootFolder> rootFolders)
-        {
-            return HasCompatibleRootFolder(author, rootFolders, BookMediaType.Audiobook) &&
-                   HasCompatibleRootFolder(author, rootFolders, BookMediaType.Ebook);
-        }
-
         private void NormalizeOrValidateSyncMonitoredAcrossFormats(Author author, Author storedAuthor, List<RootFolder> rootFolders)
         {
             if (author?.SyncMonitoredAcrossFormats != true)
@@ -1133,7 +1130,7 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            var isEligible = HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders);
+            var isEligible = AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders);
             if (isEligible)
             {
                 return;
@@ -1141,7 +1138,7 @@ namespace NzbDrone.Core.Books
 
             if (storedAuthor?.SyncMonitoredAcrossFormats == true)
             {
-                var wasEligible = HasSyncMonitoredAcrossFormatsEligibility(storedAuthor, rootFolders);
+                var wasEligible = AuthorMonitoringSyncPolicy.IsEligible(storedAuthor, rootFolders);
                 if (wasEligible)
                 {
                     author.SyncMonitoredAcrossFormats = false;
@@ -1164,8 +1161,8 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            var wasEligible = HasSyncMonitoredAcrossFormatsEligibility(storedAuthor, rootFolders);
-            var isEligible = HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders);
+            var wasEligible = AuthorMonitoringSyncPolicy.IsEligible(storedAuthor, rootFolders);
+            var isEligible = AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders);
 
             if (!isEligible || wasEligible)
             {
@@ -1182,7 +1179,7 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            if (!HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders))
+            if (!AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders))
             {
                 return;
             }
@@ -1197,27 +1194,13 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            var explicitDefaults = new List<bool>();
-
-            void TryAddDefault(string rootFolderPath)
+            var syncDefault = AuthorMonitoringSyncPolicy.ResolveDefault(author, rootFolders);
+            if (syncDefault.Value.HasValue)
             {
-                var rootFolder = GetRootFolderForPath(rootFolders, rootFolderPath);
-                if (rootFolder?.DefaultSyncMonitoredAcrossFormats is bool syncDefault)
-                {
-                    explicitDefaults.Add(syncDefault);
-                }
+                author.SyncMonitoredAcrossFormats = syncDefault.Value;
+                _logger.Debug("Seeded SyncMonitoredAcrossFormats={0} for author {1} {2}", syncDefault.Value, author.Name, context);
             }
-
-            TryAddDefault(author.AudiobookRootFolderPath);
-            TryAddDefault(author.EbookRootFolderPath);
-
-            var distinctDefaults = explicitDefaults.Distinct().ToList();
-            if (distinctDefaults.Count == 1)
-            {
-                author.SyncMonitoredAcrossFormats = distinctDefaults[0];
-                _logger.Debug("Seeded SyncMonitoredAcrossFormats={0} for author {1} {2}", distinctDefaults[0], author.Name, context);
-            }
-            else if (distinctDefaults.Count > 1)
+            else if (syncDefault.Conflicting)
             {
                 _logger.Warn("Conflicting root folder sync defaults for author {0}; leaving SyncMonitoredAcrossFormats unset", author.Name);
             }

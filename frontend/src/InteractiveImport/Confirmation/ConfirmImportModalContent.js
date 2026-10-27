@@ -18,10 +18,10 @@ function formatBookFiles(items, book) {
       <b> {book.title} </b>
       <ul>
         {
-          _.sortBy(items, 'path').map((item) => {
+          _.sortBy(_.uniq(items.flatMap((item) => [item.path, ...(item.associatedPaths || [])]))).map((path) => {
             return (
-              <li key={item.id}>
-                {item.path}
+              <li key={path}>
+                {path}
               </li>
             );
           })
@@ -46,9 +46,13 @@ class ConfirmImportModalContent extends Component {
 
     if (!isFetching && isPopulated && !items.length) {
       this.props.onModalClose();
-      this.props.onConfirmImportPress();
+      this.props.onConfirmImportPress([]);
     }
   }
+
+  onConfirmImportPress = () => {
+    this.props.onConfirmImportPress(this.props.items.map(({ id, bookId, path, associatedPaths }) => ({ id, bookId, path, associatedPaths })));
+  };
 
   //
   // Render
@@ -57,10 +61,10 @@ class ConfirmImportModalContent extends Component {
     const {
       books,
       items,
-      onConfirmImportPress,
       onModalClose,
       isFetching,
-      isPopulated
+      isPopulated,
+      error
     } = this.props;
 
     // don't render if nothing to do
@@ -79,6 +83,12 @@ class ConfirmImportModalContent extends Component {
         }
 
         <ModalBody>
+          {
+            error &&
+              <Alert kind={kinds.DANGER}>
+                {translate('UnableToLoadReplacementFiles')}
+              </Alert>
+          }
           {
             isFetching &&
               <LoadingIndicator />
@@ -109,7 +119,7 @@ class ConfirmImportModalContent extends Component {
 
               <Button
                 kind={kinds.DANGER}
-                onPress={onConfirmImportPress}
+                onPress={this.onConfirmImportPress}
               >
                 {translate('Proceed')}
               </Button>
@@ -127,6 +137,7 @@ ConfirmImportModalContent.propTypes = {
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
+  error: PropTypes.object,
   onConfirmImportPress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

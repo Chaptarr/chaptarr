@@ -403,7 +403,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 }).ToList();
             }
 
-            public List<NzbDrone.Core.Queue.Queue> GetQueue()
+            public List<NzbDrone.Core.Queue.Queue> GetQueue(bool includeConversionStatus = true)
             {
                 return _items.ToList();
             }
@@ -420,7 +420,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
         private sealed class EmptyQueueService : IQueueService
         {
-            public List<NzbDrone.Core.Queue.Queue> GetQueue()
+            public List<NzbDrone.Core.Queue.Queue> GetQueue(bool includeConversionStatus = true)
             {
                 return new List<NzbDrone.Core.Queue.Queue>();
             }
@@ -449,10 +449,6 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
             public Task ProcessSelectedDecisions(List<RemoteBook> selected, int? downloadClientId = null) => Task.CompletedTask;
 
-            public Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId)
-            {
-                return Task.FromResult(ProcessedDecisionResult.Skipped);
-            }
         }
     }
 }

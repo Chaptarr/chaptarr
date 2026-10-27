@@ -30,7 +30,7 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             public List<QualityProfile> All() => new();
             public List<QualityProfile> GetByType(ProfileType type) => new();
             public QualityProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => false;
+            public bool Exists(int id, ProfileType? profileType = null) => false;
             public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed) => throw new NotImplementedException();
         }
 
@@ -41,7 +41,7 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             public void Delete(int id) => throw new NotImplementedException();
             public List<MetadataProfile> All() => new();
             public MetadataProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => false;
+            public bool Exists(int id, MetadataProfileType? profileType = null) => false;
             public List<Book> FilterBooks(Author input, int profileId) => input?.Books ?? new List<Book>();
 
             public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>

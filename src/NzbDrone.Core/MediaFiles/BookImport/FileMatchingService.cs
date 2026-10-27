@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
@@ -27,6 +28,7 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Authors;
 using NzbDrone.Core.MediaFiles.TagExtraction;
 using NzbDrone.Core.Parser;
+using static NzbDrone.Core.Parser.TitleOccurrenceComparison;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Utilities;
@@ -59,6 +61,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         private readonly AsyncLocal<RejectionCaptureContext> _rejectionCapture = new AsyncLocal<RejectionCaptureContext>();
         private readonly AsyncLocal<IMatchingTraceSink> _matchingTraceSink = new AsyncLocal<IMatchingTraceSink>();
+        private readonly AsyncLocal<Dictionary<int, Book>> _matchingBooks = new();
+        private readonly AsyncLocal<Dictionary<int, GroupingCatalog>> _groupingCatalogs = new();
+
+        private sealed class GroupingCatalog
+        {
+            public Dictionary<string, List<string[]>> Titles { get; set; }
+            public Dictionary<int, Edition> Editions { get; } = new();
+        }
 
         private sealed class RejectionCaptureContext
         {
@@ -129,16 +139,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             public MatchIdentityProof IdentityProof { get; set; }
             public string Reason { get; set; }
         }
-
-        private sealed class SuccessfulProbeMatch
-        {
-            public DiscoveredFileWithMetadata File { get; set; }
-            public Dictionary<string, List<string>> Tags { get; set; }
-            public MatchDecision Decision { get; set; }
-            public MatchIdentityProof Evidence { get; set; }
-            public string LogicalWorkKey { get; set; }
-        }
-
 
         private sealed class HolyGrailAttemptResult
         {
@@ -587,6 +587,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         public Task<FileMatchResult> MatchFilesToLibraryAsync(DiscoveredFileWithMetadata[] filesWithMetadata, int? restrictToAuthorId, MatchingContext context)
         {
+            var previousBooks = _matchingBooks.Value;
+            var previousTrace = _matchingTraceSink.Value;
+            var previousCatalogs = _groupingCatalogs.Value;
+            _matchingBooks.Value = new Dictionary<int, Book>();
+            _groupingCatalogs.Value = new Dictionary<int, GroupingCatalog>();
+            try
+            {
+                return MatchFilesToLibrary(filesWithMetadata, restrictToAuthorId, context);
+            }
+            finally
+            {
+                _matchingBooks.Value = previousBooks;
+                _matchingTraceSink.Value = previousTrace;
+                _groupingCatalogs.Value = previousCatalogs;
+            }
+        }
+
+        private Task<FileMatchResult> MatchFilesToLibrary(DiscoveredFileWithMetadata[] filesWithMetadata, int? restrictToAuthorId, MatchingContext context)
+        {
             var totalStopwatch = Stopwatch.StartNew();
             context ??= new MatchingContext();
             var cancellationToken = context.CancellationToken;
@@ -675,7 +694,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 // causing incorrect matches. Split those author-root files into per-file units.
                 HashSet<string> restrictedAuthorFolders = null;
                 string restrictedAuthorName = null;
-                Dictionary<string, bool> directUnderAuthorFolderCache = null;
                 if (restrictToAuthorId.HasValue)
                 {
                     try
@@ -689,81 +707,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             if (!string.IsNullOrWhiteSpace(a.AudiobookPath)) restrictedAuthorFolders.Add(NormalizeDirectory(a.AudiobookPath));
                             if (!string.IsNullOrWhiteSpace(a.EbookPath)) restrictedAuthorFolders.Add(NormalizeDirectory(a.EbookPath));
                             if (restrictedAuthorFolders.Count == 0) restrictedAuthorFolders = null;
-                            directUnderAuthorFolderCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                         }
                     }
                     catch
                     {
                         restrictedAuthorFolders = null;
                         restrictedAuthorName = null;
-                        directUnderAuthorFolderCache = null;
                     }
                 }
 
-                IReadOnlyDictionary<string, int> directAuthorIdentitySupport = null;
-                ISet<string> directAuthorExcludedIdentityValues = null;
-                if (restrictToAuthorId.HasValue && !string.IsNullOrWhiteSpace(restrictedAuthorName))
+                var groups = filesWithMetadata.GroupBy(file => new
                 {
-                    var normalizedRestrictedAuthorName = BookImportUnitGroupingService.NormalizeIdentityValue(restrictedAuthorName);
-                    if (!string.IsNullOrWhiteSpace(normalizedRestrictedAuthorName))
-                    {
-                        directAuthorExcludedIdentityValues = new HashSet<string>(StringComparer.Ordinal)
-                        {
-                            normalizedRestrictedAuthorName
-                        };
-                    }
-
-                    directAuthorIdentitySupport = BookImportUnitGroupingService.BuildIdentityPairSupport(filesWithMetadata, directAuthorExcludedIdentityValues);
-                }
-
-                // Group by unit key plus any extra author-root split key.
-                // A "book unit" is usually folder + extension, except standalone book
-                // containers which are always one file per unit.
-                // Direct-under-author-root files can still split further via SubKey when needed.
-                var groups = filesWithMetadata
-                    .GroupBy(f =>
-                    {
-                        var folder = GetBookFolder(f.Path);
-                        var ext = Path.GetExtension(f.Path).ToLowerInvariant();
-                        var unitKey = BookCoalescingHelper.BuildGroupingUnitKey(f.Path);
-                        var subKey = string.Empty;
-
-                        if (restrictToAuthorId.HasValue &&
-                            !string.IsNullOrWhiteSpace(folder) &&
-                            !string.IsNullOrWhiteSpace(restrictedAuthorName))
-                        {
-                            // Prefer exact author folder links when available, but also tolerate non-canonical on-disk
-                            // spellings (e.g. "George R. R. Martin" vs stored "George R.R. Martin") by resolving
-                            // the author folder from the path via AuthorFolderMatchingService.
-                            var isDirectUnderAuthorFolder = false;
-                            if (restrictedAuthorFolders != null && restrictedAuthorFolders.Contains(folder))
-                            {
-                                isDirectUnderAuthorFolder = true;
-                            }
-                            else if (directUnderAuthorFolderCache != null && directUnderAuthorFolderCache.TryGetValue(folder, out var cached))
-                            {
-                                isDirectUnderAuthorFolder = cached;
-                            }
-                            else
-                            {
-                                var resolvedAuthorFolder = GetAuthorFolder(f.Path, restrictedAuthorName);
-                                isDirectUnderAuthorFolder = !string.IsNullOrWhiteSpace(resolvedAuthorFolder) && folder.PathEquals(resolvedAuthorFolder);
-                                if (directUnderAuthorFolderCache != null)
-                                {
-                                    directUnderAuthorFolderCache[folder] = isDirectUnderAuthorFolder;
-                                }
-                            }
-
-                            if (isDirectUnderAuthorFolder)
-                            {
-                                var identityKey = BookImportUnitGroupingService.BuildIdentityKey(f?.AllTags, directAuthorIdentitySupport, directAuthorExcludedIdentityValues);
-                                subKey = !string.IsNullOrWhiteSpace(identityKey) ? identityKey : f.Path; // cluster when tags agree; else unique per file
-                            }
-                        }
-
-                        return new { UnitKey = unitKey, Folder = folder, Ext = ext, SubKey = subKey };
-                    })
-                    .ToList();
+                    UnitKey = BookCoalescingHelper.BuildGroupingUnitKey(file.Path),
+                    Folder = GetBookFolder(file.Path),
+                    Ext = Path.GetExtension(file.Path).ToLowerInvariant()
+                }).ToList();
 
             _logger.Debug("[FILE-MATCHING] Processing {0} grouped sets (unitized)", groups.Count);
             // Publish discovery of book units (file groups)
@@ -823,8 +781,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 var mediaType = isAudiobook ? BookMediaType.Audiobook : BookMediaType.Ebook;
 
                 var samples = SelectSpreadSamples(files);
-                var homogeneousTags = BuildGroupConsensusTags(files);
-                try { _logger.Debug("[TAGS] Consensus from spread samples ({0} keys, samples={1})", homogeneousTags.Count, samples.Count); } catch { }
+                var useSharedGroupText = isAudiobook;
+                var homogeneousTags = BuildGroupConsensusTags(files, isAudiobook);
+                try { _logger.Debug("[TAGS] Consensus ({0} keys, files={1})", homogeneousTags.Count, isAudiobook ? files.Count : samples.Count); } catch { }
 
                 var groupMatchDurationSeconds = representative.DurationSeconds;
                 if (isAudiobook)
@@ -883,7 +842,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                 return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                             }
 
-                        MatchDecision TryMatchOne(DiscoveredFileWithMetadata f, Dictionary<string, List<string>> tags, Dictionary<string, List<string>> v5Tags)
+                        MatchDecision TryMatchOne(DiscoveredFileWithMetadata f, Dictionary<string, List<string>> tags, Dictionary<string, List<string>> v5Tags, bool recover = true)
                         {
                             string pinnedFailure = null;
                             // If this import was grabbed for a specific book with a pinned edition (ManualAdd / AnyEditionOk=false),
@@ -944,7 +903,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                 AllTags = tags,
                                 GroupMemberTags = f.GroupMemberTags,
                                 DurationSeconds = f.DurationSeconds
-                            }, mediaType, authorId, disablePathFallback: disablePathFallback, inferAuthorFromPathDuringPathFallback: true, unscoped: false, hardAllowedBookIds: hardAllowedBookIds),
+                            }, mediaType, authorId, disablePathFallback: disablePathFallback, inferAuthorFromPathDuringPathFallback: true, unscoped: false, hardAllowedBookIds: hardAllowedBookIds, useSharedGroupText: useSharedGroupText),
                             rejections);
                                 match = holyGrailEvaluation?.Match;
                             }
@@ -963,7 +922,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                         AllTags = tags,
                                         GroupMemberTags = f.GroupMemberTags,
                                         DurationSeconds = f.DurationSeconds
-                                    }, mediaType, restrictToAuthorId: null, disablePathFallback: isRestrictedAuthorRootFolder || disablePathFallback, inferAuthorFromPathDuringPathFallback: false, unscoped: true, hardAllowedBookIds: hardAllowedBookIds),
+                                    }, mediaType, restrictToAuthorId: null, disablePathFallback: isRestrictedAuthorRootFolder || disablePathFallback, inferAuthorFromPathDuringPathFallback: false, unscoped: true, hardAllowedBookIds: hardAllowedBookIds, useSharedGroupText: useSharedGroupText),
                                     rejections);
                                 match = holyGrailEvaluation?.Match;
                             }
@@ -972,7 +931,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             string unmatchedReason = null;
                             var matchedViaV5Recovery = false;
 
-                            if (match == null && allowV5Identification)
+                            if (match == null && allowV5Identification && recover)
                             {
                                 var v5File = new DiscoveredFileWithMetadata
                                 {
@@ -1056,7 +1015,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                         ? "Matched via Holy Grail FTS + smoke test (unscoped fallback)"
                                         : "Matched via Holy Grail FTS + smoke test (author-restricted)";
 
-                                groupedMatched.Add(CopyFileMatchForFile(match, representative));
+                                var singleMatch = CopyFileMatchForFile(match, representative, singleFileUnit: isAudiobook);
+                                groupedMatched.Add(singleMatch);
                                 LogDecisionWithProvenance(
                                     representative.Path,
                                     "MATCHED",
@@ -1103,362 +1063,72 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             continue;
                         }
 
-                        // Multi-file group: first let stable unit evidence try the existing grouped match path.
-                        // This is what lets a full-book duration prove a chapterized audiobook; every member
-                        // still has to pass strict proof membership before we stamp the grouped result.
-                        var unitHandledPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        List<CandidateRejection> groupedSeedDurationRejections = null;
-
-                        if (homogeneousTags.Count > 0)
+                        var probeCache = new Dictionary<string, MatchDecision>(PathEqualityComparer.Instance);
+                        MatchDecision Probe(DiscoveredFileWithMetadata file)
                         {
-                            var groupedSeedTags = CloneTags(homogeneousTags);
-                            var groupedSeedDecision = TryMatchOne(groupFile, groupedSeedTags, CloneTags(groupedSeedTags));
-                            var groupedSeedMatch = groupedSeedDecision.Match;
-                            groupedSeedDurationRejections = BuildGroupedDurationGateRejections(groupedSeedDecision.Rejections, files, groupMatchDurationSeconds);
-
-                            if (groupedSeedMatch != null)
+                            if (!probeCache.TryGetValue(file.Path, out var decision))
                             {
-                                var proofSourceTags = groupedSeedDecision.ProofTags != null && groupedSeedDecision.ProofTags.Count > 0
-                                    ? groupedSeedDecision.ProofTags
-                                    : groupedSeedTags;
-                                var proofEvidence = groupedSeedMatch.IdentityProof;
-
-                                if (HasRequiredAuthorAndBookProof(proofEvidence))
-                                {
-                                    var membershipResults = files
-                                        .Select(file =>
-                                        {
-                                            var tags = GetTagsForMatch(file);
-                                            return new
-                                            {
-                                                File = file,
-                                                Tags = tags,
-                                                Membership = BuildHomogeneousProofMembership(
-                                                    groupedSeedMatch,
-                                                    file,
-                                                    tags,
-                                                    proofEvidence)
-                                            };
-                                        })
-                                        .ToList();
-
-                                    var groupedMembers = membershipResults
-                                        .Where(x => x.File != null && x.Membership.Passes)
-                                        .ToList();
-
-                                    if (groupedMembers.Count > 1)
-                                    {
-                                        var remainderCount = membershipResults.Count(x => x.File != null && !x.Membership.Passes);
-                                        if (remainderCount > 0)
-                                        {
-                                            _logger.Debug("{0}[HOLY-GRAIL] GROUPED-SEED accepted {1}/{2}; rematching remainder={3}",
-                                                cid, groupedMembers.Count, files.Count, remainderCount);
-                                        }
-
-                                        var anyFallback = groupedSeedDecision.TriedUnscopedFallback ||
-                                                          groupedSeedDecision.SkippedScopedMatch;
-                                        var matchReason = groupedSeedDecision.MatchedPinnedFirstCrack
-                                            ? "Matched pinned edition (first crack smoke test)"
-                                            : groupedSeedDecision.MatchedViaV5Recovery
-                                                ? "Matched via V5 author recovery + Holy Grail FTS (author-restricted grouped seed)"
-                                                : anyFallback
-                                                    ? "Matched via Holy Grail FTS + smoke test (grouped seed fallback)"
-                                                    : "Matched via Holy Grail FTS + smoke test (grouped seed)";
-
-                                        foreach (var member in groupedMembers)
-                                        {
-                                            cancellationToken.ThrowIfCancellationRequested();
-
-                                            unitHandledPaths.Add(member.File.Path);
-                                            var memberMatch = CopyFileMatchForFile(
-                                                groupedSeedMatch,
-                                                member.File,
-                                                member.Membership.IdentityProof);
-                                            groupedMatched.Add(memberMatch);
-
-                                            LogDecisionWithProvenance(
-                                                member.File.Path,
-                                                "MATCHED",
-                                                matchReason,
-                                                member.Tags,
-                                                mediaType,
-                                                memberMatch,
-                                                member.Membership.ProofTags ?? proofSourceTags,
-                                                groupedSeedDecision.PathFallbackUsed || anyFallback,
-                                                groupedSeedDecision.PathFallbackSuppressedReason,
-                                                groupedSeedDecision.PinnedTargetResult,
-                                                groupedSeedDecision.PinnedTargetFailure,
-                                                commandId: ProgressMessageContext.CommandModel?.Id,
-                                                correlationId: correlationId);
-                                        }
-                                    }
-                                }
+                                var tags = GetTagsForMatch(file);
+                                decision = TryMatchOne(file, tags, tags, recover: false);
+                                decision.BooksById = null;
+                                probeCache[file.Path] = decision;
                             }
+
+                            return decision;
                         }
 
-                        // Then probe remaining files and only stamp grouped units when successful probes share
-                        // exact proof fields and a unit-level rerun resolves cleanly.
-                        var matchCache = new Dictionary<string, (Dictionary<string, List<string>> Tags, MatchDecision Decision)>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var file in files)
+                        var initialDecision = TryMatchOne(groupFile, groupFile.AllTags, homogeneousTags, recover: false);
+                        var units = BuildEvidenceSubgroups(files, file => Probe(file).Match, initialDecision.Match, cancellationToken);
+                        foreach (var unit in units)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
-
-                            if (file == null || string.IsNullOrWhiteSpace(file.Path))
+                            var unitFile = BuildMatchingGroupFile(unit.Files, isAudiobook);
+                            var decision = unit.Files.Count == files.Count ? initialDecision :
+                                unit.Files.Count == 1 ? Probe(unit.Files[0]) :
+                                TryMatchOne(unitFile, unitFile.AllTags, unitFile.AllTags, recover: false);
+                            if (decision.Match == null && allowV5Identification)
                             {
-                                continue;
+                                decision = TryMatchOne(unitFile, unitFile.AllTags, unitFile.AllTags);
                             }
 
-                            if (unitHandledPaths.Contains(file.Path))
+                            foreach (var file in unit.Files)
                             {
-                                continue;
-                            }
-
-                            var tags = GetTagsForMatch(file);
-                            var embeddedFileTags = file?.AllTags != null && file.AllTags.Count > 0
-                                ? CloneTags(file.AllTags)
-                                : new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                            var res = TryMatchOne(file, tags, embeddedFileTags);
-                            matchCache[file.Path] = (tags, res);
-                        }
-
-                        var booksById = new Dictionary<int, Book>();
-                        var successfulProbes = new List<SuccessfulProbeMatch>();
-                        foreach (var file in files)
-                        {
-                            cancellationToken.ThrowIfCancellationRequested();
-
-                            if (file == null || string.IsNullOrWhiteSpace(file.Path) || !matchCache.TryGetValue(file.Path, out var cached))
-                            {
-                                continue;
-                            }
-
-                            if (cached.Decision?.Match == null)
-                            {
-                                continue;
-                            }
-
-                            var evidence = cached.Decision.Match.IdentityProof;
-                            var logicalWorkKey = GetLogicalWorkKey(cached.Decision.Match, booksById);
-                            if (!HasRequiredAuthorAndBookProof(evidence) || string.IsNullOrWhiteSpace(logicalWorkKey))
-                            {
-                                continue;
-                            }
-
-                            successfulProbes.Add(new SuccessfulProbeMatch
-                            {
-                                File = file,
-                                Tags = cached.Tags,
-                                Decision = cached.Decision,
-                                Evidence = evidence,
-                                LogicalWorkKey = logicalWorkKey
-                            });
-                        }
-
-                        foreach (var logicalGroup in successfulProbes
-                                     .GroupBy(p => p.LogicalWorkKey, StringComparer.OrdinalIgnoreCase)
-                                     .OrderByDescending(g => g.Count()))
-                        {
-                            cancellationToken.ThrowIfCancellationRequested();
-
-                            var seedProbe = logicalGroup
-                                .OrderBy(p => p.File.Path, StringComparer.OrdinalIgnoreCase)
-                                .FirstOrDefault(p => HasRequiredAuthorAndBookProof(p.Evidence));
-
-                            if (seedProbe == null)
-                            {
-                                continue;
-                            }
-
-                            var memberProbes = logicalGroup
-                                .Select(p => new
-                                {
-                                    Probe = p,
-                                    Membership = BuildHomogeneousProofMembership(
-                                        seedProbe.Decision.Match,
-                                        p.File,
-                                        p.Tags,
-                                        seedProbe.Evidence)
-                                })
-                                .Where(x => !unitHandledPaths.Contains(x.Probe.File.Path) && x.Membership.Passes)
-                                .ToList();
-
-                            if (memberProbes.Count <= 1)
-                            {
-                                continue;
-                            }
-
-                            var unitFiles = memberProbes.Select(p => p.Probe.File).ToList();
-                            var unitTags = CloneTags(seedProbe.Tags);
-                            int? totalUnitDurationSeconds = null;
-                            var unitMatchDurationSeconds = memberProbes[0].Probe.File.DurationSeconds;
-
-                            if (isAudiobook)
-                            {
-                                totalUnitDurationSeconds = ResolveTotalDurationSeconds(unitFiles);
-                                TryEnrichAudiobookTagsWithTotalDuration(unitTags, totalUnitDurationSeconds, unitFiles.Count, cid);
-                                unitMatchDurationSeconds = ResolveGroupedMatchDurationSeconds(memberProbes[0].Probe.File, totalUnitDurationSeconds, isAudiobook);
-                            }
-
-                            var unitFile = new DiscoveredFileWithMetadata
-                            {
-                                Path = memberProbes[0].Probe.File.Path,
-                                Size = memberProbes[0].Probe.File.Size,
-                                Modified = memberProbes[0].Probe.File.Modified,
-                                AllTags = unitTags,
-                                GroupMemberTags = unitFiles
-                                    .Select(member => member?.AllTags ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase))
-                                    .ToList(),
-                                DurationSeconds = unitMatchDurationSeconds
-                            };
-
-                            var unitDecision = TryMatchOne(unitFile, unitTags, CloneTags(unitTags));
-                            var unitMatch = unitDecision.Match;
-                            var unitLogicalWorkKey = unitMatch != null ? GetLogicalWorkKey(unitMatch, booksById) : null;
-
-                            if (unitMatch == null || !string.Equals(unitLogicalWorkKey, logicalGroup.Key, StringComparison.OrdinalIgnoreCase))
-                            {
-                                foreach (var member in memberProbes)
-                                {
-                                    var probe = member.Probe;
-                                    cancellationToken.ThrowIfCancellationRequested();
-
-                                    unitHandledPaths.Add(probe.File.Path);
-                                    var reason = unitMatch == null
-                                        ? $"NO_MATCH_HOLY_GRAIL (authorId={authorId}; unitRerunFailed=true)"
-                                        : $"NO_MATCH_HOLY_GRAIL (authorId={authorId}; unitRerunChangedWork=true)";
-
-                                    groupedUnmatched.Add(new UnmatchedFile
-                                    {
-                                        File = probe.File,
-                                        Reason = reason,
-                                        PotentialAuthors = new AuthorSuggestion[0]
-                                    });
-
-                                    LogDecisionWithProvenance(
-                                        probe.File.Path,
-                                        "UNMATCHED",
-                                        reason,
-                                        probe.Tags,
-                                        mediaType,
-                                        proofTags: unitTags,
-                                        pathFallbackUsed: unitDecision.PathFallbackUsed,
-                                        pathFallbackSuppressedReason: unitDecision.PathFallbackSuppressedReason,
-                                        pinnedTargetResult: unitDecision.PinnedTargetResult,
-                                        pinnedTargetFailure: unitDecision.PinnedTargetFailure,
-                                        rejections: MergeRejections(
-                                            BuildGroupedDurationGateRejections(unitDecision.Rejections, unitFiles, unitMatchDurationSeconds),
-                                            unitDecision.Rejections),
-                                        commandId: ProgressMessageContext.CommandModel?.Id,
-                                        correlationId: correlationId);
-                                }
-
-                                continue;
-                            }
-
-                            var anyFallback = unitDecision.TriedUnscopedFallback ||
-                                              unitDecision.SkippedScopedMatch ||
-                                              memberProbes.Any(p => p.Probe.Decision.TriedUnscopedFallback || p.Probe.Decision.SkippedScopedMatch);
-                            var matchReason = unitDecision.MatchedPinnedFirstCrack
-                                ? "Matched pinned edition (first crack smoke test)"
-                                : unitDecision.MatchedViaV5Recovery
-                                    ? "Matched via V5 author recovery + Holy Grail FTS (author-restricted)"
-                                    : anyFallback
-                                        ? "Matched via Holy Grail FTS + smoke test (unit rerun fallback)"
-                                        : "Matched via Holy Grail FTS + smoke test (unit rerun)";
-
-                            foreach (var member in memberProbes)
-                            {
-                                var probe = member.Probe;
                                 cancellationToken.ThrowIfCancellationRequested();
-
-                                unitHandledPaths.Add(probe.File.Path);
-                                var memberMatch = CopyFileMatchForFile(unitMatch, probe.File, member.Membership.IdentityProof);
-                                groupedMatched.Add(memberMatch);
-
-                                LogDecisionWithProvenance(
-                                    probe.File.Path,
-                                    "MATCHED",
-                                    matchReason,
-                                    probe.Tags,
-                                    mediaType,
-                                    memberMatch,
-                                    unitDecision.ProofTags ?? unitTags,
-                                    unitDecision.PathFallbackUsed || anyFallback,
-                                    unitDecision.PathFallbackSuppressedReason,
-                                    unitDecision.PinnedTargetResult,
-                                    unitDecision.PinnedTargetFailure,
-                                    commandId: ProgressMessageContext.CommandModel?.Id,
-                                    correlationId: correlationId);
-                            }
-                        }
-
-                        foreach (var file in files)
-                        {
-                            cancellationToken.ThrowIfCancellationRequested();
-
-                            if (file == null || string.IsNullOrWhiteSpace(file.Path) || unitHandledPaths.Contains(file.Path))
-                            {
-                                continue;
-                            }
-
-                            if (!matchCache.TryGetValue(file.Path, out var cached))
-                            {
-                                continue;
-                            }
-
-                            var tagsToUse = cached.Tags ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                            var fileDecision = cached.Decision;
-                            var match = fileDecision.Match;
-                            if (match != null)
-                            {
-                                groupedMatched.Add(CopyFileMatchForFile(match, file));
-                                LogDecisionWithProvenance(
-                                    file.Path,
-                                    "MATCHED",
-                                    fileDecision.MatchedPinnedFirstCrack
-                                        ? "Matched pinned edition (first crack smoke test)"
-                                        : fileDecision.MatchedViaV5Recovery
-                                            ? "Matched via V5 author recovery + Holy Grail FTS (author-restricted)"
-                                            : "Matched via Holy Grail FTS + smoke test (per-file probe)",
-                                    tagsToUse,
-                                    mediaType,
-                                    match,
-                                    fileDecision.ProofTags,
-                                    fileDecision.PathFallbackUsed,
-                                    fileDecision.PathFallbackSuppressedReason,
-                                    fileDecision.PinnedTargetResult,
-                                    fileDecision.PinnedTargetFailure,
-                                    commandId: ProgressMessageContext.CommandModel?.Id,
-                                    correlationId: correlationId);
-                            }
-                            else
-                            {
-                                var reason = !string.IsNullOrWhiteSpace(fileDecision.UnmatchedReason)
-                                    ? fileDecision.UnmatchedReason
-                                    : fileDecision.TriedUnscopedFallback || fileDecision.SkippedScopedMatch
-                                        ? $"NO_MATCH_HOLY_GRAIL (authorId={authorId}; unscopedFallback=true{(fileDecision.SkippedScopedMatch ? "; scopedAuthorNotInTags=true" : string.Empty)})"
-                                        : $"NO_MATCH_HOLY_GRAIL (authorId={authorId})";
-
-                                groupedUnmatched.Add(new UnmatchedFile
+                                var memberDecision = decision;
+                                var membership = decision.Match == null ? null : BuildHomogeneousProofMembership(
+                                    decision.Match, file, file.AllTags, decision.Match.IdentityProof);
+                                if (decision.Match != null && membership?.Passes != true && unit.Files.Count > 1)
                                 {
-                                    File = file,
-                                    Reason = reason,
-                                    PotentialAuthors = fileDecision.PotentialAuthor != null ? new[] { fileDecision.PotentialAuthor } : new AuthorSuggestion[0]
-                                });
-                                LogDecisionWithProvenance(
-                                    file.Path,
-                                    "UNMATCHED",
-                                    reason,
-                                    tagsToUse,
-                                    mediaType,
-                                    proofTags: fileDecision.ProofTags,
-                                    pathFallbackUsed: fileDecision.PathFallbackUsed,
-                                    pathFallbackSuppressedReason: fileDecision.PathFallbackSuppressedReason,
-                                    pinnedTargetResult: fileDecision.PinnedTargetResult,
-                                    pinnedTargetFailure: fileDecision.PinnedTargetFailure,
-                                    rejections: MergeRejections(groupedSeedDurationRejections, fileDecision.Rejections),
-                                    commandId: ProgressMessageContext.CommandModel?.Id,
-                                    correlationId: correlationId);
+                                    memberDecision = Probe(file);
+                                }
+
+                                var match = memberDecision.Match;
+                                if (match != null)
+                                {
+                                    var memberMatch = CopyFileMatchForFile(match, file,
+                                        ReferenceEquals(memberDecision, decision) ? membership?.IdentityProof : null,
+                                        singleFileUnit: isAudiobook && (unit.Files.Count == 1 || !ReferenceEquals(memberDecision, decision)));
+                                    groupedMatched.Add(memberMatch);
+                                    LogDecisionWithProvenance(file.Path, "MATCHED", memberDecision.MatchedPinnedFirstCrack
+                                        ? "Matched pinned edition (first crack smoke test)"
+                                        : "Matched via Holy Grail FTS + smoke test (grouped seed)",
+                                        file.AllTags, mediaType, memberMatch, memberDecision.ProofTags,
+                                        memberDecision.PathFallbackUsed, memberDecision.PathFallbackSuppressedReason,
+                                        memberDecision.PinnedTargetResult, memberDecision.PinnedTargetFailure,
+                                        commandId: ProgressMessageContext.CommandModel?.Id, correlationId: correlationId);
+                                }
+                                else
+                                {
+                                    var reason = memberDecision.UnmatchedReason ?? $"NO_MATCH_HOLY_GRAIL (authorId={authorId})";
+                                    groupedUnmatched.Add(new UnmatchedFile { File = file, Reason = reason,
+                                        PotentialAuthors = memberDecision.PotentialAuthor == null ? Array.Empty<AuthorSuggestion>() : new[] { memberDecision.PotentialAuthor } });
+                                    LogDecisionWithProvenance(file.Path, "UNMATCHED", reason, file.AllTags, mediaType,
+                                        proofTags: memberDecision.ProofTags, pathFallbackUsed: memberDecision.PathFallbackUsed,
+                                        pathFallbackSuppressedReason: memberDecision.PathFallbackSuppressedReason,
+                                        pinnedTargetResult: memberDecision.PinnedTargetResult, pinnedTargetFailure: memberDecision.PinnedTargetFailure,
+                                        rejections: MergeRejections(BuildGroupedDurationGateRejections(decision.Rejections, unit.Files, unitFile.DurationSeconds), memberDecision.Rejections),
+                                        commandId: ProgressMessageContext.CommandModel?.Id, correlationId: correlationId);
+                                }
                             }
                         }
                         continue;
@@ -1625,9 +1295,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                                             if (changed)
                                             {
-                                                updated.Tags = (updated.AudiobookTags ?? new HashSet<int>())
-                                                    .Concat(updated.EbookTags ?? new HashSet<int>())
-                                                    .ToHashSet();
+                                                updated.Tags = updated.GetCombinedTags();
                                                 updated = _authorService.UpdateAuthor(updated);
                                             }
 
@@ -1715,8 +1383,24 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                     }
 
-                    // Group on repeated non-trash tag/value evidence, not fixed tag labels.
-                    var identityGroups = BookImportUnitGroupingService.BuildIdentitySubgroups(files);
+                    var probeCache = new Dictionary<string, (Dictionary<string, List<string>> Tags, FileMatch Match, List<CandidateRejection> Rejections)>(PathEqualityComparer.Instance);
+                    FileMatch ProbeForGrouping(DiscoveredFileWithMetadata file)
+                    {
+                        if (!probeCache.TryGetValue(file.Path, out var cached))
+                        {
+                            var tags = GetTagsForUnscopedMatch(file);
+                            var decision = TryMatchUnscopedOne(file, tags);
+                            cached = (tags, decision.match, decision.rejections);
+                            probeCache[file.Path] = cached;
+                        }
+
+                        return cached.Match;
+                    }
+
+                    var initialGroupResult = TryMatchWithHolyGrail(BuildMatchingGroupFile(files, isAudiobook), mediaType, disablePathFallback: true, hardAllowedBookIds);
+                    var identityGroups = isAudiobook
+                        ? BuildEvidenceSubgroups(files, ProbeForGrouping, initialGroupResult?.Match, cancellationToken)
+                        : BookImportUnitGroupingService.BuildIdentitySubgroups(files);
 
                     if (identityGroups.Count > 1)
                     {
@@ -1764,7 +1448,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             FileMatch m;
                             List<CandidateRejection> rejections;
 
-                            if (cachedMatches != null && cachedMatches.TryGetValue(file.Path, out var cached))
+                            if ((cachedMatches ?? probeCache).TryGetValue(file.Path, out var cached))
                             {
                                 tags = cached.Tags ?? GetTagsForUnscopedMatch(file);
                                 m = cached.Match;
@@ -1780,7 +1464,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                             if (m != null)
                             {
-                                var fm = CopyFileMatchForFile(m, file);
+                                var fm = CopyFileMatchForFile(m, file, singleFileUnit: isAudiobook);
                                 groupedMatched.Add(fm);
                                 LogDecisionWithProvenance(
                                     file.Path,
@@ -1851,7 +1535,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             continue;
                         }
 
-                        var subgroupHasIdentity = !string.IsNullOrWhiteSpace(subgroup.IdentityKey);
+                        var subgroupRep = subgroup.Files[0];
+                        var subgroupFile = BuildMatchingGroupFile(subgroup.Files, isAudiobook);
+                        var subgroupTags = subgroupFile.AllTags;
+                        var subgroupHasIdentity = !string.IsNullOrWhiteSpace(subgroup.IdentityKey) ||
+                            !string.IsNullOrWhiteSpace(BookImportUnitGroupingService.BuildIdentityKey(subgroupTags));
                         var shouldForcePerFile = !subgroupHasIdentity && isDirectChildOfRootFolder;
 
                         // If we have no stable identity in a direct-under-root folder, never stamp across the whole folder.
@@ -1866,46 +1554,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             continue;
                         }
 
-                        // Build subgroup tags from spread samples + consensus for better matching signals (e.g. TOTALDURATION).
-                        var subgroupTags = BuildGroupConsensusTags(subgroup.Files);
-
-                        var subgroupRep = subgroup.Files[0];
-                        var subgroupMatchDurationSeconds = subgroupRep.DurationSeconds;
-                        if (isAudiobook)
-                        {
-                            var totalSubgroupDurationSeconds = ResolveTotalDurationSeconds(subgroup.Files);
-                            TryEnrichAudiobookTagsWithTotalDuration(subgroupTags, totalSubgroupDurationSeconds, subgroup.Files.Count, cid);
-                            subgroupMatchDurationSeconds = ResolveGroupedMatchDurationSeconds(subgroupRep, totalSubgroupDurationSeconds, isAudiobook);
-                        }
-
-                        var subgroupFile = new DiscoveredFileWithMetadata
-                        {
-                            Path = subgroupRep.Path,
-                            Size = subgroupRep.Size,
-                            Modified = subgroupRep.Modified,
-                            AllTags = subgroupTags,
-                            GroupMemberTags = subgroup.Files
-                                .Select(member => member?.AllTags ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase))
-                                .ToList(),
-                            DurationSeconds = subgroupMatchDurationSeconds
-                        };
-
-                        var sampleMatchCache = new Dictionary<string, (Dictionary<string, List<string>> Tags, FileMatch Match, List<CandidateRejection> Rejections)>(StringComparer.OrdinalIgnoreCase);
+                        var sampleMatchCache = subgroup.Files.Where(file => probeCache.ContainsKey(file.Path))
+                            .ToDictionary(file => file.Path, file => probeCache[file.Path], PathEqualityComparer.Instance);
                         var sampleBooksById = new Dictionary<int, Book>();
 
                         void PopulateSampleMatchCache()
                         {
-                            if (sampleMatchCache.Count > 0)
-                            {
-                                return;
-                            }
-
                             var seenSamplePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                             foreach (var sample in SelectSpreadSamples(subgroup.Files))
                             {
                                 if (sample == null ||
                                     string.IsNullOrWhiteSpace(sample.Path) ||
-                                    !seenSamplePaths.Add(sample.Path))
+                                    !seenSamplePaths.Add(sample.Path) || sampleMatchCache.ContainsKey(sample.Path))
                                 {
                                     continue;
                                 }
@@ -1937,7 +1597,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                         // A group seed may use only evidence shared by the members. Path fallback remains
                         // available when each file is rematched below, where one folder cannot stamp a mixed unit.
-                        var groupMatchResult = TryMatchWithHolyGrail(subgroupFile, mediaType, disablePathFallback: true, hardAllowedBookIds);
+                        var groupMatchResult = subgroup.Files.Count == files.Count ? initialGroupResult :
+                            TryMatchWithHolyGrail(subgroupFile, mediaType, disablePathFallback: true, hardAllowedBookIds);
                         var match = groupMatchResult?.Match;
                         if (match == null && usePathAsTagsFallback && !disablePathFallback)
                         {
@@ -2016,7 +1677,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             foreach (var grouped in groupedFiles)
                             {
                                 var file = grouped.File;
-                                var fm = CopyFileMatchForFile(match, file, grouped.Membership.IdentityProof);
+                                var fm = CopyFileMatchForFile(match, file, grouped.Membership.IdentityProof, singleFileUnit: isAudiobook && groupedFiles.Count == 1);
                                 groupedMatched.Add(fm);
                                 LogDecisionWithProvenance(
                                     file.Path,
@@ -2110,7 +1771,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                                 var memberMatch = CopyFileMatchForFile(
                                                     localMatch,
                                                     acceptedMember.File,
-                                                    acceptedMember.Membership.IdentityProof);
+                                                    acceptedMember.Membership.IdentityProof,
+                                                    singleFileUnit: isAudiobook && accepted.Count == 1);
                                                 if (memberMatch.Provenance != null)
                                                 {
                                                     memberMatch.Provenance.Route = $"v5_provider_work_group/{memberMatch.Provenance.Route ?? "local_match"}";
@@ -2206,7 +1868,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             memberTags,
                             matchResult.Match.IdentityProof);
                         var memberMatch = membership.Passes
-                            ? CopyFileMatchForFile(matchResult.Match, file, membership.IdentityProof)
+                            ? CopyFileMatchForFile(matchResult.Match, file, membership.IdentityProof, singleFileUnit: isAudiobook && files.Count == 1)
                             : EvaluateHolyGrailMatchFileInternal(
                                 file,
                                 mediaType,
@@ -2359,7 +2021,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                                         memberTags,
                                                         localMatch.IdentityProof);
                                                     var memberMatch = membership.Passes
-                                                        ? CopyFileMatchForFile(localMatch, file, membership.IdentityProof)
+                                                        ? CopyFileMatchForFile(localMatch, file, membership.IdentityProof, singleFileUnit: isAudiobook && files.Count == 1)
                                                         : EvaluateHolyGrailMatchFileInternal(
                                                             file,
                                                             mediaType,
@@ -3533,6 +3195,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 BookId = witness.BookId,
                 BookTitle = witness.BookTitle,
                 EditionId = witness.EditionId,
+                EditionDurationSeconds = witness.EditionDurationSeconds,
                 MatchedVia = "shared_grab"
             })).ToArray();
             result.UnmatchedFiles = result.UnmatchedFiles.Except(following).ToArray();
@@ -3952,6 +3615,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 BookId = target.Book.Id,
                 BookTitle = target.Book.Title ?? target.Edition.Title,
                 EditionId = target.Edition.Id,
+                EditionDurationSeconds = target.Edition.DurationSeconds,
                 MatchedVia = provenance.MatchedVia,
                 Provenance = provenance,
                 IdentityProof = identityProof
@@ -4015,7 +3679,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         disablePathFallback,
                         inferAuthorFromPathDuringPathFallback: true,
                         unscoped: false,
-                        hardAllowedBookIds: hardAllowedBookIds),
+                        hardAllowedBookIds: hardAllowedBookIds,
+                        useSharedGroupText: mediaType == BookMediaType.Audiobook && file.GroupMemberTags?.Count > 1),
                     rejections);
                 var match = evaluation?.Match;
 
@@ -4198,31 +3863,253 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return merged;
         }
 
-        private Dictionary<string, List<string>> BuildGroupConsensusTags(IReadOnlyList<DiscoveredFileWithMetadata> files)
+        private List<Book> LoadMatchingBooks(IReadOnlyCollection<int> ids)
         {
-            var output = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-            if (files == null || files.Count == 0)
+            var cache = _matchingBooks.Value;
+            if (cache == null) return _bookService.GetBooks(ids) ?? new List<Book>();
+            var wanted = ids.ToHashSet();
+            foreach (var stale in cache.Keys.Where(id => !wanted.Contains(id)).ToArray()) cache.Remove(stale);
+            var missing = wanted.Where(id => !cache.ContainsKey(id)).ToArray();
+            if (missing.Length > 0)
             {
-                return output;
+                foreach (var book in _bookService.GetBooks(missing) ?? new List<Book>()) cache[book.Id] = book;
             }
 
-            var spreadSamples = SelectSpreadSamples(files);
-            output = BuildHomogeneousTags(spreadSamples, spreadSamples.Count);
-            if (output.Count > 0)
+            return ids.Where(cache.ContainsKey).Select(id => cache[id]).ToList();
+        }
+
+        private DiscoveredFileWithMetadata BuildMatchingGroupFile(IReadOnlyList<DiscoveredFileWithMetadata> files, bool isAudiobook)
+        {
+            var first = files[0];
+            var tags = BuildGroupConsensusTags(files, includeSharedText: isAudiobook);
+            var duration = isAudiobook ? ResolveTotalDurationSeconds(files) : first.DurationSeconds;
+            if (isAudiobook) TryEnrichAudiobookTagsWithTotalDuration(tags, duration, files.Count, string.Empty);
+            return new DiscoveredFileWithMetadata
             {
-                return output;
+                Path = first.Path, Size = first.Size, Modified = first.Modified,
+                AllTags = tags, DurationSeconds = duration,
+                GroupMemberTags = files.Select(file => file.AllTags ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)).ToList()
+            };
+        }
+
+        private List<BookImportIdentitySubgroup> BuildEvidenceSubgroups(
+            IReadOnlyList<DiscoveredFileWithMetadata> files,
+            Func<DiscoveredFileWithMetadata, FileMatch> matchOne,
+            FileMatch groupSeed,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            var catalogs = _groupingCatalogs.Value ?? new Dictionary<int, GroupingCatalog>();
+            var tokens = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            var fieldHits = new Dictionary<(int AuthorId, string Value), string>();
+            var matches = new Dictionary<string, FileMatch>(PathEqualityComparer.Instance);
+            var units = new List<BookImportIdentitySubgroup>();
+            var remaining = files.ToList();
+            var unknown = new List<DiscoveredFileWithMetadata>();
+
+            IReadOnlyList<string> Tokens(string value)
+            {
+                if (!tokens.TryGetValue(value, out var result)) tokens[value] = result = ReleaseTitleMatchScorer.Tokenize(value);
+                return result;
             }
 
-            if (files.Count == 1)
+            GroupingCatalog Catalog(int authorId)
             {
-                var representative = files[0];
-                if (representative?.AllTags != null && representative.AllTags.Count > 0)
+                if (catalogs.TryGetValue(authorId, out var result)) return result;
+                result = new GroupingCatalog();
+                var books = (_bookService?.GetBooksByAuthor(authorId) ?? new List<Book>())
+                    .Where(book => book.MediaType == BookMediaType.Audiobook).ToList();
+                foreach (var book in books)
                 {
-                    return CloneTags(representative.AllTags);
+                    var editions = book.Editions ?? new List<Edition>();
+                    foreach (var edition in editions)
+                    {
+                        result.Editions[edition.Id] = edition;
+                    }
                 }
+
+                result.Titles = books.SelectMany(book => book.Editions ?? new List<Edition>())
+                    .SelectMany(edition => TitleBracketCatalog.FullThenBase(edition.Title))
+                    .Where(title => !string.IsNullOrWhiteSpace(title)).Select(Tokens)
+                    .Where(title => title.Count > 0).Select(title => title.ToArray())
+                    .GroupBy(title => string.Join("\u001f", title), StringComparer.Ordinal).Select(group => group.First())
+                    .GroupBy(title => title[0], StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+                catalogs[authorId] = result;
+                return result;
             }
 
-            return output;
+            FileMatch Match(DiscoveredFileWithMetadata file)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!matches.TryGetValue(file.Path, out var match)) matches[file.Path] = match = matchOne(file);
+                return match;
+            }
+
+            List<(string Field, string Title)> ObservedTitles(FileMatch match, DiscoveredFileWithMetadata member)
+            {
+                var result = new List<(string Field, string Title)>();
+                var catalog = Catalog(match.AuthorId);
+                foreach (var proof in match.IdentityProof.Values.Where(value => value.Role == MatchIdentityRole.Title && value.Source == "embedded_tag"))
+                {
+                    if (member.AllTags == null || !member.AllTags.TryGetValue(proof.Field, out var values) || !values.Contains(proof.Observed)) continue;
+                    var observed = Tokens(proof.Observed);
+                    var expected = Tokens(proof.Expected);
+                    var spans = ReleaseTitleMatchScorer.FindExactTitleSpans(observed, expected).ToList();
+                    if (spans.Count == 0)
+                    {
+                        spans = ReleaseTitleMatchScorer.FindNumberEquivalentTitleSpans(observed, expected, catalog.Editions.GetValueOrDefault(match.EditionId)?.Language).ToList();
+                    }
+
+                    result.AddRange(spans.Select(span => (proof.Field, string.Join(" ", observed.Skip(span.Start).Take(span.End - span.Start + 1)))));
+                }
+
+                return result.Distinct().ToList();
+            }
+
+            bool ContainsTitle((string Field, string Title) title, DiscoveredFileWithMetadata member)
+            {
+                return member.AllTags.TryGetValue(title.Field, out var values) && values.Any(value =>
+                    !string.IsNullOrWhiteSpace(value) && value.Length <= ContainmentValidator.MaxTitleEvidenceValueLength &&
+                    ReleaseTitleMatchScorer.FindExactTitleSpans(Tokens(value), Tokens(title.Title)).Any());
+            }
+
+            bool Supports(FileMatch seed, List<(string Field, string Title)> titles, DiscoveredFileWithMetadata member)
+            {
+                if (member.AllTags == null || titles.Count == 0) return false;
+                var author = seed.IdentityProof.Values.Where(value => value.Role == MatchIdentityRole.Author && value.Source == "embedded_tag")
+                    .Any(value => member.AllTags.TryGetValue(value.Field, out var values) &&
+                        _containmentValidator.ValidateAuthorInTags(seed.AuthorName,
+                            new Dictionary<string, List<string>> { [value.Field] = values }, titles.Select(title => title.Title)));
+                return author && titles.Any(title => ContainsTitle(title, member));
+            }
+
+            (string Titles, string Narrators) Fingerprint(FileMatch seed, DiscoveredFileWithMetadata file)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var catalog = Catalog(seed.AuthorId).Titles;
+                var hits = new List<string>();
+                foreach (var pair in file.AllTags.Where(pair => !TagExclusionPolicy.IsExcludedFromMatching(pair.Key)))
+                {
+                    foreach (var value in pair.Value ?? new List<string>())
+                    {
+                        if (string.IsNullOrWhiteSpace(value) || value.Length > ContainmentValidator.MaxTitleEvidenceValueLength) continue;
+                        if (!fieldHits.TryGetValue((seed.AuthorId, value), out var found))
+                        {
+                            var words = Tokens(value);
+                            found = string.Join("\u001e", words.Distinct().Where(catalog.ContainsKey).SelectMany(word => catalog[word])
+                                .Where(title => ReleaseTitleMatchScorer.FindExactTitleSpans(words, title).Any())
+                                .Select(title => string.Join(" ", title)).Distinct().OrderBy(title => title, StringComparer.Ordinal));
+                            fieldHits[(seed.AuthorId, value)] = found;
+                        }
+
+                        if (found.Length > 0) hits.Add(pair.Key.ToLowerInvariant() + "=" + found);
+                    }
+                }
+
+                var narrators = new List<string>();
+                foreach (var field in seed.Provenance?.SupportingSignals?.Where(signal => signal.Type == "narrator" && signal.Field != null)
+                             .Select(signal => signal.Field).Distinct() ?? Enumerable.Empty<string>())
+                {
+                    if (file.AllTags.TryGetValue(field, out var values)) narrators.Add(field + "=" + string.Join("|", values));
+                }
+
+                return (string.Join("\u001d", hits.Distinct().OrderBy(hit => hit, StringComparer.Ordinal)),
+                    string.Join("\u001d", narrators.OrderBy(value => value, StringComparer.Ordinal)));
+            }
+
+            void Add(List<DiscoveredFileWithMetadata> members, string identity, List<(string Field, string Title)> titles = null, FileMatch seed = null)
+            {
+                var existing = titles == null ? null : units.FirstOrDefault(unit => unit.IdentityKey == identity &&
+                    titles.Any(title => unit.Files.Concat(members).All(member => ContainsTitle(title, member))));
+                if (existing == null)
+                {
+                    units.Add(new BookImportIdentitySubgroup { Files = members, IdentityKey = identity, SeedMatch = seed });
+                }
+                else
+                {
+                    existing.Files.AddRange(members);
+                }
+
+                foreach (var member in members) remaining.Remove(member);
+            }
+
+            while (remaining.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var first = remaining[0];
+                var seed = groupSeed?.IdentityProof != null && ObservedTitles(groupSeed, first).Count > 0 ? groupSeed : Match(first);
+                if (seed != null && ReferenceEquals(seed, groupSeed) && first.DurationSeconds > 0 &&
+                    Catalog(seed.AuthorId).Editions.TryGetValue(seed.EditionId, out var seedEdition) && seedEdition.DurationSeconds.GetValueOrDefault() == 0)
+                {
+                    seed = Match(first) ?? seed;
+                }
+                groupSeed = null;
+                if (seed?.IdentityProof == null)
+                {
+                    unknown.Add(first);
+                    remaining.Remove(first);
+                    continue;
+                }
+
+                var titles = ObservedTitles(seed, first);
+                var possible = remaining.Where(file => Supports(seed, titles, file)).ToList();
+                var probeGroups = possible.GroupBy(file => Fingerprint(seed, file)).ToList();
+                foreach (var probeGroup in probeGroups)
+                {
+                    var representative = probeGroup.Contains(first) ? first : probeGroup.First();
+                    var independent = probeGroups.Count == 1 && representative == first ? seed : Match(representative);
+                    if (independent?.IdentityProof == null) continue;
+                    var observedTitles = ObservedTitles(independent, representative);
+                    var members = probeGroup.Where(file => Supports(independent, observedTitles, file)).ToList();
+                    if (members.Count > 0)
+                    {
+                        Add(members, independent.AuthorId + "\u001f" + string.Join("|", observedTitles.Select(title => title.Title).Distinct().OrderBy(title => title, StringComparer.Ordinal)) +
+                            "\u001f" + probeGroup.Key.Narrators, observedTitles, independent);
+                    }
+                }
+
+                if (remaining.Contains(first)) { Add(new() { first }, first.Path); }
+            }
+
+            foreach (var unit in units.Where(unit => unit.Files.Count > 1).ToArray())
+            {
+                var first = unit.Files[0];
+                var match = unit.SeedMatch;
+                if (match?.IdentityProof == null) continue;
+                var edition = Catalog(match.AuthorId).Editions.GetValueOrDefault(match.EditionId);
+                if (edition == null || !ObservedTitles(match, first).Any(title => unit.Files.All(file => ContainsTitle(title, file)))) continue;
+
+                // Use physical durations here; matching may count repeated recordings only once.
+                var decision = BookCoalescingHelper.DecideRecordingDurationAction(edition.DurationSeconds,
+                    unit.Files.Select(file => file.DurationSeconds).ToList(), out var tolerance, out var total, out _);
+                if (decision != BookCoalescingHelper.RecordingDurationDecision.SplitDuplicates) continue;
+                var identity = GetEditionIdentityKey(edition.ForeignEditionId, edition.Id);
+                if (!unit.Files.All(file =>
+                {
+                    var member = Match(file);
+                    var memberEdition = member == null ? null : Catalog(member.AuthorId).Editions.GetValueOrDefault(member.EditionId);
+                    return member?.AuthorId == match.AuthorId && memberEdition != null &&
+                        string.Equals(identity, GetEditionIdentityKey(memberEdition.ForeignEditionId, memberEdition.Id), StringComparison.OrdinalIgnoreCase);
+                })) continue;
+
+                units.Remove(unit);
+                units.AddRange(unit.Files.Select(file => new BookImportIdentitySubgroup
+                {
+                    Files = new List<DiscoveredFileWithMetadata> { file }, IdentityKey = file.Path
+                }));
+                _logger.Debug("[RECORDING-GROUP] Split {0} complete copies of edition {1}: total={2}s expected={3}s tolerance={4}s",
+                    unit.Files.Count, edition.Id, total, edition.DurationSeconds, tolerance);
+            }
+
+            units.AddRange(BookImportUnitGroupingService.BuildIdentitySubgroups(unknown));
+            return units;
+        }
+
+        private Dictionary<string, List<string>> BuildGroupConsensusTags(IReadOnlyList<DiscoveredFileWithMetadata> files, bool includeSharedText = false)
+        {
+            var evidence = includeSharedText ? files : SelectSpreadSamples(files);
+            return UnitTagConsensusBuilder.BuildConsensus(
+                evidence.Select(file => file.AllTags), evidence.Count, includeSharedText);
         }
 
         private static List<DiscoveredFileWithMetadata> SelectSpreadSamples(IReadOnlyList<DiscoveredFileWithMetadata> files, int maxSamples = 5)
@@ -4267,25 +4154,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             return samples;
-        }
-
-        private Dictionary<string, List<string>> BuildHomogeneousTags(IReadOnlyCollection<DiscoveredFileWithMetadata> samples, int totalFileCount)
-        {
-            var output = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-            if (samples == null || samples.Count == 0) return output;
-
-            var tagSets = new List<Dictionary<string, List<string>>>();
-            foreach (var s in samples)
-            {
-                if (s?.AllTags == null || s.AllTags.Count == 0)
-                {
-                    continue;
-                }
-
-                tagSets.Add(CloneTags(s.AllTags));
-            }
-
-            return UnitTagConsensusBuilder.BuildConsensus(tagSets, totalFileCount);
         }
 
         private static Dictionary<string, List<string>> CloneTags(IDictionary<string, List<string>> tags)
@@ -4391,7 +4259,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             bool disablePathFallback,
             bool inferAuthorFromPathDuringPathFallback,
             bool unscoped,
-            IReadOnlySet<int> hardAllowedBookIds = null)
+            IReadOnlySet<int> hardAllowedBookIds = null,
+            bool useSharedGroupText = false)
         {
             if (file == null)
             {
@@ -4541,7 +4410,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     fileDurationSeconds: fileDurationSeconds,
                     onContradictoryEvidence: () => embeddedContradiction = true,
                     groupMemberTags: file.GroupMemberTags,
-                    hardAllowedBookIds: hardAllowedBookIds);
+                    hardAllowedBookIds: hardAllowedBookIds,
+                    useSharedGroupText: useSharedGroupText);
                 var match = matchResult?.Match;
                 if (match != null)
                 {
@@ -5706,7 +5576,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             bool allowNarratorEvidence = true,
             Action onContradictoryEvidence = null,
             IReadOnlyList<Dictionary<string, List<string>>> groupMemberTags = null,
-            IReadOnlySet<int> hardAllowedBookIds = null)
+            IReadOnlySet<int> hardAllowedBookIds = null,
+            bool useSharedGroupText = false)
         {
             string Truncate(string value, int maxLen)
             {
@@ -5899,8 +5770,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             if (!authorId.HasValue)
                             {
                                 provenName = identityNames.FirstOrDefault(name =>
-                                    _containmentValidator.ValidateAuthorInTags(name, allTags) ||
-                                    TryBuildExactGroupIdentitySpanProof(name, groupMemberTags, out _));
+                                {
+                                    var expectedName = AuthorNameMatcher.PrepareName(name);
+                                    return authorFields.Any(field => AuthorNameMatcher.ContainsAuthorName(expectedName, field.Value, field.Tokens)) ||
+                                        TryBuildExactGroupIdentitySpanProof(name, groupMemberTags, out _);
+                                });
                             }
 
                             cached = (
@@ -6077,7 +5951,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 try
                 {
                     var uniqueBookIds = ftsResults.Select(r => r.BookId).Distinct().ToList();
-                    var books = _bookService.GetBooks(uniqueBookIds) ?? new List<Book>();
+                    var books = LoadMatchingBooks(uniqueBookIds);
                     booksById = books
                         .Where(b => b != null)
                         .GroupBy(b => b.Id)
@@ -6504,7 +6378,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         .GroupBy(book => book.Id)
                         .Select(group => group.First());
 
-                    foreach (var seriesName in scopedBooks.SelectMany(GetBookSeriesNames).Distinct(StringComparer.OrdinalIgnoreCase))
+                    foreach (var seriesName in scopedBooks.SelectMany(BookSeries.GetNames).Distinct(StringComparer.OrdinalIgnoreCase))
                     {
                         var seriesTokens = NormalizeSeriesPrefixTokens(seriesName);
                         if (seriesTokens.Count >= baseTokens.Count &&
@@ -7417,7 +7291,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     selectedCandidate,
                     originalTags,
                     phase,
-                    groupMemberTags);
+                    groupMemberTags,
+                    useSharedGroupText);
                 return new FtsSmokeTestResult
                 {
                     Match = winner,
@@ -7467,21 +7342,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 public int YearDiff { get; set; } = int.MaxValue;
                 public double Bm25Score { get; set; }
                 public IReadOnlyList<TitleOccurrenceExplanation> TitleOccurrenceExplanations { get; set; } = Array.Empty<TitleOccurrenceExplanation>();
-            }
-
-            /// <summary>
-            /// Candidate-relative account of the exact token positions consumed from one observed value.
-            /// OccurrenceKey intentionally omits the tag label: raw/canonical aliases carrying the same
-            /// normalized value are one conservative occurrence, not independent votes.
-            /// </summary>
-            private sealed class TitleOccurrenceExplanation
-            {
-                public string OccurrenceKey { get; set; }
-                public string FieldName { get; set; }
-                public bool IsNearExact { get; set; }
-                public bool IsSeriesContext { get; set; }
-                public HashSet<int> MeaningfulConsumedIndexes { get; set; } = new HashSet<int>();
-                public IReadOnlyList<string> NearbyUnexplainedTokens { get; set; } = Array.Empty<string>();
             }
 
             private sealed class OccurrenceWorkSelection
@@ -7661,7 +7521,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var candidateBook = TryGetBookCached(candidate.BookId, booksById);
-                var candidateSeriesNames = GetBookSeriesNames(candidateBook).ToList();
+                var candidateSeriesNames = BookSeries.GetNames(candidateBook).ToList();
                 foreach (var seriesName in candidateSeriesNames)
                 {
                     AddExplainable(seriesName);
@@ -7986,61 +7846,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return explanations;
             }
 
-            private static bool StrictlyExplainsMoreOfSameOccurrence(
-                TitleOccurrenceExplanation left,
-                TitleOccurrenceExplanation right)
-            {
-                if (left == null || right == null ||
-                    string.IsNullOrWhiteSpace(left.OccurrenceKey) ||
-                    !string.Equals(left.OccurrenceKey, right.OccurrenceKey, StringComparison.Ordinal))
-                {
-                    return false;
-                }
-
-                // A fuzzy explanation cannot displace an exact explanation merely by consuming more positions.
-                if (left.IsNearExact && !right.IsNearExact)
-                {
-                    return false;
-                }
-
-                return left.MeaningfulConsumedIndexes.IsProperSupersetOf(right.MeaningfulConsumedIndexes);
-            }
-
-            private static int CompareWorkOccurrenceExplanations(
-                IReadOnlyList<TitleOccurrenceExplanation> left,
-                IReadOnlyList<TitleOccurrenceExplanation> right,
-                bool allowSeriesContext)
-            {
-                var leftTitles = left.Where(item => !item.IsSeriesContext).ToList();
-                var rightTitles = right.Where(item => !item.IsSeriesContext).ToList();
-                bool Covers(TitleOccurrenceExplanation explanation, TitleOccurrenceExplanation title) =>
-                    string.Equals(explanation.OccurrenceKey, title.OccurrenceKey, StringComparison.Ordinal) &&
-                    (!explanation.IsNearExact || title.IsNearExact) &&
-                    explanation.MeaningfulConsumedIndexes.IsSupersetOf(title.MeaningfulConsumedIndexes);
-
-                bool ExplainsConnectedEvidence(
-                    IReadOnlyList<TitleOccurrenceExplanation> explanations,
-                    IReadOnlyList<TitleOccurrenceExplanation> titles,
-                    IReadOnlyList<TitleOccurrenceExplanation> otherExplanations,
-                    IReadOnlyList<TitleOccurrenceExplanation> otherTitles) =>
-                    explanations.Any(item => item.IsSeriesContext) && otherTitles.Count > 0 &&
-                    otherTitles.All(title => explanations.Any(item => Covers(item, title))) &&
-                    titles.Any(title => !title.IsNearExact && !otherExplanations.Any(item => Covers(item, title)));
-
-                var leftExplainsMore = allowSeriesContext && ExplainsConnectedEvidence(left, leftTitles, right, rightTitles);
-                var rightExplainsMore = allowSeriesContext && ExplainsConnectedEvidence(right, rightTitles, left, leftTitles);
-                if (leftExplainsMore != rightExplainsMore)
-                {
-                    return leftExplainsMore ? 1 : -1;
-                }
-
-                // A book's own series can explain an otherwise competing title; without that
-                // connection, preserve the strict title comparison within each physical value.
-                leftExplainsMore = leftTitles.Any(item => rightTitles.Any(other => StrictlyExplainsMoreOfSameOccurrence(item, other)));
-                rightExplainsMore = rightTitles.Any(item => leftTitles.Any(other => StrictlyExplainsMoreOfSameOccurrence(item, other)));
-                return leftExplainsMore == rightExplainsMore ? 0 : leftExplainsMore ? 1 : -1;
-            }
-
             private OccurrenceSelectionResult BuildOccurrenceSelection(
                 IReadOnlyList<ScoredCandidate> scoredCandidates,
                 IReadOnlyList<EditionFtsMatch> recalledCandidates,
@@ -8104,7 +7909,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             continue;
                         }
 
-                        var seriesNames = GetBookSeriesNames(book)
+                        var seriesNames = BookSeries.GetNames(book)
                             .SelectMany(TitleBracketCatalog.FullThenBase)
                             .Distinct(StringComparer.OrdinalIgnoreCase)
                             .Select(TokenizeForLeftoverGateSequence)
@@ -8625,7 +8430,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 ScoredCandidate selected,
                 IDictionary<string, List<string>> evidenceTags,
                 string phase,
-                IReadOnlyList<Dictionary<string, List<string>>> groupMemberTags)
+                IReadOnlyList<Dictionary<string, List<string>>> groupMemberTags,
+                bool useSharedGroupText)
             {
                 if (selected?.Match == null)
                 {
@@ -8637,6 +8443,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     ? "path"
                     : "embedded_tag";
                 var values = new List<MatchIdentityProofValue>();
+
+                var mappedGroupTitles = new HashSet<(string Field, string Title)>();
 
                 foreach (var titleEvidence in selected.TitleEvidence ?? Array.Empty<EditionTitleEvidence>())
                 {
@@ -8667,6 +8475,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         matchedTitle,
                         titleScope,
                         titleDetail));
+
+                    if (useSharedGroupText && mappedGroupTitles.Add((titleEvidence.FieldName, matchedTitle)) &&
+                        TryBuildExactGroupIdentitySpanProof(matchedTitle, groupMemberTags, out var groupTitleProof, titleEvidence.FieldName))
+                    {
+                        foreach (var observed in groupTitleProof.ObservedValues.Distinct(StringComparer.Ordinal))
+                        {
+                            values.Add(new MatchIdentityProofValue(
+                                MatchIdentityRole.Title,
+                                ResolveEvidenceSource(groupTitleProof.FieldName, defaultSource),
+                                groupTitleProof.FieldName,
+                                observed,
+                                matchedTitle,
+                                titleScope,
+                                titleDetail));
+                        }
+                    }
                 }
 
                 if (selected.AuthorMatch)
@@ -9231,6 +9055,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 if (cmp != 0) return cmp;
 
                 cmp = a.Bm25Score.CompareTo(b.Bm25Score);
+                if (cmp != 0) return cmp;
+
+                cmp = a.Match.Monitored.CompareTo(b.Match.Monitored);
                 if (cmp != 0) return cmp;
 
                 // Only the ruled no-corroboration cohort needs a new final ordering rule. Keep the
@@ -10042,32 +9869,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return ExactMatchEvidenceBuilder.FindNarratorEvidenceFields(narratorRaw, authorName, tags);
             }
 
-            private static IEnumerable<string> GetBookSeriesNames(Book book)
-            {
-                if (book == null)
-                {
-                    yield break;
-                }
-
-                if (!string.IsNullOrWhiteSpace(book.SeriesName))
-                {
-                    yield return book.SeriesName;
-                }
-
-                foreach (var link in book.SeriesLinks ?? Enumerable.Empty<SeriesBookLink>())
-                {
-                    var name = link?.Series?.Value?.Title;
-                    if (!string.IsNullOrWhiteSpace(name))
-                    {
-                        yield return name;
-                    }
-                }
-            }
-
             private bool IsTitleOwnedSeriesTitle(string title, Book book)
             {
                 var titleTokens = TokenizeForLeftoverGateSequence(title);
-                return titleTokens.Count > 0 && GetBookSeriesNames(book).SelectMany(TitleBracketCatalog.FullThenBase).Any(seriesName =>
+                return titleTokens.Count > 0 && BookSeries.GetNames(book).SelectMany(TitleBracketCatalog.FullThenBase).Any(seriesName =>
                 {
                     var seriesTokens = TokenizeForLeftoverGateSequence(seriesName);
                     return seriesTokens.Count > 0 && titleTokens.SequenceEqual(seriesTokens, StringComparer.OrdinalIgnoreCase);
@@ -10179,7 +9984,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return representative?.DurationSeconds;
                     }
 
-                    return totalDurationSeconds ?? representative?.DurationSeconds;
+                    return totalDurationSeconds;
                 }
 
                 private void TryEnrichAudiobookTagsWithTotalDuration(
@@ -10302,13 +10107,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return null;
                     }
 
-                    var seconds = totalSeconds > int.MaxValue ? int.MaxValue : (int)totalSeconds;
-                    if (seconds < 30 || seconds > 432000)
-                    {
-                        return null;
-                    }
-
-                    return seconds;
+                    return totalSeconds > int.MaxValue ? int.MaxValue : (int)totalSeconds;
                 }
 
         private IReadOnlyList<EditionTitleEvidence> GetSeriesExplainableEditionTitleEvidence(
@@ -10795,7 +10594,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private bool TryBuildExactGroupIdentitySpanProof(
             string expected,
             IReadOnlyList<Dictionary<string, List<string>>> groupMemberTags,
-            out GroupIdentitySpanProof proof)
+            out GroupIdentitySpanProof proof,
+            string requiredField = null)
         {
             proof = null;
             if (string.IsNullOrWhiteSpace(expected) ||
@@ -10808,6 +10608,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             var commonFieldNames = groupMemberTags[0].Keys
                 .Where(field => !string.IsNullOrWhiteSpace(field) && !IsExcludedFromMatching(field))
+                .Where(field => requiredField == null || string.Equals(field, requiredField, StringComparison.OrdinalIgnoreCase))
                 .Where(field => groupMemberTags.All(tags => tags.ContainsKey(field)))
                 .OrderBy(field => field, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -12079,6 +11880,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     BookId = match.BookId,
                     BookTitle = match.BookTitle,
                     EditionId = match.EditionId,
+                    EditionDurationSeconds = match.EditionDurationSeconds,
+                    IsStandaloneRecording = match.IsStandaloneRecording,
                     MatchedVia = match.MatchedVia,
                     Provenance = match.Provenance?.Clone(),
                     IdentityProof = match.IdentityProof,
@@ -12635,6 +12438,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 BookId = ftsMatch.BookId,
                 BookTitle = ftsMatch.BookTitle,
                 EditionId = ftsMatch.EditionId,
+                EditionDurationSeconds = ftsMatch.DurationSeconds,
                 MatchedVia = matchedVia,
                 Provenance = provenance,
                 IdentityProof = identityProof
@@ -12644,7 +12448,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private FileMatch CopyFileMatchForFile(
             FileMatch match,
             DiscoveredFileWithMetadata file,
-            MatchIdentityProof memberProof = null)
+            MatchIdentityProof memberProof = null,
+            bool singleFileUnit = false)
         {
             if (match == null)
             {
@@ -12665,6 +12470,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 BookTitle = match.BookTitle,
                 EditionId = match.EditionId,
                 MatchedVia = match.MatchedVia,
+                EditionDurationSeconds = match.EditionDurationSeconds,
+                IsStandaloneRecording = singleFileUnit && BookCoalescingHelper.DecideRecordingDurationAction(
+                    match.EditionDurationSeconds, new[] { file.DurationSeconds }, out _, out _, out _) ==
+                        BookCoalescingHelper.RecordingDurationDecision.MergeMultipart,
                 Provenance = BuildMemberMatchProvenance(match.Provenance, memberProof, file),
                 IdentityProof = memberProof
             };
@@ -13274,6 +13083,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 BookId = edition.BookId,
                 BookTitle = edition.Book?.Title ?? edition.Title,
                 EditionId = edition.Id,
+                EditionDurationSeconds = edition.DurationSeconds,
                 MatchedVia = provenance?.MatchedVia,
                 Provenance = provenance,
                 IdentityProof = identityProof

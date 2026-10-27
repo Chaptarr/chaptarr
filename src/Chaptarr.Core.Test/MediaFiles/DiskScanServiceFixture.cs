@@ -23,6 +23,15 @@ namespace Chaptarr.Core.Test.MediaFiles
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             public BookFile ExistingFile { get; set; }
             public List<BookFile> ExistingFiles { get; set; } = new List<BookFile>();
             public List<BookFile> UnmappedFiles { get; set; } = new List<BookFile>();
@@ -81,6 +90,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     UpdatedMany.Add(bookFile);
                 }
             }
+            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -372,7 +382,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             out MediaFileTableCleanupServiceProxy cleanupProxy,
             IMediaFileService mediaFileService = null,
             IMetadataTagService metadataTagService = null,
-            RootFolder rootFolder = null)
+            RootFolder rootFolder = null,
+            IAuthorService authorService = null,
+            IEventAggregator eventAggregator = null)
         {
             var diskProvider = DispatchProxy.Create<NzbDrone.Common.Disk.IDiskProvider, DiskProviderProxy>();
             ((DiskProviderProxy)(object)diskProvider).FolderExistsResult = folderExists;
@@ -392,8 +404,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             var cleanupService = DispatchProxy.Create<IMediaFileTableCleanupService, MediaFileTableCleanupServiceProxy>();
             cleanupProxy = (MediaFileTableCleanupServiceProxy)(object)cleanupService;
 
-            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
-            var eventAggregator = DispatchProxy.Create<IEventAggregator, EventAggregatorProxy>();
+            authorService ??= DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            eventAggregator ??= DispatchProxy.Create<IEventAggregator, EventAggregatorProxy>();
 
             return new DiskScanService(
                 configService: null,
@@ -409,6 +421,41 @@ namespace Chaptarr.Core.Test.MediaFiles
                 commandQueueManager: new StubCommandQueueManager(),
                 eventAggregator: eventAggregator,
                 logger: LogManager.GetCurrentClassLogger());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void completed_scan_notifies_discovered_authors_once_without_repeating_the_scan(bool complete)
+        {
+            var lookups = new List<int[]>();
+            var notified = new List<int>();
+            var authors = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IAuthorService>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IAuthorService.GetExistingAuthors)));
+                var ids = ((IEnumerable<int>)args[0]).ToArray();
+                lookups.Add(ids);
+                return ids.Select(id => new Author { Id = id }).ToList();
+            });
+            var events = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((_, args) =>
+            {
+                if (args[0] is NzbDrone.Core.MediaFiles.Events.AuthorScannedEvent scanned) notified.Add(scanned.Author.Id);
+                return null;
+            });
+            var result = new OrchestratorImportResult
+            {
+                CleanupSafe = complete,
+                StagingResults = new List<NzbDrone.Core.Datastore.ImportResult>
+                {
+                    new() { AuthorId = 9, Outcome = ImportOutcome.Imported },
+                    new() { AuthorId = 9, Outcome = ImportOutcome.Imported },
+                    new() { AuthorId = null, Outcome = ImportOutcome.Unmapped }
+                }
+            };
+            var service = CreateScanService(true, result, out var orchestrator, out _, authorService: authors, eventAggregator: events);
+            service.Scan(new List<string> { "/books" }, authorIds: new List<int> { 7 });
+            Assert.That(orchestrator.Calls, Is.EqualTo(1));
+            Assert.That(lookups, Has.Count.EqualTo(1));
+            Assert.That(notified, Is.EquivalentTo(complete ? new[] { 7, 9 } : new[] { 7 }));
         }
 
         [Test]

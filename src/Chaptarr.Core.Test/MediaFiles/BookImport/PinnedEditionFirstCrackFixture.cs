@@ -147,6 +147,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetCandidates(int authorId, string title) => throw new System.NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new System.NotImplementedException();
             public List<Book> GetAllBooks() => throw new System.NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new System.NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new System.NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new System.NotImplementedException();
@@ -158,7 +159,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public void InsertMany(List<Book> books) => throw new System.NotImplementedException();
             public void InsertMany(List<Book> books, IDbConnection connection, IDbTransaction transaction) => throw new System.NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new System.NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new System.NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new System.NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new System.NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new System.NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new System.NotImplementedException();

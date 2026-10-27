@@ -10996,7 +10996,7 @@
         "tags": [
           "Release"
         ],
-        "description": "Requests a stop for an active grouped author search identified by its UUID searchId. The current book finishes; remaining books are not searched. isStopping confirms the request, not completion. The original GET and SignalR stream deliver the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.",
+        "description": "Requests a stop for an active grouped author search identified by its UUID searchId. The current book finishes; remaining books are not searched. isStopping confirms the request, not completion. The SignalR stream delivers the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.",
         "parameters": [
           {
             "name": "searchId",
@@ -11111,7 +11111,7 @@
         "tags": [
           "Release"
         ],
-        "description": "GET /api/v1/release returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType returns grouped AuthorReleaseSearchResponse results. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.",
+        "description": "GET /api/v1/release returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType queues a grouped search and immediately returns an AuthorReleaseSearchResponse acknowledgement. Book results and completion arrive through SignalR; ending the GET does not cancel the search. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.",
         "parameters": [
           {
             "name": "bookId",
@@ -14267,6 +14267,56 @@
             "type": "string",
             "nullable": true
           },
+          "syncMonitoredAcrossFormats": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "audiobookRootFolderPath": {
+            "type": "string",
+            "nullable": true
+          },
+          "audiobookQualityProfileId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "audiobookMetadataProfileId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "audiobookTags": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
+          "ebookRootFolderPath": {
+            "type": "string",
+            "nullable": true
+          },
+          "ebookQualityProfileId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ebookMetadataProfileId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "ebookTags": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
           "mediaType": {
             "type": "string",
             "nullable": true
@@ -14386,6 +14436,11 @@
       "AuthorReleaseSearchResponse": {
         "type": "object",
         "properties": {
+          "commandId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
           "searchId": {
             "type": "string",
             "nullable": true
@@ -14409,6 +14464,9 @@
             "type": "boolean"
           },
           "isCancelled": {
+            "type": "boolean"
+          },
+          "isFailed": {
             "type": "boolean"
           }
         },
@@ -18778,6 +18836,24 @@
               "$ref": "#/components/schemas/MatchEvidenceValue"
             },
             "nullable": true
+          },
+          "importDownloadId": {
+            "type": "string",
+            "nullable": true
+          },
+          "importSourcePaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "importExcludedSourcePaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -22106,6 +22182,20 @@
           "narratorName": {
             "type": "string",
             "nullable": true
+          },
+          "narratorNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "audioProductionType": {
+            "type": "string",
+            "nullable": true
+          },
+          "isGraphicAudio": {
+            "type": "boolean"
           },
           "quality": {
             "type": "string",

@@ -22,14 +22,12 @@ namespace NzbDrone.Core.Download
     }
 
     public class DownloadClientFileSnapshotService : IDownloadClientFileSnapshotService,
-                                                     IHandle<DownloadCompletedEvent>,
                                                      IHandle<TrackedDownloadsRemovedEvent>,
+                                                     IHandle<TrackedDownloadRefreshedEvent>,
                                                      IHandle<ModelEvent<RemotePathMapping>>
     {
         private const string ClientSource = "client";
         private const string DiskSource = "disk";
-
-        private static readonly TimeSpan SnapshotRefreshInterval = TimeSpan.FromHours(6);
 
         private readonly IDownloadClientFileSnapshotRepository _repository;
         private readonly IDiskProvider _diskProvider;
@@ -46,7 +44,8 @@ namespace NzbDrone.Core.Download
 
         public void CaptureClientList(DownloadClientItem item)
         {
-            if (!CanSnapshot(item) || item.FilePaths == null || item.FilePaths.Count == 0)
+            if (!CanSnapshot(item) || item.FilePaths == null || item.FilePaths.Count == 0 ||
+                item.FileListConfidence == DownloadClientFileListConfidence.Disk)
             {
                 return;
             }
@@ -61,13 +60,16 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            if (item.FilePaths != null && item.FilePaths.Count > 0)
+            ApplySnapshot(item);
+            if (item.FilePaths?.Count > 0 && item.FileListConfidence != DownloadClientFileListConfidence.Disk)
             {
                 return;
             }
 
             var outputPath = item.OutputPath.FullPath;
-            var filePaths = new List<string>();
+            // Completion still needs import evidence for previously seen media, even after
+            // it disappears from disk. Import itself can only process files still present.
+            var filePaths = new List<string>(item.FilePaths ?? new List<string>());
 
             try
             {
@@ -91,8 +93,10 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
+            filePaths = filePaths.Distinct(StringComparerFromComparison(PathComparison)).ToList();
             Upsert(item, filePaths, DiskSource, DownloadClientFileListConfidence.Disk);
-            ApplySnapshot(item);
+            item.FilePaths = filePaths;
+            item.FileListConfidence = DownloadClientFileListConfidence.Disk;
         }
 
         public void ApplySnapshot(DownloadClientItem item)
@@ -102,7 +106,7 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            if (item.FilePaths != null && item.FilePaths.Count > 0)
+            if (item.FilePaths != null && item.FilePaths.Count > 0 && item.FileListConfidence != DownloadClientFileListConfidence.Disk)
             {
                 return;
             }
@@ -132,18 +136,28 @@ namespace NzbDrone.Core.Download
             _repository.Delete(item.DownloadClientInfo.Id, item.DownloadId);
         }
 
-        public void Handle(DownloadCompletedEvent message)
-        {
-            Delete(message?.TrackedDownload?.DownloadItem);
-            Delete(message?.TrackedDownload?.ImportItem);
-        }
-
         public void Handle(TrackedDownloadsRemovedEvent message)
         {
             foreach (var trackedDownload in message?.TrackedDownloads ?? Enumerable.Empty<TrackedDownload>())
             {
                 Delete(trackedDownload?.DownloadItem);
                 Delete(trackedDownload?.ImportItem);
+            }
+        }
+
+        public void Handle(TrackedDownloadRefreshedEvent message)
+        {
+            if (message.ReportedDownloadIds == null)
+            {
+                return;
+            }
+
+            var tracked = message.TrackedDownloads.ToLookup(item => item.DownloadClient, item => item.DownloadItem.DownloadId);
+            foreach (var client in message.ReportedDownloadIds)
+            {
+                // Only a successful client poll can prove removal. Importing downloads can
+                // remain tracked after disappearing from the client.
+                _repository.RemoveMissingDownloads(client.Key, client.Value.Concat(tracked[client.Key]));
             }
         }
 
@@ -175,15 +189,11 @@ namespace NzbDrone.Core.Download
 
             if (existing != null && SamePaths(existing.FilePaths, normalizedPaths))
             {
-                // Monitoring re-captures every client item each cycle. Rewriting an unchanged row
-                // once a minute per item keeps long-lived rows eternally fresh (so the age-based
-                // housekeeper can never reclaim a leaked one) for no informational gain, so refresh
-                // the row only when something material changed or the timestamp has gone stale.
                 var unchanged = string.Equals(existing.OutputPath, item.OutputPath.FullPath, StringComparison.Ordinal) &&
                                 string.Equals(existing.Source, source, StringComparison.Ordinal) &&
                                 existing.Confidence == confidence;
 
-                if (unchanged && now - existing.LastUpdated < SnapshotRefreshInterval)
+                if (unchanged)
                 {
                     return;
                 }

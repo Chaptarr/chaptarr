@@ -883,7 +883,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     bool monitoredOnly = false)
                 {
                     RecallCalls++;
-                    return _recalls.Take(limit).ToList();
+                    return (limit > 0 ? _recalls.Take(limit) : _recalls).ToList();
                 }
 
                 public List<EditionFtsMatch> RankEditions(
@@ -1065,48 +1065,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 return (service.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId), stagedFts);
             }
 
-            private sealed class CountingContainmentValidator : IContainmentValidator
-            {
-                private readonly IContainmentValidator _inner;
-
-                public CountingContainmentValidator(IContainmentValidator inner)
-                {
-                    _inner = inner;
-                }
-
-                public Dictionary<string, int> NeighborhoodAuthorChecks { get; } = new(StringComparer.OrdinalIgnoreCase);
-
-                public bool Contains(string haystack, string needle) => _inner.Contains(haystack, needle);
-
-                public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags)
-                {
-                    return ValidateAuthorInTags(authorName, allTags, null);
-                }
-
-                public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags, IEnumerable<string> knownTitles)
-                {
-                    if (allTags != null && allTags.Count > 1)
-                    {
-                        NeighborhoodAuthorChecks[authorName] = NeighborhoodAuthorChecks.TryGetValue(authorName, out var count)
-                            ? count + 1
-                            : 1;
-                    }
-
-                    return knownTitles == null
-                        ? _inner.ValidateAuthorInTags(authorName, allTags)
-                        : _inner.ValidateAuthorInTags(authorName, allTags, knownTitles);
-                }
-
-                public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags, IEnumerable<string> knownNarrators = null) =>
-                    _inner.ValidateEditionInTags(editionTitle, allTags, knownNarrators);
-
-                public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(
-                    string editionTitle,
-                    IDictionary<string, List<string>> allTags,
-                    bool includeDurationGatedNearExact = false, IEnumerable<string> knownNarrators = null) =>
-                    _inner.GetEditionTitleEvidence(editionTitle, allTags, includeDurationGatedNearExact, knownNarrators);
-            }
-
             private sealed class StubEditionRepository : IEditionRepository
             {
                 private readonly Dictionary<string, List<Edition>> _editionsByAsin;
@@ -1178,6 +1136,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public void InsertMany(IList<Edition> model) => throw new NotImplementedException();
                 public void InsertMany(IList<Edition> model, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
                 public void UpdateMany(IList<Edition> model) => throw new NotImplementedException();
+                public void UpdateMany(IList<Edition> model, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new NotImplementedException();
                 public void SetFields(IList<Edition> models, params System.Linq.Expressions.Expression<Func<Edition, object>>[] properties) => throw new NotImplementedException();
                 public void DeleteMany(List<Edition> model) => throw new NotImplementedException();
                 public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
@@ -1203,6 +1162,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public List<Edition> FindByAuthor(int id, bool onlyMonitored = false) => throw new NotImplementedException();
                 public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
                 public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+                public void UpdateSelection(IList<Edition> editions) => throw new NotImplementedException();
                 public HashSet<string> FindExistingTitleSlugsForUniqueness(IEnumerable<string> baseTitleSlugs) => throw new NotImplementedException();
                 public Edition FindByIsbn(string isbn) => throw new NotImplementedException();
                 public List<Edition> FindAllByIsbn(string isbn) => throw new NotImplementedException();
@@ -1286,7 +1246,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 _author = author;
             }
 
-            public Author GetAuthor(int authorId) => _author;
+            public List<int> AuthorReads { get; } = new();
+            public Author GetAuthor(int authorId)
+            {
+                AuthorReads.Add(authorId);
+                return _author;
+            }
             public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
@@ -1362,6 +1327,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Book FindByASIN(string asin) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -1373,7 +1339,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
@@ -1509,7 +1475,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         public void staged_fts_should_gate_unique_authors_and_rank_independent_residual_fields(bool combinedEditionTitle)
         {
             var logger = LogManager.GetCurrentClassLogger();
-            var containment = new CountingContainmentValidator(new ContainmentValidator(new TagNormalizer(), logger));
+            var containment = new ContainmentValidator(new TagNormalizer(), logger);
+            var authors = new StubAuthorService(new Author { Id = 1, Name = "Ryan Cahill" });
             var stagedFts = new RecordingStagedEditionFtsRepository(
                 new[]
                 {
@@ -1550,7 +1517,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 authorFolderMatchingService: null,
                 rootFolderService: null,
                 configService: ConfigServiceTestProxy.Create(usePathAsTagsFallback: false),
-                authorService: new StubAuthorService(new Author { Id = 1, Name = "Ryan Cahill" }),
+                authorService: authors,
                 eventAggregator: null,
                 authorLibraryService: null,
                 editionFtsRepository: stagedFts,
@@ -1580,8 +1547,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(stagedFts.RecallCalls, Is.EqualTo(1));
             Assert.That(stagedFts.RankCalls, Is.EqualTo(1));
             Assert.That(stagedFts.GatedBooks.Select(book => book.BookId), Is.EquivalentTo(new[] { 101, 102 }));
-            Assert.That(containment.NeighborhoodAuthorChecks["Ryan Cahill"], Is.EqualTo(1));
-            Assert.That(containment.NeighborhoodAuthorChecks["Frank Herbert"], Is.EqualTo(1));
+            Assert.That(authors.AuthorReads, Is.EquivalentTo(new[] { 1, 2 }), "load each recalled author's identity once, including rejected authors");
 
             var residualValues = stagedFts.ResidualQueries
                 .Select(query => string.Join(" ", query.Terms))

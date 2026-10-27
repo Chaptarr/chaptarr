@@ -31,6 +31,7 @@ namespace Chaptarr.Core.Test.MediaCover
 
             public List<int> RequestedBookIds { get; } = new();
             public List<List<int>> RequestedFileBatches { get; } = new();
+            public Action OnGetExistingBooks { get; set; }
 
             public List<Book> GetBooks(IEnumerable<int> bookIds)
             {
@@ -54,6 +55,7 @@ namespace Chaptarr.Core.Test.MediaCover
             {
                 var ids = bookIds.Distinct().ToList();
                 RequestedBookIds.AddRange(ids);
+                OnGetExistingBooks?.Invoke();
 
                 return ids
                     .Where(bookId => _booksById.ContainsKey(bookId))
@@ -85,6 +87,7 @@ namespace Chaptarr.Core.Test.MediaCover
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -96,7 +99,7 @@ namespace Chaptarr.Core.Test.MediaCover
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
@@ -321,6 +324,40 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
+        public void should_keep_failed_cover_batch_pending_until_a_later_flush_succeeds()
+        {
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var bookService = new RecordingBookService(new[]
+            {
+                new Book { Id = 1, Title = "One" },
+                new Book { Id = 2, Title = "Two" }
+            });
+            var coverMapper = new RecordingCoverMapper
+            {
+                OnEnsureBook = _ => throw new InvalidOperationException("Cover batch failed")
+            };
+            var commandQueue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
+
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "start") { CommandId = 31 });
+            deferredCoverService.MarkBooksForCoverDownload(new[] { 1, 2 });
+
+            Assert.DoesNotThrow(() =>
+                service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "done") { CommandId = 31 }));
+
+            Assert.That(deferredCoverService.GetPendingBookIds(), Is.EquivalentTo(new[] { 1, 2 }));
+            Assert.That(coverMapper.EnsuredBookIds, Is.EqualTo(new[] { 1 }));
+
+            coverMapper.OnEnsureBook = null;
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "next start") { CommandId = 32 });
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "next done") { CommandId = 32 });
+
+            Assert.That(coverMapper.EnsuredBookIds, Is.EqualTo(new[] { 1, 1, 2 }));
+            Assert.That(deferredCoverService.GetPendingBookIds(), Is.Empty);
+            Assert.That(commandQueue.Recorder.Commands, Is.Empty);
+        }
+
+        [Test]
         public void should_ignore_stale_import_stage_events_after_command_terminal_cleanup()
         {
             var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
@@ -342,6 +379,69 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(bookService.RequestedBookIds, Is.EqualTo(new List<int> { 1 }));
             Assert.That(coverMapper.EnsuredBookIds, Is.EqualTo(new List<int> { 1 }));
             Assert.That(deferredCoverService.GetPendingBookIds(), Is.Empty);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void failed_batch_should_merge_back_with_new_work_even_when_deferral_has_ended(bool lookupFailure)
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var books = new RecordingBookService(new[] { new Book { Id = 1 }, new Book { Id = 2 }, new Book { Id = 3 } });
+            var covers = new RecordingCoverMapper();
+            var service = new DeferredCoverDownloadService(deferred, books, null, covers, LogManager.GetCurrentClassLogger());
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "start") { CommandId = 81 });
+            deferred.MarkBooksForCoverDownload(new[] { 1, 2 });
+            Action failAfterNewWork = () =>
+            {
+                deferred.IsCoverDownloadDeferred = true;
+                deferred.MarkBooksForCoverDownload(new[] { 1, 3 });
+                deferred.IsCoverDownloadDeferred = false;
+                throw new InvalidOperationException("Batch dependency failed");
+            };
+            if (lookupFailure)
+            {
+                books.OnGetExistingBooks = failAfterNewWork;
+            }
+            else
+            {
+                covers.OnEnsureBook = _ => failAfterNewWork();
+            }
+
+            Assert.DoesNotThrow(() => service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "done") { CommandId = 81 }));
+            Assert.That(deferred.GetPendingBookIds(), Is.EquivalentTo(new[] { 1, 2, 3 }));
+            Assert.That(deferred.IsCoverDownloadDeferred, Is.False);
+            books.OnGetExistingBooks = null;
+            covers.OnEnsureBook = null;
+            covers.EnsuredBookIds.Clear();
+            service.Handle(new CommandExecutedEvent(new CommandModel { Id = 81 }));
+            Assert.That(covers.EnsuredBookIds, Is.Empty);
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "retry") { CommandId = 82 });
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "retried") { CommandId = 82 });
+
+            Assert.That(covers.EnsuredBookIds, Is.EquivalentTo(new[] { 1, 2, 3 }));
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty);
+        }
+
+        [Test]
+        public void overlapping_flush_should_not_process_an_already_claimed_batch()
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var books = new RecordingBookService(new[] { new Book { Id = 1 } });
+            var covers = new RecordingCoverMapper();
+            var service = new DeferredCoverDownloadService(deferred, books, null, covers, LogManager.GetCurrentClassLogger());
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "start") { CommandId = 91 });
+            deferred.MarkBookForCoverDownload(1);
+            covers.OnEnsureBook = _ =>
+            {
+                covers.OnEnsureBook = null;
+                service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "overlapping completion") { CommandId = 92 });
+            };
+
+            service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "done") { CommandId = 91 });
+
+            Assert.That(books.RequestedBookIds, Is.EqualTo(new[] { 1 }));
+            Assert.That(covers.EnsuredBookIds, Is.EqualTo(new[] { 1 }));
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty);
         }
 
         [Test]

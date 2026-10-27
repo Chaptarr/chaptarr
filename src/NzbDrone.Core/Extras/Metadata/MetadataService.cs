@@ -184,7 +184,7 @@ namespace NzbDrone.Core.Extras.Metadata
             return movedFiles;
         }
 
-        public override ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly)
+        public override ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly, bool replaceExisting)
         {
             return null;
         }
@@ -548,12 +548,12 @@ namespace NzbDrone.Core.Extras.Metadata
 
         private bool IsTrackedTextFileCurrent(MetadataFile metadata, string path)
         {
-            return HasTrackedHash(metadata) && _diskProvider.ReadAllText(path).SHA256Hash() == GetTrackedFileHash(metadata);
+            return MetadataFileHash.IsCurrent(metadata, path, _diskProvider, binary: false);
         }
 
         private bool IsTrackedBinaryFileCurrent(MetadataFile metadata, string path)
         {
-            return HasTrackedHash(metadata) && GetBinaryFileHash(path) == GetTrackedFileHash(metadata);
+            return MetadataFileHash.IsCurrent(metadata, path, _diskProvider, binary: true);
         }
 
         private string GetBinaryFileHash(string path)
@@ -586,27 +586,9 @@ namespace NzbDrone.Core.Extras.Metadata
             return sourceHash.IsNullOrWhiteSpace() ? fileHash : fileHash + ":" + sourceHash;
         }
 
-        private static string GetTrackedFileHash(MetadataFile metadata)
-        {
-            if (!HasTrackedHash(metadata))
-            {
-                return null;
-            }
+        private static string GetTrackedFileHash(MetadataFile metadata) => MetadataFileHash.FileHash(metadata);
 
-            var separatorIndex = metadata.Hash.IndexOf(':');
-            return separatorIndex > -1 ? metadata.Hash.Substring(0, separatorIndex) : metadata.Hash;
-        }
-
-        private static string GetTrackedSourceHash(MetadataFile metadata)
-        {
-            if (!HasTrackedHash(metadata))
-            {
-                return null;
-            }
-
-            var separatorIndex = metadata.Hash.IndexOf(':');
-            return separatorIndex > -1 ? metadata.Hash.Substring(separatorIndex + 1) : null;
-        }
+        private static string GetTrackedSourceHash(MetadataFile metadata) => MetadataFileHash.SourceHash(metadata);
 
         private static bool HasTrackedHash(MetadataFile metadata)
         {

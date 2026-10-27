@@ -123,6 +123,8 @@ namespace NzbDrone.Core.MediaFiles
 
             var processedFolders = 0;
             var totalScannedFiles = 0;
+            var scannedAuthorIds = (authorIds ?? new List<int>()).ToHashSet();
+            var completedFolders = new HashSet<string>(PathEqualityComparer.Instance);
 
             foreach (var folder in folders)
             {
@@ -144,6 +146,7 @@ namespace NzbDrone.Core.MediaFiles
                     else
                     {
                         _logger.Debug("Skipping scan for absent folder {0}; root folder {1} is available.", folder, rootFolder.Path);
+                        completedFolders.Add(folder);
                     }
 
                     continue;
@@ -176,6 +179,8 @@ namespace NzbDrone.Core.MediaFiles
                     // Reconcile inventory after all matching/apply work: every still-existing supported file seen
                     // under the root must have exactly one mapped or EditionId=0 BookFile row.
                     EnsureScannedFilesVisible(result, includeReportedReasons: true);
+                    if (result.CleanupSafe)
+                        scannedAuthorIds.UnionWith(result.StagingResults.Where(item => item.AuthorId > 0).Select(item => item.AuthorId.Value));
                     LogMemorySnapshot("Disk scan folder after inventory reconciliation {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
 
                     // Only clean after a complete enumeration. Import results are not a safe substitute for the full scan list.
@@ -193,6 +198,7 @@ namespace NzbDrone.Core.MediaFiles
                     }
 
                     LogMemorySnapshot("Disk scan folder after cleanup {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
+                    if (result.CleanupSafe) completedFolders.Add(folder);
                 }
                 catch (InventoryReconciliationException ex)
                 {
@@ -221,11 +227,22 @@ namespace NzbDrone.Core.MediaFiles
             LogMemorySnapshot("Disk scan folders complete ({0} files, {1})", totalScannedFiles, scanStopwatch.Elapsed);
 
             // Notify completion for each author
-            var authors = _authorService.GetExistingAuthors(authorIds ?? new List<int>());
+            var authors = _authorService.GetExistingAuthors(scannedAuthorIds);
+            var requestedScanComplete = folders.Count > 0 && folders.All(completedFolders.Contains);
             foreach (var author in authors)
             {
                 CheckForPauseAndWait(ref cancellationToken);
-                CompletedScanning(author);
+                var canCompleteSetup = true;
+                if (author.AddOptions != null)
+                {
+                    var setupPaths = author.GetScanPaths(author.AddOptions.GetInitialScanMediaType());
+                    canCompleteSetup = setupPaths.Count > 0
+                        ? setupPaths.All(path => completedFolders.Any(folder => folder.PathEquals(path) || folder.IsParentPath(path)))
+                        : authorIds?.Contains(author.Id) == true;
+                    // An explicit author scan can also include old folders found through mapped files.
+                    if (authorIds?.Contains(author.Id) == true) canCompleteSetup &= requestedScanComplete;
+                }
+                CompletedScanning(author, canCompleteSetup);
             }
 
             authors = null;
@@ -494,7 +511,7 @@ namespace NzbDrone.Core.MediaFiles
                 filesOnDisk = _diskProvider.GetFileInfos(path, allDirectories);
             }
 
-            var mediaFileList = filesOnDisk.Where(file => MediaFileExtensions.AllExtensions.Contains(file.Extension))
+            var mediaFileList = filesOnDisk.Where(file => MediaFileExtensions.AllExtensions.Contains(file.Extension) && !IsExcludedFile(file.FullName))
                 .ToArray();
 
             _logger.Debug("{0} book files found in {1}", mediaFileList.Length, path);
@@ -511,17 +528,22 @@ namespace NzbDrone.Core.MediaFiles
             return mediaFileList.ToArray();
         }
 
+        public static bool IsExcludedFile(string path)
+        {
+            return ExcludedFilesRegex.IsMatch(Path.GetFileName(path));
+        }
+
         public List<IFileInfo> FilterFiles(string basePath, IEnumerable<IFileInfo> files)
         {
             return files.Where(file => !ExcludedSubFoldersRegex.IsMatch(basePath.GetRelativePath(file.FullName)))
-                        .Where(file => !ExcludedFilesRegex.IsMatch(file.Name))
+                        .Where(file => !IsExcludedFile(file.FullName))
                         .ToList();
         }
 
         public List<string> FilterPaths(string basePath, IEnumerable<string> paths)
         {
             return paths.Where(file => !ExcludedSubFoldersRegex.IsMatch(basePath.GetRelativePath(file)))
-                        .Where(file => !ExcludedFilesRegex.IsMatch(Path.GetFileName(file)))
+                        .Where(file => !IsExcludedFile(file))
                         .ToList();
         }
 
@@ -903,10 +925,10 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void CompletedScanning(Author author)
+        private void CompletedScanning(Author author, bool canCompleteInitialSetup)
         {
             _logger.Info("Completed scanning disk for {0}", author.Name);
-            _eventAggregator.PublishEvent(new AuthorScannedEvent(author));
+            _eventAggregator.PublishEvent(new AuthorScannedEvent(author, canCompleteInitialSetup));
         }
 
         private void CheckForPauseAndWait(ref CancellationToken cancellationToken)

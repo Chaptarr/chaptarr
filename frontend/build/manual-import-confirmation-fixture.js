@@ -3,6 +3,7 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import { Provider } from 'react-redux';
 import { Router } from 'react-router-dom';
+import QueueRow from 'Activity/Queue/QueueRow';
 import InteractiveImportModal from 'InteractiveImport/InteractiveImportModal';
 import { set } from 'Store/Actions/baseActions';
 import createAppStore from 'Store/createAppStore';
@@ -12,7 +13,7 @@ import { fetchTranslations } from 'Utilities/String/translate';
 import 'Styles/globals.css';
 import '../src/index.css';
 
-window.renderManualImportFixture = (themeName) => {
+window.renderManualImportFixture = (themeName, folderMode = false) => {
   Object.entries(themes[themeName]).forEach(([key, value]) => {
     document.documentElement.style.setProperty(`--${key}`, value);
   });
@@ -41,20 +42,45 @@ window.renderManualImportFixture = (themeName) => {
   ReactDOM.render(
     <Provider store={store}>
       <Router history={history}>
-        <InteractiveImportModal
-          isOpen={true}
-          downloadId="queue-download"
-          title="Queued book"
-          showReplaceExistingFiles={true}
-          replaceExistingFiles={true}
-          showFilterExistingFiles={false}
-          filterExistingFiles={true}
-          showImportMode={false}
-          onModalClose={() => {
-            window.manualImportCloseCount++;
-            ReactDOM.unmountComponentAtNode(root);
-          }}
-        />
+        {
+          folderMode ?
+            <InteractiveImportModal
+              isOpen={true}
+              folder="/downloads"
+              onModalClose={() => {
+                window.manualImportCloseCount++;
+              }}
+            /> :
+            <table>
+              <tbody>
+                <QueueRow
+                  id={999}
+                  downloadId="queue-download"
+                  title="Queued book"
+                  status="completed"
+                  trackedDownloadStatus="warning"
+                  trackedDownloadState="importBlocked"
+                  quality={{ quality: { id: 1, name: 'Any' }, revision: { version: 1 } }}
+                  customFormatScore={0}
+                  protocol="usenet"
+                  showRelativeDates={false}
+                  shortDateFormat="MMM D YYYY"
+                  timeFormat="HH:mm"
+                  columns={[{ name: 'actions', isVisible: true }]}
+                  onSelectedChange={() => {}}
+                  onGrabPress={() => {}}
+                  onCancelConversionPress={() => {}}
+                  onRetryImportPress={() => {}}
+                  onRemoveQueueItemPress={() => {}}
+                  onQueueRowModalOpenOrClose={(isOpen) => {
+                    if (!isOpen) {
+                      window.manualImportCloseCount++;
+                    }
+                  }}
+                />
+              </tbody>
+            </table>
+        }
       </Router>
     </Provider>, root);
 };

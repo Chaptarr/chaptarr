@@ -66,9 +66,9 @@ namespace NzbDrone.Core.Extras.Others
             return movedFiles;
         }
 
-        public override ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly)
+        public override ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly, bool replaceExisting)
         {
-            var extraFile = ImportFile(author, bookFile, path, readOnly, extension, null);
+            var extraFile = ImportFile(author, bookFile, path, readOnly, extension, replaceExisting);
 
             _mediaFileAttributeService.SetFilePermissions(path);
             _otherExtraFileService.Upsert(extraFile);

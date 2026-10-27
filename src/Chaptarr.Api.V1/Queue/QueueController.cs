@@ -41,8 +41,10 @@ namespace Chaptarr.Api.V1.Queue
         private readonly IBlocklistService _blocklistService;
         private readonly IConversionTrackingService _conversionTrackingService;
         private readonly IConversionJobService _conversionJobService;
+        private readonly IDownloadImportModeResolver _downloadImportModeResolver;
 
-        public QueueController(IBroadcastSignalRMessage broadcastSignalRMessage,
+        public QueueController(IDownloadImportModeResolver downloadImportModeResolver,
+                           IBroadcastSignalRMessage broadcastSignalRMessage,
                            IQueueService queueService,
                            IPendingReleaseService pendingReleaseService,
                            QualityProfileService qualityProfileService,
@@ -56,6 +58,7 @@ namespace Chaptarr.Api.V1.Queue
             : base(broadcastSignalRMessage)
         {
             _queueService = queueService;
+            _downloadImportModeResolver = downloadImportModeResolver;
             _pendingReleaseService = pendingReleaseService;
             _trackedDownloadService = trackedDownloadService;
             _failedDownloadService = failedDownloadService;
@@ -113,11 +116,11 @@ namespace Chaptarr.Api.V1.Queue
 
             // Ignore can fail (eg unknown download) and we should not stop tracking unless the action succeeded,
             // otherwise the item will reappear on the next refresh cycle.
+            EnsureRemovalAllowed(trackedDownload, removeFromClient);
             if (Remove(trackedDownload, removeFromClient, blocklist, skipRedownload, changeCategory) == null)
             {
                 throw new BadRequestException();
             }
-            _trackedDownloadService.StopTracking(trackedDownload.DownloadItem.DownloadId);
         }
 
         [HttpDelete("bulk")]
@@ -153,6 +156,11 @@ namespace Chaptarr.Api.V1.Queue
                 }
             }
 
+            foreach (var trackedDownload in trackedToRemove.DistinctBy(t => t.DownloadItem.DownloadId))
+            {
+                EnsureRemovalAllowed(trackedDownload, removeFromClient);
+            }
+
             var successfulPendingCount = 0;
             try
             {
@@ -177,7 +185,6 @@ namespace Chaptarr.Api.V1.Queue
                 }
             }
 
-            _trackedDownloadService.StopTracking(trackedDownloadIds);
             Logger.Debug("Removed {0} pending queue items and {1} tracked downloads for {2} requested IDs in {3} ms", pendingToRemove.Count, trackedDownloadIds.Count, resource.Ids.Count, stopwatch.ElapsedMilliseconds);
 
             return new { };
@@ -343,8 +350,20 @@ namespace Chaptarr.Api.V1.Queue
             }
         }
 
+        private void EnsureRemovalAllowed(TrackedDownload trackedDownload, bool removeFromClient)
+        {
+            if (removeFromClient &&
+                _downloadImportModeResolver.ShouldPreserveDownloadClientItem(
+                trackedDownload.DownloadItem, trackedDownload.RemoteBook?.Release?.IndexerId ?? 0, includeUnmanaged: false))
+            {
+                var title = trackedDownload.DownloadItem.Title ?? trackedDownload.DownloadItem.DownloadId;
+                throw new BadRequestException($"Torrent '{title}' is preserved. Choose Ignore Download to keep it, or delete it directly in your download client.");
+            }
+        }
+
         private TrackedDownload Remove(TrackedDownload trackedDownload, bool removeFromClient, bool blocklist, bool skipRedownload, bool changeCategory)
         {
+            var cleanupConversion = _conversionJobService?.PrepareArtifactRemoval(trackedDownload.DownloadItem.DownloadId);
             if (removeFromClient)
             {
                 var downloadClient = _downloadClientProvider.Get(trackedDownload.DownloadClient);
@@ -386,6 +405,21 @@ namespace Chaptarr.Api.V1.Queue
                 {
                     return null;
                 }
+            }
+
+            try
+            {
+                cleanupConversion?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Download removal action succeeded for {0}, but retained conversion cleanup failed", trackedDownload.DownloadItem.DownloadId);
+                throw new BadRequestException("The download removal action succeeded, but conversion cleanup failed and retained files remain. Check the logs for the cleanup error.");
+            }
+            finally
+            {
+                // Finalize each successful action even when cleanup or a later bulk item fails.
+                _trackedDownloadService.StopTracking(trackedDownload.DownloadItem.DownloadId);
             }
 
             return trackedDownload;

@@ -74,14 +74,14 @@ namespace Chaptarr.Core.Test.Download
         {
             public ImportMode Resolve(ImportMode requestedMode, DownloadClientItem downloadClientItem) => requestedMode;
             public DownloadImportPolicy ResolvePolicy(ImportMode requestedMode, DownloadClientItem downloadClientItem) => new(requestedMode, false);
-            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem) => false;
+            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem, int fallbackIndexerId = 0, bool includeUnmanaged = true) => false;
         }
 
         private sealed class StubTrackedDownloadAlreadyImported : ITrackedDownloadAlreadyImported
         {
             public bool Result { get; set; }
 
-            public bool IsImported(TrackedDownload trackedDownload, List<EntityHistory> historyItems) => Result;
+            public bool IsImported(TrackedDownload trackedDownload, List<EntityHistory> historyItems, IReadOnlyCollection<ImportResult> results = null, IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportFile> requestedFiles = null) => Result || TrackedDownloadAlreadyImported.Evaluate(trackedDownload, results, requestedFiles, historyItems).Complete;
         }
 
         private class HistoryServiceProxy : DispatchProxy
@@ -170,7 +170,7 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(importService.CallCount, Is.EqualTo(1));
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
             Assert.That(trackedDownload.StatusMessages, Is.Empty);
-            Assert.That(historyProxy.FindByDownloadIdCalls, Has.All.EqualTo("download-1"));
+            Assert.That(historyProxy.FindByDownloadIdCalls, Is.EqualTo(new[] { "download-1" }));
             Assert.That(eventAggregator.Events, Has.One.InstanceOf<DownloadCompletedEvent>());
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }
@@ -274,7 +274,7 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
-        public void should_block_best_effort_import_when_no_eligible_files_are_returned()
+        public void should_keep_retrying_empty_import_until_completion_is_proven()
         {
             var eventAggregator = new RecordingEventAggregator();
             var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
@@ -310,23 +310,36 @@ namespace Chaptarr.Core.Test.Download
                 State = TrackedDownloadState.ImportPending
             };
 
+            var importer = new RecordingDownloadedBooksImportService();
+            var imported = new StubTrackedDownloadAlreadyImported();
             var subject = new CompletedDownloadService(
                 eventAggregator,
                 historyService,
                 new StubProvideImportItemService("/tmp/chaptarr-missing-context-empty"),
-                new RecordingDownloadedBooksImportService(),
+                importer,
                 new PassthroughDownloadImportModeResolver(),
-                new StubTrackedDownloadAlreadyImported(),
+                imported,
                 NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
-            Assert.DoesNotThrow(() => subject.Import(trackedDownload));
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                subject.Import(trackedDownload);
+                Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
+            }
+
+            Assert.That(importer.CallCount, Is.EqualTo(6));
             Assert.That(trackedDownload.StatusMessages, Is.Not.Empty);
             Assert.That(trackedDownload.StatusMessages[0].Messages, Does.Contain("NO_ELIGIBLE_FILES"));
-            Assert.That(eventAggregator.Events, Has.Some.InstanceOf<BookImportIncompleteEvent>());
+            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<DownloadCompletedEvent>());
+
+            imported.Result = true;
+            subject.Import(trackedDownload);
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
+            Assert.That(trackedDownload.StatusMessages, Is.Empty);
+            Assert.That(eventAggregator.Events, Has.Exactly(1).InstanceOf<DownloadCompletedEvent>());
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
@@ -388,10 +401,12 @@ namespace Chaptarr.Core.Test.Download
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
-            subject.Import(trackedDownload);
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                subject.Import(trackedDownload);
+                Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
+            }
 
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.EqualTo(1));
             Assert.That(trackedDownload.StatusMessages.SelectMany(message => message.Messages), Has.Some.Contains(rejection.Reason));
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
 
@@ -402,16 +417,15 @@ namespace Chaptarr.Core.Test.Download
 
             subject.Import(trackedDownload);
 
-            Assert.That(importService.CallCount, Is.EqualTo(2));
+            Assert.That(importService.CallCount, Is.EqualTo(7));
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.Zero);
             Assert.That(trackedDownload.StatusMessages, Is.Empty);
             Assert.That(eventAggregator.Events, Has.One.InstanceOf<DownloadCompletedEvent>());
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
-        public void should_restore_the_pre_d60_three_attempt_grace_for_missing_declared_files()
+        public void should_keep_retrying_missing_declared_files_without_marking_import_incomplete()
         {
             var eventAggregator = new RecordingEventAggregator();
             var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
@@ -466,18 +480,19 @@ namespace Chaptarr.Core.Test.Download
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
-            subject.Import(trackedDownload);
-            subject.Import(trackedDownload);
-            subject.Import(trackedDownload);
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                subject.Import(trackedDownload);
+                Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
+            }
 
-            Assert.That(importService.CallCount, Is.EqualTo(3));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.EqualTo(3));
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
-            Assert.That(eventAggregator.Events, Has.One.InstanceOf<BookImportIncompleteEvent>());
+            Assert.That(importService.CallCount, Is.EqualTo(6));
+            Assert.That(trackedDownload.StatusMessages.SelectMany(message => message.Messages), Has.Some.Contains(rejection.Reason));
+            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
-        public void should_not_apply_the_missing_file_cap_to_other_temporary_rejections()
+        public void should_keep_retrying_other_temporary_rejections()
         {
             var eventAggregator = new RecordingEventAggregator();
             var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
@@ -534,7 +549,6 @@ namespace Chaptarr.Core.Test.Download
             subject.Import(trackedDownload);
 
             Assert.That(importService.CallCount, Is.EqualTo(3));
-            Assert.That(trackedDownload.MissingAuthoritativeMediaFileAttempts, Is.Zero);
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportPending));
             Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
         }
@@ -854,7 +868,7 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
-        public void should_allow_best_effort_import_when_grabbed_target_allows_any_edition()
+        public void should_not_complete_a_different_book_row_just_because_the_grab_allows_any_edition()
         {
             var eventAggregator = new RecordingEventAggregator();
             var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
@@ -917,9 +931,9 @@ namespace Chaptarr.Core.Test.Download
 
             subject.Import(trackedDownload);
 
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
-            Assert.That(eventAggregator.Events, Has.One.InstanceOf<DownloadCompletedEvent>());
-            Assert.That(eventAggregator.Events, Has.None.InstanceOf<BookImportIncompleteEvent>());
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
+            Assert.That(eventAggregator.Events, Has.None.InstanceOf<DownloadCompletedEvent>());
+            Assert.That(eventAggregator.Events, Has.One.InstanceOf<BookImportIncompleteEvent>());
         }
 
         [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
@@ -1104,7 +1118,8 @@ namespace Chaptarr.Core.Test.Download
             var localBook = new LocalBook
             {
                 Author = author,
-                Book = book
+                Book = book,
+                Path = $"/downloads/book-{bookId}" + (mediaType == BookMediaType.Audiobook ? ".m4b" : ".epub")
             };
 
             return new ImportResult(new ImportDecision<LocalBook>(localBook));

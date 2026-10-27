@@ -257,7 +257,7 @@ namespace Chaptarr.Core.Test.Books
                 return targetMethod?.Name switch
                 {
                     nameof(IAuthorService.GetAuthor) => Authors.Single(author => author.Id == (int)args[0]),
-                    nameof(IAuthorService.GetAuthors) => Authors
+                    nameof(IAuthorService.GetAuthors) or nameof(IAuthorService.GetExistingAuthors) => Authors
                         .Where(author => ((IEnumerable<int>)args[0]).Contains(author.Id))
                         .ToList(),
                     nameof(IAuthorService.GetAllAuthors) => Authors,

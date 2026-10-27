@@ -124,7 +124,7 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public async Task purge_and_readd_should_retry_only_retained_unmapped_book_file_rows()
+        public async Task purge_and_readd_should_retry_only_retained_unmapped_book_file_rows([Values(false, true)] bool initialSetup)
         {
             var original = new Author
             {
@@ -142,7 +142,8 @@ namespace Chaptarr.Core.Test.Api
                 Id = 22,
                 Name = original.Name,
                 AudiobookRootFolderPath = original.AudiobookRootFolderPath,
-                EbookRootFolderPath = original.EbookRootFolderPath
+                EbookRootFolderPath = original.EbookRootFolderPath,
+                AddOptions = initialSetup ? new AddAuthorOptions { Monitor = MonitorTypes.None } : null
             };
             var retainedBookFileIds = new List<int> { 41, 42, 43 };
 
@@ -189,11 +190,18 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(result, Is.TypeOf<OkResult>());
                 Assert.That(libraryProxy.AddCalls, Is.EqualTo(2));
                 Assert.That(authorProxy.DeleteForReaddCalls, Is.EqualTo(1));
-                Assert.That(commandQueue.Pushed, Has.Count.EqualTo(1));
+                Assert.That(commandQueue.Pushed, Has.Count.EqualTo(initialSetup ? 2 : 1));
             });
 
-            var queued = commandQueue.Pushed.Single();
+            var queued = commandQueue.Pushed.Single(command => command.Body is RetryUnmappedMatchCommand);
             var retry = queued.Body as RetryUnmappedMatchCommand;
+            if (initialSetup)
+            {
+                var scan = (NzbDrone.Core.Books.Commands.RefreshAuthorCommand)commandQueue.Pushed.Single(command => command.Body is NzbDrone.Core.Books.Commands.RefreshAuthorCommand).Body;
+                Assert.That(scan.RefreshMetadata, Is.False);
+                Assert.That(scan.RescanFolders, Is.True);
+                Assert.That(scan.AuthorId, Is.EqualTo(generated.Id));
+            }
             Assert.Multiple(() =>
             {
                 Assert.That(retry, Is.Not.Null);

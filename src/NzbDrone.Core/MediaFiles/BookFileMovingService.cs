@@ -26,6 +26,7 @@ namespace NzbDrone.Core.MediaFiles
         BookFile MoveBookFile(BookFile bookFile, LocalBook localBook);
         BookFile CopyBookFile(BookFile bookFile, LocalBook localBook);
         string GetImportDestinationPath(BookFile bookFile, LocalBook localBook);
+        bool CompleteImportReplicas(BookFile bookFile, LocalBook localBook);
     }
 
     public sealed class BookFileMovePlan
@@ -194,7 +195,7 @@ namespace NzbDrone.Core.MediaFiles
                     TransferFile(bookFile, author, edition.Book, plan.DestinationPath, TransferMode.Move, plan.DestinationAuthorFolderPath);
                 }
 
-                ReconcileReplicaFiles(bookFile, author, edition.Book, plan.ReplicaPaths, preferHardlinks: _configService.CopyUsingHardlinks);
+                ReconcileReplicaFiles(bookFile, plan.ReplicaPaths, preferHardlinks: _configService.CopyUsingHardlinks);
                 return bookFile;
             }
 
@@ -224,7 +225,7 @@ namespace NzbDrone.Core.MediaFiles
                     TransferFile(bookFile, localBook.Author, localBook.Book, filePath, TransferMode.Move);
                 }
 
-                ReconcileReplicaFiles(bookFile, localBook.Author, localBook.Book, replicaPaths, preferHardlinks: _configService.CopyUsingHardlinks);
+                ReconcileImportReplicas(bookFile, localBook, replicaPaths);
                 return bookFile;
             }
 
@@ -254,7 +255,7 @@ namespace NzbDrone.Core.MediaFiles
                     _logger.Debug("Ebook file already at destination: {0}", filePath);
                 }
 
-                ReconcileReplicaFiles(bookFile, localBook.Author, localBook.Book, replicaPaths, preferHardlinks: _configService.CopyUsingHardlinks);
+                ReconcileImportReplicas(bookFile, localBook, replicaPaths);
                 return bookFile;
             }
 
@@ -295,10 +296,39 @@ namespace NzbDrone.Core.MediaFiles
 
             if (colocationPlan.ShouldCleanupReplicas)
             {
-                CleanupReplicaFilesIfAny(bookFile);
+                localBook.PendingReplicaPaths = new List<string>();
             }
 
             return filePath;
+        }
+
+        private void ReconcileImportReplicas(BookFile bookFile, LocalBook localBook, List<string> replicaPaths)
+        {
+            // Import replicas belong to the committed ebook row. Preparing/transferring the primary
+            // must never mutate an old recording's copies before the replacement commits.
+            localBook.PendingReplicaPaths = replicaPaths ?? new List<string>();
+        }
+
+        public bool CompleteImportReplicas(BookFile bookFile, LocalBook localBook)
+        {
+            if (localBook.PendingReplicaPaths == null)
+            {
+                return false;
+            }
+
+            if (bookFile.Id <= 0)
+            {
+                throw new InvalidOperationException("Ebook replicas require a committed primary BookFile.");
+            }
+
+            var confirmedPaths = localBook.ConfirmedReplacementFiles?
+                .Where(file => file.BookId == localBook.Book?.Id)
+                .SelectMany(file => file.AssociatedPaths ?? new List<string>())
+                .ToHashSet(PathEqualityComparer.Instance);
+            ReconcileReplicaFiles(bookFile, localBook.PendingReplicaPaths,
+                _configService.CopyUsingHardlinks, confirmedPaths);
+            localBook.PendingReplicaPaths = null;
+            return true;
         }
 
         private void CleanupReplicaFilesIfAny(BookFile bookFile)
@@ -316,7 +346,7 @@ namespace NzbDrone.Core.MediaFiles
             bookFile.ReplicaPaths = new List<string>();
         }
 
-        private void ReconcileReplicaFiles(BookFile bookFile, Author author, Book book, List<string> desiredReplicaPaths, bool preferHardlinks = true)
+        private void ReconcileReplicaFiles(BookFile bookFile, List<string> desiredReplicaPaths, bool preferHardlinks = true, IReadOnlyCollection<string> confirmedPaths = null)
         {
             desiredReplicaPaths ??= new List<string>();
 
@@ -326,21 +356,22 @@ namespace NzbDrone.Core.MediaFiles
                 .ToList();
 
             var existing = (bookFile.ReplicaPaths ?? new List<string>())
-                .Where(p => p.IsNotNullOrWhiteSpace())
+                .Where(p => p.IsNotNullOrWhiteSpace() && p.PathNotEquals(bookFile.Path))
                 .Distinct(PathEqualityComparer.Instance)
                 .ToList();
             var existingSet = new HashSet<string>(existing, PathEqualityComparer.Instance);
+            bool CanDelete(string path) => confirmedPaths == null || confirmedPaths.Contains(path, PathEqualityComparer.Instance);
+            var kept = existing.Where(path => !CanDelete(path)).ToList();
 
             // Remove stale managed replicas.
             foreach (var oldReplica in existing)
             {
-                if (!desired.Any(p => p.PathEquals(oldReplica)))
+                if (CanDelete(oldReplica) && !desired.Any(p => p.PathEquals(oldReplica)))
                 {
                     TryDeleteReplica(oldReplica);
                 }
             }
 
-            var kept = new List<string>();
             var sourcePath = bookFile.Path;
 
             // Ensure desired replicas exist on disk.
@@ -358,6 +389,12 @@ namespace NzbDrone.Core.MediaFiles
                     // (e.g., after an upgrade/reimport that replaces the ebook).
                     if (isManagedReplica)
                     {
+                        if (!CanDelete(replicaPath))
+                        {
+                            _logger.Warn("Keeping ebook replica not included in replacement confirmation: {0}", replicaPath);
+                            continue;
+                        }
+
                         TryDeleteReplica(replicaPath);
                     }
                     else

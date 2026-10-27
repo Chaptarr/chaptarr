@@ -8,14 +8,16 @@ namespace NzbDrone.Core.Books.Events
     {
         public Book Book { get; private set; }
         public bool DeleteFiles { get; private set; }
+        public bool FilesAlreadyDeleted { get; private set; }
         public bool AddImportListExclusion { get; private set; }
         public bool ApplyToBothFormats { get; private set; }
         public IReadOnlyList<Book> DeletedBooks { get; private set; }
 
-        public BookDeletedEvent(Book book, bool deleteFiles, bool addImportListExclusion, bool applyToBothFormats = false, IEnumerable<Book> deletedBooks = null)
+        public BookDeletedEvent(Book book, bool deleteFiles, bool addImportListExclusion, bool applyToBothFormats = false, IEnumerable<Book> deletedBooks = null, bool filesAlreadyDeleted = false)
         {
             Book = book;
             DeleteFiles = deleteFiles;
+            FilesAlreadyDeleted = filesAlreadyDeleted;
             AddImportListExclusion = addImportListExclusion;
             ApplyToBothFormats = applyToBothFormats;
             DeletedBooks = (deletedBooks ?? Enumerable.Repeat(book, 1))

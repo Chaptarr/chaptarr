@@ -7,6 +7,7 @@ using Chaptarr.Http.REST;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Profiles.Qualities;
@@ -178,6 +179,32 @@ namespace Chaptarr.Core.Test.Queue
             }
         }
 
+        [Test]
+        public void late_stop_after_inline_conversion_should_return_bad_request_and_preserve_import_progress()
+        {
+            var downloadId = Guid.NewGuid().ToString("N");
+            using var cancellation = new CancellationTokenSource();
+            var tracking = CreateTrackingService();
+            tracking.Start(downloadId, 10, "M4B", "Converting to M4B");
+            tracking.RegisterCancellation(downloadId, cancellation);
+            tracking.UnregisterCancellation(downloadId, cancellation);
+            cancellation.Dispose();
+            tracking.Progress(downloadId, 99m, "Importing M4B");
+            var durable = CreateJobService(cancelResult: false);
+            var setup = BuildController(downloadId, tracking, durable.Service);
+            try
+            {
+                Assert.Throws<BadRequestException>(() => setup.Controller.CancelConversion(QueueItemId));
+                Assert.That(tracking.Get(downloadId).CanCancel, Is.False);
+                Assert.That(tracking.Get(downloadId).Message, Is.EqualTo("Importing M4B"));
+                Assert.That(tracking.Get(downloadId).Progress, Is.EqualTo(99m));
+            }
+            finally
+            {
+                tracking.Complete(downloadId);
+            }
+        }
+
         private static IConversionTrackingService CreateTrackingService()
         {
             return new ConversionTrackingService(new NoOpEventAggregator());
@@ -213,7 +240,7 @@ namespace Chaptarr.Core.Test.Queue
                 qualityDefinitionService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
-            var controller = new QueueController(
+            var controller = new QueueController(Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDownloadImportModeResolver>((method, args) => false),
                 broadcastSignalRMessage: null,
                 queueService: queueService,
                 pendingReleaseService: null,

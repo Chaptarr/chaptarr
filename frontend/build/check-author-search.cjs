@@ -1,11 +1,16 @@
-/* Render the real grouped search UI; every browser request is intercepted locally. */
+/* Render the real grouped search UI with local responses, including unload requests. */
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const webpack = require('webpack');
 const { chromium } = require('playwright');
+const checkReconnect = require('./author-search-reconnect-check.cjs');
+const checkTable = require('./author-search-table-check.cjs');
+const checkAuthorSync = require('./author-sync-check.cjs');
+const checkCommandMessages = require('./command-message-check.cjs');
 
 const root = path.resolve(__dirname, '../..');
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'chaptarr-search-ui-'));
@@ -149,10 +154,10 @@ async function checkAddAuthorPayloads(page, importRequests, capture = null) {
       const labels = { both: 'Add Audiobooks + Ebooks', audiobook: 'Add Audiobooks', ebook: 'Add Ebooks' };
       const add = page.getByRole('button', { name: labels[mediaType], exact: true });
       if (capture) {
-        const responses = sides.map((side) => page.waitForResponse((response) => {
+        const responses = [page.waitForResponse((response) => {
           const request = response.request();
-          return new URL(response.url()).pathname === '/api/v1/author/import' && request.method() === 'POST' && request.postDataJSON().mediaType === side;
-        }));
+          return new URL(response.url()).pathname === '/api/v1/author/import' && request.method() === 'POST' && request.postDataJSON().mediaType === mediaType;
+        })];
         await add.click();
         await Promise.all(responses);
       } else {
@@ -165,24 +170,35 @@ async function checkAddAuthorPayloads(page, importRequests, capture = null) {
       const posted = importRequests.slice(start);
       modalReceipts.push({ mediaType, overrides, selected, posted, provenance: capture ? `Captured ${capture.provider} search response; local-library overlay cleared; actual selected search-card/modal/thunk; intercepted POST` : 'Synthetic provider-search card; real connected modal and production store thunk; all requests intercepted locally' });
       try {
-        assert.equal(posted.length, sides.length);
+        assert.equal(posted.length, 1, 'Both uses one durable import request');
         assert.deepEqual(await page.evaluate(() => window.readAddAuthorFixtureState().authorDefaults), selected.authorDefaults, 'Queued submission preserves selected settings');
-        for (let index = 0; index < sides.length; index++) {
-          const side = sides[index];
+        const expected = {
+          foreignAuthorId: selectedAuthor.foreignAuthorId, authorName: selectedAuthor.authorName, mediaType,
+          ...(mediaType === 'both' ? { syncMonitoredAcrossFormats: false } : {}), manualFlag: true, searchForMissingBooks: overrides
+        };
+        for (const side of sides) {
           const selection = choices[side][overrides ? 'overrides' : 'defaults'];
-          const expected = {
-            foreignAuthorId: selectedAuthor.foreignAuthorId, authorName: selectedAuthor.authorName, mediaType: side,
-            rootFolder: selection.root, qualityProfileId: selection.quality, metadataProfileId: selection.metadata,
-            monitor: selection.monitor, [`${side}MonitorExistingMode`]: selection.monitor,
-            [`${side}Monitored`]: selection.monitored, [`${side}MonitorNewItems`]: selection.newItems,
-            tags: selection.tags, manualFlag: true, searchForMissingBooks: overrides && index === sides.length - 1
-          };
-          assert.equal(posted[index].method, 'POST');
-          assert.equal(posted[index].pathname, '/api/v1/author/import');
-          assert.deepEqual(posted[index].body, expected, 'Every serialized import field must preserve the real modal choice, numeric IDs, booleans, enum strings, tags and existing per-side request contract');
+          Object.assign(expected, {
+            [`${side}MonitorExistingMode`]: selection.monitor,
+            [`${side}Monitored`]: selection.monitored, [`${side}MonitorNewItems`]: selection.newItems
+          });
+          if (mediaType === 'both') {
+            Object.assign(expected, {
+              [`${side}RootFolderPath`]: selection.root, [`${side}QualityProfileId`]: selection.quality,
+              [`${side}MetadataProfileId`]: selection.metadata, [`${side}Tags`]: selection.tags
+            });
+          } else {
+            Object.assign(expected, {
+              rootFolder: selection.root, qualityProfileId: selection.quality, metadataProfileId: selection.metadata,
+              monitor: selection.monitor, tags: selection.tags
+            });
+          }
           const profileField = selected.fields.find((field) => field.name === `${side}QualityProfileId`);
-          assert.equal(profileField.value, String(selection.quality), 'Native DOM select values are strings before the shared connector parses them');
+          assert.equal(profileField.value, String(selection.quality));
         }
+        assert.equal(posted[0].method, 'POST');
+        assert.equal(posted[0].pathname, '/api/v1/author/import');
+        assert.deepEqual(posted[0].body, expected, 'Every serialized import field preserves the real modal choices');
       } catch (error) {
         failures.push({ mediaType, overrides, error: error.message });
       }
@@ -612,7 +628,20 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
 
   console.log('Launching Chromium for the mocked browser lifecycle.');
   const browser = await chromium.launch();
+  const unloadStops = [];
+  const server = http.createServer((request, response) => {
+    const url = new URL(request.url, 'http://localhost');
+    if (request.method === 'DELETE' && url.pathname === '/api/v1/release') {
+      unloadStops.push({ searchId: url.searchParams.get('searchId'), apiKey: request.headers['x-api-key'] });
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ isStopping: true }));
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
   try {
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const css = fs.readdirSync(path.join(output, 'Content')).find((name) => name.endsWith('.css'));
     const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
     const page = await browser.newPage();
@@ -635,13 +664,17 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     let pendingExpectedStopResourceErrorCount = 0;
     const requestFailures = [];
     const authorLifecycleEvents = [];
-    const heldAuthorRoutes = new Map();
+    const activeAuthorSearches = new Set();
+    let heldAdmissionRoute = null;
+    let holdNextAdmission = false;
     const heldBookRoutes = new Map();
     let holdNextAuthorSearch = false;
     let heldAuthorRequestResolver = null;
     let holdNextBookSearch = false;
     let heldBookRequestResolver = null;
     let failNextStopRequest = false;
+    const expectedCommandErrors = [];
+    const observedExpectedHttpErrors = [];
     page.on('pageerror', (error) => {
       errors.push({ type: 'pageerror', message: error.message, stack: error.stack });
       if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST) {
@@ -660,6 +693,12 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
           return;
         }
 
+        const expectedIndex = expectedCommandErrors.findIndex((error) =>
+          message.location().url === error.url && message.text().includes(`status of ${error.status}`));
+        if (expectedIndex !== -1) {
+          observedExpectedHttpErrors.push({ ...expectedCommandErrors.splice(expectedIndex, 1)[0], message: message.text() });
+          return;
+        }
         errors.push({ type: 'console', message: message.text() });
       }
     });
@@ -708,7 +747,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
         saveProviderWire();
         return route.fulfill({ status: 202, json: { pendingId: 1, message: 'Author queued for import' } });
       }
-      if (pathname === '/api/v1/rootfolder') {
+      if (pathname.toLowerCase() === '/api/v1/rootfolder') {
         const roots = await page.evaluate(() => window.addAuthorFixture.roots);
         return route.fulfill({ json: roots });
       }
@@ -739,7 +778,16 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
           authorRequests.push(params);
           if (holdNextAuthorSearch) {
             holdNextAuthorSearch = false;
-            heldAuthorRoutes.set(params.searchId, route);
+            activeAuthorSearches.add(params.searchId);
+            if (holdNextAdmission) {
+              holdNextAdmission = false;
+              heldAdmissionRoute = route;
+            } else {
+              await route.fulfill({ json: {
+                searchId: params.searchId, authorId: Number(params.authorId), mediaType: params.mediaType,
+                bookResults: [], isComplete: false, isCancelled: false
+              } });
+            }
             if (heldAuthorRequestResolver) {
               heldAuthorRequestResolver(params);
               heldAuthorRequestResolver = null;
@@ -784,17 +832,79 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
         return route.fulfill({ path: path.join(output, 'Content', css), contentType: 'text/css' });
       }
       if (pathname !== '/') {
+        if (process.env.CHAPTARR_SYNC_ONLY) {
+          console.error(`Unmatched sync fixture request: ${request.method()} ${url.pathname}${url.search}`);
+        }
         return route.fulfill({ status: 404, body: '' });
       }
       return route.fulfill({ contentType: 'text/html', body: '<!doctype html><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,apiRoot:"/api/v1",apiKey:"fixture"};</script><script src="/fixture.js"></script>' });
     });
-    await page.goto('http://author-search.test/');
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    if (process.env.CHAPTARR_RECONNECT_ONLY) {
+      await checkReconnect(page, strings, makeRelease, expectedCommandErrors, unloadStops);
+      assert.deepEqual(expectedCommandErrors, []);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CHAPTARR_MESSAGES_ONLY) {
+      await checkCommandMessages(page, expectedCommandErrors);
+      assert.deepEqual(expectedCommandErrors, [], 'The command refresh failure was observed');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CHAPTARR_SYNC_ONLY) {
+      await checkAuthorSync(page, {
+        importRequests, checkAddAuthorPayloads, selectAddAuthorMonitor, setAddAuthorCheckbox, strings,
+        beforeInjectedFailure: () => assert.deepEqual(errors, [], 'Normal form interactions have zero browser console or page errors'),
+        expectHttpError: (url, status) => expectedCommandErrors.push({ url, status })
+      });
+      assert.deepEqual(expectedCommandErrors, [], 'The exact injected HTTP failure was observed');
+      assert.deepEqual(errors, [], 'No unexpected browser console or page errors');
+      if (process.env.CHAPTARR_LAYOUT_ARTIFACTS) {
+        fs.writeFileSync(path.join(process.env.CHAPTARR_LAYOUT_ARTIFACTS, 'browser-errors.json'), JSON.stringify({
+          unexpectedErrors: errors, expectedInjectedHttpErrors: observedExpectedHttpErrors, requestFailures
+        }, null, 2));
+      }
+      console.log('Author sync browser checks passed.');
+      return;
+    }
     if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST) {
       await checkCapturedProviderPayloads(page, importRequests, bookRequests, seriesRequests);
       assert.deepEqual(errors, []);
       console.log('Captured provider selected Author/Book modal and supplied Series-name payload checks passed.');
       return;
     }
+    const checkTableFixture = () => checkTable(page, {
+      makeRelease,
+      artifacts: process.env.CHAPTARR_LAYOUT_ARTIFACTS,
+      captureOnly: process.env.CHAPTARR_TABLE_BEFORE === '1',
+      requestCount: () => authorRequests.length + releaseRequests.length,
+      beginSearch: async(mediaType, bookResults) => {
+        await page.evaluate((side) => window.renderAuthorSearchFixture('grouped-tabs', 3, 3, { selectedMediaType: side }), mediaType);
+        await page.getByRole('tab', { name: 'Search tab', exact: true }).click();
+        holdNextAuthorSearch = true;
+        await page.getByRole('button', { name: 'Search', exact: true }).click();
+        await page.waitForFunction(() => window.readAuthorSearchState().isAccepted === true);
+        const { searchId } = await page.evaluate(() => window.readAuthorSearchState());
+        const updateSearch = async(results, isComplete = false) => {
+          await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+            searchId, authorId: 10, mediaType, bookResults: results, isComplete, isCancelled: false
+          });
+          if (isComplete) {
+            activeAuthorSearches.delete(searchId);
+          }
+        };
+        await updateSearch(bookResults);
+        return updateSearch;
+      }
+    });
+    if (process.env.CHAPTARR_TABLE_ONLY) {
+      await checkTableFixture();
+      assert.deepEqual(errors, []);
+      console.log('Author-search table browser check passed.');
+      return;
+    }
+
     await page.evaluate(() => window.renderAuthorSearchFixture('filter-warning', 0, 0));
     assert.equal(await page.getByText('2 results are available behind bypassable filters.', { exact: true }).count(), 1);
     assert.equal(await page.getByText('Showing 0 of 2 results (2 filtered)', { exact: true }).count(), 0);
@@ -936,15 +1046,15 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       assert.match(await row.innerText(), /Waiting for results/, `${title} should remain visibly waiting after the first result`);
     }
 
-    await heldAuthorRoutes.get(pendingRosterSearchId).fulfill({ json: {
+    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
       searchId: pendingRosterSearchId,
       authorId: 10,
       mediaType: 'audiobook',
       bookResults: [makeBookResult(firstRosterBook.bookId, firstRosterBook.title, 'complete', [firstRosterRelease]), ...pendingRoster.slice(1)],
       isComplete: true,
       isCancelled: false
-    } });
-    heldAuthorRoutes.delete(pendingRosterSearchId);
+    });
+    activeAuthorSearches.delete(pendingRosterSearchId);
     await page.waitForFunction(() => window.readAuthorSearchState().isComplete === true);
     console.log('A confirmed six-book audiobook roster renders all pending rows before the first result and preserves the other five as waiting.');
     releaseRequests.length = 0;
@@ -1166,7 +1276,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     await page.getByRole('button', { name: 'Close book modal', exact: true }).click();
     searchState = await page.evaluate(() => window.readAuthorSearchState());
     assert.equal(searchState.isFetching, true, 'Closing the book modal must not abort the author search');
-    assert.equal(heldAuthorRoutes.has(searchId), true);
+    assert.equal(activeAuthorSearches.has(searchId), true);
     assert.equal(requestFailures.some((failure) => failure.url.includes(`searchId=${searchId}`)), false);
     console.log('Book modal request preserved the active author search.');
 
@@ -1207,16 +1317,16 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       isComplete: true,
       isCancelled: false
     };
-    await heldAuthorRoutes.get(searchId).fulfill({ json: finalAuthorResult });
-    heldAuthorRoutes.delete(searchId);
+    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), finalAuthorResult);
+    activeAuthorSearches.delete(searchId);
     await page.waitForFunction(() => window.readAuthorSearchState().isComplete === true);
     searchState = await page.evaluate(() => window.readAuthorSearchState());
     assert.equal(searchState.isFetching, false);
-    assert.equal(searchState.bookResults[0].releases.find((release) => release.guid === 'shared-guid').isGrabbed, true, 'The final HTTP merge must preserve the prior grab state');
+    assert.equal(searchState.bookResults[0].releases.find((release) => release.guid === 'shared-guid').isGrabbed, true, 'The final streamed merge must preserve the prior grab state');
     assert.equal(searchState.bookResults[1].releases.find((release) => release.guid === 'shared-guid').isGrabbed, false);
-    assert.equal(searchState.bookResults[0].releases.find((release) => release.guid === 'other-alpha').isGrabbed, true, 'The final HTTP merge must preserve expanded scoped grab state');
+    assert.equal(searchState.bookResults[0].releases.find((release) => release.guid === 'other-alpha').isGrabbed, true, 'The final streamed merge must preserve expanded scoped grab state');
     await page.getByText('Search incomplete', { exact: true }).first().waitFor();
-    console.log('Final HTTP merge preserved grab state and marks terminal pending books incomplete.');
+    console.log('Final streamed merge preserved grab state and marks terminal pending books incomplete.');
 
     assert.equal(await summaryTable.locator(':scope > thead').getByRole('columnheader', { name: 'Rank', exact: true }).count(), 0);
     assert.match(await summaryTable.locator('tbody tr').first().innerText(), /Preferred Book A/);
@@ -1286,8 +1396,9 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     const cancelledRequestParams = await cancelledAuthorRequest;
     const cancelledSearchId = cancelledRequestParams.searchId;
 
-    assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).count(), 0,
-      'Stop must stay unavailable until the server publishes the registered book roster');
+    await page.getByRole('button', { name: 'Stop search', exact: true }).waitFor();
+    assert.equal((await page.evaluate(() => window.readAuthorSearchState())).bookResults.length, 0,
+      'An accepted queued search must be stoppable before the book roster arrives');
 
     const keptRelease = makeRelease({
       guid: 'cancel-kept-guid', title: 'Completed Before Stop', bookId: 201, rank: 1, preferred: true
@@ -1389,8 +1500,8 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       isComplete: true,
       isCancelled: true
     };
-    await heldAuthorRoutes.get(cancelledSearchId).fulfill({ json: finalStoppedResult });
-    heldAuthorRoutes.delete(cancelledSearchId);
+    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), finalStoppedResult);
+    activeAuthorSearches.delete(cancelledSearchId);
     await page.waitForFunction(() => {
       const state = window.readAuthorSearchState();
       return state.isComplete && state.isCancelled && !state.isFetching;
@@ -1413,7 +1524,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     assert.equal(await page.getByText('Search stopped before all books completed.', { exact: true }).count(), 3,
       'The alert and both unfinished book rows should show the stopped status');
     assert.equal(requestFailures.some((failure) => failure.url.includes(`searchId=${cancelledSearchId}`)), false,
-      'The author GET must remain open until its terminal HTTP response');
+      'The admission request must finish independently of the streamed terminal result');
     assert.deepEqual(errors, []);
 
     stopRequests.length = 0;
@@ -1424,41 +1535,72 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       resolveUnmountAuthorRequest = resolve;
     });
     holdNextAuthorSearch = true;
+    holdNextAdmission = true;
     heldAuthorRequestResolver = resolveUnmountAuthorRequest;
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     const unmountRequestParams = await unmountAuthorRequest;
     const unmountSearchId = unmountRequestParams.searchId;
     assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).count(), 0,
-      'The user cannot click Stop before roster registration');
+      'Stop is unavailable before admission or roster registration');
     const lifecycleStart = authorLifecycleEvents.length;
-    const unmountStopRequest = page.waitForRequest((request) =>
-      request.method() === 'DELETE' && new URL(request.url()).searchParams.get('searchId') === unmountSearchId);
-    const unmountGetFailure = page.waitForEvent('requestfailed', (request) =>
-      request.method() === 'GET' && new URL(request.url()).searchParams.get('searchId') === unmountSearchId);
+    const unmountStopRequest = page.waitForResponse((response) =>
+      response.request().method() === 'DELETE' && new URL(response.url()).searchParams.get('searchId') === unmountSearchId);
     await page.evaluate(() => window.renderAuthorSearchFixture('filter-warning', 0, 0));
-    await Promise.all([unmountStopRequest, unmountGetFailure]);
+    await (await unmountStopRequest).finished();
+    await page.waitForFunction(() => !window.readAuthorSearchState().searchId);
+    const afterAdmissionStop = page.waitForResponse((response) =>
+      response.request().method() === 'DELETE' && new URL(response.url()).searchParams.get('searchId') === unmountSearchId);
+    // The first Stop has finished before the delayed acknowledgement reaches the browser.
+    await page.waitForFunction(() => window.readAuthorSearchState().searchId === null);
+    await heldAdmissionRoute.fulfill({ json: {
+      commandId: 999, searchId: unmountSearchId, authorId: 10, mediaType: 'audiobook', bookResults: [], isComplete: false
+    } });
+    await (await afterAdmissionStop).finished();
     const unmountEvents = authorLifecycleEvents.slice(lifecycleStart).filter((event) => event.searchId === unmountSearchId);
-    const unmountDeleteIndex = unmountEvents.findIndex((event) => event.event === 'request' && event.method === 'DELETE');
-    const unmountAbortIndex = unmountEvents.findIndex((event) => event.event === 'failed' && event.method === 'GET');
-    assert.ok(unmountDeleteIndex >= 0, 'Unmount should request explicit server cancellation');
-    assert.ok(unmountAbortIndex >= 0, 'Unmount should abort the hanging HTTP request after requesting cancellation');
-    assert.ok(unmountDeleteIndex < unmountAbortIndex, 'Unmount must initiate DELETE before aborting the author GET');
-    assert.deepEqual(stopRequests, [{ searchId: unmountSearchId }], 'Unmount should issue only one scoped Stop request');
-    heldAuthorRoutes.delete(unmountSearchId);
+    assert.ok(unmountEvents.some((event) => event.event === 'request' && event.method === 'DELETE'),
+      'Unmount should request explicit server cancellation');
+    assert.equal(unmountEvents.some((event) => event.event === 'failed' && event.method === 'GET'), false,
+      'Admission must finish so a late-queued search can also be stopped');
+    assert.deepEqual(stopRequests, [{ searchId: unmountSearchId }, { searchId: unmountSearchId }],
+      'A late admission after page exit needs its own Stop');
+    activeAuthorSearches.delete(unmountSearchId);
 
+    await page.evaluate(() => window.renderAuthorSearchFixture('grouped-tabs', 3, 3, { selectedMediaType: 'audiobook' }));
+    await page.getByRole('tab', { name: 'Search tab', exact: true }).click();
+    holdNextAuthorSearch = true;
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.waitForFunction(() => window.readAuthorSearchState().isAccepted === true);
+    const failedSearchId = (await page.evaluate(() => window.readAuthorSearchState())).searchId;
+    await page.evaluate((failedId) => window.sendAuthorSearchSignalR({
+      searchId: failedId, authorId: 10, mediaType: 'audiobook', bookResults: [], isComplete: true, isFailed: true
+    }), failedSearchId);
+    await page.getByText(strings.AuthorSearchIncomplete, { exact: true }).waitFor();
+    assert.equal(await page.getByText(strings.AuthorSearchNoBooksReturned, { exact: true }).count(), 0,
+      'A failed background search must not also claim there were no books');
+    assert.equal((await page.evaluate(() => window.readAuthorSearchState())).isFetching, false);
+    activeAuthorSearches.delete(failedSearchId);
+
+    await checkReconnect(page, strings, makeRelease, expectedCommandErrors, unloadStops);
+    await checkTableFixture();
+    assert.deepEqual(expectedCommandErrors, [], 'Only the explicitly injected command lookup errors are expected');
     await checkAddAuthorPayloads(page, importRequests);
     await checkBookModalMetadata(page);
     await checkAddSeriesPayloads(page, seriesRequests);
     await checkModalReopenAndZeroFallback(page, seriesRequests, bookRequests);
     await checkCapturedProviderPayloads(page, importRequests, bookRequests, seriesRequests);
+    await page.reload();
+    await checkCommandMessages(page, expectedCommandErrors);
+    assert.deepEqual(expectedCommandErrors, [], 'The command refresh failure was observed');
     assert.deepEqual(errors, []);
 
     console.log('Author-search browser check passed: confirmation and media boundaries, scoped grabs, incremental/final merges, explicit Stop acceptance, retry, modal isolation, terminal cancellation, and unmount cleanup.');
   } finally {
     await browser.close();
+    await new Promise((resolve) => server.close(resolve));
     fs.rmSync(output, { recursive: true, force: true });
   }
 })().catch((error) => {
+  fs.rmSync(output, { recursive: true, force: true });
   console.error(error);
   process.exitCode = 1;
 });

@@ -810,7 +810,7 @@ namespace NzbDrone.Core.Books
             try
             {
                 var localEditions = local.Editions ?? _editionService.GetEditionsForRefresh(local.Id) ?? new List<Edition>();
-                protectedEditions.AddRange(localEditions.Where(e => e?.ManualAdd == true));
+                protectedEditions.AddRange(localEditions.Where(e => EditionPinPolicy.IsProtected(e, local.AnyEditionOk)));
 
                 var localFiles = local.BookFiles ?? _mediaFileService.GetFilesByBook(local.Id) ?? new List<BookFile>();
                 local.BookFiles = localFiles;
@@ -1085,17 +1085,25 @@ namespace NzbDrone.Core.Books
                 .ToDictionary(g => g.Key, g => g.First().Monitored)
                 ?? new Dictionary<int, bool>();
 
+            // Provider monitoring hints are only an initial suggestion. They must not
+            // turn a surviving local selection into corruption repair. An explicit
+            // unsaved manual selection remains eligible to express an explicit selection.
+            if (future.Any(edition => edition.Id > 0 && edition.Monitored))
+            {
+                foreach (var edition in children.Added.Where(edition => !edition.ManualAdd))
+                {
+                    edition.Monitored = false;
+                }
+            }
+
             // Centralized selection + invariant repair: exactly one monitored edition per book.
             var fileCountsByEditionId = future
                 .Where(e => e.Id > 0)
                 .GroupBy(e => e.Id)
                 .ToDictionary(group => group.Key, group => GetKnownFileCount(group.First()));
 
-            var mediaType = future
-                .Select(e => e.Book?.MediaType)
-                .FirstOrDefault(mt => mt.HasValue);
-
-            _editionSelector.EnsureSingleMonitoredEdition(future, fileCountsByEditionId, mediaType);
+            var book = future.Select(edition => edition.Book).FirstOrDefault(parent => parent != null);
+            _editionSelector.EnsureSingleMonitoredEdition(future, fileCountsByEditionId, book?.MediaType, book?.AnyEditionOk ?? true);
 
             PersistMonitoredChanges(children, beforeMonitoredById);
             Debug.Assert(future.Count(e => e.Monitored) == 1, "exactly one surviving edition monitored");
@@ -1129,13 +1137,13 @@ namespace NzbDrone.Core.Books
                 foreach (var edition in localChildren.Deleted.ToList())
                 {
                     var hasFiles = GetKnownFileCount(edition) > 0;
-                    var isPinned = edition.ManualAdd;
+                    var isPinned = EditionPinPolicy.IsProtected(edition, edition.Book?.AnyEditionOk ?? true);
                     if (hasFiles || isPinned)
                     {
                         _logger.Warn("Edition {0} (ID: {1}) is protected ({2}) - preserving instead of deleting",
                             edition.Title,
                             edition.Id,
-                            hasFiles ? "has files" : "ManualAdd");
+                            hasFiles ? "has files" : "pinned selection");
                         localChildren.Deleted.Remove(edition);
                         // Preserved editions are local-only (or pinned) and should not be churned on every refresh.
                         // If monitoring selection changes, MonitorSingleEdition will move them to Updated.

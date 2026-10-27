@@ -4,6 +4,9 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 {
     public class DelugeLabel
     {
+        [JsonProperty(PropertyName = "apply_queue")]
+        public bool ApplyQueue { get; set; }
+
         [JsonProperty(PropertyName = "apply_move_completed")]
         public bool ApplyMoveCompleted { get; set; }
 

@@ -30,6 +30,7 @@ namespace NzbDrone.Core.Books
         void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction);
         void RefreshProviderAliases(List<Edition> editions);
         void UpdateMany(List<Edition> editions);
+        void UpdateMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction, Edition selectedEdition = null);
         void UpdateSelection(List<Edition> editions);
         void DeleteMany(List<Edition> editions);
         List<Edition> GetEditionsForRefresh(int bookId);
@@ -40,8 +41,7 @@ namespace NzbDrone.Core.Books
         List<Edition> SetMonitored(Edition edition, bool isManualSelection = false);
     }
 
-    public class EditionService : IEditionService,
-        IHandle<BookDeletedEvent>
+    public class EditionService : IEditionService
     {
         private readonly IEditionRepository _editionRepository;
         private readonly IEventAggregator _eventAggregator;
@@ -379,13 +379,22 @@ namespace NzbDrone.Core.Books
 
         public void UpdateMany(List<Edition> editions)
         {
-            // Compute MatchingTitle for FTS matching (canonical normalization)
+            PrepareMatchingTitles(editions);
+            _editionRepository.UpdateMany(editions);
+        }
+
+        public void UpdateMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction, Edition selectedEdition = null)
+        {
+            PrepareMatchingTitles(editions);
+            _editionRepository.UpdateMany(editions, connection, transaction, selectedEdition);
+        }
+
+        private static void PrepareMatchingTitles(IEnumerable<Edition> editions)
+        {
             foreach (var edition in editions)
             {
                 edition.MatchingTitle = StringSuperNormalizer.ComputeMatchingTitle(edition.Title);
             }
-
-            _editionRepository.UpdateMany(editions);
         }
 
         public void RefreshProviderAliases(List<Edition> editions)
@@ -395,7 +404,7 @@ namespace NzbDrone.Core.Books
 
         public void UpdateSelection(List<Edition> editions)
         {
-            _editionRepository.SetFields(editions, edition => edition.Monitored, edition => edition.ManualAdd);
+            _editionRepository.UpdateSelection(editions);
         }
 
         public void DeleteMany(List<Edition> editions)
@@ -436,16 +445,5 @@ namespace NzbDrone.Core.Books
         {
             return _editionRepository.SetMonitored(edition, isManualSelection);
         }
-
-        public void Handle(BookDeletedEvent message)
-        {
-            // BookService snapshots editions before deletion so notifications and
-            // asynchronous cleanup retain the full book shape. Reuse that snapshot
-            // instead of querying the same editions again for every deleted book.
-            var editions = message.Book.Editions ?? GetEditionsByBook(message.Book.Id);
-            DeleteMany(editions);
-        }
-
-
     }
 }

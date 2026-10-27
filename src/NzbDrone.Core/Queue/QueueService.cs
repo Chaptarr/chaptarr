@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.IO;
 using NLog;
 using NzbDrone.Common.Crypto;
@@ -22,7 +23,7 @@ namespace NzbDrone.Core.Queue
 {
     public interface IQueueService
     {
-        List<Queue> GetQueue();
+        List<Queue> GetQueue(bool includeConversionStatus = true);
         Queue Find(int id);
         void Remove(int id);
     }
@@ -56,13 +57,16 @@ namespace NzbDrone.Core.Queue
             _diskProvider = diskProvider;
         }
 
-        public List<Queue> GetQueue()
+        public List<Queue> GetQueue(bool includeConversionStatus = true)
         {
             var queue = _queue
                 .Select(CloneQueueItem)
                 .ToList();
 
-            ApplyConversionStatuses(queue);
+            if (includeConversionStatus)
+            {
+                ApplyConversionStatuses(queue);
+            }
             return queue;
         }
 
@@ -537,9 +541,21 @@ namespace NzbDrone.Core.Queue
                 return;
             }
 
+            var jobs = (_conversionJobService?.Get(queue.Select(item => item.DownloadId)) ?? new List<ConversionJob>())
+                .ToDictionary(job => job.DownloadId, StringComparer.OrdinalIgnoreCase);
+            var bookIds = jobs.Values.ToDictionary(job => job.DownloadId, job =>
+            {
+                try { return JsonSerializer.Deserialize<ConversionJobRequest>(job.RequestJson ?? "{}")?.BookId ?? 0; }
+                catch (JsonException) { return 0; }
+            }, StringComparer.OrdinalIgnoreCase);
             foreach (var item in queue)
             {
-                var durableJob = _conversionJobService?.Get(item.DownloadId);
+                var durableJob = item.DownloadId != null ? jobs.GetValueOrDefault(item.DownloadId) : null;
+                if (durableJob != null && item.Book != null && bookIds[durableJob.DownloadId] > 0 && bookIds[durableJob.DownloadId] != item.Book.Id)
+                {
+                    // A pack's other book keeps its own planned state; it cannot inherit this group's failure.
+                    continue;
+                }
                 if (durableJob != null && durableJob.Status != ConversionJobStatus.Completed)
                 {
                     item.ConversionStatus = GetConversionJobStatus(durableJob.Status);
