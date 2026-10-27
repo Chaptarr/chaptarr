@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
@@ -24,6 +25,7 @@ namespace NzbDrone.Core.Download
         void Check(TrackedDownload trackedDownload);
         void Import(TrackedDownload trackedDownload);
         bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults);
+        bool CanRemoveDownload(TrackedDownload trackedDownload);
     }
 
 	    public class CompletedDownloadService : ICompletedDownloadService
@@ -266,6 +268,48 @@ namespace NzbDrone.Core.Download
 
             return consideredFiles.All(result =>
                 result.ImportDecision.Rejections?.Any(rejection => rejection.IsQualityFilter) == true);
+        }
+
+        public bool CanRemoveDownload(TrackedDownload trackedDownload)
+        {
+            if (trackedDownload.State != TrackedDownloadState.Imported)
+            {
+                return false;
+            }
+
+            var item = trackedDownload.ImportItem ?? trackedDownload.DownloadItem;
+            var knownPaths = new HashSet<string>(item.FilePaths ?? new List<string>(), PathEqualityComparer.Instance);
+            try
+            {
+                _downloadClientFileSnapshotService.CaptureCompletedOutput(item, throwOnError: true);
+                if (!(item.FilePaths ?? new List<string>()).Except(knownPaths, PathEqualityComparer.Instance)
+                    .Any(path => TrackedDownloadAlreadyImported.IsTargetMediaFile(path, trackedDownload.RemoteBook?.GetMediaType())))
+                {
+                    return true;
+                }
+
+                trackedDownload.DownloadItem.FilePaths = item.FilePaths;
+                trackedDownload.DownloadItem.FileListConfidence = item.FileListConfidence;
+                if (_trackedDownloadAlreadyImported.IsImported(trackedDownload,
+                    _historyService.FindByDownloadId(item.DownloadId)))
+                {
+                    return true;
+                }
+
+                trackedDownload.Warn(trackedDownload.StatusMessages.Append(new TrackedDownloadStatusMessage(item.Title,
+                    "Additional book files have not been imported. Use Manual Import to review them and Combine with the existing files.")).ToArray());
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to verify files before cleaning up download {0}", item.DownloadId);
+                trackedDownload.Warn("Unable to check download files before cleanup: {0}. Review the files using Manual Import.", ex.Message);
+            }
+
+            _logger.Warn("Keeping download {0} for Manual Import: {1}", item.DownloadId,
+                string.Join("; ", trackedDownload.StatusMessages.SelectMany(message => message.Messages.Prepend(message.Title))));
+            trackedDownload.IsTrackable = true;
+            BlockImportWithCurrentStatus(trackedDownload);
+            return false;
         }
 
         private static bool AreAllImportRejectionsTemporary(List<ImportResult> importResults)

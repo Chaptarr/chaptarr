@@ -163,7 +163,7 @@ namespace Chaptarr.Core.Test.Download
         private static DownloadEventHub BuildSubject(StubDownloadClient downloadClient, IDownloadImportModeResolver resolver)
         {
             return new DownloadEventHub(
-                null,
+                Proxy<ICompletedDownloadService>((method, args) => true),
                 new StubDownloadClientProvider(downloadClient),
                 resolver,
                 LogManager.GetLogger("DownloadEventHubPreservationFixture"));
@@ -263,7 +263,10 @@ namespace Chaptarr.Core.Test.Download
             var resolver = new StubDownloadImportModeResolver { Preserve = false };
             var subject = BuildSubject(downloadClient, resolver);
 
-            subject.Handle(new DownloadCompletedEvent(TrackedDownload(), 1));
+            var tracked = TrackedDownload();
+            subject.Handle(new DownloadCompletedEvent(tracked, 1));
+            Assert.That(downloadClient.RemoveCalls, Is.Zero, "Completion publishes before the cleanup pass");
+            subject.Handle(new DownloadCanBeRemovedEvent(tracked));
 
             Assert.That(downloadClient.MarkImportedCalls, Is.EqualTo(1));
             Assert.That(downloadClient.RemoveCalls, Is.EqualTo(1));
@@ -277,7 +280,10 @@ namespace Chaptarr.Core.Test.Download
             var resolver = new StubDownloadImportModeResolver { Preserve = true };
             var subject = BuildSubject(downloadClient, resolver);
 
-            subject.Handle(new DownloadCompletedEvent(TrackedDownload(), 1));
+            var tracked = TrackedDownload();
+            subject.Handle(new DownloadCompletedEvent(tracked, 1));
+            Assert.That(downloadClient.RemoveCalls, Is.Zero, "Completion publishes before the cleanup pass");
+            subject.Handle(new DownloadCanBeRemovedEvent(tracked));
 
             Assert.That(downloadClient.MarkImportedCalls, Is.EqualTo(1));
             Assert.That(downloadClient.RemoveCalls, Is.EqualTo(0));
@@ -290,7 +296,10 @@ namespace Chaptarr.Core.Test.Download
             var resolver = new StubDownloadImportModeResolver { Preserve = false };
             var subject = BuildSubject(downloadClient, resolver);
 
-            subject.Handle(new DownloadCompletedEvent(TrackedDownload(), 1));
+            var tracked = TrackedDownload();
+            subject.Handle(new DownloadCompletedEvent(tracked, 1));
+            Assert.That(downloadClient.RemoveCalls, Is.Zero, "Completion publishes before the cleanup pass");
+            subject.Handle(new DownloadCanBeRemovedEvent(tracked));
 
             Assert.That(downloadClient.MarkImportedCalls, Is.EqualTo(1));
             Assert.That(downloadClient.PreserveAfterImportChecks, Is.EqualTo(1));
@@ -304,7 +313,10 @@ namespace Chaptarr.Core.Test.Download
             var resolver = new StubDownloadImportModeResolver { Preserve = false };
             var subject = BuildSubject(downloadClient, resolver);
 
-            subject.Handle(new DownloadCompletedEvent(TrackedDownload(BookMediaType.Ebook), 1));
+            var tracked = TrackedDownload(BookMediaType.Ebook);
+            subject.Handle(new DownloadCompletedEvent(tracked, 1));
+            Assert.That(downloadClient.RemoveCalls, Is.Zero, "Completion publishes before the cleanup pass");
+            subject.Handle(new DownloadCanBeRemovedEvent(tracked));
 
             Assert.That(downloadClient.LastPreserveAfterImportMediaType, Is.EqualTo(BookMediaType.Ebook));
             Assert.That(downloadClient.RemoveCalls, Is.EqualTo(0));

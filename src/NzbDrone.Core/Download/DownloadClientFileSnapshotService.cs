@@ -16,7 +16,7 @@ namespace NzbDrone.Core.Download
     public interface IDownloadClientFileSnapshotService
     {
         void CaptureClientList(DownloadClientItem item);
-        void CaptureCompletedOutput(DownloadClientItem item);
+        void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false);
         void ApplySnapshot(DownloadClientItem item);
         void Delete(DownloadClientItem item);
     }
@@ -53,7 +53,7 @@ namespace NzbDrone.Core.Download
             Upsert(item, item.FilePaths, ClientSource, item.FileListConfidence ?? DownloadClientFileListConfidence.Degraded);
         }
 
-        public void CaptureCompletedOutput(DownloadClientItem item)
+        public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false)
         {
             if (!CanSnapshot(item) || item.OutputPath.IsEmpty)
             {
@@ -84,6 +84,11 @@ namespace NzbDrone.Core.Download
             }
             catch (Exception ex)
             {
+                if (throwOnError)
+                {
+                    throw;
+                }
+
                 _logger.Debug(ex, "Unable to snapshot completed output file list for download '{0}' at '{1}'", item.Title, outputPath);
                 return;
             }

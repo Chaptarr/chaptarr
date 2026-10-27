@@ -178,7 +178,7 @@ namespace Chaptarr.Core.Test.History
                 var tracked = new TrackedDownload { DownloadClient = 1, RemoteBook = h.Subject(h.Books.ToArray()),
                     DownloadItem = new DownloadClientItem { DownloadId = "DOWNLOAD-ONE", CanBeRemoved = true,
                         DownloadClientInfo = new DownloadClientItemClientInfo { Name = "Fixture client" } } };
-                new DownloadEventHub(null, Proxy<IProvideDownloadClient>((_, _) => client),
+                new DownloadEventHub(Proxy<ICompletedDownloadService>((_, _) => true), Proxy<IProvideDownloadClient>((_, _) => client),
                     Proxy<IDownloadImportModeResolver>((_, _) => false), h.Logger).Handle(new DownloadCanBeRemovedEvent(tracked));
                 Assert.That(removals, Is.EqualTo(1)); Assert.That(tracked.DownloadItem.Removed, Is.True);
                 Assert.That(h.History.Get(loser.Id).EventType, Is.EqualTo(EntityHistoryEventType.Grabbed));

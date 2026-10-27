@@ -216,6 +216,8 @@ namespace Chaptarr.Core.Test.Download
                 ImportedDownloadIds.Add(trackedDownload.DownloadItem.DownloadId);
             }
 
+            public bool CanRemoveDownload(TrackedDownload trackedDownload) => throw new NotImplementedException();
+
             public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults) => throw new NotImplementedException();
         }
 

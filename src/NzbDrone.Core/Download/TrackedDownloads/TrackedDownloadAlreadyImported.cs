@@ -92,14 +92,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
             void Require(string path, int bookId = 0)
             {
-                if (path.IsNotNullOrWhiteSpace() && !DiskScanService.IsExcludedFile(path) &&
-                    MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(path)))
+                if (IsTargetMediaFile(path, targetMedia))
                 {
-                    if (targetMedia.HasValue && NzbDrone.Core.Qualities.QualityMediaTypeHelper.GetMediaTypeFromPath(path) != targetMedia)
-                    {
-                        return;
-                    }
-
                     if (!required.ContainsKey(path) || bookId > 0)
                     {
                         required[path] = bookId;
@@ -260,6 +254,13 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
             completion.Complete = completion.Missing.Count == 0;
             return completion;
+        }
+
+        internal static bool IsTargetMediaFile(string path, BookMediaType? mediaType)
+        {
+            return path.IsNotNullOrWhiteSpace() && !DiskScanService.IsExcludedFile(path) &&
+                MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(path)) &&
+                (!mediaType.HasValue || NzbDrone.Core.Qualities.QualityMediaTypeHelper.GetMediaTypeFromPath(path) == mediaType);
         }
 
         internal static List<Book> GetExpectedBooks(TrackedDownload tracked)
