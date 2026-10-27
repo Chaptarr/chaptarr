@@ -9120,7 +9120,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cmp = b.LeftoverCount.CompareTo(a.LeftoverCount);
                 if (cmp != 0) return cmp;
 
-                return a.Bm25Score.CompareTo(b.Bm25Score);
+                cmp = a.Bm25Score.CompareTo(b.Bm25Score);
+                if (cmp != 0) return cmp;
+
+                return a.Match.Monitored.CompareTo(b.Match.Monitored);
             }
 
             private bool HasNearExactTitleAmbiguity(string phase, List<ScoredCandidate> scoredCandidates, IDictionary<int, Book> booksById)
