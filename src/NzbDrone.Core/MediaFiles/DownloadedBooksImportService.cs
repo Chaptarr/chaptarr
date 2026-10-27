@@ -1360,7 +1360,7 @@ namespace NzbDrone.Core.MediaFiles
             var mediaLabel = targetMedia == BookMediaType.Audiobook ? "audiobook" : targetMedia == BookMediaType.Ebook ? "ebook" : "audio or ebook";
             var reason = $"No supported {mediaLabel} files were found in {path}.{observedFilesMessage} Check that the download contains supported {mediaLabel} files and that Chaptarr can read the completed download folder.";
             var localBook = new LocalBook { Path = path };
-            var rejection = new Rejection(reason, singleFile && unsupported.Count > 0 ? RejectionType.Permanent : RejectionType.Temporary);
+            var rejection = new Rejection(reason, singleFile && !DiskScanService.IsExcludedFile(path) ? RejectionType.Permanent : RejectionType.Temporary);
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 

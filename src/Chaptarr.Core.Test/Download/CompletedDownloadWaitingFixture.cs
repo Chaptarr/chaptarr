@@ -11,6 +11,8 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients.Nzbget;
+using NzbDrone.Core.Download.Clients.Sabnzbd;
 using NzbDrone.Core.Download.History;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
@@ -90,11 +92,165 @@ namespace Chaptarr.Core.Test.Download
             });
         }
 
+        private sealed class RemovalCalls
+        {
+            public int RemoveItem;
+            public int DeleteItemData;
+            public int LocalDelete;
+            public int RemoteDelete;
+
+            public IDiskProvider Disk => Proxy<IDiskProvider>((method, args) =>
+            {
+                if (method.Name == nameof(IDiskProvider.FolderExists)) return Directory.Exists((string)args[0]);
+                Assert.That(method.Name, Is.EqualTo(nameof(IDiskProvider.DeleteFolder)));
+                Assert.That(args[1], Is.True);
+                LocalDelete++;
+                return null;
+            });
+        }
+
+        private sealed class RecordingSabnzbd : Sabnzbd
+        {
+            private readonly RemovalCalls _calls;
+
+            public RecordingSabnzbd(RemovalCalls calls)
+                : base(Proxy<ISabnzbdProxy>((method, args) =>
+                {
+                    if (method.Name == nameof(ISabnzbdProxy.GetQueue)) return new SabnzbdQueue { Items = new() };
+                    Assert.That(method.Name, Is.EqualTo(nameof(ISabnzbdProxy.RemoveFromHistory)));
+                    Assert.That(args[1], Is.True);
+                    calls.RemoteDelete++;
+                    return null;
+                }), null, null, calls.Disk, null, null, null, LogManager.GetCurrentClassLogger())
+            {
+                _calls = calls;
+                Definition = new DownloadClientDefinition { Id = 1, Name = "SAB fixture", Settings = new SabnzbdSettings(), RemoveCompletedDownloads = true };
+            }
+
+            public override void RemoveItem(DownloadClientItem item, bool deleteData)
+            {
+                _calls.RemoveItem++;
+                base.RemoveItem(item, deleteData);
+            }
+
+            protected override void DeleteItemData(DownloadClientItem item)
+            {
+                _calls.DeleteItemData++;
+                base.DeleteItemData(item);
+            }
+        }
+
+        private sealed class RecordingNzbget : Nzbget
+        {
+            private readonly RemovalCalls _calls;
+
+            public RecordingNzbget(RemovalCalls calls)
+                : base(Proxy<INzbgetProxy>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(INzbgetProxy.RemoveItem)));
+                    calls.RemoteDelete++;
+                    return null;
+                }), null, null, calls.Disk, null, null, LogManager.GetCurrentClassLogger())
+            {
+                _calls = calls;
+                Definition = new DownloadClientDefinition { Id = 1, Name = "NZBGet fixture", Settings = new NzbgetSettings(), RemoveCompletedDownloads = true };
+            }
+
+            public override void RemoveItem(DownloadClientItem item, bool deleteData)
+            {
+                _calls.RemoveItem++;
+                base.RemoveItem(item, deleteData);
+            }
+
+            protected override void DeleteItemData(DownloadClientItem item)
+            {
+                _calls.DeleteItemData++;
+                base.DeleteItemData(item);
+            }
+        }
+
+        [Test]
+        public void usenet_hub_cleanup_requires_all_ten_source_files(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool sab, [Values(1, 10)] int imported)
+        {
+            Run(postgres, 10, imported, (subject, tracked, counters) =>
+            {
+                var calls = new RemovalCalls();
+                IDownloadClient client = sab ? new RecordingSabnzbd(calls) : new RecordingNzbget(calls);
+                var hub = new DownloadEventHub(subject, Proxy<IProvideDownloadClient>((method, args) => client),
+                    Proxy<IDownloadImportModeResolver>((method, args) => false), LogManager.GetCurrentClassLogger());
+                tracked.DownloadItem.CanBeRemoved = true;
+                var complete = subject.VerifyImport(tracked, new List<ImportResult>());
+                Assert.That(complete, Is.EqualTo(imported == 10));
+                if (complete)
+                {
+                    hub.Handle(new DownloadCompletedEvent(tracked, tracked.RemoteBook.Author.Id));
+                }
+                else
+                {
+                    Assert.That(tracked.StatusMessages.Select(message => message.Title),
+                        Is.EquivalentTo(tracked.DownloadItem.FilePaths.Skip(imported)));
+                }
+                Assert.That(calls.RemoveItem, Is.Zero);
+                hub.Handle(new DownloadCanBeRemovedEvent(tracked));
+                var expected = complete ? 1 : 0;
+                Assert.Multiple(() =>
+                {
+                    Assert.That(calls.RemoveItem, Is.EqualTo(expected));
+                    Assert.That(calls.DeleteItemData, Is.EqualTo(expected));
+                    Assert.That(calls.LocalDelete, Is.EqualTo(expected));
+                    Assert.That(calls.RemoteDelete, Is.EqualTo(expected));
+                    Assert.That(tracked.DownloadItem.Removed, Is.EqualTo(complete));
+                });
+            }, diskInventory: !sab);
+        }
+
+        [Test]
+        public void wrong_media_single_file_should_wait_for_manual_import(
+            [Values(false, true)] bool postgres, [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType)
+        {
+            Run(postgres, 1, 0, (subject, tracked, counters) =>
+            {
+                var path = Path.Combine(tracked.DownloadItem.OutputPath.FullPath,
+                    mediaType == BookMediaType.Audiobook ? "Dune.epub" : "Dune.m4b");
+                File.WriteAllText(path, "fixture");
+                tracked.DownloadItem.OutputPath = new OsPath(path);
+                tracked.DownloadItem.FilePaths = new() { path };
+                tracked.DownloadItem.CanBeRemoved = true;
+                tracked.IsTrackable = true;
+
+                subject.Import(tracked);
+
+                var calls = new RemovalCalls();
+                var client = new RecordingSabnzbd(calls);
+                var hub = new DownloadEventHub(subject, Proxy<IProvideDownloadClient>((method, args) => client),
+                    Proxy<IDownloadImportModeResolver>((method, args) => false), LogManager.GetCurrentClassLogger());
+                hub.Handle(new DownloadCanBeRemovedEvent(tracked));
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
+                    Assert.That(tracked.IsTrackable, Is.True);
+                    Assert.That(tracked.StatusMessages.Select(message => message.Title), Has.Member(Path.GetFileName(path)));
+                    Assert.That(tracked.StatusMessages.SelectMany(message => message.Messages),
+                        Has.Some.Contains($"No supported {mediaType.ToString().ToLowerInvariant()} files"));
+                    Assert.That(counters.DownloadHistory.GetLatestDownloadHistoryItem("waiting").EventType,
+                        Is.EqualTo(DownloadHistoryEventType.DownloadImportIncomplete));
+                    Assert.That(counters.FailedDownloads, Is.Zero);
+                    Assert.That(calls.RemoveItem, Is.Zero);
+                    Assert.That(calls.DeleteItemData, Is.Zero);
+                    Assert.That(tracked.DownloadItem.Removed, Is.False);
+                    Assert.That(File.Exists(path), Is.True);
+                });
+            }, mediaType: mediaType);
+        }
+
         private sealed class Counters
         {
             public int HistoryReads;
             public int FileReads;
             public int InventoryRequests;
+            public int FailedDownloads;
             public bool FailFileListing;
             public DownloadHistoryService DownloadHistory;
             public Action<string> ImportSource;
@@ -262,6 +418,7 @@ namespace Chaptarr.Core.Test.Download
                     {
                         nameof(IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
                         nameof(IDiskProvider.FileExists) => File.Exists((string)args[0]),
+                        nameof(IDiskProvider.GetFileInfo) => fs.FileInfo.FromFileName((string)args[0]),
                         nameof(IDiskProvider.GetDirectoryInfo) => fs.DirectoryInfo.FromDirectoryName((string)args[0]),
                         nameof(IDiskProvider.GetFileInfos) => counters.FailFileListing
                             ? throw new IOException("File listing unavailable")
@@ -297,8 +454,14 @@ namespace Chaptarr.Core.Test.Download
                         return ((DownloadClientItem)args[0]).Clone();
                     });
                     var mode = Proxy<IDownloadImportModeResolver>((method, args) => ImportMode.Copy);
+                    var failed = Proxy<IFailedDownloadService>((method, args) =>
+                    {
+                        Assert.That(method.Name, Is.EqualTo(nameof(IFailedDownloadService.MarkAsFailed)));
+                        counters.FailedDownloads++;
+                        return null;
+                    });
                     var subject = new CompletedDownloadService(events, history, provider, importer, mode,
-                        new TrackedDownloadAlreadyImported(logger, media), null, logger, snapshots);
+                        new TrackedDownloadAlreadyImported(logger, media), failed, logger, snapshots);
                     check(subject, tracked, counters);
                 }
                 finally

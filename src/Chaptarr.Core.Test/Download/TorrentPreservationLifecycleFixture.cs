@@ -132,17 +132,29 @@ namespace Chaptarr.Core.Test.Download
                     Assert.That(repository.All(), Has.Count.EqualTo(deleteAuthor ? 1 : 2));
                 });
                 var removals = 0;
+                var markedImported = 0;
+                var cleanupChecks = 0;
                 var client = Proxy<IDownloadClient>((method, args) =>
                 {
                     if (method.Name == "get_Definition") return new DownloadClientDefinition { RemoveCompletedDownloads = true, RemoveFailedDownloads = true };
                     if (method.Name == nameof(IDownloadClient.RemoveItem)) removals++;
+                    if (method.Name == nameof(IDownloadClient.MarkItemAsImported)) markedImported++;
                     return null;
                 });
-                var hub = new DownloadEventHub(null, Proxy<IProvideDownloadClient>((method, args) => client), resolver, Logger);
-                var tracked = new TrackedDownload { DownloadClient = 5, DownloadItem = Item("keep") };
+                var completion = Proxy<ICompletedDownloadService>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(ICompletedDownloadService.CanRemoveDownload)));
+                    cleanupChecks++;
+                    return true;
+                });
+                var hub = new DownloadEventHub(completion, Proxy<IProvideDownloadClient>((method, args) => client), resolver, Logger);
+                var tracked = new TrackedDownload { DownloadClient = 5, DownloadItem = Item("keep"), State = TrackedDownloadState.Imported };
+                tracked.DownloadItem.Status = DownloadItemStatus.Completed;
+                hub.Handle(new DownloadCompletedEvent(tracked, 0));
+                Assert.That(markedImported, Is.EqualTo(1));
                 hub.Handle(new DownloadCanBeRemovedEvent(tracked));
                 hub.Handle(new DownloadFailedEvent { TrackedDownload = tracked });
-                hub.Handle(new DownloadCompletedEvent(tracked, 0));
+                Assert.That(cleanupChecks, Is.Zero, "Preservation stops cleanup before import evidence is consulted");
                 Assert.That(removals, Is.Zero);
 
                 if (deleteAuthor)
