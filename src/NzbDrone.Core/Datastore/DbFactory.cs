@@ -47,6 +47,11 @@ namespace NzbDrone.Core.Datastore
             Dapper.SqlMapper.AddTypeHandler(typeof(DateTime), new SqliteUtcDateTimeHandler());
             Dapper.SqlMapper.AddTypeHandler(typeof(DateTime?), new SqliteNullableUtcDateTimeHandler());
 
+            // NUMERIC affinity causes a decimal column alternate between INTEGER and REAL
+            // storage per row, which Dapper's single compiled deserializer cannot handle.
+            Dapper.SqlMapper.AddTypeHandler(typeof(decimal), new SqliteDecimalHandler());
+            Dapper.SqlMapper.AddTypeHandler(typeof(decimal?), new SqliteNullableDecimalHandler());
+
             TableMapping.Map();
         }
 
