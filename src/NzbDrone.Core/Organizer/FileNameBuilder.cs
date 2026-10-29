@@ -56,6 +56,8 @@ namespace NzbDrone.Core.Organizer
 
         private static readonly Regex TitlePrefixRegex = new Regex(@"^(The|An|A) (.*?)((?: *\([^)]+\))*)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        private static readonly Regex SeriesPositionLeadingNumberRegex = new Regex(@"^\d+", RegexOptions.Compiled);
+
         public FileNameBuilder(INamingConfigService namingConfigService,
                                IQualityDefinitionService qualityDefinitionService,
                                ICacheManager cacheManager,
@@ -446,9 +448,10 @@ namespace NzbDrone.Core.Organizer
             tokenHandlers["{Book Series}"] = m => 
                 seriesName ?? m.DefaultValue("");
             
-            // Series position only (e.g., "3" or "2.5")
-            tokenHandlers["{Book SeriesPosition}"] = m => 
-                seriesPosition ?? m.DefaultValue("");
+            // Series position only (e.g., "3" or "2.5"), optionally padded
+            // with a numeric format: {Book SeriesPosition:00} -> "03", "02.5"
+            tokenHandlers["{Book SeriesPosition}"] = m =>
+                seriesPosition != null ? FormatSeriesPosition(seriesPosition, m.CustomFormat) : m.DefaultValue("");
             
             // Combined series with position (e.g., "Dresden Files #3")
             tokenHandlers["{Book SeriesTitle}"] = m => 
@@ -665,6 +668,20 @@ namespace NzbDrone.Core.Organizer
                 tokenHandlers["{PartNumber}"] = m => FormatPartToken(bookFile.Part, bookFile.PartCount, m.CustomFormat);
                 tokenHandlers["{PartCount}"] = m => FormatPartToken(bookFile.PartCount, bookFile.PartCount, m.CustomFormat);
             }
+        }
+
+        private static string FormatSeriesPosition(string position, string customFormat)
+        {
+            if (position.IsNullOrWhiteSpace() || customFormat.IsNullOrWhiteSpace())
+            {
+                return position;
+            }
+
+            // Only the leading integer is padded, so fractional and range positions keep
+            // their shape: with ":00", "2.5" -> "02.5" and "1-4" -> "01-4".
+            return SeriesPositionLeadingNumberRegex.Replace(
+                position,
+                m => int.TryParse(m.Value, out var number) ? number.ToString(customFormat) : m.Value);
         }
 
         private static string FormatPartToken(int value, int partCount, string customFormat)

@@ -198,5 +198,87 @@ namespace Chaptarr.Core.Test.Organizer
             // When mid-string dangling is fixed, update this assertion to "Grave Peril - M4B".
             Assert.That(segments[1], Is.EqualTo("Grave Peril - - M4B"));
         }
+
+        // {Book SeriesPosition} accepts a numeric format the same way {PartNumber} does, so a
+        // library can be organized as "01 - Title" and stay in lexicographic order past book 9.
+        // Only the leading integer is padded; fractional and range positions keep their shape.
+        [TestCase("3", "{Book SeriesPosition:00}", "03")]
+        [TestCase("12", "{Book SeriesPosition:00}", "12")]
+        [TestCase("117", "{Book SeriesPosition:00}", "117")]
+        [TestCase("3", "{Book SeriesPosition:000}", "003")]
+        [TestCase("2.5", "{Book SeriesPosition:00}", "02.5")]
+        [TestCase("17.5", "{Book SeriesPosition:00}", "17.5")]
+        [TestCase("1-4", "{Book SeriesPosition:00}", "01-4")]
+        [TestCase("Prequel", "{Book SeriesPosition:00}", "Prequel")]
+        [TestCase("3", "{Book SeriesPosition}", "3")]
+        [TestCase("2.5", "{Book SeriesPosition}", "2.5")]
+        public void should_apply_custom_format_to_series_position(string position, string format, string expected)
+        {
+            var builder = new FileNameBuilder(
+                new StubNamingConfigService(),
+                new StubQualityDefinitionService(),
+                new CacheManager(),
+                new StubCustomFormatCalculationService(),
+                LogManager.GetCurrentClassLogger());
+
+            var author = new Author { Name = "Jim Butcher" };
+            var book = new Book
+            {
+                Author = author,
+                SeriesName = "Dresden Files",
+                SeriesPosition = position
+            };
+            var edition = new Edition { Title = "Grave Peril", Book = book };
+            var bookFile = new BookFile
+            {
+                Path = "/books/Grave Peril.m4b",
+                Quality = new QualityModel(Quality.M4B)
+            };
+
+            var namingConfig = NamingConfig.Default;
+            namingConfig.RenameBooks = true;
+            namingConfig.StandardBookFormat = format;
+
+            var result = builder.BuildBookFileName(author, edition, bookFile, namingConfig, customFormats: new List<CustomFormat>());
+
+            Assert.That(result, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void should_pad_series_position_in_a_full_folder_pattern()
+        {
+            var builder = new FileNameBuilder(
+                new StubNamingConfigService(),
+                new StubQualityDefinitionService(),
+                new CacheManager(),
+                new StubCustomFormatCalculationService(),
+                LogManager.GetCurrentClassLogger());
+
+            var author = new Author { Name = "Andrew Rowe" };
+            var book = new Book
+            {
+                Author = author,
+                SeriesName = "Arcane Ascension",
+                SeriesPosition = "1"
+            };
+            var edition = new Edition { Title = "Sufficiently Advanced Magic", Book = book };
+            var bookFile = new BookFile
+            {
+                Path = "/books/Sufficiently Advanced Magic.m4b",
+                Quality = new QualityModel(Quality.M4B)
+            };
+
+            var namingConfig = NamingConfig.Default;
+            namingConfig.RenameBooks = true;
+            namingConfig.StandardBookFormat =
+                "{Book Series}/{Book SeriesPosition:00} - {Book Title}/{Book SeriesPosition:00} - {Book Title}";
+
+            var result = builder.BuildBookFileName(author, edition, bookFile, namingConfig, customFormats: new List<CustomFormat>());
+
+            Assert.That(result, Is.EqualTo(Path.Combine(
+                "Arcane Ascension",
+                "01 - Sufficiently Advanced Magic",
+                "01 - Sufficiently Advanced Magic")));
+        }
     }
 }
