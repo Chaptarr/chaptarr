@@ -25,6 +25,7 @@
     <PackageReference Include="System.IO.Abstractions" />
     <PackageReference Include="TagLibSharp-Lidarr" />
     <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
     <PackageReference Include="Equ" />
     <PackageReference Include="MonoTorrent" />
     <PackageReference Include="PdfSharpCore" />
