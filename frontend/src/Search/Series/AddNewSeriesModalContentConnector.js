@@ -57,8 +57,9 @@ function createMapStateToProps() {
         };
       }
 
-      if (!settings.tags) {
+      if (settings.tags?.value == null) {
         settings.tags = {
+          ...(settings.tags || {}),
           value: [],
           errors: [],
           warnings: []
@@ -159,13 +160,32 @@ function createMapStateToProps() {
         }
 
         // Inherit tag defaults from the selected root folder when unset.
-        if (!settings.audiobookTags && audiobookTagsFromRootFolder != null) {
+        // The settings selector wraps every default in { value, errors, warnings },
+        // so "unset" means a null value, not a missing object.
+        if (settings.audiobookTags?.value == null && audiobookTagsFromRootFolder != null) {
           settings.audiobookTags = { ...(settings.audiobookTags || {}), value: audiobookTagsFromRootFolder };
         }
 
-        if (!settings.ebookTags && ebookTagsFromRootFolder != null) {
+        if (settings.ebookTags?.value == null && ebookTagsFromRootFolder != null) {
           settings.ebookTags = { ...(settings.ebookTags || {}), value: ebookTagsFromRootFolder };
         }
+      }
+
+      // Same null-resolution rule as AddNewAuthorModalContentConnector: a
+      // configured root wins above; otherwise fall back to the saved tag
+      // preference. Empty arrays remain an explicit "no tags" selection.
+      if (settings.audiobookTags?.value == null) {
+        settings.audiobookTags = {
+          ...(settings.audiobookTags || {}),
+          value: settings.tags?.value ?? []
+        };
+      }
+
+      if (settings.ebookTags?.value == null) {
+        settings.ebookTags = {
+          ...(settings.ebookTags || {}),
+          value: settings.tags?.value ?? []
+        };
       }
 
       // Set quality profile defaults to first available instead of "None"
