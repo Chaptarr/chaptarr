@@ -21,7 +21,9 @@ function createMapStateToProps() {
   return createSelector(
     (state, { value }) => value,
     createTagsSelector(),
-    (tags = [], tagList) => {
+    (value, tagList) => {
+      // A default parameter only covers undefined; callers can pass null.
+      const tags = value ?? [];
       const sortedTags = _.sortBy(tagList, 'label');
       const filteredTagList = _.filter(sortedTags, (tag) => _.indexOf(tags, tag.id) === -1);
 
