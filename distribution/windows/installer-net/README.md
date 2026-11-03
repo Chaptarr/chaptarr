@@ -135,9 +135,10 @@ exit $smokeExit
 ```
 
 The packaging script accepts `-KeepPayload` for this test build so the smoke
-project can embed the same installer resources. CI removes that temporary zip
-after the smoke. The script’s default behavior still removes it immediately
-after publishing the candidate installer.
+project can embed the same installer resources. CI keeps that temporary zip
+through the Windows BookshelfNG service and Chocolatey handoff checks, then
+removes it. The script’s default behavior still removes it immediately after
+publishing the candidate installer.
 
 ## Remaining acceptance
 

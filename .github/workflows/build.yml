@@ -588,20 +588,6 @@ jobs:
       shell: pwsh
       run: ./distribution/windows/installer-net-smoke/CleanupServiceRoundTrip.ps1 -ManifestPath $env:CHAPTARR_SERVICE_ROUNDTRIP_CLEANUP_MANIFEST
 
-    - name: Remove temporary Windows installer payload
-      if: always() && matrix.platform == 'windows-x64'
-      shell: pwsh
-      run: |
-        $payload = Join-Path $PWD 'distribution/windows/installer-net/Payload/Chaptarr.payload.zip'
-        if (Test-Path -LiteralPath $payload) {
-          Remove-Item -LiteralPath $payload -Force
-        }
-        $payloadDirectory = Split-Path -Parent $payload
-        if ((Test-Path -LiteralPath $payloadDirectory) -and
-            -not (Get-ChildItem -LiteralPath $payloadDirectory -Force | Select-Object -First 1)) {
-          Remove-Item -LiteralPath $payloadDirectory -Force
-        }
-
     - name: Test Windows service preserves its selected data directory
       if: matrix.platform == 'windows-x64'
       shell: pwsh
@@ -629,6 +615,20 @@ jobs:
         Remove-Item -LiteralPath $archive -Force
         if (-not (Get-ChildItem -LiteralPath $archiveDirectory -Force | Select-Object -First 1)) {
           Remove-Item -LiteralPath $archiveDirectory -Force
+        }
+
+    - name: Remove temporary Windows installer payload
+      if: always() && matrix.platform == 'windows-x64'
+      shell: pwsh
+      run: |
+        $payload = Join-Path $PWD 'distribution/windows/installer-net/Payload/Chaptarr.payload.zip'
+        if (Test-Path -LiteralPath $payload) {
+          Remove-Item -LiteralPath $payload -Force
+        }
+        $payloadDirectory = Split-Path -Parent $payload
+        if ((Test-Path -LiteralPath $payloadDirectory) -and
+            -not (Get-ChildItem -LiteralPath $payloadDirectory -Force | Select-Object -First 1)) {
+          Remove-Item -LiteralPath $payloadDirectory -Force
         }
     
     - name: Upload artifacts
