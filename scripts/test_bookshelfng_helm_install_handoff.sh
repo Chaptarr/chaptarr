@@ -275,10 +275,10 @@ metadata:
 spec:
   restartPolicy: Never
   securityContext:
-    runAsUser: 10001
-    runAsGroup: 10001
-    fsGroup: 10001
-    fsGroupChangePolicy: OnRootMismatch
+    # The chart starts as root and normalizes PUID/PGID ownership. Match that
+    # bootstrap here so the seed can initialize a fresh root-owned local-path PVC.
+    runAsUser: 0
+    runAsGroup: 0
   containers:
     - name: seed
       image: ${CANDIDATE_IMAGE}

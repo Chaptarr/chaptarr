@@ -247,6 +247,14 @@ test('Helm .76 zero-replica bootstrap lets its delayed-binding claim reach the s
   assert.match(installedHandoff, /kubectl apply -f "\$EVIDENCE_DIR\/seed-pod\.yaml"[\s\S]*?kubectl wait --for=condition=Succeeded pod\/bookshelfng-seed/);
 });
 
+test('Helm fixture seeder can initialize the chart’s fresh root-owned PVC', () => {
+  const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
+  const seedPod = installedHandoff.match(/cat > "\$EVIDENCE_DIR\/seed-pod\.yaml" <<YAML\n([\s\S]*?)\nYAML/)?.[1];
+  assert.ok(seedPod, 'the installed handoff must define its populated BookshelfNG seed pod');
+  assert.match(seedPod, /securityContext:[\s\S]*runAsUser: 0[\s\S]*runAsGroup: 0/);
+  assert.doesNotMatch(seedPod, /fsGroup:/);
+});
+
 test('Docker headless Ask harness gives migration startup time and reports early exits', () => {
   const dockerCompatibility = read('packaging/scripts/test-docker-bookshelf-compatibility-defaults.sh');
   assert.match(dockerCompatibility, /timeout --signal=TERM --kill-after=2 5 sh/);
