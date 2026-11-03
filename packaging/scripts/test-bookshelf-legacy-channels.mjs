@@ -244,7 +244,7 @@ test('Helm .76 zero-replica bootstrap lets its delayed-binding claim reach the s
   assert.ok(installLegacy, 'the pinned BookshelfNG bootstrap install must remain explicit');
   assert.match(installLegacy, /--set replicaCount=0/);
   assert.doesNotMatch(installLegacy, /--wait/);
-  assert.match(installedHandoff, /kubectl apply -f "\$EVIDENCE_DIR\/seed-pod\.yaml"[\s\S]*?kubectl wait --for=condition=Succeeded pod\/bookshelfng-seed/);
+  assert.match(installedHandoff, /kubectl apply -f "\$EVIDENCE_DIR\/seed-pod\.yaml"[\s\S]*?kubectl wait --for=jsonpath='\{\.status\.phase\}'=Succeeded pod\/bookshelfng-seed/);
 });
 
 test('Helm fixture seeder can initialize the chart’s fresh root-owned PVC', () => {

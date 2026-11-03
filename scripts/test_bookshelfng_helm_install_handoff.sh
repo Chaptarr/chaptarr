@@ -318,7 +318,7 @@ spec:
         name: bookshelfng-schema-fixture
 YAML
 kubectl apply -f "$EVIDENCE_DIR/seed-pod.yaml"
-if ! kubectl wait --for=condition=Succeeded pod/bookshelfng-seed -n "$NAMESPACE" --timeout=5m; then
+if ! kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/bookshelfng-seed -n "$NAMESPACE" --timeout=5m; then
     kubectl describe pod bookshelfng-seed -n "$NAMESPACE" 2>&1 \
         | tee "$EVIDENCE_DIR/seed-pod-describe.txt" || true
     kubectl get pod bookshelfng-seed -n "$NAMESPACE" -o yaml \
