@@ -204,10 +204,14 @@ test('macOS installed handoff acceptance supports hosted and private runners wit
 
 test('Helm handoff workflow supports hosted and private runners for its pinned Ruby contract', () => {
   const workflow = read('.github/workflows/helm-handoff.yml');
+  const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
 
   assert.match(workflow, /default: public[\s\S]*?options:[\s\S]*?- public[\s\S]*?- private/);
   assert.match(workflow, /'ubuntu-24\.04'/);
   assert.match(workflow, /"group":"ng-shared-main-jit"/);
+  assert.match(workflow, /RUNNER_POOL: \$\{\{ inputs\.runner_pool \}\}/);
+  assert.match(installedHandoff, /if \[\[ "\$RUNNER_POOL" == "public" \]\][\s\S]*?unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy/);
+  assert.match(installedHandoff, /elif \[\[ "\$RUNNER_POOL" == "private" && "\$BUILDKIT_EGRESS_PROXY" == "http:\/\/10\.0\.2\.100:3128" \]\]/);
   assert.match(workflow, /Prepare writable Ruby tool cache[\s\S]*?sudo install -d .*\/opt\/hostedtoolcache[\s\S]*?test -w \/opt\/hostedtoolcache[\s\S]*?ruby\/setup-ruby@824c0e29fdfc7d689c191c27acc969d2d04b7dd8/);
   assert.match(workflow, /ruby-version: "3\.4"/);
   assert.match(workflow, /BOOKSHELFNG_REFERENCE_CHART: \$\{\{ github\.workspace \}\}\/bookshelfng-reference\/charts\/bookshelfng/);

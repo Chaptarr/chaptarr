@@ -309,6 +309,9 @@ assert(helm_workflow.include?("test_bookshelfng_helm_install_handoff.sh") &&
        helm_workflow.include?("BOOKSHELFNG_LEGACY_IMAGE_DIGEST: sha256:40a53ac528b6789ca78686b4303bb6c436cd191cd813f915ea171d72b47a8c38") &&
        helm_workflow.include?(%q[inputs.runner_pool == 'public' && 'ubuntu-24.04']) &&
        helm_workflow.include?(%q[BUILDKIT_EGRESS_PROXY: ${{ inputs.runner_pool == 'private' && github.ref == 'refs/heads/main' && 'http://10.0.2.100:3128' || '' }]) &&
+       helm_workflow.include?(%q[RUNNER_POOL: ${{ inputs.runner_pool }]) &&
+       installed_handoff.include?(%q[if [[ "$RUNNER_POOL" == "public" ]]; then]) &&
+       installed_handoff.include?(%q[elif [[ "$RUNNER_POOL" == "private" && "$BUILDKIT_EGRESS_PROXY" == "http://10.0.2.100:3128" ]]; then]) &&
        helm_workflow.include?("Upload Helm installed-handoff evidence"),
        "Helm workflow no longer runs and retains the installed BookshelfNG .76 handoff")
 [

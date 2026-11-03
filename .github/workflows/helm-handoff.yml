@@ -124,6 +124,7 @@ jobs:
 
       - name: Install BookshelfNG .76, defer migration, upgrade, and roll back in Kind
         env:
+          RUNNER_POOL: ${{ inputs.runner_pool }}
           BOOKSHELFNG_REFERENCE_CHART: ${{ github.workspace }}/bookshelfng-reference/charts/bookshelfng
           BOOKSHELFNG_LEGACY_IMAGE_REF: docker.io/snapetech/bookshelfng:hardcover-v0.4.21.76
           BOOKSHELFNG_LEGACY_IMAGE_DIGEST: sha256:40a53ac528b6789ca78686b4303bb6c436cd191cd813f915ea171d72b47a8c38

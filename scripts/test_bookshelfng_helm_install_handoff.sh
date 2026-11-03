@@ -15,12 +15,21 @@ KIND_NODE_IMAGE=kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a26
 RELEASE_NAME=bookshelfng
 NAMESPACE=default
 
-[[ "${BUILDKIT_EGRESS_PROXY:-}" == "http://10.0.2.100:3128" ]] || {
-    printf 'A trusted-main private JIT proxy is required for the installed Helm build.\n' >&2
+RUNNER_POOL="${RUNNER_POOL:-}"
+BUILDKIT_EGRESS_PROXY="${BUILDKIT_EGRESS_PROXY:-}"
+if [[ "$RUNNER_POOL" == "public" ]]; then
+    [[ -z "$BUILDKIT_EGRESS_PROXY" ]] || {
+        printf 'The public hosted route must use direct egress, without the private JIT proxy.\n' >&2
+        exit 1
+    }
+    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+elif [[ "$RUNNER_POOL" == "private" && "$BUILDKIT_EGRESS_PROXY" == "http://10.0.2.100:3128" ]]; then
+    export HTTP_PROXY="$BUILDKIT_EGRESS_PROXY" HTTPS_PROXY="$BUILDKIT_EGRESS_PROXY"
+    export http_proxy="$BUILDKIT_EGRESS_PROXY" https_proxy="$BUILDKIT_EGRESS_PROXY"
+else
+    printf 'Select the explicit public hosted pool or the trusted-main private JIT proxy route.\n' >&2
     exit 1
-}
-export HTTP_PROXY="$BUILDKIT_EGRESS_PROXY" HTTPS_PROXY="$BUILDKIT_EGRESS_PROXY"
-export http_proxy="$BUILDKIT_EGRESS_PROXY" https_proxy="$BUILDKIT_EGRESS_PROXY"
+fi
 export NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1
 
 mkdir -p "$EVIDENCE_DIR"
