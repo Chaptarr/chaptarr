@@ -382,7 +382,7 @@ spec:
         claimName: bookshelfng-config
 YAML
 kubectl apply -f "$EVIDENCE_DIR/snapshot-pod.yaml"
-if ! kubectl wait --for=condition=Succeeded pod/bookshelfng-snapshot -n "$NAMESPACE" --timeout=5m; then
+if ! kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/bookshelfng-snapshot -n "$NAMESPACE" --timeout=5m; then
     kubectl describe pod bookshelfng-snapshot -n "$NAMESPACE" 2>&1 \
         | tee "$EVIDENCE_DIR/snapshot-pod-describe.txt" || true
     kubectl get pod bookshelfng-snapshot -n "$NAMESPACE" -o yaml \
