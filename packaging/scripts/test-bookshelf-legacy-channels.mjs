@@ -247,6 +247,12 @@ test('Helm .76 zero-replica bootstrap lets its delayed-binding claim reach the s
   assert.match(installedHandoff, /kubectl apply -f "\$EVIDENCE_DIR\/seed-pod\.yaml"[\s\S]*?kubectl wait --for=condition=Succeeded pod\/bookshelfng-seed/);
 });
 
+test('Docker headless Ask harness gives migration startup time and reports early exits', () => {
+  const dockerCompatibility = read('packaging/scripts/test-docker-bookshelf-compatibility-defaults.sh');
+  assert.match(dockerCompatibility, /timeout --signal=TERM --kill-after=2 5 sh/);
+  assert.match(dockerCompatibility, /did not write its deferral marker within five seconds/);
+});
+
 test('Flatpak keeps the installed app ID and BookshelfNG sandbox data directory', () => {
   const manifest = read('packaging/legacy/flatpak/com.snapetech.BookshelfNG.yml');
   const desktop = read('packaging/legacy/flatpak/com.snapetech.BookshelfNG.desktop');

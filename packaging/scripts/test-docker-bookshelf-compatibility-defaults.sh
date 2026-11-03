@@ -401,19 +401,27 @@ run_case 'ask mode without a terminal records deferral and does not start Chapta
   export CHAPTARR_COMPAT_DATA_DIR="$data_dir"
   export CHAPTARR_CONFIG_FILE="$data_dir/config.xml"
   export BOOKSHELFNG_MIGRATION_MODE=ask
-  if timeout --signal=TERM --kill-after=2 1 sh "$2" "$app" > "$1/ask.log" 2>&1; then
+  if timeout --signal=TERM --kill-after=2 5 sh "$2" "$app" > "$1/ask.log" 2>&1; then
     status=0
   else
     status=$?
   fi
   case "$status" in 124|143) ;; *) echo "unexpected supervisor exit status: $status" >&2; exit 1 ;; esac
   deferred="$data_dir/.chaptarrng-bookshelf-handoff/deferred"
-  test -f "$deferred"
+  if [[ ! -f "$deferred" ]]; then
+    echo "Headless migration supervisor did not write its deferral marker within five seconds (exit $status)." >&2
+    cat "$1/ask.log" >&2
+    exit 1
+  fi
   grep -Fxq manual-review "$deferred"
   test ! -e "$data_dir/.chaptarrng-bookshelf-handoff/pending"
   test ! -e "$data_dir/.chaptarrng-bookshelf-handoff/failed"
   test ! -e "$app_started"
-  grep -Fq "Interactive migration choice requested without a terminal. Deferring migration" "$1/ask.log"
+  if ! grep -Fq "Interactive migration choice requested without a terminal. Deferring migration" "$1/ask.log"; then
+    echo "Headless migration supervisor did not reach Ask mode within five seconds (exit $status)." >&2
+    cat "$1/ask.log" >&2
+    exit 1
+  fi
   grep -Fq "BookshelfNG migration is deferred" "$1/ask.log"
 ' _ "$test_root" "$repo_root/docker-bookshelf-compat-supervisor.sh"
 
