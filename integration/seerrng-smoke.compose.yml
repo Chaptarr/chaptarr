@@ -29,6 +29,23 @@ services:
         read_only: true
     command: ["python", "/fixture/prepare.py"]
 
+  metadata-mock:
+    image: node:24.22.1-bookworm-slim
+    command:
+      - node
+      - -e
+      - |
+        const http = require('node:http');
+        http.createServer((request, response) => {
+          const authorUnavailable = request.url.startsWith('/api/v5/author');
+          response.writeHead(200, {
+            'content-type': 'application/json',
+          });
+          response.end(JSON.stringify(authorUnavailable
+            ? { Author: null, Summary: null, Pagination: null, Books: [], Series: [] }
+            : {}));
+        }).listen(8765, '0.0.0.0');
+
   chaptarrng:
     image: chaptarrng-seerrng-smoke:local
     depends_on:
@@ -36,12 +53,16 @@ services:
         condition: service_completed_successfully
       prepare-bookshelf-source:
         condition: service_completed_successfully
+      metadata-mock:
+        condition: service_started
     build:
       context: ..
       dockerfile: Dockerfile.build
     environment:
       CHAPTARR__AUTH__APIKEY: ${CHAPTARR_GLOBAL_API_KEY:?Set CHAPTARR_GLOBAL_API_KEY}
       CHAPTARR__AUTH__SEERRAPIKEY: ${CHAPTARR_SEERR_API_KEY:?Set CHAPTARR_SEERR_API_KEY}
+      CHAPTARR__SERVER__PORT: "8789"
+      METADATA_URL: http://metadata-mock:8765
       HARDCOVER: "true"
       PUID: "99"
       PGID: "100"
@@ -82,3 +103,7 @@ services:
 volumes:
   chaptarrng-smoke-config:
   chaptarrng-smoke-books:
+
+networks:
+  default:
+    internal: true

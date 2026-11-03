@@ -2,7 +2,12 @@
 
 The SeerrNG smoke stack builds the ChaptarrNG candidate, seeds a disposable
 BookshelfNG migration-158 SQLite fixture, and starts ChaptarrNG on an isolated
-Compose network. Normal startup converts the source fixture. The smoke then
+Compose network. The app listens on port 8789 for the SeerrNG probe. The default
+network is internal, so the containers can reach each other but cannot contact
+public providers or other external services. Normal startup converts the
+source fixture. A local metadata stub returns an empty author payload for the
+synthetic author so the pending import lifecycle can run without the real
+metadata service. The smoke then
 checks both migrated formats through SeerrNG, capability discovery, the
 restricted service key, and a real SeerrNG adapter add/poll/cancel cycle for
 an unavailable synthetic author.
@@ -47,8 +52,11 @@ small fixture unchanged and adds a larger source for explicit migration
 rehearsals. It creates four authors, six works, nine editions, four empty
 placeholder files, alternate audiobook and ebook editions, a work with no
 editions, an unselected mixed-format work, history, series, a `Readarr` metadata
-sidecar, provider settings, and fake credentials. The media files are not
-decodable content, and the fixture never contacts those providers.
+sidecar, provider settings, and synthetic credentials. The media files are not
+decodable content. ChaptarrNG may attempt startup checks for migrated provider
+settings, but the internal Compose network blocks public egress during the
+application and SeerrNG checks. The SeerrNG pending-import probe uses a local
+metadata stub that marks only its synthetic author as unavailable.
 
 Create empty task-scoped directories, then run:
 

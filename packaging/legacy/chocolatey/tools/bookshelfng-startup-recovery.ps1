@@ -12,6 +12,22 @@ function Write-Manifest {
   Move-Item -LiteralPath $temporaryPath -Destination $ManifestPath -Force
 }
 
+function Get-BookshelfFileSha256 {
+  param([string] $LiteralPath)
+
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [IO.File]::OpenRead($LiteralPath)
+    try {
+      return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
 function Get-BookshelfJournalFingerprint {
   param([string] $Path)
 
@@ -34,7 +50,7 @@ function Get-BookshelfJournalFingerprint {
     if (($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
       throw "Migration fingerprint '$Path' changed to a symbolic link or reparse point."
     }
-    $hash = (Get-FileHash -LiteralPath $rootItem.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    $hash = Get-BookshelfFileSha256 -LiteralPath $rootItem.FullName
     $after = Get-Item -LiteralPath $rootItem.FullName -Force -ErrorAction Stop
     if (($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
         $after.Length -ne $before.Length -or
@@ -64,7 +80,7 @@ function Get-BookshelfJournalFingerprint {
     if (($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
       throw "Migration fingerprint '$Path' contains a symbolic link or reparse point."
     }
-    $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    $hash = Get-BookshelfFileSha256 -LiteralPath $filePath
     $after = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
     if (($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
         $after.Length -ne $before.Length -or

@@ -253,6 +253,7 @@ test('Helm fixture seeder can initialize the chart’s fresh root-owned PVC', ()
   assert.ok(seedPod, 'the installed handoff must define its populated BookshelfNG seed pod');
   assert.match(seedPod, /securityContext:[\s\S]*runAsUser: 0[\s\S]*runAsGroup: 0/);
   assert.doesNotMatch(seedPod, /fsGroup:/);
+  assert.match(installedHandoff, /kubectl describe pod bookshelfng-seed[\s\S]*fixture-seed-failed\.log/);
 });
 
 test('Docker headless Ask harness gives migration startup time and reports early exits', () => {
@@ -348,6 +349,16 @@ test('Chocolatey deferred service upgrades retain both NSSM environments and rec
     'the test resets its intentionally nonzero utility result before the PowerShell runner exits');
 });
 
+test('Chocolatey migration fingerprints do not depend on Get-FileHash module autoloading', () => {
+  const install = read('packaging/legacy/chocolatey/tools/chocolateyinstall.ps1.in');
+  const recovery = read('packaging/legacy/chocolatey/tools/bookshelfng-startup-recovery.ps1');
+
+  for (const script of [install, recovery]) {
+    assert.match(script, /function Get-BookshelfFileSha256[\s\S]*?\[Security\.Cryptography\.SHA256\]::Create\(\)/);
+    assert.doesNotMatch(script, /Get-FileHash/);
+  }
+});
+
 test('Windows standalone migration installer is opt-in and Close defers handoff', () => {
   const xaml = read('distribution/windows/installer-net/MainWindow.xaml');
   const code = read('distribution/windows/installer-net/MainWindow.xaml.cs');
@@ -401,6 +412,18 @@ test('catalog Compose handoff keeps the BookshelfNG container and named volumes'
     assert.match(sample, new RegExp(`^${key}=`, 'm'),
       `catalog .env.sample documents legacy ${key}`);
   }
+});
+
+test('SeerrNG migration smoke blocks external provider egress', () => {
+  const compose = read('integration/seerrng-smoke.compose.yml');
+  const readme = read('integration/README.md');
+
+  assert.match(compose, /metadata-mock:[\s\S]*request\.url\.startsWith\('\/api\/v5\/author'\)/);
+  assert.match(compose, /Author:\s*null/);
+  assert.match(compose, /METADATA_URL: http:\/\/metadata-mock:8765/);
+  assert.match(compose, /networks:\n\s+default:\n\s+internal: true/);
+  assert.match(compose, /CHAPTARR__SERVER__PORT:\s+"8789"/);
+  assert.match(readme, /network is internal, so the containers can reach each other but cannot contact\n+public providers or other external services/);
 });
 
 test('Co-op Cloud handoff keeps stack volumes and uses the standard ChaptarrNG image', () => {

@@ -426,6 +426,22 @@ function Write-BookshelfHandoffManifest {
   if ($LASTEXITCODE -ne 0) { throw 'Could not protect the Windows migration recovery record.' }
 }
 
+function Get-BookshelfFileSha256 {
+  param([string] $LiteralPath)
+
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [IO.File]::OpenRead($LiteralPath)
+    try {
+      return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
 function Get-BookshelfJournalFingerprint {
   param([string] $Path)
 
@@ -448,7 +464,7 @@ function Get-BookshelfJournalFingerprint {
     if (($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
       throw "Migration fingerprint '$Path' changed to a symbolic link or reparse point."
     }
-    $hash = (Get-FileHash -LiteralPath $rootItem.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    $hash = Get-BookshelfFileSha256 -LiteralPath $rootItem.FullName
     $after = Get-Item -LiteralPath $rootItem.FullName -Force -ErrorAction Stop
     if (($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
         $after.Length -ne $before.Length -or
@@ -478,7 +494,7 @@ function Get-BookshelfJournalFingerprint {
     if (($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
       throw "Migration fingerprint '$Path' contains a symbolic link or reparse point."
     }
-    $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    $hash = Get-BookshelfFileSha256 -LiteralPath $filePath
     $after = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
     if (($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
         $after.Length -ne $before.Length -or
@@ -865,7 +881,7 @@ try {
     if (-not (Test-Path -LiteralPath $testArchivePath -PathType Leaf)) {
       throw 'The private Windows acceptance archive path does not identify a file.'
     }
-    $testArchiveHash = (Get-FileHash -LiteralPath $testArchivePath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    $testArchiveHash = Get-BookshelfFileSha256 -LiteralPath $testArchivePath
     if ($testArchiveHash -ne '__ARCHIVE_SHA256__') {
       throw 'The private Windows acceptance archive checksum does not match this package candidate.'
     }

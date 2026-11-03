@@ -286,6 +286,13 @@ spec:
       command: ["/bin/sh", "-ec"]
       args:
         - |
+          printf 'Seed identity: '
+          id
+          stat -c 'config mount: mode=%a owner=%u:%g type=%F' /config
+          grep ' /config ' /proc/mounts || true
+          test -w /config
+          : > /config/.bookshelfng-seed-write-check
+          rm -f /config/.bookshelfng-seed-write-check
           sqlite3 /config/readarr.db < /fixture/schema.sql
           sqlite3 /config/readarr.db < /fixture/populated.sql
           printf '%s\\n' '<?xml version="1.0" encoding="utf-8"?><Config><BindAddress>0.0.0.0</BindAddress><Port>8787</Port><EnableSsl>False</EnableSsl><UrlBase></UrlBase><LaunchBrowser>False</LaunchBrowser></Config>' > /config/config.xml
@@ -311,7 +318,15 @@ spec:
         name: bookshelfng-schema-fixture
 YAML
 kubectl apply -f "$EVIDENCE_DIR/seed-pod.yaml"
-kubectl wait --for=condition=Succeeded pod/bookshelfng-seed -n "$NAMESPACE" --timeout=5m
+if ! kubectl wait --for=condition=Succeeded pod/bookshelfng-seed -n "$NAMESPACE" --timeout=5m; then
+    kubectl describe pod bookshelfng-seed -n "$NAMESPACE" 2>&1 \
+        | tee "$EVIDENCE_DIR/seed-pod-describe.txt" || true
+    kubectl get pod bookshelfng-seed -n "$NAMESPACE" -o yaml \
+        > "$EVIDENCE_DIR/seed-pod-status.yaml" 2>&1 || true
+    kubectl logs pod/bookshelfng-seed -n "$NAMESPACE" --all-containers=true 2>&1 \
+        | tee "$EVIDENCE_DIR/fixture-seed-failed.log" || true
+    exit 1
+fi
 kubectl logs -n "$NAMESPACE" pod/bookshelfng-seed | tee "$EVIDENCE_DIR/fixture-seed.log"
 kubectl delete pod bookshelfng-seed -n "$NAMESPACE" --wait=true
 SOURCE_PVC_UID="$(kubectl get pvc bookshelfng-config -n "$NAMESPACE" -o jsonpath='{.metadata.uid}')"
