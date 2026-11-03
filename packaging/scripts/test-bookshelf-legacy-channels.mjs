@@ -543,6 +543,8 @@ test('Windows release uses private Packer and verifies the BookshelfNG handoff a
   assert.match(legacyInstaller, /CHAPTARRNG_TEST_ARCHIVE_PATH/);
   assert.match(buildWorkflow, /windows_chocolatey_only:[\s\S]*?type: boolean[\s\S]*?default: false/);
   assert.match(build, /inputs\.windows_chocolatey_only[\s\S]*?fromJSON\('\["windows-x64"\]'\)/);
+  assert.match(build, /name: Check translation calls and locale catalogs\n      if: inputs\.windows_chocolatey_only != true/);
+  assert.match(build, /name: Test locale formatting and RTL CSS\n      if: inputs\.windows_chocolatey_only != true/);
   assert.match(buildWorkflow, /postgres-migrations:[\s\S]*?inputs\.windows_chocolatey_only/);
   assert.match(buildWorkflow, /docker-image-build:[\s\S]*?inputs\.windows_chocolatey_only/);
   assert.match(buildWorkflow, /rpm_bridge_only:[\s\S]*?type: boolean[\s\S]*?default: false/);

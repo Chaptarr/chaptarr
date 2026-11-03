@@ -387,9 +387,11 @@ jobs:
       run: yarn install --frozen-lockfile --network-timeout 120000
 
     - name: Check translation calls and locale catalogs
+      if: inputs.windows_chocolatey_only != true
       run: yarn check-translations && yarn check-localization
 
     - name: Test locale formatting and RTL CSS
+      if: inputs.windows_chocolatey_only != true
       run: yarn test-localization
 
     - name: Verify bundled asset URLs remain same-origin
