@@ -148,14 +148,15 @@ assert_source_file_hashes() {
 }
 
 install_legacy() {
+    # The zero-replica bootstrap intentionally leaves a WaitForFirstConsumer
+    # claim pending until the fixture seed pod mounts it below.
     helm upgrade --install "$RELEASE_NAME" "$REFERENCE_CHART" \
         --namespace "$NAMESPACE" --create-namespace \
         --set replicaCount=0 \
         --set-string "image.repository=$LEGACY_IMAGE_REPOSITORY" \
         --set-string image.tag=hardcover-v0.4.21.76 \
         --set-string image.digest="$LEGACY_IMAGE_DIGEST" \
-        --set image.pullPolicy=IfNotPresent \
-        --wait --timeout 10m
+        --set image.pullPolicy=IfNotPresent
 }
 
 upgrade_candidate() {

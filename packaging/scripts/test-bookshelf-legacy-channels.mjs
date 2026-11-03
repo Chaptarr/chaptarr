@@ -238,6 +238,15 @@ test('Helm installed handoff extracts Buildx digests from both Docker push forma
   }
 });
 
+test('Helm .76 zero-replica bootstrap lets its delayed-binding claim reach the seed pod', () => {
+  const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
+  const installLegacy = installedHandoff.match(/install_legacy\(\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(installLegacy, 'the pinned BookshelfNG bootstrap install must remain explicit');
+  assert.match(installLegacy, /--set replicaCount=0/);
+  assert.doesNotMatch(installLegacy, /--wait/);
+  assert.match(installedHandoff, /kubectl apply -f "\$EVIDENCE_DIR\/seed-pod\.yaml"[\s\S]*?kubectl wait --for=condition=Succeeded pod\/bookshelfng-seed/);
+});
+
 test('Flatpak keeps the installed app ID and BookshelfNG sandbox data directory', () => {
   const manifest = read('packaging/legacy/flatpak/com.snapetech.BookshelfNG.yml');
   const desktop = read('packaging/legacy/flatpak/com.snapetech.BookshelfNG.desktop');
