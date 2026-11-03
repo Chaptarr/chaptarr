@@ -297,11 +297,11 @@ spec:
           sqlite3 /config/readarr.db < /fixture/populated.sql
           printf '%s\\n' '<?xml version="1.0" encoding="utf-8"?><Config><BindAddress>0.0.0.0</BindAddress><Port>8787</Port><EnableSsl>False</EnableSsl><UrlBase></UrlBase><LaunchBrowser>False</LaunchBrowser></Config>' > /config/config.xml
           printf '%s\\n' 'helm-handoff-canary=preserve-me' > /config/channel-test-canary.txt
-          test "$(sqlite3 -readonly /config/readarr.db 'PRAGMA integrity_check;')" = ok
-          test "$(sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 158
-          test "$(sqlite3 -readonly /config/readarr.db 'SELECT COUNT(*) > 0 FROM Authors;')" = 1
-          test "$(sqlite3 -readonly /config/readarr.db 'SELECT COUNT(*) > 0 FROM Books;')" = 1
-          test "$(sqlite3 -readonly /config/readarr.db 'SELECT COUNT(*) > 0 FROM Editions;')" = 1
+          test "\$(sqlite3 -readonly /config/readarr.db 'PRAGMA integrity_check;')" = ok
+          test "\$(sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 158
+          test "\$(sqlite3 -readonly /config/readarr.db 'SELECT COUNT(*) > 0 FROM Authors;')" = 1
+          test "\$(sqlite3 -readonly /config/readarr.db 'SELECT COUNT(*) > 0 FROM Books;')" = 1
+          test "\$(sqlite3 -readonly /config/readarr.db 'SELECT COUNT(*) > 0 FROM Editions;')" = 1
           echo 'Populated BookshelfNG schema 158 fixture seeded with config and canary.'
       volumeMounts:
         - name: config

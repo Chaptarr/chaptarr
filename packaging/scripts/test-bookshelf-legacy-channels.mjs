@@ -253,6 +253,10 @@ test('Helm fixture seeder can initialize the chart’s fresh root-owned PVC', ()
   assert.ok(seedPod, 'the installed handoff must define its populated BookshelfNG seed pod');
   assert.match(seedPod, /securityContext:[\s\S]*runAsUser: 0[\s\S]*runAsGroup: 0/);
   assert.doesNotMatch(seedPod, /fsGroup:/);
+  assert.ok(
+    seedPod.includes(String.raw`test "\$(sqlite3 -readonly /config/readarr.db 'PRAGMA integrity_check;')" = ok`),
+    'seed database checks must expand inside the pod, after the unquoted YAML heredoc is evaluated'
+  );
   assert.match(installedHandoff, /kubectl describe pod bookshelfng-seed[\s\S]*fixture-seed-failed\.log/);
 });
 
