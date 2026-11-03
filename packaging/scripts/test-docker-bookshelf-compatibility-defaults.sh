@@ -29,6 +29,10 @@ run_case() {
   local name="$1"
   shift
   if ! ( "$@" ); then
+    if [[ "$name" == 'ask mode without a terminal records deferral and does not start ChaptarrNG' && -f "$test_root/ask.log" ]]; then
+      printf 'Headless Ask-mode supervisor log:\n' >&2
+      cat "$test_root/ask.log" >&2
+    fi
     printf 'Failed Docker compatibility defaults case: %s\n' "$name" >&2
     exit 1
   fi
