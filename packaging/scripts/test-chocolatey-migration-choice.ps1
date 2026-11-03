@@ -28,6 +28,15 @@ if (-not $utilityFunction) {
   throw 'Could not find Invoke-BookshelfUtility in the Chocolatey install template.'
 }
 . ([scriptblock]::Create($utilityFunction.Extent.Text))
+$fileHashFunction = $installAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+      $node.Name -eq 'Get-BookshelfFileSha256'
+  }, $true)
+if (-not $fileHashFunction) {
+  throw 'Could not find Get-BookshelfFileSha256 in the Chocolatey install template.'
+}
+. ([scriptblock]::Create($fileHashFunction.Extent.Text))
 $journalFingerprintFunction = $installAst.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
