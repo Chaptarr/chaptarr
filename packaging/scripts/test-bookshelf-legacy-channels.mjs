@@ -583,6 +583,8 @@ test('Windows release uses private Packer and verifies the BookshelfNG handoff a
   assert.match(channelContracts, /gha-\{0\}-channel-contracts/);
   assert.match(channelContracts, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(channelContracts, /node --test packaging\/scripts\/test-bookshelf-legacy-channels\.mjs/);
+  assert.match(channelContracts, /Test Docker BookshelfNG migration supervisor and single image[\s\S]*?TASK_SCRATCH_DIR: \$\{\{ runner\.temp \}\}\/chaptarrng-docker-compatibility-[\s\S]*?test-docker-bookshelf-compatibility-defaults\.sh/);
+  assert.match(channelContracts, /Upload Docker compatibility failure evidence[\s\S]*?if: failure\(\)[\s\S]*?actions\/upload-artifact@/);
   assert.match(build, /Test Chocolatey BookshelfNG \.76 to exact candidate handoff[\s\S]*?github\.event_name == 'workflow_dispatch'[\s\S]*?test-chocolatey-bookshelfng-handoff\.ps1/);
 });
 

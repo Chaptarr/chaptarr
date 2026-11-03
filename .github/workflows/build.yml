@@ -713,6 +713,20 @@ jobs:
     - name: Test workflow runner policy
       run: python3 scripts/test_workflow_runner_policy.py
 
+    - name: Test Docker BookshelfNG migration supervisor and single image
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-docker-compatibility-${{ github.run_id }}-${{ github.run_attempt }}
+      run: bash packaging/scripts/test-docker-bookshelf-compatibility-defaults.sh
+
+    - name: Upload Docker compatibility failure evidence
+      if: failure()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: chaptarrng-docker-compatibility-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/chaptarrng-docker-compatibility-${{ github.run_id }}-${{ github.run_attempt }}
+        if-no-files-found: ignore
+        retention-days: 7
+
   postgres-migrations:
     if: >-
       (
