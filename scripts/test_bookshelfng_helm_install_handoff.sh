@@ -367,11 +367,11 @@ spec:
       args:
         - |
           sqlite3 -readonly /config/readarr.db 'PRAGMA integrity_check;' | grep -Fx ok
-          test "$(sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 158
+          test "\$(sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 158
           sqlite3 -readonly /config/readarr.db .dump > /tmp/readarr-source.sql
-          printf 'SOURCE_SQL_DUMP_SHA256=%s\\n' "$(sha256sum /tmp/readarr-source.sql | cut -d' ' -f1)"
-          printf 'CONFIG_SHA256=%s\\n' "$(sha256sum /config/config.xml | cut -d' ' -f1)"
-          printf 'CANARY_SHA256=%s\\n' "$(sha256sum /config/channel-test-canary.txt | cut -d' ' -f1)"
+          printf 'SOURCE_SQL_DUMP_SHA256=%s\\n' "\$(sha256sum /tmp/readarr-source.sql | cut -d' ' -f1)"
+          printf 'CONFIG_SHA256=%s\\n' "\$(sha256sum /config/config.xml | cut -d' ' -f1)"
+          printf 'CANARY_SHA256=%s\\n' "\$(sha256sum /config/channel-test-canary.txt | cut -d' ' -f1)"
           grep -Fx 'helm-handoff-canary=preserve-me' /config/channel-test-canary.txt
       volumeMounts:
         - name: config

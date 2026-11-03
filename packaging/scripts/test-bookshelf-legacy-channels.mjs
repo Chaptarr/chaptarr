@@ -267,6 +267,11 @@ test('Helm handoff fingerprints the restored legacy claim with root access and c
   assert.match(snapshotPod, /securityContext:[\s\S]*runAsUser: 0[\s\S]*runAsGroup: 0/);
   assert.doesNotMatch(snapshotPod, /fsGroup:/);
   assert.match(installedHandoff, /kubectl describe pod bookshelfng-snapshot[\s\S]*snapshot-pod-failed\.log/);
+  assert.equal(
+    (snapshotPod.match(/\\\$\(/g) ?? []).length,
+    4,
+    'snapshot SQLite and fingerprint substitutions must expand in the pod, after the unquoted YAML heredoc is evaluated'
+  );
 });
 
 test('Docker headless Ask harness gives migration startup time and reports early exits', () => {
