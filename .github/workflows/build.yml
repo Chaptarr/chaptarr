@@ -58,7 +58,7 @@ on:
         type: boolean
         default: false
       channel_contracts_only:
-        description: Run only the private-JIT legacy distribution contract suite
+        description: Run only the legacy distribution and runner contract suite
         required: false
         type: boolean
         default: false

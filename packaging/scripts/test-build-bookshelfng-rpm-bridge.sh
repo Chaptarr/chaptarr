@@ -67,12 +67,12 @@ tar -czf "$task_root/ChaptarrNG-$candidate_version-linux-x64.tar.gz" \
   -C "$task_root/payload" ChaptarrNG
 
 if ! command -v docker >/dev/null 2>&1; then
-  printf '%s\n' 'Docker CLI is missing from the private JIT guest.' > "$task_root/evidence/docker-preflight.log"
-  echo 'RPM bridge package test requires the Docker CLI on the private JIT guest.' >&2
+  printf '%s\n' 'Docker CLI is missing from the runner.' > "$task_root/evidence/docker-preflight.log"
+  echo 'RPM bridge package test requires the Docker CLI on the runner.' >&2
   exit 127
 fi
 if ! docker version --format '{{.Server.Version}}' > "$task_root/evidence/docker-preflight.log" 2>&1; then
-  echo 'Docker CLI is present, but its daemon is unavailable to the private JIT guest.' >&2
+  echo 'Docker CLI is present, but its daemon is unavailable to the runner.' >&2
   exit 1
 fi
 

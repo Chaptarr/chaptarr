@@ -572,7 +572,7 @@ test('Windows release uses private Packer and verifies the BookshelfNG handoff a
   assert.match(rpmAcceptance, /test-build-bookshelfng-rpm-bridge\.sh/);
   assert.match(rpmAcceptance, /name: Upload Fedora 44 RPM migration evidence[\s\S]*?if: always\(\)[\s\S]*?actions\/upload-artifact@/);
   const rpmHarness = read('packaging/scripts/test-build-bookshelfng-rpm-bridge.sh');
-  assert.match(rpmHarness, /Docker CLI is missing from the private JIT guest/);
+  assert.match(rpmHarness, /Docker CLI is missing from the runner/);
   assert.match(rpmHarness, /docker version --format/);
   assert.match(rpmHarness, /RPM bridge package transaction passed; evidence kept/);
   assert.match(buildWorkflow, /channel_contracts_only:[\s\S]*?type: boolean[\s\S]*?default: false/);
