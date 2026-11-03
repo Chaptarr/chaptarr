@@ -212,6 +212,8 @@ test('Helm handoff workflow supports hosted and private runners for its pinned R
   assert.match(workflow, /RUNNER_POOL: \$\{\{ inputs\.runner_pool \}\}/);
   assert.match(installedHandoff, /if \[\[ "\$RUNNER_POOL" == "public" \]\][\s\S]*?unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy/);
   assert.match(installedHandoff, /elif \[\[ "\$RUNNER_POOL" == "private" && "\$BUILDKIT_EGRESS_PROXY" == "http:\/\/10\.0\.2\.100:3128" \]\]/);
+  assert.match(installedHandoff, /--target chaptarrng-standard/);
+  assert.doesNotMatch(installedHandoff, /--target bookshelf-(?:softcover|hardcover)/);
   assert.match(workflow, /Prepare writable Ruby tool cache[\s\S]*?sudo install -d .*\/opt\/hostedtoolcache[\s\S]*?test -w \/opt\/hostedtoolcache[\s\S]*?ruby\/setup-ruby@824c0e29fdfc7d689c191c27acc969d2d04b7dd8/);
   assert.match(workflow, /ruby-version: "3\.4"/);
   assert.match(workflow, /BOOKSHELFNG_REFERENCE_CHART: \$\{\{ github\.workspace \}\}\/bookshelfng-reference\/charts\/bookshelfng/);

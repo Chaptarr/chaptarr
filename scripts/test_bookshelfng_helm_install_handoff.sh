@@ -242,7 +242,7 @@ YAML
 
 candidate_tag="candidate-${GITHUB_SHA:-local}"
 candidate_tagged_image="localhost:${REGISTRY_PORT}/chaptarrng:${candidate_tag}"
-log "Building ChaptarrNG at ${GITHUB_SHA:-local} as the pinned Hardcover compatibility image"
+log "Building ChaptarrNG at ${GITHUB_SHA:-local} as the standard image; the chart selects Hardcover mode"
 docker build --platform linux/amd64 --file "$ROOT/Dockerfile.cross" \
     --build-arg "HTTP_PROXY=${BUILDKIT_EGRESS_PROXY}" \
     --build-arg "HTTPS_PROXY=${BUILDKIT_EGRESS_PROXY}" \
@@ -250,7 +250,7 @@ docker build --platform linux/amd64 --file "$ROOT/Dockerfile.cross" \
     --build-arg "https_proxy=${BUILDKIT_EGRESS_PROXY}" \
     --build-arg NO_PROXY=localhost,127.0.0.1 \
     --build-arg no_proxy=localhost,127.0.0.1 \
-    --target bookshelf-hardcover --tag "$candidate_tagged_image" "$ROOT"
+    --target chaptarrng-standard --tag "$candidate_tagged_image" "$ROOT"
 docker push "$candidate_tagged_image" 2>&1 | tee "$EVIDENCE_DIR/docker-push.log"
 CANDIDATE_DIGEST="$(awk '$1 == "digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ { print $2 }' \
     "$EVIDENCE_DIR/docker-push.log" | tail -n 1)"
