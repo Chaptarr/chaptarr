@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -219,6 +220,22 @@ test('Helm handoff workflow supports hosted and private runners for its pinned R
   assert.match(workflow, /BOOKSHELFNG_REFERENCE_CHART: \$\{\{ github\.workspace \}\}\/bookshelfng-reference\/charts\/bookshelfng/);
   assert.match(workflow, /run: ruby scripts\/test_bookshelfng_helm_handoff\.rb/);
   assert.doesNotMatch(workflow, /docker run|ruby:3\.4-bookworm/);
+});
+
+test('Helm installed handoff extracts Buildx digests from both Docker push formats', () => {
+  const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
+  const awkProgram = installedHandoff.match(/awk '([^']+)' \\\n    "\$EVIDENCE_DIR\/docker-push\.log"/)?.[1];
+  assert.ok(awkProgram, 'the installed handoff must retain its Docker push digest parser');
+
+  const digest = `sha256:${'a'.repeat(64)}`;
+  for (const pushOutput of [
+    `digest: ${digest}`,
+    `candidate-f46bd718: digest: ${digest} size: 6187`,
+  ]) {
+    const result = spawnSync('awk', [awkProgram], { input: `${pushOutput}\n`, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), digest);
+  }
 });
 
 test('Flatpak keeps the installed app ID and BookshelfNG sandbox data directory', () => {

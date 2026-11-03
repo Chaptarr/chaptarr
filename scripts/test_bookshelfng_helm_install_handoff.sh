@@ -252,7 +252,7 @@ docker build --platform linux/amd64 --file "$ROOT/Dockerfile.cross" \
     --build-arg no_proxy=localhost,127.0.0.1 \
     --target chaptarrng-standard --tag "$candidate_tagged_image" "$ROOT"
 docker push "$candidate_tagged_image" 2>&1 | tee "$EVIDENCE_DIR/docker-push.log"
-CANDIDATE_DIGEST="$(awk '$1 == "digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ { print $2 }' \
+CANDIDATE_DIGEST="$(awk '$1 == "digest:" { digest=$2 } $2 == "digest:" { digest=$3 } END { print digest }' \
     "$EVIDENCE_DIR/docker-push.log" | tail -n 1)"
 [[ "$CANDIDATE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
 CANDIDATE_IMAGE="localhost:${REGISTRY_PORT}/chaptarrng@${CANDIDATE_DIGEST}"
