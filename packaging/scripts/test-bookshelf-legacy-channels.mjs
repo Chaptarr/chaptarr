@@ -260,6 +260,15 @@ test('Helm fixture seeder can initialize the chart’s fresh root-owned PVC', ()
   assert.match(installedHandoff, /kubectl describe pod bookshelfng-seed[\s\S]*fixture-seed-failed\.log/);
 });
 
+test('Helm handoff fingerprints the restored legacy claim with root access and captures pod diagnostics', () => {
+  const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
+  const snapshotPod = installedHandoff.match(/cat > "\$EVIDENCE_DIR\/snapshot-pod\.yaml" <<YAML\n([\s\S]*?)\nYAML/)?.[1];
+  assert.ok(snapshotPod, 'the installed handoff must define its stopped-source snapshot pod');
+  assert.match(snapshotPod, /securityContext:[\s\S]*runAsUser: 0[\s\S]*runAsGroup: 0/);
+  assert.doesNotMatch(snapshotPod, /fsGroup:/);
+  assert.match(installedHandoff, /kubectl describe pod bookshelfng-snapshot[\s\S]*snapshot-pod-failed\.log/);
+});
+
 test('Docker headless Ask harness gives migration startup time and reports early exits', () => {
   const dockerCompatibility = read('packaging/scripts/test-docker-bookshelf-compatibility-defaults.sh');
   assert.match(dockerCompatibility, /timeout --signal=TERM --kill-after=2 5 sh/);
@@ -360,6 +369,18 @@ test('Chocolatey migration fingerprints do not depend on Get-FileHash module aut
   for (const script of [install, recovery]) {
     assert.match(script, /function Get-BookshelfFileSha256[\s\S]*?\[Security\.Cryptography\.SHA256\]::Create\(\)/);
     assert.doesNotMatch(script, /Get-FileHash/);
+  }
+});
+
+test('Chocolatey installed handoff passes private rollback inputs to nested scripts and restores machine state', () => {
+  const installedHandoff = read('packaging/scripts/test-chocolatey-bookshelfng-handoff.ps1');
+  for (const name of [
+    'CHAPTARRNG_TEST_ARCHIVE_PATH',
+    'CHAPTARRNG_TEST_FAIL_HANDOFF',
+    'CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS',
+  ]) {
+    assert.match(installedHandoff, new RegExp(`GetEnvironmentVariable\\('${name}', 'Machine'\\)`));
+    assert.match(installedHandoff, new RegExp(`SetEnvironmentVariable\\('${name}',[\\s\\S]*?'Machine'\\)`));
   }
 });
 

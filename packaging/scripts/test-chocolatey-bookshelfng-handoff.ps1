@@ -304,9 +304,20 @@ try {
   $env:CHAPTARRNG_TEST_ARCHIVE_PATH = $ArchivePath
   $env:CHAPTARRNG_TEST_FAIL_HANDOFF = 'after-migration-health'
   $env:CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS = '600'
+  $previousMachineArchivePath = [Environment]::GetEnvironmentVariable('CHAPTARRNG_TEST_ARCHIVE_PATH', 'Machine')
+  $previousMachineHandoffFailure = [Environment]::GetEnvironmentVariable('CHAPTARRNG_TEST_FAIL_HANDOFF', 'Machine')
+  $previousMachineHandoffTimeout = [Environment]::GetEnvironmentVariable('CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS', 'Machine')
   try {
+    # Chocolatey can run package scripts in a nested PowerShell process. Make
+    # the disposable acceptance inputs visible there, then restore machine state.
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_ARCHIVE_PATH', $ArchivePath, 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_FAIL_HANDOFF', 'after-migration-health', 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS', '600', 'Machine')
     $rollbackResult = Invoke-Chocolatey @('upgrade', 'bookshelfng', '--version', $Version, '--source', $candidateSource, '--yes', '--no-progress', '--force', '--params', "'/ProviderMode=Goodreads'")
   } finally {
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_ARCHIVE_PATH', $previousMachineArchivePath, 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_FAIL_HANDOFF', $previousMachineHandoffFailure, 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS', $previousMachineHandoffTimeout, 'Machine')
     Remove-Item Env:\CHAPTARRNG_TEST_ARCHIVE_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:\CHAPTARRNG_TEST_FAIL_HANDOFF -ErrorAction SilentlyContinue
     Remove-Item Env:\CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS -ErrorAction SilentlyContinue

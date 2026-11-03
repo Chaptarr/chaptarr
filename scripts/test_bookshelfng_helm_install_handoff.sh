@@ -355,9 +355,10 @@ metadata:
 spec:
   restartPolicy: Never
   securityContext:
-    runAsUser: 10001
-    runAsGroup: 10001
-    fsGroup: 10001
+    # BookshelfNG owns the installed claim using its configured Linux user;
+    # inspect the stopped source as root without changing its ownership.
+    runAsUser: 0
+    runAsGroup: 0
   containers:
     - name: snapshot
       image: ${CANDIDATE_IMAGE}
@@ -381,7 +382,15 @@ spec:
         claimName: bookshelfng-config
 YAML
 kubectl apply -f "$EVIDENCE_DIR/snapshot-pod.yaml"
-kubectl wait --for=condition=Succeeded pod/bookshelfng-snapshot -n "$NAMESPACE" --timeout=5m
+if ! kubectl wait --for=condition=Succeeded pod/bookshelfng-snapshot -n "$NAMESPACE" --timeout=5m; then
+    kubectl describe pod bookshelfng-snapshot -n "$NAMESPACE" 2>&1 \
+        | tee "$EVIDENCE_DIR/snapshot-pod-describe.txt" || true
+    kubectl get pod bookshelfng-snapshot -n "$NAMESPACE" -o yaml \
+        > "$EVIDENCE_DIR/snapshot-pod-status.yaml" 2>&1 || true
+    kubectl logs pod/bookshelfng-snapshot -n "$NAMESPACE" --all-containers=true 2>&1 \
+        | tee "$EVIDENCE_DIR/snapshot-pod-failed.log" || true
+    exit 1
+fi
 snapshot_output="$(kubectl logs -n "$NAMESPACE" pod/bookshelfng-snapshot)"
 printf '%s\n' "$snapshot_output" | tee "$EVIDENCE_DIR/source-before-handoff.txt"
 SOURCE_SQL_DUMP_SHA256="$(sed -n 's/^SOURCE_SQL_DUMP_SHA256=//p' <<< "$snapshot_output")"
