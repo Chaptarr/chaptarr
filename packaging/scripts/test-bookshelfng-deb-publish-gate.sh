@@ -31,8 +31,17 @@ fi
 for workflow in "$repo_root/.github/workflows/build.yml" \
   "$repo_root/.github/workflows/docker-publish.yml" \
   "$release_workflow" "$repo_root/.github/workflows/release-distribution.yml"; do
-  if grep -Fq 'sudo apt-get' "$workflow"; then
-    echo "Private JIT workflow dependencies must be installed by the broker: $workflow" >&2
+  if [[ "$workflow" == "$repo_root/.github/workflows/build.yml" ]]; then
+    if grep -Fq 'sudo apt-get' "$workflow" && {
+      ! grep -Fq 'RUNNER_POOL: ${{ inputs.runner_pool }}' "$workflow" ||
+      ! grep -Fq 'if [[ "$RUNNER_POOL" == "public" ]]' "$workflow" ||
+      ! grep -Fq "inputs.runner_pool == 'public'" "$workflow"
+    }; then
+      echo 'Hosted PostgreSQL client installation must be restricted to the explicit public runner pool.' >&2
+      exit 1
+    fi
+  elif grep -Fq 'sudo apt-get' "$workflow"; then
+    echo "Private JIT release dependencies must be installed by the broker: $workflow" >&2
     exit 1
   fi
 done
