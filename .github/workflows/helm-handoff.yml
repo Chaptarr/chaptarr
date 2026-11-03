@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-required-v1
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
 name: BookshelfNG Helm handoff
 run-name: ${{ format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) }}
 
@@ -6,16 +6,18 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: Admit this workflow to the private JIT broker
+        description: Run trusted BookshelfNG handoff acceptance
         required: true
         type: choice
         options:
           - ci
       runner_pool:
-        description: Select the private ephemeral JIT pool
+        description: Select compatible GitHub-hosted or private JIT runners
         required: true
         type: choice
+        default: public
         options:
+          - public
           - private
 permissions:
   contents: read
@@ -29,17 +31,17 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'ci' &&
-          inputs.runner_pool == 'private'
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-helm-handoff"]}}', github.run_id)) }}
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-helm-handoff"]}}', github.run_id)) }}
     timeout-minutes: 120
     env:
       BOOKSHELFNG_CHART_SOURCE_SHA: adea130aeea2b6ea29c28a6ea8bf4706169d15e4
-      BUILDKIT_EGRESS_PROXY: ${{ github.ref == 'refs/heads/main' && 'http://10.0.2.100:3128' || '' }}
+      BUILDKIT_EGRESS_PROXY: ${{ inputs.runner_pool == 'private' && github.ref == 'refs/heads/main' && 'http://10.0.2.100:3128' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 

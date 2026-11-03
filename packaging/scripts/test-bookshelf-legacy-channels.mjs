@@ -183,11 +183,14 @@ test('macOS and FreeBSD standalone archives include the optional, recoverable Bo
     'standalone acceptance cleanup closes the controlling PTY so macOS can deliver hangup to its shell');
 });
 
-test('macOS installed handoff acceptance is manually dispatched and publication-free', () => {
+test('macOS installed handoff acceptance supports hosted and private runners without publication', () => {
   const workflow = read('.github/workflows/bookshelfng-standalone-macos-acceptance.yml');
 
   assert.match(workflow, /^  workflow_dispatch:$/m);
+  assert.match(workflow, /default: public[\s\S]*?options: \[public, private\]/);
   assert.match(workflow, /rid: osx-x64[\s\S]*?architecture: X64[\s\S]*?rid: osx-arm64[\s\S]*?architecture: ARM64/);
+  assert.match(workflow, /'macos-15-intel'/);
+  assert.match(workflow, /'macos-15'/);
   assert.match(workflow, /"group":"private-apple-builds","labels":\["self-hosted","macOS","X64","private-apple"/);
   assert.match(workflow, /"group":"private-apple-builds","labels":\["self-hosted","macOS","ARM64","private-apple"/);
   assert.match(workflow, /build-standalone\.sh "\$version" "\$\{\{ matrix\.rid \}\}"/);
@@ -199,9 +202,12 @@ test('macOS installed handoff acceptance is manually dispatched and publication-
   assert.doesNotMatch(workflow, /upload-artifact|gh release (create|upload)|docker push/);
 });
 
-test('Helm handoff workflow runs its pinned Ruby contract on private JIT without requiring Docker', () => {
+test('Helm handoff workflow supports hosted and private runners for its pinned Ruby contract', () => {
   const workflow = read('.github/workflows/helm-handoff.yml');
 
+  assert.match(workflow, /default: public[\s\S]*?options:[\s\S]*?- public[\s\S]*?- private/);
+  assert.match(workflow, /'ubuntu-24\.04'/);
+  assert.match(workflow, /"group":"ng-shared-main-jit"/);
   assert.match(workflow, /Prepare writable Ruby tool cache[\s\S]*?sudo install -d .*\/opt\/hostedtoolcache[\s\S]*?test -w \/opt\/hostedtoolcache[\s\S]*?ruby\/setup-ruby@824c0e29fdfc7d689c191c27acc969d2d04b7dd8/);
   assert.match(workflow, /ruby-version: "3\.4"/);
   assert.match(workflow, /BOOKSHELFNG_REFERENCE_CHART: \$\{\{ github\.workspace \}\}\/bookshelfng-reference\/charts\/bookshelfng/);

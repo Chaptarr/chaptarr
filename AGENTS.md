@@ -1,21 +1,20 @@
-## Runner policy — owner directive, 2026-10-26
+## Runner policy — owner directive, 2026-11-03
 
-All repositories and all GitHub Actions build, test, scan, packaging and release
-jobs must use compatible private ephemeral JIT runners. GitHub-hosted runners
-and automatic hosted fallback are not authorized. This directive supersedes
-older hosted-first, pilot-only, selected-jobs-only and permission-pending notes.
-Do not restore `NG_HOSTED_FIRST`, a hosted literal, or a hosted matrix fallback.
-Missing capacity is a provisioning blocker, never permission to spend hosted
-minutes. Preserve OS and architecture requirements. Keep untrusted pull-request
-code on an isolated disposable runner with no secrets; do not widen trusted
-runner-group access to make it run. Preserve active builds and other agents'
-work. Do not restart the broker while it owns running guests. Validate a new
-workflow revision on private JIT; rerunning an old run uses its old revision.
+Public GitHub-hosted runner minutes are available again. Compatible
+GitHub-hosted runners are authorized for trusted build, test, scan, packaging,
+and release jobs; private ephemeral JIT remains available but is no longer
+mandatory. Choose the runner OS and architecture to match each job. Use an
+explicit route when a workflow offers both pools; do not add a silent fallback.
 
-The shared policy and exact workflow inventory live in
-`snapetech-org/packer/scripts/shared-jit-runner-pool/`. Source routing, deployed
-broker policy, runner-group access and live platform capacity must all agree.
-Do not report the rollout complete from YAML changes alone.
+Keep untrusted pull-request code on an isolated disposable VM-backed runner
+with no secrets, minimal read access, and restricted egress. Do not widen
+trusted runner-group access to admit untrusted code. Preserve active builds and
+other agents' work. Do not restart the broker while it owns running guests.
+
+Runner choice does not satisfy release readiness. Keep publication, migration,
+and cutover behind their existing fail-closed acceptance gates. Treat exact-head
+validation, installed acceptance, operator data, and production readiness as
+separate evidence.
 
 # ChaptarrNG build notes
 

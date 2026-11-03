@@ -77,33 +77,42 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         ):
             self.assertIn(token, build)
 
-    def test_build_matrix_requests_private_capacity_for_each_platform(self) -> None:
+    def test_build_matrix_supports_hosted_and_private_capacity_for_each_platform(self) -> None:
         source = WORKFLOW.read_text(encoding="utf-8")
         build = job_block(source, "build")
-        runner_match = re.search(r"(?m)^    runs-on: (?P<runner>[^\n]+)$", build)
-        self.assertIsNotNone(runner_match)
-        runner = runner_match.group("runner").replace("\\", "")
-        self.assertIn("matrix.platform == 'windows-x64'", runner)
-        self.assertIn("matrix.platform == 'macos-intel'", runner)
-        self.assertIn('"group":"ng-shared-main-jit"', runner)
-        self.assertIn('"ng-shared-main-chaptarrng"', runner)
-        self.assertIn('"ng-main-run-{0}"', runner)
-        self.assertIn("github.run_id", runner)
-        self.assertIn('"group":"packer-windows"', runner)
-        self.assertIn('"on-demand"', runner)
-        self.assertIn('"ChaptarrNG"', runner)
-        self.assertIn('"gha-{0}-{1}-build"', runner)
-        self.assertNotRegex(runner, r"ubuntu-latest|windows-latest|macos-[0-9]")
-        self.assertNotIn("|| matrix.os", runner)
+        self.assertIn("inputs.runner_pool == 'public'", build)
+        self.assertIn("'windows-2025'", build)
+        self.assertIn("'macos-15-intel'", build)
+        self.assertIn("'ubuntu-24.04'", build)
+        self.assertIn('"group":"ng-shared-main-jit"', build)
+        self.assertIn('"ng-shared-main-chaptarrng"', build)
+        self.assertIn('"ng-main-run-{0}"', build)
+        self.assertIn("github.run_id", build)
+        self.assertIn('"group":"packer-windows"', build)
+        self.assertIn('"on-demand"', build)
+        self.assertIn('"ChaptarrNG"', build)
+        self.assertIn('"gha-{0}-{1}-build"', build)
+        self.assertNotIn("|| matrix.os", build)
         self.assertNotIn("TRUSTED_MAIN_RUNNERS_ENABLED", source)
 
-    def test_all_workflow_jobs_use_private_runner_groups_or_labels(self) -> None:
+    def test_workflow_jobs_use_explicit_runner_routes(self) -> None:
         workflow_dir = WORKFLOW.parent
+        hosted_routes = {
+            "build.yml",
+            "helm-handoff.yml",
+            "bookshelfng-standalone-macos-acceptance.yml",
+        }
         for workflow_path in sorted(workflow_dir.glob("*.yml")):
             source = workflow_path.read_text(encoding="utf-8")
             lines = source.splitlines()
             for index, line in enumerate(lines):
                 if not re.match(r"^\s*runs-on:", line):
+                    continue
+                if workflow_path.name in hosted_routes and (
+                    "inputs.runner_pool == 'public'" in line
+                    or line.rstrip().endswith("runs-on: >-")
+                ):
+                    self.assertIn("fromJSON", source, str(workflow_path))
                     continue
                 self.assertNotRegex(
                     line,
@@ -147,8 +156,16 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             source = (WORKFLOW.parent / workflow_name).read_text(encoding="utf-8")
             self.assertNotRegex(source, r"(?m)^\s+runs-on: windows-latest\s*$")
 
-    def test_release_workflows_have_private_jit_markers_and_no_hosted_fallback(self) -> None:
-        for workflow_name in ("build.yml", "release.yml", "release-distribution.yml"):
+    def test_release_workflows_keep_explicit_runner_policy(self) -> None:
+        build = (WORKFLOW.parent / "build.yml").read_text(encoding="utf-8")
+        self.assertTrue(
+            build.startswith(
+                "# ng-runner-policy: trusted-hosted-or-private-jit-v1\n# packer-windows-jit-v1"
+            )
+        )
+        self.assertIn("default: public", event_block(build, "workflow_dispatch"))
+        self.assertIn("inputs.runner_pool == 'public'", job_block(build, "build"))
+        for workflow_name in ("release.yml", "release-distribution.yml"):
             source = (WORKFLOW.parent / workflow_name).read_text(encoding="utf-8")
             self.assertTrue(
                 source.startswith(
@@ -267,10 +284,10 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             ):
                 self.assertIn(token, job)
 
-    def test_buildkit_proxy_is_limited_to_trusted_main_and_release_tags(self) -> None:
+    def test_buildkit_proxy_is_limited_to_private_trusted_main_and_release_jobs(self) -> None:
         source = WORKFLOW.read_text(encoding="utf-8")
         docker_job = job_block(source, "docker-image-build")
-        expected_proxy_gate = "BUILDKIT_EGRESS_PROXY: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'http://10.0.2.100:3128' || '' }}"
+        expected_proxy_gate = "BUILDKIT_EGRESS_PROXY: ${{ inputs.runner_pool == 'private' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'http://10.0.2.100:3128' || '' }}"
         self.assertIn(expected_proxy_gate, docker_job)
 
         buildx = step_block(source, "Set up Docker Buildx")
@@ -293,11 +310,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertTrue(all("," not in option for option in buildx_driver_options))
         self.assertIn("NO_PROXY=localhost,127.0.0.1", build)
 
-    def test_installed_helm_handoff_build_uses_only_the_trusted_main_proxy(self) -> None:
+    def test_installed_helm_handoff_uses_the_private_proxy_only_on_private_runners(self) -> None:
         helm_workflow = (WORKFLOW.parent / "helm-handoff.yml").read_text(encoding="utf-8")
         installed_handoff = WORKFLOW.parents[2] / "scripts" / "test_bookshelfng_helm_install_handoff.sh"
         script = installed_handoff.read_text(encoding="utf-8")
-        expected_proxy_gate = "BUILDKIT_EGRESS_PROXY: ${{ github.ref == 'refs/heads/main' && 'http://10.0.2.100:3128' || '' }}"
+        expected_proxy_gate = "BUILDKIT_EGRESS_PROXY: ${{ inputs.runner_pool == 'private' && github.ref == 'refs/heads/main' && 'http://10.0.2.100:3128' || '' }}"
 
         self.assertIn(expected_proxy_gate, helm_workflow)
         for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
@@ -365,7 +382,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         ):
             self.assertIn(permission, release_validation)
 
-    def test_build_and_helm_dispatches_expose_required_private_jit_claims(self) -> None:
+    def test_dispatches_expose_their_authorized_runner_pools(self) -> None:
         workflows = (
             (WORKFLOW, "ci", WORKFLOW.read_text(encoding="utf-8")),
             (
@@ -398,7 +415,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             dispatch = event_block(source, "workflow_dispatch")
             if path.name == "helm-handoff.yml":
                 self.assertNotRegex(source, r"(?m)^  push:")
-            for field, option in (("action", action), ("runner_pool", "private")):
+            pool_options = ("public", "private") if path.name in {"build.yml", "helm-handoff.yml"} else ("private",)
+            for field, options in (("action", (action,)), ("runner_pool", pool_options)):
                 input_match = re.search(
                     rf"(?ms)^      {field}:\n(?P<body>.*?)(?=^      [A-Za-z0-9_-]+:|\Z)",
                     dispatch,
@@ -407,11 +425,14 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 input_body = input_match.group("body")
                 self.assertIn("required: true", input_body, f"{path.name}: {field}")
                 self.assertIn("type: choice", input_body, f"{path.name}: {field}")
-                self.assertRegex(
-                    input_body,
-                    rf"(?m)^          - {re.escape(option)}$",
-                    f"{path.name}: {field}",
-                )
+                for option in options:
+                    self.assertRegex(
+                        input_body,
+                        rf"(?m)^          - {re.escape(option)}$",
+                        f"{path.name}: {field}",
+                    )
+                if path.name in {"build.yml", "helm-handoff.yml"} and field == "runner_pool":
+                    self.assertIn("default: public", input_body, f"{path.name}: {field}")
 
             run_name = source.split("run-name:", 1)[1].split("\non:", 1)[0]
             self.assertIn("inputs.action", run_name, path.name)
@@ -419,7 +440,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn("action:", run_name, path.name)
             self.assertIn("pool:", run_name, path.name)
 
-    def test_fedora_rpm_acceptance_is_an_exact_head_private_jit_dispatch(self) -> None:
+    def test_fedora_rpm_acceptance_is_an_exact_head_hosted_or_private_dispatch(self) -> None:
         source = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("rpm_bridge_only:", source)
         self.assertIn("inputs.rpm_bridge_only != true", job_block(source, "build"))
@@ -443,6 +464,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "github.event_name == 'workflow_dispatch'",
             "inputs.rpm_bridge_only == true",
             "github.ref == 'refs/heads/main'",
+            "inputs.runner_pool == 'public'",
+            "'ubuntu-24.04'",
             '"group":"ng-shared-main-jit"',
             '"gha-{0}-rpm-bridge-acceptance"',
             "ref: ${{ github.sha }}",
@@ -455,7 +478,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("inputs.rpm_bridge_only != true", job_block(source, "postgres-migrations"))
         self.assertIn("inputs.rpm_bridge_only != true", job_block(source, "docker-image-build"))
 
-    def test_legacy_channel_contracts_are_an_exact_head_private_jit_dispatch(self) -> None:
+    def test_legacy_channel_contracts_are_an_exact_head_hosted_or_private_dispatch(self) -> None:
         source = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("channel_contracts_only:", source)
         self.assertIn("inputs.channel_contracts_only != true", job_block(source, "build"))
@@ -464,6 +487,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "github.event_name == 'workflow_dispatch'",
             "inputs.channel_contracts_only == true",
             "github.ref == 'refs/heads/main'",
+            "inputs.runner_pool == 'public'",
+            "'ubuntu-24.04'",
             '"group":"ng-shared-main-jit"',
             '"gha-{0}-channel-contracts"',
             "ref: ${{ github.sha }}",
@@ -510,14 +535,12 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         source = WORKFLOW.read_text(encoding="utf-8")
         migrations = job_block(source, "postgres-migrations")
         self.assertIn("image: postgres:16", migrations)
-        self.assertIn(
-            "PostgreSQL 16 client binaries must be installed by the private JIT broker",
-            migrations,
-        )
+        self.assertIn("sudo apt-get install -y postgresql-client-16", migrations)
+        self.assertIn("if [[ \"$RUNNER_POOL\" == \"public\" ]]", migrations)
+        self.assertIn("PostgreSQL 16 client binaries are required for the migration smoke.", migrations)
         self.assertIn('postgres:16 "$tool" "$@"', migrations)
         self.assertIn("/usr/lib/postgresql/16/bin", migrations)
         self.assertIn("GITHUB_PATH", migrations)
-        self.assertNotIn("apt-get", migrations)
 
     def test_frontend_build_runs_after_tests_and_before_publish(self) -> None:
         build = job_block(WORKFLOW.read_text(encoding="utf-8"), "build")

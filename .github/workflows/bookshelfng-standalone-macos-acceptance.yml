@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-required-v1
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
 name: BookshelfNG standalone macOS handoff acceptance
 run-name: ${{ format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) }}
 
@@ -6,15 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: Admit this acceptance run to the private JIT broker
+        description: Run trusted standalone handoff acceptance
         required: true
         type: choice
         options: [ci]
       runner_pool:
-        description: Select the private ephemeral JIT pool
+        description: Select compatible GitHub-hosted or private JIT runners
         required: true
         type: choice
-        options: [private]
+        default: public
+        options: [public, private]
 
 permissions:
   contents: read
@@ -26,8 +27,12 @@ concurrency:
 jobs:
   installed-handoff:
     name: BookshelfNG .76 to current ${{ matrix.rid }} archive
-    if: github.ref == 'refs/heads/main' && inputs.action == 'ci' && inputs.runner_pool == 'private'
-    runs-on: ${{ matrix.architecture == 'X64' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","X64","private-apple","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-installed-handoff"]}}', github.run_id, strategy.job-index)) || fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-installed-handoff"]}}', github.run_id, strategy.job-index)) }}
+    if: github.ref == 'refs/heads/main' && inputs.action == 'ci' && (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+    runs-on: >-
+      ${{ inputs.runner_pool == 'public' &&
+          (matrix.architecture == 'X64' && 'macos-15-intel' || 'macos-15') ||
+          (matrix.architecture == 'X64' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","X64","private-apple","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-installed-handoff"]}}', github.run_id, strategy.job-index)) ||
+           fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-installed-handoff"]}}', github.run_id, strategy.job-index))) }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
