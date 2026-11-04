@@ -136,6 +136,26 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         f"{workflow_path}: {line}",
                     )
 
+    def test_bookshelfng_differential_uses_runner_temp_in_step_context(self) -> None:
+        path = WORKFLOW.parent / "bookshelfng-api-differential.yml"
+        source = path.read_text(encoding="utf-8")
+        differential = job_block(source, "differential-smoke")
+        job_environment = differential.split("    steps:", 1)[0]
+        self.assertNotIn("runner.temp", job_environment)
+        run_start = source.index(
+            "      - name: Run read-only API differential against identical disposable fixtures"
+        )
+        upload_start = source.index(
+            "      - name: Upload sanitized differential results and startup logs",
+            run_start,
+        )
+        run_step = source[run_start:upload_start]
+        self.assertIn("BOOKSHELFNG_DIFFERENTIAL_WORK_DIR: ${{ runner.temp }}", run_step)
+        self.assertIn(
+            "path: ${{ runner.temp }}/bookshelfng-api-differential-${{ github.run_id }}/evidence/",
+            source,
+        )
+
     def test_standalone_asset_validation_allows_trusted_public_runners(self) -> None:
         path = WORKFLOW.parent / "standalone-asset-validation.yml"
         source = path.read_text(encoding="utf-8")
