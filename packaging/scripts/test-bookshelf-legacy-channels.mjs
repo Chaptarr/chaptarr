@@ -357,6 +357,12 @@ test('Chocolatey deferred service upgrades retain both NSSM environments and rec
 
   assert.match(installer, /Get-BookshelfServiceEnvironment 'AppEnvironment'/);
   assert.match(installer, /Get-BookshelfServiceEnvironment 'AppEnvironmentExtra'/);
+  assert.match(installer, /function ConvertTo-WindowsNativeArgument[\s\S]*?function Invoke-BookshelfNssm[\s\S]*?Start-Process -FilePath \$nssm\.Source -ArgumentList \$argumentLine -Wait -PassThru -NoNewWindow/,
+    'Chocolatey must preserve embedded quote characters when it calls NSSM from Windows PowerShell');
+  assert.match(installer, /function Set-BookshelfServiceSetting[\s\S]*?Invoke-BookshelfNssm -Arguments @\('set', 'BookshelfNG', \$Name, \$Value\)/,
+    'Chocolatey must use the quoted native-argument wrapper when restoring service settings');
+  assert.match(installer, /function Set-BookshelfServiceEnvironment[\s\S]*?Invoke-BookshelfNssm -Arguments \$arguments/,
+    'Chocolatey must use the same native-argument wrapper for service environment settings');
   assert.match(installer, /MigrationEnvironment = @\(\$effectiveEnvironment\)/);
   assert.match(installer, /schtasks\.exe \/Create/);
   assert.match(installer, /HealthUrl = \$healthUrl/);

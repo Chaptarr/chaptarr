@@ -361,17 +361,59 @@ function Invoke-BookshelfUtility {
   }
 }
 
+function ConvertTo-WindowsNativeArgument {
+  param([AllowNull()][string] $Value)
+  if ($null -eq $Value) { return '""' }
+  if ($Value -notmatch '[\s"]') { return $Value }
+
+  $builder = New-Object System.Text.StringBuilder
+  [void] $builder.Append([char] 34)
+  $backslashCount = 0
+  foreach ($character in $Value.ToCharArray()) {
+    if ($character -eq [char] 92) {
+      $backslashCount++
+      continue
+    }
+    if ($character -eq [char] 34) {
+      if ($backslashCount -gt 0) {
+        [void] $builder.Append(('\' * (($backslashCount * 2) + 1)))
+      } else {
+        [void] $builder.Append('\')
+      }
+      [void] $builder.Append([char] 34)
+    } else {
+      if ($backslashCount -gt 0) { [void] $builder.Append(('\' * $backslashCount)) }
+      [void] $builder.Append($character)
+    }
+    $backslashCount = 0
+  }
+  if ($backslashCount -gt 0) { [void] $builder.Append(('\' * ($backslashCount * 2))) }
+  [void] $builder.Append([char] 34)
+  return $builder.ToString()
+}
+
+function Invoke-BookshelfNssm {
+  param([Parameter(Mandatory = $true)][string[]] $Arguments)
+  $argumentLine = (@($Arguments | ForEach-Object { ConvertTo-WindowsNativeArgument $_ }) -join ' ')
+  $process = Start-Process -FilePath $nssm.Source -ArgumentList $argumentLine -Wait -PassThru -NoNewWindow
+  try {
+    return [int] $process.ExitCode
+  } finally {
+    $process.Dispose()
+  }
+}
+
 function Set-BookshelfServiceSetting {
   param(
     [Parameter(Mandatory = $true)] [string] $Name,
     [Parameter(Mandatory = $true)] [AllowEmptyString()] [AllowNull()] [string] $Value
   )
   if ([string]::IsNullOrEmpty($Value)) {
-    & $nssm.Source reset BookshelfNG $Name
+    $exitCode = Invoke-BookshelfNssm -Arguments @('reset', 'BookshelfNG', $Name)
   } else {
-    & $nssm.Source set BookshelfNG $Name $Value
+    $exitCode = Invoke-BookshelfNssm -Arguments @('set', 'BookshelfNG', $Name, $Value)
   }
-  if ($LASTEXITCODE -ne 0) { throw "NSSM could not set BookshelfNG $Name." }
+  if ($exitCode -ne 0) { throw "NSSM could not set BookshelfNG $Name (exit code $exitCode)." }
 }
 
 function Set-BookshelfServiceEnvironment {
@@ -384,8 +426,8 @@ function Set-BookshelfServiceEnvironment {
   } else {
     $arguments = @('reset', 'BookshelfNG', $Setting)
   }
-  & $nssm.Source @arguments | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'NSSM could not update the BookshelfNG service environment.' }
+  $exitCode = Invoke-BookshelfNssm -Arguments $arguments
+  if ($exitCode -ne 0) { throw "NSSM could not update the BookshelfNG service environment (exit code $exitCode)." }
 }
 
 function Test-BookshelfPostgresSource {
