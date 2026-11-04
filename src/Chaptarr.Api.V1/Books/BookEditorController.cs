@@ -59,7 +59,11 @@ namespace Chaptarr.Api.V1.Books
             }
 
             _bookService.UpdateMany(booksToUpdate);
-            var resources = booksToUpdate.ToResource();
+            var facadeContext = HttpContext?.GetReadarrFacadeContext();
+            var resources = booksToUpdate
+                .Select(book => book.ToResource(new BookResourceMappingOptions { FacadeContext = facadeContext }))
+                .ToList();
+            BookResourceMapper.WarnFacadeIdentityGaps(resources, facadeContext, "book editor response");
             if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true && _legacyIdentityMapService != null)
             {
                 var mappingsByTargetId = _legacyIdentityMapService.GetMappingsByTargetIds("Book", booksToUpdate.Select(book => book.Id))
