@@ -330,11 +330,18 @@ try {
   if ((Get-InstalledPackageVersion 'bookshelfng') -ne $BookshelfVersion) {
     throw 'Chocolatey did not retain the public BookshelfNG package version after the injected rollback.'
   }
-  $serviceAfterRollback = Get-CimInstance -ClassName Win32_Service -Filter "Name='BookshelfNG'" -ErrorAction Stop
-  if (-not $serviceAfterRollback -or $serviceAfterRollback.State -ne 'Running' -or
+  $serviceRecoveryWaitFailure = $null
+  try { Wait-BookshelfService | Out-Null }
+  catch { $serviceRecoveryWaitFailure = $_.Exception.Message }
+  $serviceAfterRollback = Get-CimInstance -ClassName Win32_Service -Filter "Name='BookshelfNG'" -ErrorAction SilentlyContinue
+  if ($serviceRecoveryWaitFailure -or -not $serviceAfterRollback -or $serviceAfterRollback.State -ne 'Running' -or
       $serviceAfterRollback.StartName -ne $serviceStartNameBeforeManual -or
       $serviceAfterRollback.StartMode -ne $serviceStartModeBeforeManual) {
-    throw 'The injected migration failure did not restore and restart the original BookshelfNG service.'
+    $actualState = if ($serviceAfterRollback) { $serviceAfterRollback.State } else { '<missing>' }
+    $actualStartName = if ($serviceAfterRollback) { $serviceAfterRollback.StartName } else { '<missing>' }
+    $actualStartMode = if ($serviceAfterRollback) { $serviceAfterRollback.StartMode } else { '<missing>' }
+    $rollbackOutputTail = @($rollbackResult.Output | Select-Object -Last 40) -join "`n"
+    throw "The injected migration failure did not restore and restart the original BookshelfNG service. Actual state=$actualState, start name=$actualStartName, start mode=$actualStartMode; expected start name=$serviceStartNameBeforeManual and start mode=$serviceStartModeBeforeManual. Wait error=$serviceRecoveryWaitFailure. Chocolatey output tail:`n$rollbackOutputTail"
   }
   if ((Get-NssmSetting 'Application') -ne $applicationBeforeManual -or
       (Get-NssmSetting 'AppParameters') -ne $parametersBeforeManual -or

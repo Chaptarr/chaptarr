@@ -187,14 +187,16 @@ upgrade_candidate() {
 assert_migrated_fixture() {
     log "Checking converted edition provider identity and narrator values:"
     pod_exec sqlite3 -readonly -header -column /config/readarr.db \
-        'SELECT Id, BookId, ForeignEditionId, HardcoverEditionId, OpenLibraryEditionId, Narrator, NarratorNames FROM Editions WHERE Id IN (40,41) ORDER BY Id;' \
+        'SELECT Id, BookId, ForeignEditionId, HardcoverEditionId, OpenLibraryEditionId, Narrator, quote(NarratorNames) AS NarratorNames, json_array_length(NarratorNames) AS NarratorCount, json_extract(NarratorNames, "$[0]") AS FirstNarrator FROM Editions WHERE Id IN (40,41) ORDER BY Id;' \
         | tee "$EVIDENCE_DIR/migrated-editions.txt"
     require_sql_count 'audiobook book identity, monitoring, and selected edition' 1 \
         "SELECT COUNT(*) FROM Books WHERE Id=30 AND MediaType=0 AND AudiobookMonitored=1 AND ForeignEditionId='hc:audio-40';"
     require_sql_count 'ebook book identity and unselected edition state' 1 \
         'SELECT COUNT(*) FROM Books WHERE Id=31 AND MediaType=1 AND EbookMonitored=0 AND ForeignEditionId IS NULL;'
-    require_sql_count 'audiobook edition provider identity and narrator' 1 \
-        "SELECT COUNT(*) FROM Editions WHERE Id=40 AND BookId=30 AND HardcoverEditionId='audio-40' AND NarratorNames='[\"A Narrator\"]';"
+    require_sql_count 'audiobook edition Hardcover provider identity' 1 \
+        "SELECT COUNT(*) FROM Editions WHERE Id=40 AND BookId=30 AND HardcoverEditionId='audio-40';"
+    require_sql_count 'audiobook edition narrator value' 1 \
+        "SELECT COUNT(*) FROM Editions WHERE Id=40 AND BookId=30 AND json_valid(NarratorNames) AND json_array_length(NarratorNames)=1 AND json_extract(NarratorNames, '\$[0]')='A Narrator';"
     require_sql_count 'ebook edition provider identity' 1 \
         "SELECT COUNT(*) FROM Editions WHERE Id=41 AND BookId=31 AND OpenLibraryEditionId='ol:OL123M';"
     require_sql_count 'audiobook file path and catalog-search timestamp' 1 \
