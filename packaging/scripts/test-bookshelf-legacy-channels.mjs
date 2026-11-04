@@ -247,6 +247,14 @@ test('Helm .76 zero-replica bootstrap lets its delayed-binding claim reach the s
   assert.match(installedHandoff, /kubectl apply -f "\$EVIDENCE_DIR\/seed-pod\.yaml"[\s\S]*?kubectl wait --for=jsonpath='\{\.status\.phase\}'=Succeeded pod\/bookshelfng-seed/);
 });
 
+test('Helm candidate upgrade consumes helper arguments before forwarding Helm flags', () => {
+  const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
+  const upgradeCandidate = installedHandoff.match(/upgrade_candidate\(\) \{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(upgradeCandidate, 'the candidate upgrade helper must remain explicit');
+  assert.match(upgradeCandidate, /local mode="\$1" replicas="\$2"\s+shift 2[\s\S]*?helm upgrade/);
+  assert.match(upgradeCandidate, /bookshelfMigration\.mode=\$mode[\s\S]*?"\$@"/);
+});
+
 test('Helm fixture seeder can initialize the chart’s fresh root-owned PVC', () => {
   const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
   const seedPod = installedHandoff.match(/cat > "\$EVIDENCE_DIR\/seed-pod\.yaml" <<YAML\n([\s\S]*?)\nYAML/)?.[1];

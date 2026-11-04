@@ -161,6 +161,7 @@ install_legacy() {
 
 upgrade_candidate() {
     local mode="$1" replicas="$2"
+    shift 2
     helm upgrade "$RELEASE_NAME" "$ROOT/charts/bookshelfng" \
         --namespace "$NAMESPACE" --reuse-values \
         --set bookshelfMigration.confirmed=true \
