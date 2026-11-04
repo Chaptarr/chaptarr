@@ -45,17 +45,16 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        architecture: ${{ fromJSON(inputs.architecture == 'all' && '["X64","ARM64"]' || inputs.architecture == 'x64' && '["X64"]' || '["ARM64"]') }}
-        include:
-        - rid: osx-x64
-          architecture: X64
-          predecessor_version: 0.4.21.76
-          predecessor_sha256: 4f660a1367e28c01660c2e082c4f1778f652cca34affc0dba55d3f47ef67f747
-        - rid: osx-arm64
-          architecture: ARM64
-          predecessor_version: 0.4.21.76
-          predecessor_sha256: d964bb1146b6c9e313758a967815f53f8d9aa45314bc30cfa55e96bb299433ce
+      matrix: >-
+        ${{
+          fromJSON(
+            inputs.architecture == 'all' &&
+            '{"include":[{"rid":"osx-x64","architecture":"X64","predecessor_version":"0.4.21.76","predecessor_sha256":"4f660a1367e28c01660c2e082c4f1778f652cca34affc0dba55d3f47ef67f747"},{"rid":"osx-arm64","architecture":"ARM64","predecessor_version":"0.4.21.76","predecessor_sha256":"d964bb1146b6c9e313758a967815f53f8d9aa45314bc30cfa55e96bb299433ce"}]}' ||
+            inputs.architecture == 'x64' &&
+            '{"include":[{"rid":"osx-x64","architecture":"X64","predecessor_version":"0.4.21.76","predecessor_sha256":"4f660a1367e28c01660c2e082c4f1778f652cca34affc0dba55d3f47ef67f747"}]}' ||
+            '{"include":[{"rid":"osx-arm64","architecture":"ARM64","predecessor_version":"0.4.21.76","predecessor_sha256":"d964bb1146b6c9e313758a967815f53f8d9aa45314bc30cfa55e96bb299433ce"}]}'
+          )
+        }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
