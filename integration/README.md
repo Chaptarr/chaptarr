@@ -1,5 +1,43 @@
 # Integration smoke tests
 
+## BookshelfNG API differential smoke
+
+The bookshelfng-api-differential Compose file starts the digest-pinned public
+BookshelfNG 0.4.21.76 image beside the ChaptarrNG image built from the current
+checkout. It seeds separate expanded schema-158 fixtures, replaces placeholder
+provider IDs with valid numeric Hardcover and typed Open Library identities,
+normalizes the fixture generator's current-time migration timestamps, then
+verifies the two database files are byte identical. It compares read-only legacy
+API lists and detail routes after ChaptarrNG's normal startup migration. The script records
+the source image digest and image ID,
+target commit and image ID, source database hash, per-case response hashes, and
+JSON mismatch paths. Secret-valued response fields are compared as empty or
+present and are never written into the report; array order is preserved.
+
+Run it with an empty task-owned directory. The generated database, config,
+library placeholders, and sanitized report stay under that directory. The
+comparator runs in a pinned Node container on the same internal network, so
+the app ports are not exposed and the services have no outbound network path.
+The script removes only its uniquely named containers and network when it exits.
+
+    export BOOKSHELFNG_DIFFERENTIAL_WORK_DIR=/path/to/task-scratch/bookshelfng-api-differential
+    export BOOKSHELFNG_SOURCE_IMAGE=docker.io/snapetech/bookshelfng@sha256:40a53ac528b6789ca78686b4303bb6c436cd191cd813f915ea171d72b47a8c38
+    export CHAPTARRNG_TARGET_COMMIT="$(git rev-parse HEAD)"
+    bash integration/run-bookshelfng-api-differential.sh
+
+The workflow dispatch defaults to a GitHub-hosted Ubuntu runner and retains an
+explicit private JIT option. The comparison currently covers authors, books,
+series, files, history, roots, profiles, indexers, download clients, and
+notifications, including author/book detail and book-file lookups. It is
+read-only and synthetic; it does not establish mutation semantics, provider
+fulfillment, representative operator data, media decoding, rollback, or
+installed-channel acceptance.
+
+For local triage, `CHAPTARRNG_DIFFERENTIAL_SKIP_BUILD=true` may reuse an
+already-built image only when `HEAD` matches the requested commit and all
+application build inputs are clean. `BOOKSHELFNG_DIFFERENTIAL_DEBUG_VALUES=true`
+adds bounded, sanitized scalar values to the report; it is off by default.
+
 The SeerrNG smoke stack builds the ChaptarrNG candidate, seeds a disposable
 BookshelfNG migration-158 SQLite fixture, and starts ChaptarrNG on an isolated
 Compose network. The app listens on port 8789 for the SeerrNG probe. The default

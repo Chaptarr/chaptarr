@@ -92,8 +92,8 @@ namespace Chaptarr.Api.V1.Books
         public string FileSizeOnDisk { get; set; }
 
         //Hiding this so people don't think its usable (only used to set the initial state)
-        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public bool Grabbed { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? Grabbed { get; set; }
     }
 
     public class BookLocalInstanceResource
@@ -182,9 +182,9 @@ namespace Chaptarr.Api.V1.Books
             string foreignBookId = BuildForeignBookId(model, options.FacadeContext);
 
             var links = options.IncludeLinks
-                ? ((model.Links != null && model.Links.Any())
-                    ? model.Links
-                    : BuildFallbackLinks(model, selectedEdition))
+                ? (model.Links ?? new List<Links>())
+                    .Concat(selectedEdition?.Links ?? new List<Links>())
+                    .ToList()
                 : null;
 
             if (options.IncludeLinks)
@@ -233,7 +233,9 @@ namespace Chaptarr.Api.V1.Books
                 Genres = (model.Genres ?? new List<string>()).ToList(),
                 Title = title,
                 AuthorTitle = authorTitle,
-                SeriesTitle = seriesTitle,
+                SeriesTitle = options.FacadeContext?.IsBookshelfCompatibility == true
+                    ? seriesTitle ?? string.Empty
+                    : seriesTitle,
                 Disambiguation = selectedEdition?.Disambiguation,
                 Overview = options.IncludeOverview && !string.IsNullOrWhiteSpace(selectedEdition?.Overview)
                     ? selectedEdition.Overview
@@ -245,7 +247,7 @@ namespace Chaptarr.Api.V1.Books
                 Statistics = options.Statistics?.ToResource(),
                 AddOptions = model.AddOptions,
                 RemoteCover = string.Empty,
-                Grabbed = false,
+                Grabbed = options.FacadeContext?.IsBookshelfCompatibility == true ? false : null,
                 Narrator = GetNarratorDisplay(model, selectedEdition),
                 AvailableNarrators = GetAvailableNarrators(model),
                 NarratorNames = GetNarratorNamesForDisplay(model, selectedEdition),
@@ -341,13 +343,6 @@ namespace Chaptarr.Api.V1.Books
                 normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
                 normalized = Regex.Replace(normalized, @"\s+#", " #");
                 return normalized;
-            }
-
-            private static List<Links> BuildFallbackLinks(Book book, Edition selectedEdition)
-            {
-                // No client-side URL fabrication. All provider links must come from
-                // the metadata server via Book.ProviderUrls / Edition.ProviderUrls.
-                return new List<Links>();
             }
 
             private static List<Links> NormalizeLinks(Book book, Edition selectedEdition, string displayTitle, List<Links> links)

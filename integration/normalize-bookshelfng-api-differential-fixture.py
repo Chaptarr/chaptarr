@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+
+"""Normalize the disposable API differential fixture to valid provider IDs."""
+
+import argparse
+import sqlite3
+from pathlib import Path
+
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("database", nargs="+", type=Path)
+args = parser.parse_args()
+
+expected_counts = {
+    "AuthorMetadata": 4,
+    "Books": 6,
+    "Editions": 9,
+}
+
+for path in args.database:
+    with sqlite3.connect(path) as connection:
+        for table, expected in expected_counts.items():
+            count = connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            if count != expected:
+                raise RuntimeError(
+                    f"Expected {expected} {table} rows in the disposable fixture, found {count}."
+                )
+
+        for source_id, in connection.execute('SELECT "Id" FROM "AuthorMetadata"'):
+            provider_id = str(10000 + source_id)
+            connection.execute(
+                'UPDATE "AuthorMetadata" SET "ForeignAuthorId" = ?, "TitleSlug" = ? WHERE "Id" = ?',
+                (provider_id, f"hc-author-{provider_id}", source_id),
+            )
+
+        for source_id, in connection.execute('SELECT "Id" FROM "Books"'):
+            provider_id = str(100000 + source_id)
+            connection.execute(
+                'UPDATE "Books" SET "ForeignBookId" = ?, "TitleSlug" = ? WHERE "Id" = ?',
+                (provider_id, f"hc-book-{provider_id}", source_id),
+            )
+
+        for edition_id, is_ebook in connection.execute(
+            'SELECT "Id", "IsEbook" FROM "Editions"'
+        ):
+            if is_ebook:
+                provider_id = {
+                    41: "ol:OL123M",
+                    44: "ol:OL2100M",
+                    45: "ol:OL2101M",
+                    47: "ol:OL2102M",
+                }.get(edition_id)
+                if provider_id is None:
+                    raise RuntimeError(
+                        f"No Open Library fixture identity is defined for edition {edition_id}."
+                    )
+            else:
+                provider_id = str(200000 + edition_id)
+
+            connection.execute(
+                'UPDATE "Editions" SET "ForeignEditionId" = ?, "TitleSlug" = ? WHERE "Id" = ?',
+                (provider_id, f"edition-{edition_id}", edition_id),
+            )
+
+        connection.execute(
+            'UPDATE "VersionInfo" SET "AppliedOn" = ? WHERE "AppliedOn" IS NOT NULL',
+            ("2026-01-01 00:00:00",),
+        )
+        connection.commit()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise RuntimeError(f"Disposable fixture integrity check failed: {integrity}.")
+
+print(f"Normalized {len(args.database)} disposable fixture(s) with valid Hardcover and Open Library IDs.")

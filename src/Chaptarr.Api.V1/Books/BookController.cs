@@ -700,7 +700,8 @@ namespace Chaptarr.Api.V1.Books
                     IncludeRequested(include, "author"),
                     statsByBookId,
                     includeOverview: IncludeRequested(include, "overview"),
-                    includeLinks: IncludeRequested(include, "links"));
+                    includeLinks: HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true ||
+                        IncludeRequested(include, "links"));
             }
 
             if (authorId.HasValue)

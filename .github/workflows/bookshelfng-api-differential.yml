@@ -1,0 +1,70 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: BookshelfNG API differential smoke
+run-name: ${{ format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Run the pinned BookshelfNG-to-ChaptarrNG API comparison
+        required: true
+        type: choice
+        options:
+          - ci
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options:
+          - public
+          - private
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bookshelfng-api-differential-${{ github.ref }}-${{ inputs.runner_pool }}
+  cancel-in-progress: false
+
+jobs:
+  differential-smoke:
+    name: Compare schema-158 API responses before and after migration
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      (inputs.runner_pool == 'public' || inputs.runner_pool == 'private')
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-bookshelfng-api-differential"]}}', github.run_id)) }}
+    timeout-minutes: 120
+    env:
+      BOOKSHELFNG_SOURCE_IMAGE: docker.io/snapetech/bookshelfng@sha256:40a53ac528b6789ca78686b4303bb6c436cd191cd813f915ea171d72b47a8c38
+      CHAPTARRNG_TARGET_COMMIT: ${{ github.sha }}
+      BOOKSHELFNG_DIFFERENTIAL_WORK_DIR: ${{ runner.temp }}/bookshelfng-api-differential-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.12.1
+          package-manager-cache: false
+
+      - name: Verify the pinned source and target revisions
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'BookshelfNG source image: %s\n' "$BOOKSHELFNG_SOURCE_IMAGE"
+          printf 'ChaptarrNG target commit: %s\n' "$CHAPTARRNG_TARGET_COMMIT"
+
+      - name: Run read-only API differential against identical disposable fixtures
+        run: bash integration/run-bookshelfng-api-differential.sh
+
+      - name: Upload sanitized differential results and startup logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bookshelfng-api-differential-${{ github.run_id }}
+          path: ${{ env.BOOKSHELFNG_DIFFERENTIAL_WORK_DIR }}/evidence/
+          if-no-files-found: warn
+          retention-days: 30

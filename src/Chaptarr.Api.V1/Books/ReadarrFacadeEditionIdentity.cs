@@ -21,6 +21,20 @@ namespace Chaptarr.Api.V1.Books
                 return null;
             }
 
+            if (facadeContext?.IsBookshelfCompatibility == true)
+            {
+                var facadeEditionId = facadeContext.IsGoodreads
+                    ? BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(edition)
+                    : facadeContext.IsHardcover
+                        ? BookEditionIdentity.GetReadarrFacadeHardcoverEditionId(edition)
+                        : null;
+
+                // BookshelfNG returned its stored edition identity even when an edition came
+                // from a provider other than the selected work provider. Preserve that typed
+                // identity during migrated API calls when no facade-specific ID is available.
+                return facadeEditionId ?? BuildNativeForeignEditionId(edition);
+            }
+
             if (facadeContext?.IsGoodreads == true)
             {
                 return BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(edition) ?? string.Empty;

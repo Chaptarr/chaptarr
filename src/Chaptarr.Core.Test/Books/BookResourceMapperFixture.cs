@@ -878,6 +878,77 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(resource.Statistics, Is.Not.Null);
         }
 
+        [Test]
+        public void resource_should_include_selected_edition_links()
+        {
+            var book = new Book
+            {
+                Id = 12,
+                Title = "Dune",
+                MediaType = BookMediaType.Audiobook,
+                Links = new System.Collections.Generic.List<Links>
+                {
+                    new Links { Name = "Work", Url = "https://catalog.example/work" }
+                },
+                Editions = new System.Collections.Generic.List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 1,
+                        Monitored = true,
+                        Title = "Dune audiobook",
+                        Links = new System.Collections.Generic.List<Links>
+                        {
+                            new Links { Name = "Edition", Url = "https://catalog.example/edition" }
+                        }
+                    }
+                }
+            };
+
+            var resource = book.ToResource();
+
+            Assert.That(resource.Links.Select(link => link.Url), Is.EquivalentTo(new[]
+            {
+                "https://catalog.example/work",
+                "https://catalog.example/edition"
+            }));
+        }
+
+        [Test]
+        public void bookshelf_compatibility_should_preserve_empty_series_grabbed_and_other_provider_edition_ids()
+        {
+            var book = new Book
+            {
+                Id = 13,
+                Title = "Dune",
+                MediaType = BookMediaType.Ebook,
+                Editions = new System.Collections.Generic.List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 1,
+                        Monitored = true,
+                        Title = "Dune ebook",
+                        ForeignEditionId = "ol:OL123M",
+                        OpenLibraryEditionId = "OL123M"
+                    }
+                }
+            };
+            var options = new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            };
+
+            var resource = book.ToResource(options);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.SeriesTitle, Is.EqualTo(string.Empty));
+                Assert.That(resource.Grabbed, Is.False);
+                Assert.That(resource.ForeignEditionId, Is.EqualTo("ol:OL123M"));
+            });
+        }
+
         private static MemoryTarget ConfigureLogging()
         {
             var memoryTarget = new MemoryTarget("memory")

@@ -102,6 +102,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "helm-handoff.yml",
             "bookshelfng-standalone-macos-acceptance.yml",
             "standalone-asset-validation.yml",
+            "bookshelfng-api-differential.yml",
         }
         for workflow_path in sorted(workflow_dir.glob("*.yml")):
             source = workflow_path.read_text(encoding="utf-8")
@@ -437,6 +438,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 (WORKFLOW.parent / "standalone-asset-validation.yml").read_text(encoding="utf-8"),
             ),
             (
+                WORKFLOW.parent / "bookshelfng-api-differential.yml",
+                "ci",
+                (WORKFLOW.parent / "bookshelfng-api-differential.yml").read_text(encoding="utf-8"),
+            ),
+            (
                 WORKFLOW.parent / "trivy-filesystem.yml",
                 "scan",
                 (WORKFLOW.parent / "trivy-filesystem.yml").read_text(encoding="utf-8"),
@@ -446,11 +452,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             dispatch = event_block(source, "workflow_dispatch")
             if path.name == "helm-handoff.yml":
                 self.assertNotRegex(source, r"(?m)^  push:")
-            pool_options = (
-                ("public", "private")
-                if path.name in {"build.yml", "helm-handoff.yml", "standalone-asset-validation.yml"}
-                else ("private",)
-            )
+            public_routes = {
+                "build.yml",
+                "helm-handoff.yml",
+                "standalone-asset-validation.yml",
+                "bookshelfng-api-differential.yml",
+            }
+            pool_options = ("public", "private") if path.name in public_routes else ("private",)
             for field, options in (("action", (action,)), ("runner_pool", pool_options)):
                 input_match = re.search(
                     rf"(?ms)^      {field}:\n(?P<body>.*?)(?=^      [A-Za-z0-9_-]+:|\Z)",
@@ -466,7 +474,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         rf"(?m)^          - {re.escape(option)}$",
                         f"{path.name}: {field}",
                     )
-                if path.name in {"build.yml", "helm-handoff.yml", "standalone-asset-validation.yml"} and field == "runner_pool":
+                if path.name in public_routes and field == "runner_pool":
                     self.assertIn("default: public", input_body, f"{path.name}: {field}")
 
             run_name = source.split("run-name:", 1)[1].split("\non:", 1)[0]
