@@ -189,6 +189,9 @@ test('macOS installed handoff acceptance supports hosted and private runners wit
 
   assert.match(workflow, /^  workflow_dispatch:$/m);
   assert.match(workflow, /default: public[\s\S]*?options: \[public, private\]/);
+  assert.match(workflow, /architecture:[\s\S]*?default: all[\s\S]*?options: \[all, x64, arm64\]/);
+  assert.match(workflow, /inputs\.architecture == 'x64' && matrix\.architecture == 'X64'/);
+  assert.match(workflow, /inputs\.architecture == 'arm64' && matrix\.architecture == 'ARM64'/);
   assert.match(workflow, /rid: osx-x64[\s\S]*?architecture: X64[\s\S]*?rid: osx-arm64[\s\S]*?architecture: ARM64/);
   assert.match(workflow, /'macos-15-intel'/);
   assert.match(workflow, /'macos-15'/);

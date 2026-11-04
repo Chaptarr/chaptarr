@@ -1,6 +1,6 @@
 # ng-runner-policy: trusted-hosted-or-private-jit-v1
 name: BookshelfNG standalone macOS handoff acceptance
-run-name: ${{ format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) }}
+run-name: ${{ format('action:{0}:pool:{1}:arch:{2}', inputs.action, inputs.runner_pool, inputs.architecture) }}
 
 on:
   workflow_dispatch:
@@ -16,6 +16,12 @@ on:
         type: choice
         default: public
         options: [public, private]
+      architecture:
+        description: Run both architectures or retry one native architecture
+        required: true
+        type: choice
+        default: all
+        options: [all, x64, arm64]
 
 permissions:
   contents: read
@@ -27,7 +33,15 @@ concurrency:
 jobs:
   installed-handoff:
     name: BookshelfNG .76 to current ${{ matrix.rid }} archive
-    if: github.ref == 'refs/heads/main' && inputs.action == 'ci' && (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
+      (
+        inputs.architecture == 'all' ||
+        (inputs.architecture == 'x64' && matrix.architecture == 'X64') ||
+        (inputs.architecture == 'arm64' && matrix.architecture == 'ARM64')
+      )
     runs-on: >-
       ${{ inputs.runner_pool == 'public' &&
           (matrix.architecture == 'X64' && 'macos-15-intel' || 'macos-15') ||
