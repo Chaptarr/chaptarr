@@ -49,6 +49,9 @@ jobs:
           node-version: 26.12.1
           package-manager-cache: false
 
+      - name: Test source-contract comparison rules
+        run: node integration/test-bookshelfng-api-contract.mjs
+
       - name: Verify the pinned source and target revisions
         run: |
           set -euo pipefail

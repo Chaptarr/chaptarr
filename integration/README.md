@@ -11,8 +11,12 @@ verifies the two database files are byte identical. It compares read-only legacy
 API lists and detail routes after ChaptarrNG's normal startup migration. The script records
 the source image digest and image ID,
 target commit and image ID, source database hash, per-case response hashes, and
-JSON mismatch paths. Secret-valued response fields are compared as empty or
-present and are never written into the report; array order is preserved.
+JSON mismatch paths. Source fields and values must remain present and equivalent;
+ChaptarrNG-only fields and records are reported as additive. Objects with IDs
+are matched by ID, provider fields by name, and select options by value, so
+reordering form fields does not create false failures. Source collection order
+is still checked. Secret-valued response fields are compared as empty or
+present and are never written into the report.
 
 Run it with an empty task-owned directory. The generated database, config,
 library placeholders, and sanitized report stay under that directory. The
@@ -32,6 +36,12 @@ notifications, including author/book detail and book-file lookups. It is
 read-only and synthetic; it does not establish mutation semantics, provider
 fulfillment, representative operator data, media decoding, rollback, or
 installed-channel acceptance.
+
+The Node contract comparator has focused checks in
+`test-bookshelfng-api-contract.mjs`; the workflow runs them before building the
+disposable services. Review both mismatches and additive differences in the
+report. Additive API output still needs an old-client compatibility review even
+when it does not fail the source-contract comparison.
 
 For local triage, `CHAPTARRNG_DIFFERENTIAL_SKIP_BUILD=true` may reuse an
 already-built image only when `HEAD` matches the requested commit and all

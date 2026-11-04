@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { compareResponses } from "./bookshelfng-api-contract.mjs";
 
 const sourceUrl = (
   process.env.BOOKSHELFNG_API_URL ?? "http://127.0.0.1:18787/api/v1"
@@ -81,87 +81,6 @@ function sanitize(value, key = "") {
   return value;
 }
 
-function debugValue(value) {
-  if (typeof value === "string") {
-    return value.length > 160 ? value.slice(0, 160) + "…" : value;
-  }
-  if (value === null || typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return { type: "array", length: value.length };
-  }
-  if (value && typeof value === "object") {
-    return { type: "object", keys: Object.keys(value).slice(0, 25) };
-  }
-  return { type: typeof value };
-}
-
-function differences(expected, actual, path = "", output = []) {
-  if (output.length >= 100 || isDeepStrictEqual(expected, actual)) {
-    return output;
-  }
-
-  if (Array.isArray(expected) && Array.isArray(actual)) {
-    if (expected.length !== actual.length) {
-      output.push({
-        path: (path || "") + "/length",
-        kind: "array-length",
-        sourceLength: expected.length,
-        targetLength: actual.length,
-      });
-    }
-    for (let index = 0; index < Math.min(expected.length, actual.length); index++) {
-      differences(expected[index], actual[index], path + "/" + index, output);
-      if (output.length >= 100) break;
-    }
-    return output;
-  }
-
-  if (
-    expected &&
-    actual &&
-    typeof expected === "object" &&
-    typeof actual === "object" &&
-    !Array.isArray(expected) &&
-    !Array.isArray(actual)
-  ) {
-    const keys = new Set([...Object.keys(expected), ...Object.keys(actual)]);
-    for (const key of [...keys].sort()) {
-      if (!(key in expected) || !(key in actual)) {
-        const detail = {
-          path: path + "/" + key,
-          kind: key in expected ? "source-only" : "target-only",
-        };
-        if (includeDebugValues) {
-          if (key in expected) detail.sourceValue = debugValue(expected[key]);
-          if (key in actual) detail.targetValue = debugValue(actual[key]);
-        }
-        output.push(detail);
-      } else {
-        differences(expected[key], actual[key], path + "/" + key, output);
-      }
-      if (output.length >= 100) break;
-    }
-    return output;
-  }
-
-  const detail = {
-    path: path || "/",
-    kind:
-      typeof expected !== typeof actual ||
-      Array.isArray(expected) !== Array.isArray(actual)
-        ? "type-difference"
-        : "value-difference",
-  };
-  if (includeDebugValues) {
-    detail.sourceValue = debugValue(expected);
-    detail.targetValue = debugValue(actual);
-  }
-  output.push(detail);
-  return output;
-}
-
 function sha256(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -221,9 +140,9 @@ async function compare(caseId, path) {
     getJson(sourceUrl, sourceKey, path),
     getJson(targetUrl, targetKey, path),
   ]);
-  const mismatchDetails =
+  const comparison =
     source.status === 200 && target.status === 200
-      ? differences(source.value, target.value)
+      ? compareResponses(source.value, target.value, { includeDebugValues })
       : [
           {
             path: "/httpStatus",
@@ -232,7 +151,18 @@ async function compare(caseId, path) {
             targetStatus: target.status,
           },
         ];
-  const mismatchPaths = mismatchDetails.map((detail) => detail.path);
+  const mismatchDetails = Array.isArray(comparison)
+    ? comparison
+    : comparison.mismatchDetails;
+  const mismatchPaths = Array.isArray(comparison)
+    ? mismatchDetails.map((detail) => detail.path)
+    : comparison.mismatchPaths;
+  const additiveDetails = Array.isArray(comparison)
+    ? []
+    : comparison.additiveDetails;
+  const additivePaths = Array.isArray(comparison)
+    ? []
+    : comparison.additivePaths;
   results.push({
     caseId,
     method: "GET",
@@ -245,6 +175,8 @@ async function compare(caseId, path) {
     targetSha256: target.value === null ? null : sha256(target.value),
     mismatchPaths,
     mismatchDetails,
+    additivePaths,
+    additiveDetails,
     result:
       source.status === 200 && target.status === 200 && mismatchPaths.length === 0
         ? "pass"
@@ -316,7 +248,7 @@ if (
 }
 
 const report = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   suite: "bookshelfng-read-api-differential",
   source: {
     release: "BookshelfNG 0.4.21.76",
@@ -333,13 +265,15 @@ const report = {
   },
   normalization: {
     objectKeys: "sorted recursively",
-    arrayOrder: "preserved",
+    collectionIdentity: "matched by id when available; source collection order preserved",
+    providerFields: "matched by name; select options matched by value",
     secretFields: "compared as empty or present, never recorded",
   },
   debugValues: includeDebugValues,
   caseCount: results.length,
   passed: results.filter((result) => result.result === "pass").length,
   failed: results.filter((result) => result.result !== "pass").length,
+  additiveDifferenceCount: results.reduce((total, result) => total + result.additivePaths.length, 0),
   results,
 };
 
