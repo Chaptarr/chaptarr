@@ -1,5 +1,42 @@
 # BookshelfNG compatibility code handoff
 
+## Full public validation — 2026-11-04
+
+Full public Build run
+[41789426720](https://github.com/snapetech-org/chaptarrng/actions/runs/41789426720)
+on `d12798d1` passed Linux and macOS build/test/artifact jobs, PostgreSQL
+migration smoke, and the standard Docker build. Windows found a test-only
+CRLF mismatch when the source-registry test hashed a JSON file from a Windows
+checkout. Commit `d3a67c58` canonicalizes text line endings before fingerprint
+comparison and covers LF/CRLF equivalence.
+
+Full public rerun
+[41792679639](https://github.com/snapetech-org/chaptarrng/actions/runs/41792679639)
+passed Linux, Windows, macOS, PostgreSQL migration smoke, and the standard
+Docker build. Its Windows job also passed the installed BookshelfNG `.76`
+service, data-path, and Chocolatey automatic migration checks.
+
+## Public Windows installed handoff — 2026-11-04
+
+Public Windows run
+[41785474409](https://github.com/snapetech-org/chaptarrng/actions/runs/41785474409)
+passed on code head `d12798d1`. It ran the full Windows .NET suite, built the
+migration installer, verified the SQLite fingerprint, upgraded and rolled back
+the installed service, and checked preservation of the selected data directory.
+The installed BookshelfNG `0.4.21.76` Chocolatey package then passed manual
+defer, injected post-migration-health rollback with source recovery, and
+automatic migration to the exact local candidate. This is hosted
+synthetic-fixture evidence; representative operator data and feed publication
+remain open.
+
+## Runner-policy update — 2026-11-03
+
+The private-JIT-only requirement recorded below is historical. Public
+GitHub-hosted runner minutes are available again for trusted work, so
+compatible public runners and private ephemeral JIT are both authorized.
+Exact-head validation, installed-channel acceptance, representative data, and
+live provider evidence remain separate gates.
+
 ## 2026-10-26 dual-database merge and validation checkpoint
 
 Normal ChaptarrNG startup and the explicit `-merge-bookshelf-databases` utility
@@ -31,9 +68,10 @@ configured libraries. A local bulk pass on `kspld0` built the Release solution
 with zero errors and one transient shared-output copy retry, passed 4,920 Core
 tests with 28 skipped, and passed the BookshelfNG shell and Docker handoff
 checks. These are local diagnostic results; the current organization policy
-requires approved private JIT execution, so exact-head JIT validation remains
-outstanding. PostgreSQL, browser-backed, live-provider, and installed-channel
-evidence is still open. Detailed channel results and remaining delivery gates
+allows compatible public hosted or private JIT execution for trusted jobs, so
+these local results still need separate exact-head validation. PostgreSQL,
+browser-backed, live-provider, and installed-channel evidence is still open.
+Detailed channel results and remaining delivery gates
 are recorded in [the October 26 channel acceptance report](BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
 
 The merge now holds the normal conversion locks for both legacy files and uses

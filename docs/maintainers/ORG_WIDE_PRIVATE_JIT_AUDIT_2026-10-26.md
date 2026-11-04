@@ -1,8 +1,16 @@
 # Organization-wide private JIT runner audit — 2026-10-26
 
+> **Policy update — 2026-11-03:** The private-JIT-only requirement documented
+> in this historical audit has been superseded. Public GitHub-hosted runner
+> minutes are available again for trusted build, test, scan, package, and
+> release jobs when the runner is compatible; private ephemeral JIT remains
+> available. Untrusted pull-request isolation and release-readiness gates are
+> unchanged. The inventory and live-capacity observations below remain a
+> 2026-10-26 snapshot, not a current organization-wide capacity audit.
+
 ## Status
 
-The user’s current scope is all 65 `snapetech-org` repositories. Every build must use private, platform-appropriate JIT capacity, with no GitHub-hosted fallback. The inventory is complete; rollout and acceptance are not. This audit did not dispatch jobs or change shared runner or broker configuration. Packer PR #8 and PR #5 have merged; their source changes do not by themselves prove live group or runner cutover.
+At the time of this 2026-10-26 audit, the user’s scope covered all 65 `snapetech-org` repositories, and the runner directive required private, platform-appropriate JIT capacity with no GitHub-hosted fallback. That directive was superseded on 2026-11-03; see the policy update above and current [`AGENTS.md`](../../AGENTS.md). The inventory is complete; rollout and acceptance were not. This audit did not dispatch jobs or change shared runner or broker configuration. Packer PR #8 and PR #5 have merged; their source changes do not by themselves prove live group or runner cutover.
 
 ## Live handoff check — 2026-10-26
 
@@ -30,7 +38,7 @@ ChaptarrNG has 17 workflow files and 48 job definitions in the Packer snapshot. 
 
 The inventory observes `windows-latest`, macOS labels, Linux ARM64 labels, `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `ubuntu-slim`, and `ubuntu-24.04-arm`. The Packer snapshot’s per-job CSV is the source for repository, workflow, job, runner expression, platform matrix, and reusable-workflow details.
 
-## Runner state and blockers
+## Runner state and blockers — 2026-10-26 snapshot
 
 Packer PR #8 merged on 2026-10-26 at `651863834624d10341b0871f23cffc509d96fd23`. Its automatic main-push run [40304794881](https://github.com/snapetech-org/packer/actions/runs/40304794881) succeeded on the Linux JIT group `ng-shared-main-jit` with per-run labels. This verifies that Packer main validation used that Linux route; it does not verify deployment of the complete 65-repository broker scope, all repository workflow permissions, or the Windows route. The merged pagination fix is source evidence, not proof of live App installation or broker configuration.
 

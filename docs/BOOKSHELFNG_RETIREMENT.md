@@ -1,6 +1,59 @@
 # BookshelfNG retirement status
 
-## Current status — 2026-10-31 18:28 UTC
+## Current status — 2026-11-04 UTC
+
+At code head `d3a67c58`, BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977`
+remain the latest public releases; the local `0.9.978` candidate is
+unpublished. Public GitHub-hosted runners are authorized again for trusted
+build and validation jobs; private ephemeral JIT remains available. See
+[`AGENTS.md`](../AGENTS.md) for the current runner policy.
+
+Full public Build run
+[#41789426720](https://github.com/snapetech-org/chaptarrng/actions/runs/41789426720)
+at `d12798d1` passed Linux and macOS build/test/artifact jobs, PostgreSQL
+migration smoke, and the standard Docker build. Windows failed the
+localization/RTL test because it hashed a JSON registry after CRLF checkout
+conversion. Commit `d3a67c58` normalizes line endings before hashing and adds a
+regression test. Full public rerun
+[#41792679639](https://github.com/snapetech-org/chaptarrng/actions/runs/41792679639)
+passed on `d3a67c58`: Linux, Windows, macOS, PostgreSQL migration smoke, and
+the standard Docker build all succeeded. The Windows job also passed installer
+fingerprinting, service upgrade/rollback, selected data-directory preservation,
+and the installed Chocolatey `.76` automatic handoff.
+
+Windows Chocolatey run
+[#41756297204](https://github.com/snapetech-org/chaptarrng/actions/runs/41756297204)
+at `29b5f31f` passed .NET tests, build, service round trip, and candidate
+health, then failed its injected post-migration rollback because backup
+discovery missed the retained SQLite source and left BookshelfNG stopped. The
+failure artifact is retained in task scratch. Backup discovery now includes
+hidden files, and exact-head rerun
+[#41761241201](https://github.com/snapetech-org/chaptarrng/actions/runs/41761241201)
+was superseded for Windows by focused public run
+[#41785474409](https://github.com/snapetech-org/chaptarrng/actions/runs/41785474409)
+on `d12798d1`. That run passed the full Windows .NET suite, installer build
+and SQLite fingerprint, installed service upgrade/rollback, selected data
+directory check, and BookshelfNG `.76` to exact-candidate Chocolatey handoff.
+Manual defer, injected post-migration-health rollback with source recovery,
+and automatic migration all passed.
+
+The separate installed macOS acceptance run
+[#41761249985](https://github.com/snapetech-org/chaptarrng/actions/runs/41761249985)
+passed on Intel and ARM64 at `8b26fa3e`, covering No, headless Manual, Yes,
+health, source backup, and failed-start rollback after the supervisor cleanup
+assertion was corrected. The previous current-source Helm installed handoff
+[#41756992768](https://github.com/snapetech-org/chaptarrng/actions/runs/41756992768)
+passed populated migration, provider-ID/narrator mapping, health and database
+checks, retained source backup, chart rollback Job, and BookshelfNG recovery
+with matching database, configuration, and canary fingerprints.
+
+Keep BookshelfNG operational. Representative SQLite/PostgreSQL operator-data
+migration and rollback, real media, live provider fulfillment, every installed
+channel, external delivery, and formal operator sign-off remain open. No
+release, image alias, compatibility bridge, or production cutover is authorized
+by these CI and synthetic-fixture results.
+
+## Historical status snapshot — 2026-10-31 18:28 UTC
 
 BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest public
 application releases; the local ChaptarrNG `0.9.978` candidate is unpublished.
@@ -64,8 +117,10 @@ provider behavior, rollback, and release publication remain open.
 **Single-image migration contract (2026-10-30):** The earlier proposal for
 separate Goodreads and Hardcover compatibility images is withdrawn. The
 ChaptarrNG source changes now define one standard image build and one digest
-for all legacy aliases. No image from this candidate has been built or
-published yet. A tag cannot carry the old image's implicit provider setting,
+for all legacy aliases. At that historical checkpoint, no candidate image had
+been published. The later Helm installed-handoff run builds a local image in
+an ephemeral Kind cluster; this is not publication. A tag cannot carry the old
+image's implicit provider setting,
 so every migration must receive `HARDCOVER=true` or `HARDCOVER=false` from
 preserved channel configuration or an explicit operator choice;
 `HARDCOVER_NATIVE=false` explicitly selects Goodreads. The importer needs this
@@ -76,8 +131,9 @@ Readarr/Audioarr/Bookshelf PostgreSQL settings, then starts the migration
 supervisor. Fresh ChaptarrNG installs keep port `8789`; migrated installs can
 retain the legacy `8787` port through saved `config.xml` or explicit channel
 settings, and the image advertises both ports for automatic Docker mappings.
-These source changes still need exact-head private-JIT validation and do not
-authorize a public alias redirect.
+These source changes still needed exact-head validation at the 2026-10-30
+checkpoint and did not authorize a public alias redirect. Runner selection is
+now governed by the current owner directive in [`AGENTS.md`](../AGENTS.md).
 
 BookshelfNG retirement is blocked by every carried feature and client
 contract, each database/schema/configuration and data path, rollback, and each
@@ -100,10 +156,11 @@ decision; it is not a count of missing runtime features. See the
 and its pinned inventory and maps. These path decisions do not close feature,
 data, rollback, or installed-channel acceptance.
 
-All organization build, test, scan, package, and release jobs require private
-ephemeral JIT capacity with no hosted fallback. A missing native route blocks
-validation; it does not authorize a hosted run. See the
-[BookshelfNG parity matrix](https://github.com/snapetech-org/bookshelfng/blob/main/docs/maintainers/bookshelfng-parity-roadmap.md),
+**Runner policy snapshot at 2026-10-31 (superseded 2026-11-03):** At that
+checkpoint, organization build, test, scan, package, and release jobs required
+private ephemeral JIT capacity with no hosted fallback. Public GitHub-hosted
+runners are now authorized for trusted jobs under [`AGENTS.md`](../AGENTS.md).
+See the [BookshelfNG parity matrix](https://github.com/snapetech-org/bookshelfng/blob/main/docs/maintainers/bookshelfng-parity-roadmap.md),
 [distribution bridge status](https://github.com/snapetech-org/bookshelfng/blob/main/docs/maintainers/chaptarrng-distribution-bridge.md),
 and [consolidation report](https://github.com/snapetech-org/bookshelfng/blob/main/docs/maintainers/chaptarr-consolidation.md).
 

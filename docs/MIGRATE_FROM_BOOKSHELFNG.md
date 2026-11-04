@@ -1,34 +1,68 @@
 # Move a BookshelfNG installation to ChaptarrNG
 
-> **Current status (2026-10-31 18:28 UTC):** BookshelfNG `0.4.21.76` and
-> ChaptarrNG `v0.9.977` remain the latest public releases; the local `0.9.978`
-> candidate remains unpublished. Consolidated source candidate `7e538f5c`
-> includes private-only build/release routing, automatic search and audiobook
-> import fixes, multi-edition update handling, and a post-defer Chocolatey
-> health check. The latest remote main observed is `b1f10c72`, whose private
-> fork-validation change is preserved; GitHub has no exact-head Actions run for
-> that head or the consolidated candidate. No exact-head private-JIT result
-> validates the candidate. Build run
-> [41168115692](https://github.com/snapetech-org/chaptarrng/actions/runs/41168115692)
-> remains queued on old SHA `64689f1f` with Linux, Windows, and PostgreSQL
-> failures; macOS is queued. Chocolatey `.76` run
-> [41166442007](https://github.com/snapetech-org/chaptarrng/actions/runs/41166442007)
-> is queued on `eec975d2`, so the `.76` No/Yes handoff has not run. Helm run
-> [41168121048](https://github.com/snapetech-org/chaptarrng/actions/runs/41168121048)
-> failed before installed acceptance when the runner proxy returned HTTP 403
-> for pinned `kubectl`. No BookshelfNG identity has been redirected; keep
-> BookshelfNG running and backed up until feature, data, rollback, and channel
-> acceptance passes on the exact candidate.
+> **Current status (2026-11-04 UTC; code head `d3a67c58`):** BookshelfNG
+> `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest public releases; the
+> local `0.9.978` candidate is unpublished. Trusted jobs may use compatible
+> public GitHub-hosted runners again under [`AGENTS.md`](../AGENTS.md); private
+> ephemeral JIT remains available for jobs that need it.
+>
+> Earlier full public Build run
+> [41755889814](https://github.com/snapetech-org/chaptarrng/actions/runs/41755889814)
+> at `29b5f31f` passed PostgreSQL migrations and the standard Docker build, but
+> failed Linux/macOS RTL/localization and Windows translation-catalog checks
+> before those jobs reached their full build and test stages. Draft PR #190
+> remains untouched.
+>
+> Earlier Windows Chocolatey run
+> [41756297204](https://github.com/snapetech-org/chaptarrng/actions/runs/41756297204)
+> passed .NET tests, build, service round trip, and migration health, then
+> exposed rollback backup discovery missing the retained SQLite source. The
+> installer now includes hidden backups and reports the names it examines;
+> exact-head rerun at `8b26fa3e` was superseded by focused public Windows run
+> [41785474409](https://github.com/snapetech-org/chaptarrng/actions/runs/41785474409)
+> on `d12798d1`. It passed the full Windows .NET suite, installer build and
+> SQLite fingerprint, service upgrade/rollback, selected data-directory
+> preservation, and the installed BookshelfNG `.76` to exact-candidate
+> Chocolatey handoff. Manual defer, injected migration-health rollback with
+> source recovery, and automatic migration all passed.
+>
+> Full public Build run
+> [41789426720](https://github.com/snapetech-org/chaptarrng/actions/runs/41789426720)
+> at `d12798d1` passed Linux and macOS build/test/artifact jobs, PostgreSQL
+> migration smoke, and the standard Docker build. Windows found that the
+> locale test hashed a JSON registry after CRLF checkout conversion. Commit
+> `d3a67c58` normalizes text line endings before hashing and adds an LF/CRLF
+> regression test. Full public rerun
+> [41792679639](https://github.com/snapetech-org/chaptarrng/actions/runs/41792679639)
+> passed on `d3a67c58`: Linux, Windows, macOS, PostgreSQL migration smoke, and
+> the standard Docker build all succeeded. The Windows job passed the installer
+> fingerprint, service upgrade/rollback, selected-data-directory check, and
+> installed Chocolatey `.76` automatic handoff.
+>
+> Installed macOS acceptance
+> [41761249985](https://github.com/snapetech-org/chaptarrng/actions/runs/41761249985)
+> passed on Intel and ARM64 at `8b26fa3e`: No, headless Manual, Yes, health,
+> source backup, and failed-start rollback. Helm installed acceptance
+> [41756992768](https://github.com/snapetech-org/chaptarrng/actions/runs/41756992768)
+> passed populated migration, provider-ID/narrator checks, health, database
+> integrity, source backup, chart rollback, and BookshelfNG recovery with
+> matching database/config/canary fingerprints.
+>
+> Keep BookshelfNG running and backed up. Representative operator data, live
+> provider/media behavior, remaining installed-channel recovery, external
+> delivery, and operator acceptance remain open. These CI and synthetic-fixture
+> results do not authorize publication or production cutover.
 
-> The current source-path ledger compares BookshelfNG `1bd7f2dc` to ChaptarrNG
+> **Historical source-path audit snapshot (2026-10-31):** The ledger compares
+> BookshelfNG `1bd7f2dc` to ChaptarrNG
 > `main` target `fa55ffab` (application source `bd589312`): 1,174 changed paths,
 > 56 reviewed mappings, 587 dispositions, and 587 paths without disposition.
 > Path counts are review records, not feature-parity or migration acceptance.
 > ChaptarrNG's separate upstream-retirement gate includes this full carryover
 > plus every ChaptarrNG feature that is maintained, active, or unreleased.
 
-> **Release status (2026-10-26).** ChaptarrNG `v0.9.977` remains the latest
-> public release. Local 0.9.978 candidates have passed installed handoff
+> **Historical channel status (2026-10-26).** ChaptarrNG `v0.9.977` remains
+> the latest public release. Local 0.9.978 candidates have passed installed handoff
 > acceptance on Debian, Fedora, Arch, Windows Chocolatey, AppImage, Flatpak,
 > Helm, Docker, Cloudron, and Co-op Cloud. Docker offers y/n with an attached
 > TTY; headless Docker and Helm defer Ask mode. Cloudron 10.1.6 passed an

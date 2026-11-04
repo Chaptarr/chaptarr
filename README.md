@@ -28,57 +28,47 @@ For local MCP access, see the [SnapeTech MCP integration guide](docs/integration
 
 ### BookshelfNG migration status
 
-**Status checked: 2026-10-31 04:54 UTC.** ChaptarrNG `v0.9.977` remains the
-latest published release. ChaptarrNG `main` is
-`fa55ffabe632c7ee003791635ebe53fb1895d3df`; its latest application source
-snapshot is `bd5893120c24ada8ea492edc1ce21cd5cdc24d8b`. PR #183 merged at
-`96c953b27e2b600eb9f70e23cf19b339c32dc3ad`; the one-image handoff and Docker
-port preservation are in `main`. The later `fa55ffab` commit updates the
-Debian release-tag gate assertion, not application code. No exact-head
-private-JIT build or platform result exists for application source `bd589312`
-or current `main` `fa55ffab`. Owner-PR run
-[#41167825847](https://github.com/snapetech-org/chaptarrng/actions/runs/41167825847)
-was cancelled on pre-integration head `f63796dd`; the current source has no
-passing private-JIT result.
+**Status checked: 2026-11-04 UTC.** BookshelfNG `0.4.21.76` and ChaptarrNG
+`v0.9.977` remain the latest published releases; the local `0.9.978` candidate
+is unpublished. The current code head is `d3a67c58`. Trusted build and
+validation jobs may use compatible public GitHub-hosted runners again; private
+ephemeral JIT remains available for jobs that need it. See
+[`AGENTS.md`](AGENTS.md) for runner and release policy.
 
-The PR Build run
-[#41168525352](https://github.com/snapetech-org/chaptarrng/actions/runs/41168525352)
-is waiting on merge-head validation at `96c953b2`; it does not validate
-current `main`.
+The focused public Windows handoff run
+[#41785474409](https://github.com/snapetech-org/chaptarrng/actions/runs/41785474409)
+passed on `d12798d1`: full .NET tests, installer build and SQLite fingerprint,
+service upgrade/rollback, selected data-directory preservation, and the
+installed BookshelfNG `.76` to exact-candidate Chocolatey handoff, including
+manual defer, injected rollback, and automatic migration.
 
-The older full Build run
-[#41166424095](https://github.com/snapetech-org/chaptarrng/actions/runs/41166424095)
-has only its runner-contract job queued; platform jobs were skipped. Windows
-handoff run
-[#41166442007](https://github.com/snapetech-org/chaptarrng/actions/runs/41166442007)
-is queued without a runner. Helm Actions run
-[#41167175002](https://github.com/snapetech-org/chaptarrng/actions/runs/41167175002)
-is also queued without a runner or steps. That job would create a disposable
-Kind cluster on its private JIT runner; it never started, and no production
-cluster was involved. BookshelfNG `0.4.21.76` remains published. No release,
-package, image, installer, updater, or chart identity has been redirected.
+Full public Build run
+[#41789426720](https://github.com/snapetech-org/chaptarrng/actions/runs/41789426720)
+at `d12798d1` passed Linux and macOS build/test/artifact jobs, PostgreSQL
+migration smoke, and the standard Docker build. Windows exposed a test-only
+line-ending mismatch while hashing the JSON source registry on a CRLF checkout.
+Commit `d3a67c58` normalizes text line endings before hashing and adds an
+LF/CRLF regression test. The full public rerun
+[#41792679639](https://github.com/snapetech-org/chaptarrng/actions/runs/41792679639)
+passed on `d3a67c58`: Linux, Windows, macOS, PostgreSQL migration smoke, and
+the standard Docker build all succeeded. The Windows job also passed the
+installer fingerprint, service upgrade/rollback, selected data-directory,
+and installed Chocolatey `.76` automatic migration checks.
 
-The latest observed full Build run
-[#41168115692](https://github.com/snapetech-org/chaptarrng/actions/runs/41168115692)
-is queued at older SHA `64689f1f`; its Linux, macOS, and Windows jobs have no
-runner or steps. The macOS handoff and later Helm runs
-[#41168181470](https://github.com/snapetech-org/chaptarrng/actions/runs/41168181470)
-and [#41168121048](https://github.com/snapetech-org/chaptarrng/actions/runs/41168121048)
-are queued on older source without runners. Standalone-assets run
-[#41168142569](https://github.com/snapetech-org/chaptarrng/actions/runs/41168142569)
-has one private frontend-build job succeeded, with ten archive/platform jobs
-still queued at older SHA `64689f1f`. No exact-head pass for the current app
-source is recorded. Preserve queued runs; do not dispatch duplicates or use
-local or hosted validation.
+The current Helm installed handoff
+[#41756992768](https://github.com/snapetech-org/chaptarrng/actions/runs/41756992768)
+passed on `0583bc8c`: populated automatic migration, Hardcover edition ID and
+narrator preservation, health and database checks, retained source backup,
+chart rollback Job, and BookshelfNG recovery with matching database, config,
+and canary fingerprints. The separate Intel/ARM64 installed macOS acceptance
+run [#41761249985](https://github.com/snapetech-org/chaptarrng/actions/runs/41761249985)
+passed on `8b26fa3e`, covering No, headless Manual, Yes, health, source backup,
+and failed-start rollback.
 
-BookshelfNG remains in service until each capability, data and configuration
-path, rollback path, and installation channel has its own acceptance evidence.
-ChaptarrNG-to-upstream retirement is a separate cumulative blocker covering
-all BookshelfNG carryover and every ChaptarrNG feature that is maintained,
-active, or unreleased. The localization catalogs, accessibility, and RTL
-support now in `main` are included in that gate. All organization build, test,
-scan, package, and release jobs require private ephemeral JIT; hosted fallback
-is not allowed, and missing platform capacity blocks validation.
+BookshelfNG remains in service. Representative operator-data conversion and
+rollback, live provider and real-media behavior, every installed channel,
+external delivery, and operator acceptance remain open. No release, package
+feed, image alias, compatibility bridge, or production cutover is authorized.
 
 Migration uses the normal ChaptarrNG application and one standard image for
 fresh and migrated installations. The container detects legacy SQLite and
@@ -86,22 +76,12 @@ Readarr/Audioarr/Bookshelf PostgreSQL sources, then starts the bounded
 migration/rollback supervisor. Every migration requires an explicit provider
 mode and fails closed before source mutation without one. The image advertises
 both `8787/tcp` for migrated BookshelfNG data and `8789/tcp` for fresh installs.
-The release and legacy-channel gates remain closed until exact-head private-JIT
-and full per-channel acceptance pass.
 
-Chocolatey publishes standard ChaptarrNG `0.9.973` and BookshelfNG `0.4.21.76`;
-the ChaptarrNG package is behind release `v0.9.977`, and the old BookshelfNG
-package identity has not been bridged. The previous `.977` Chocolatey push
-returned HTTP 403. See the
-[Chocolatey package](https://community.chocolatey.org/packages/chaptarrng),
-[BookshelfNG package](https://community.chocolatey.org/packages/bookshelfng),
-and the [channel acceptance matrix](docs/BOOKSHELFNG_RETIREMENT.md#legacy-install-channels).
-
-The latest BookshelfNG source-path audit compares source `1bd7f2dc` with
-current ChaptarrNG `main` `fa55ffab` (application source snapshot `bd589312`).
-It records 1,174 changed paths, 56 reviewed mappings, 587 dispositions, and
-587 paths still open. These are path counts, not missing-feature counts, and do
-not establish runtime parity, migration acceptance, or channel continuity. See the
+The 2026-10-31 BookshelfNG source-path audit compared source `1bd7f2dc` with
+ChaptarrNG `main` at `fa55ffab` (application source snapshot `bd589312`). It
+records 1,174 changed paths, 56 reviewed mappings, 587 dispositions, and 587
+paths still open. These are path counts, not missing-feature counts, and do not
+establish runtime parity, migration acceptance, or channel continuity. See the
 [pinned BookshelfNG consolidation inventory and review](https://github.com/snapetech-org/bookshelfng/blob/main/docs/maintainers/chaptarr-consolidation.md#exact-head-source-path-audit--2026-10-31).
 
 The implementation and rehearsal notes below preserve their original dates
@@ -128,8 +108,8 @@ gate closes. Read the [migration guide](docs/MIGRATE_FROM_BOOKSHELFNG.md)
 and [retirement status](docs/BOOKSHELFNG_RETIREMENT.md) before switching.
 
 Once those gates are closed, a pushed `v*` tag matching `package.json` starts
-the private-JIT release pipeline. Main-branch version changes alone do not
-publish a release; release tags must point to a commit on `main`.
+the release pipeline. Main-branch version changes alone do not publish a
+release; release tags must point to a commit on `main`.
 
 On 2026-10-21, the current source candidate passed migration, database
 rollback, and normal-startup rehearsals against two isolated, populated
