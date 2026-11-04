@@ -359,7 +359,7 @@ function main() {
     process.stdout.write(report);
     return;
   } else {
-    const checked = fs.readFileSync(reportPath, 'utf8');
+    const checked = fs.readFileSync(reportPath, 'utf8').replace(/\r\n?/g, '\n');
     if (checked !== report) {
       console.error('Catalog status report is stale. Run yarn localization:update-status.');
       process.exit(1);
