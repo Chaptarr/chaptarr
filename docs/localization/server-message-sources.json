@@ -40,7 +40,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/MediaFiles/ConversionJobService.cs",
-          "line": 167,
+          "line": 168,
           "sourceLine": "job.Message = \"Cancelling conversion\";",
           "sourceLineSha256": "1a74d536721e6fa8058b9755b692802908db79e4d0f72dab829c6e00de50f152",
           "category": "operational-message",
@@ -79,7 +79,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/MediaFiles/ConversionJobService.cs",
-          "line": 177,
+          "line": 178,
           "sourceLine": "job.Message = \"Conversion cancelled\";",
           "sourceLineSha256": "4921fcc6da5858c7763463a79e85e4c6a34309e73249b81d2eda89bac31d5e7e",
           "category": "operational-message",
@@ -148,7 +148,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/MediaFiles/ConversionJobService.cs",
-          "line": 117,
+          "line": 118,
           "sourceLine": "job.Message = \"Waiting to convert\";",
           "sourceLineSha256": "2f4be1af134646df5b14a02d9ffdf21b5d69d98b0bda63ef31241449ed273aa9",
           "category": "operational-message",
@@ -7003,7 +7003,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/MediaFiles/ConversionJobService.cs",
-          "line": 437,
+          "line": 451,
           "sourceLine": "job.Message = $\"Converting to M4B ({tokenBudget} CPU thread{(tokenBudget == 1 ? string.Empty : \"s\")})\";",
           "sourceLineSha256": "8a8cad3c83e1b57a5d484e42bc665da003dfe6974531e085eae156dd355cb97a",
           "category": "operational-message",
