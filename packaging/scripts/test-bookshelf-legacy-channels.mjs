@@ -365,6 +365,21 @@ test('Chocolatey deferred service upgrades retain both NSSM environments and rec
   assert.match(installer, /targetDatabaseExit = Invoke-BookshelfUtility/);
   assert.match(installer, /BookshelfNG migration failed with exit code \$migrationExit/);
   assert.match(installer, /BookshelfSource = -not \$alreadyMigrated/);
+  const backupDiscoveryStart = installer.indexOf('function Get-BookshelfSqliteBackupFiles');
+  const backupDiscoveryEnd = installer.indexOf('\nfunction Test-HasPopulatedSqliteDatabaseFamily', backupDiscoveryStart);
+  assert.ok(backupDiscoveryStart >= 0 && backupDiscoveryEnd > backupDiscoveryStart,
+    'Chocolatey SQLite rollback backup discovery helper could not be isolated');
+  const backupDiscovery = installer.slice(backupDiscoveryStart, backupDiscoveryEnd);
+  assert.match(backupDiscovery, /Get-ChildItem -LiteralPath \$DataDirectory -File -Force/,
+    'Chocolatey must enumerate the chosen data directory directly so retained backups are visible');
+  assert.doesNotMatch(backupDiscovery, /-Filter/,
+    'Chocolatey rollback backup discovery must not rely on provider-specific filename filtering');
+  for (const databaseName of ['readarr.db', 'audioarr.db', 'chaptarr.db']) {
+    assert.ok(backupDiscovery.includes(`${databaseName}.bookshelfng-backup-`),
+      `Chocolatey rollback backup discovery must recognize ${databaseName} snapshots`);
+  }
+  assert.match(installer, /Get-BookshelfSqliteBackupFiles -DataDirectory \$dataDir/,
+    'Chocolatey must use the tested backup discovery helper before and after migration');
   assert.match(installer, /URLBASE/);
   assert.match(installer, /<EventTrigger>/);
   assert.match(installer, /CHAPTARRNG_TEST_FAIL_HANDOFF/);
