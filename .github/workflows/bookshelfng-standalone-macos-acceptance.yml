@@ -27,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: bookshelfng-standalone-macos-acceptance-${{ github.ref }}
+  group: bookshelfng-standalone-macos-acceptance-${{ github.ref }}-${{ inputs.runner_pool }}-${{ inputs.architecture }}
   cancel-in-progress: false
 
 jobs:

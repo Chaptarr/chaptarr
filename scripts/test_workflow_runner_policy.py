@@ -157,6 +157,14 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn("'ubuntu-24.04'", job, job_name)
             self.assertIn('"group":"ng-shared-main-jit"', job, job_name)
 
+    def test_macos_handoff_runs_do_not_serialize_public_and_private_pools(self) -> None:
+        path = WORKFLOW.parent / "bookshelfng-standalone-macos-acceptance.yml"
+        source = path.read_text(encoding="utf-8")
+        self.assertIn(
+            "group: bookshelfng-standalone-macos-acceptance-${{ github.ref }}-${{ inputs.runner_pool }}-${{ inputs.architecture }}",
+            source,
+        )
+
     def test_windows_release_jobs_use_the_private_packer_route(self) -> None:
         windows_release_jobs = (
             ("release.yml", "windows-migration-installer", "windows-migration-installer"),
