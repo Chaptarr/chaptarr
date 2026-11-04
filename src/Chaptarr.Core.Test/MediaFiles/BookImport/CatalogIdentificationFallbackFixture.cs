@@ -15,33 +15,42 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     {
         private sealed class RecordingCatalogSearch : ISearchForNewBook
         {
+            private readonly object _callsLock = new();
             public List<string> Calls { get; } = new List<string>();
             public Func<string, string, List<Book>> OnTextSearch { get; set; } = (_, _) => new List<Book>();
             public List<Book> IsbnResults { get; set; } = new List<Book>();
             public List<Book> AsinResults { get; set; } = new List<Book>();
             public List<Book> GoodreadsResults { get; set; } = new List<Book>();
 
+            private void RecordCall(string call)
+            {
+                lock (_callsLock)
+                {
+                    Calls.Add(call);
+                }
+            }
+
             public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true, BookMediaType? mediaType = null)
             {
-                Calls.Add($"text:{title}|{author}");
+                RecordCall($"text:{title}|{author}");
                 return OnTextSearch(title, author);
             }
 
             public List<Book> SearchByIsbn(string isbn)
             {
-                Calls.Add($"isbn:{isbn}");
+                RecordCall($"isbn:{isbn}");
                 return IsbnResults;
             }
 
             public List<Book> SearchByAsin(string asin)
             {
-                Calls.Add($"asin:{asin}");
+                RecordCall($"asin:{asin}");
                 return AsinResults;
             }
 
             public List<Book> SearchByGoodreadsBookId(int goodreadsId, bool getAllEditions)
             {
-                Calls.Add($"goodreads:{goodreadsId}");
+                RecordCall($"goodreads:{goodreadsId}");
                 return GoodreadsResults;
             }
         }
