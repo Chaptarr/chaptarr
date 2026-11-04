@@ -12,15 +12,15 @@ parser.add_argument("database", nargs="+", type=Path)
 args = parser.parse_args()
 
 expected_counts = {
-    "AuthorMetadata": 4,
-    "Books": 6,
-    "Editions": 9,
+    "AuthorMetadata": (4, 'SELECT COUNT(*) FROM "AuthorMetadata"'),
+    "Books": (6, 'SELECT COUNT(*) FROM "Books"'),
+    "Editions": (9, 'SELECT COUNT(*) FROM "Editions"'),
 }
 
 for path in args.database:
     with sqlite3.connect(path) as connection:
-        for table, expected in expected_counts.items():
-            count = connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        for table, (expected, query) in expected_counts.items():
+            count = connection.execute(query).fetchone()[0]
             if count != expected:
                 raise RuntimeError(
                     f"Expected {expected} {table} rows in the disposable fixture, found {count}."
