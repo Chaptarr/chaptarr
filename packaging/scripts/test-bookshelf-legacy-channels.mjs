@@ -365,6 +365,8 @@ test('Chocolatey deferred service upgrades retain both NSSM environments and rec
   assert.match(installer, /targetDatabaseExit = Invoke-BookshelfUtility/);
   assert.match(installer, /BookshelfNG migration failed with exit code \$migrationExit/);
   assert.match(installer, /BookshelfSource = -not \$alreadyMigrated/);
+  assert.match(installer, /\[string\[\]\] \$sqliteSourceNames = @\(\)\s*if \(-not \$postgresSourceForChoice\) \{\s*\$sqliteSourceNames = \[string\[\]\] @\(Get-BookshelfSqliteDatabaseNames \$dataDir\)\s*\}/,
+    'Chocolatey must preserve a one-item SQLite source-name array before indexing its first element');
   const backupDiscoveryStart = installer.indexOf('function Get-BookshelfSqliteBackupFiles');
   const backupDiscoveryEnd = installer.indexOf('\nfunction Test-HasPopulatedSqliteDatabaseFamily', backupDiscoveryStart);
   assert.ok(backupDiscoveryStart >= 0 && backupDiscoveryEnd > backupDiscoveryStart,

@@ -748,7 +748,10 @@ foreach ($overrideName in $serverOverrides.Keys) {
 $dataDir = [IO.Path]::GetFullPath($dataDir)
 $hadApp = Test-Path -LiteralPath $appDir
 $postgresSourceForChoice = Test-BookshelfPostgresSource $serviceEnvironment
-$sqliteSourceNames = if ($postgresSourceForChoice) { @() } else { @(Get-BookshelfSqliteDatabaseNames $dataDir) }
+[string[]] $sqliteSourceNames = @()
+if (-not $postgresSourceForChoice) {
+  $sqliteSourceNames = [string[]] @(Get-BookshelfSqliteDatabaseNames $dataDir)
+}
 $preMergedNativeDatabase = $false
 if ($sqliteSourceNames.Count -gt 1 -and -not $postgresSourceForChoice) {
   $nativeDatabase = Join-Path $dataDir 'chaptarr.db'
