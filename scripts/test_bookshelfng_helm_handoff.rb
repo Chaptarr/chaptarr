@@ -324,10 +324,15 @@ assert(helm_workflow.include?("test_bookshelfng_helm_install_handoff.sh") &&
   ["preserved SQLite source backup", "readarr.db.bookshelfng-backup-*.db"],
   ["confirmed chart restore", "bookshelfMigration.rollback.confirmed=true"],
   ["BookshelfNG recovery", "assert_ping bookshelfng-after-rollback"],
-  ["logical source database restored", 'test "$(pod_logical_hash)" = "$SOURCE_SQL_DUMP_SHA256"']
+  ["BookshelfNG stopped before source snapshot verification", 'kubectl scale statefulset/bookshelfng -n "$NAMESPACE" --replicas=0 --timeout=5m'],
+  ["logical source database restored", 'test "$RESTORED_SQL_DUMP_SHA256" = "$SOURCE_SQL_DUMP_SHA256"'],
+  ["config restored", 'test "$RESTORED_CONFIG_SHA256" = "$CONFIG_SHA256"'],
+  ["canary restored", 'test "$RESTORED_CANARY_SHA256" = "$CANARY_SHA256"']
 ].each do |label, contract|
   assert(installed_handoff.include?(contract), "installed Helm acceptance is missing #{label}")
 end
+assert(installed_handoff.scan('kubectl apply -f "$EVIDENCE_DIR/snapshot-pod.yaml"').count >= 2,
+       "installed Helm acceptance must verify the source snapshot before handoff and after rollback")
 assert(!installed_handoff.include?("--set persistence.existingClaim="),
        "Helm upgrade must keep managing the stable PVC resource instead of dropping it")
 

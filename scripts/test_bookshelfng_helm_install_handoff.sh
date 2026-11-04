@@ -466,15 +466,29 @@ helm rollback "$RELEASE_NAME" "$legacy_revision" -n "$NAMESPACE" --wait --timeou
 kubectl rollout status -n "$NAMESPACE" statefulset/bookshelfng --timeout=15m
 assert_ping bookshelfng-after-rollback
 assert_pvc_identity
-test "$(kubectl exec -n "$NAMESPACE" bookshelfng-0 -c bookshelfng -- sqlite3 -readonly /config/readarr.db 'PRAGMA integrity_check;')" = ok
-test "$(kubectl exec -n "$NAMESPACE" bookshelfng-0 -c bookshelfng -- sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 158
-test "$(pod_logical_hash)" = "$SOURCE_SQL_DUMP_SHA256"
-test "$(pod_file_hash /config/config.xml)" = "$CONFIG_SHA256"
-test "$(pod_file_hash /config/channel-test-canary.txt)" = "$CANARY_SHA256"
-grep -Fxq 'helm-handoff-canary=preserve-me' < <(kubectl exec -n "$NAMESPACE" bookshelfng-0 -c bookshelfng -- cat /config/channel-test-canary.txt)
+kubectl scale statefulset/bookshelfng -n "$NAMESPACE" --replicas=0 --timeout=5m
+wait_stopped bookshelfng-0
+kubectl apply -f "$EVIDENCE_DIR/snapshot-pod.yaml"
+if ! kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/bookshelfng-snapshot -n "$NAMESPACE" --timeout=5m; then
+    kubectl describe pod bookshelfng-snapshot -n "$NAMESPACE" 2>&1 \
+        | tee "$EVIDENCE_DIR/rollback-snapshot-pod-describe.txt" || true
+    kubectl logs pod/bookshelfng-snapshot -n "$NAMESPACE" --all-containers=true 2>&1 \
+        | tee "$EVIDENCE_DIR/rollback-snapshot-pod-failed.log" || true
+    exit 1
+fi
+rollback_snapshot_output="$(kubectl logs -n "$NAMESPACE" pod/bookshelfng-snapshot)"
+printf '%s\n' "$rollback_snapshot_output" | tee "$EVIDENCE_DIR/source-after-rollback.txt"
+RESTORED_SQL_DUMP_SHA256="$(sed -n 's/^SOURCE_SQL_DUMP_SHA256=//p' <<< "$rollback_snapshot_output")"
+RESTORED_CONFIG_SHA256="$(sed -n 's/^CONFIG_SHA256=//p' <<< "$rollback_snapshot_output")"
+RESTORED_CANARY_SHA256="$(sed -n 's/^CANARY_SHA256=//p' <<< "$rollback_snapshot_output")"
+test "$RESTORED_SQL_DUMP_SHA256" = "$SOURCE_SQL_DUMP_SHA256"
+test "$RESTORED_CONFIG_SHA256" = "$CONFIG_SHA256"
+test "$RESTORED_CANARY_SHA256" = "$CANARY_SHA256"
+kubectl delete pod bookshelfng-snapshot -n "$NAMESPACE" --wait=true
 
-printf 'RESULT=PASS\nBOOKSHELFNG_IMAGE=%s@%s\nCHAPTARRNG_IMAGE=%s\nSOURCE_PVC_UID=%s\nSOURCE_SQL_DUMP_SHA256=%s\nCONFIG_SHA256=%s\nCANARY_SHA256=%s\nROLLBACK_REVISION=%s\n' \
+printf 'RESULT=PASS\nBOOKSHELFNG_IMAGE=%s@%s\nCHAPTARRNG_IMAGE=%s\nSOURCE_PVC_UID=%s\nSOURCE_SQL_DUMP_SHA256=%s\nRESTORED_SQL_DUMP_SHA256=%s\nCONFIG_SHA256=%s\nRESTORED_CONFIG_SHA256=%s\nCANARY_SHA256=%s\nRESTORED_CANARY_SHA256=%s\nROLLBACK_REVISION=%s\n' \
     "docker.io/snapetech/bookshelfng" "$LEGACY_IMAGE_DIGEST" "$CANDIDATE_IMAGE" \
-    "$SOURCE_PVC_UID" "$SOURCE_SQL_DUMP_SHA256" "$CONFIG_SHA256" "$CANARY_SHA256" "$legacy_revision" \
+    "$SOURCE_PVC_UID" "$SOURCE_SQL_DUMP_SHA256" "$RESTORED_SQL_DUMP_SHA256" "$CONFIG_SHA256" "$RESTORED_CONFIG_SHA256" \
+    "$CANARY_SHA256" "$RESTORED_CANARY_SHA256" "$legacy_revision" \
     | tee "$EVIDENCE_DIR/acceptance-result.txt"
 log "Installed Helm No/Yes, populated-data, health, backup, chart-restore, and BookshelfNG recovery acceptance passed."
