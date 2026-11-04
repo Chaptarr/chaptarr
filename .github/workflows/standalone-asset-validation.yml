@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-required-v1
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
 name: Validate standalone release assets
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' &&
@@ -14,10 +14,12 @@ on:
         options:
           - ci
       runner_pool:
-        description: Select the private ephemeral JIT pool
+        description: Select compatible GitHub-hosted or private JIT runners
         required: true
         type: choice
+        default: public
         options:
+          - public
           - private
 permissions:
   contents: read
@@ -35,13 +37,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'ci' &&
-          inputs.runner_pool == 'private'
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-verify-runtime-pack-install"]}}', github.run_id)) }}
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-verify-runtime-pack-install"]}}', github.run_id)) }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -62,14 +64,14 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'ci' &&
-          inputs.runner_pool == 'private'
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
         )
       ) &&
       (
         github.event_name != 'pull_request'
       )
     name: Build frontend once
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-frontend"]}}', github.run_id)) }}
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-frontend"]}}', github.run_id)) }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -103,14 +105,14 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'ci' &&
-          inputs.runner_pool == 'private'
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
         )
       ) &&
       (
         github.event_name != 'pull_request'
       )
     name: Build Linux x86 and FreeBSD runtime packs
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-jit-linux-22-04","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-extra-platform-runtimes"]}}', github.run_id)) }}
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-jit-linux-22-04","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-extra-platform-runtimes"]}}', github.run_id)) }}
     timeout-minutes: 360
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -148,7 +150,7 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'ci' &&
-          inputs.runner_pool == 'private'
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
         )
       ) &&
       (
@@ -156,7 +158,7 @@ jobs:
       )
     name: Build and verify ${{ matrix.rid }} archive
     needs: [frontend, extra-platform-runtimes]
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-extra-standalone"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-extra-standalone"]}}', github.run_id, strategy.job-index)) }}
     strategy:
       fail-fast: false
       matrix:
@@ -221,7 +223,7 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'ci' &&
-          inputs.runner_pool == 'private'
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
         )
       ) &&
       (
@@ -229,7 +231,7 @@ jobs:
       )
     name: Build and verify ${{ matrix.rid }} archive
     needs: frontend
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-standalone"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-standalone"]}}', github.run_id, strategy.job-index)) }}
     strategy:
       fail-fast: false
       matrix:

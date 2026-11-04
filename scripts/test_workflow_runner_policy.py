@@ -101,6 +101,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "build.yml",
             "helm-handoff.yml",
             "bookshelfng-standalone-macos-acceptance.yml",
+            "standalone-asset-validation.yml",
         }
         for workflow_path in sorted(workflow_dir.glob("*.yml")):
             source = workflow_path.read_text(encoding="utf-8")
@@ -133,6 +134,28 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         r"self-hosted|group|fromJSON",
                         f"{workflow_path}: {line}",
                     )
+
+    def test_standalone_asset_validation_allows_trusted_public_runners(self) -> None:
+        path = WORKFLOW.parent / "standalone-asset-validation.yml"
+        source = path.read_text(encoding="utf-8")
+        self.assertTrue(
+            source.startswith("# ng-runner-policy: trusted-hosted-or-private-jit-v1"),
+            path.name,
+        )
+        self.assertIn("default: public", event_block(source, "workflow_dispatch"))
+
+        for job_name in (
+            "verify-runtime-pack-install",
+            "frontend",
+            "extra-platform-runtimes",
+            "extra-standalone",
+            "standalone",
+        ):
+            job = job_block(source, job_name)
+            self.assertIn("inputs.runner_pool == 'public'", job, job_name)
+            self.assertIn("inputs.runner_pool == 'private'", job, job_name)
+            self.assertIn("'ubuntu-24.04'", job, job_name)
+            self.assertIn('"group":"ng-shared-main-jit"', job, job_name)
 
     def test_windows_release_jobs_use_the_private_packer_route(self) -> None:
         windows_release_jobs = (
@@ -415,7 +438,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             dispatch = event_block(source, "workflow_dispatch")
             if path.name == "helm-handoff.yml":
                 self.assertNotRegex(source, r"(?m)^  push:")
-            pool_options = ("public", "private") if path.name in {"build.yml", "helm-handoff.yml"} else ("private",)
+            pool_options = (
+                ("public", "private")
+                if path.name in {"build.yml", "helm-handoff.yml", "standalone-asset-validation.yml"}
+                else ("private",)
+            )
             for field, options in (("action", (action,)), ("runner_pool", pool_options)):
                 input_match = re.search(
                     rf"(?ms)^      {field}:\n(?P<body>.*?)(?=^      [A-Za-z0-9_-]+:|\Z)",
@@ -431,7 +458,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         rf"(?m)^          - {re.escape(option)}$",
                         f"{path.name}: {field}",
                     )
-                if path.name in {"build.yml", "helm-handoff.yml"} and field == "runner_pool":
+                if path.name in {"build.yml", "helm-handoff.yml", "standalone-asset-validation.yml"} and field == "runner_pool":
                     self.assertIn("default: public", input_body, f"{path.name}: {field}")
 
             run_name = source.split("run-name:", 1)[1].split("\non:", 1)[0]
