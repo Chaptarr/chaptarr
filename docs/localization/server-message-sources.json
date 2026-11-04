@@ -6240,7 +6240,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/ProviderControllerBase.cs",
-          "line": 117,
+          "line": 126,
           "sourceLine": "throw new BadRequestException(\"ids must be provided\");",
           "sourceLineSha256": "60a4770f0a91e2b155bbd972ea823b81107efcdeec99c36fcedd6bfa863a097f",
           "category": "api-error",
@@ -14771,7 +14771,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/ProviderControllerBase.cs",
-          "line": 38,
+          "line": 39,
           "sourceLine": "SharedValidator.RuleFor(c => c.Name).Must((v, c) => !_providerFactory.All().Any(p => p.Name.EqualsIgnoreCase(c) && p.Id != v.Id)).WithMessage(\"Should be unique\");",
           "sourceLineSha256": "d21c1ec2e8237f63e75417a7036b715643a7896721e33508f7b831816e819cd8",
           "category": "validation-message",
@@ -15545,7 +15545,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/ProviderControllerBase.cs",
-          "line": 41,
+          "line": 42,
           "sourceLine": "SharedValidator.RuleFor(c => c.ConfigContract).Must(contract => ProviderConfigTypeCache.Find(contract) != null).WithMessage(\"Invalid config contract\");",
           "sourceLineSha256": "d03d68f93d80e9b116a366882dc96ae29c9b199920d6b583b88c822f43da164c",
           "category": "validation-message",

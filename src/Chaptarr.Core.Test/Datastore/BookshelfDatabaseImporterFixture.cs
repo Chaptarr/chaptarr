@@ -822,6 +822,11 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(mamSettings.SearchInSeries, Is.False);
                 Assert.That(mamSettings.SearchInFilenames, Is.True);
                 Assert.That(mamSettings.SearchLanguages, Is.EqualTo(new[] { 4, 1 }));
+                Assert.That(mamSettings.SeedCriteria.SeedRatio, Is.EqualTo(1.5));
+                Assert.That(mamSettings.SeedCriteria.SeedTime, Is.EqualTo(4320));
+                Assert.That(mamSettings.SeedCriteria.DiscographySeedTime, Is.EqualTo(10080));
+                Assert.That(mamSettings.NeverMoveOnImport, Is.True);
+                Assert.That(mamSettings.RejectBlocklistedTorrentHashesWhileGrabbing, Is.True);
                 Assert.That(mamSettings.UseFreeleechWedge, Is.EqualTo((int)MyAnonaMouseFreeleechWedgeAction.Preferred),
                     "the supported legacy Prefer value must keep using MAM's freeleech wedge");
             });

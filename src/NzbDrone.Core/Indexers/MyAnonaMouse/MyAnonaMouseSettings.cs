@@ -22,6 +22,10 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
     public class MyAnonaMouseSettings : ITorrentIndexerSettings
     {
         private static readonly MyAnonaMouseSettingsValidator Validator = new MyAnonaMouseSettingsValidator();
+        private SeedCriteriaSettings _seedCriteria = new SeedCriteriaSettings();
+        private bool _neverMoveOnImport;
+        private int? _seedTimeHours;
+        private bool _seedTimeComesFromHours;
 
         public MyAnonaMouseSettings()
         {
@@ -69,7 +73,24 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public bool IntegrateWithAbs { get; set; }
 
         [FieldDefinition(7, Type = FieldType.Number, Label = "IndexerSettingsSeedTime", Unit = "hours", HelpText = "provider.field.f47441f72616d")]
-        public int? SeedTimeHours { get; set; }
+        public int? SeedTimeHours
+        {
+            get => _seedTimeHours;
+            set
+            {
+                _seedTimeHours = value;
+                if (value is > 0)
+                {
+                    _seedCriteria.SeedTime = value.Value * 60;
+                    _seedTimeComesFromHours = true;
+                }
+                else if (_seedTimeComesFromHours)
+                {
+                    _seedCriteria.SeedTime = null;
+                    _seedTimeComesFromHours = false;
+                }
+            }
+        }
 
         [FieldDefinition(8, Type = FieldType.Number, Label = "provider.field.fa4001360c131", Unit = "days", HelpText = "provider.field.f8ef2df0a1d96", Advanced = true)]
         public int? EarlyReleaseLimit { get; set; }
@@ -91,7 +112,15 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public int ManualGrabBuffer { get; set; }
 
         [FieldDefinition(14, Type = FieldType.Checkbox, Label = "IndexerSettingsNeverMoveOnImport", HelpText = "IndexerSettingsNeverMoveOnImportHelpText")]
-        public bool NeverMoveOnImport { get; set; }
+        public bool NeverMoveOnImport
+        {
+            get => _neverMoveOnImport;
+            set
+            {
+                _neverMoveOnImport = value;
+                _seedCriteria.NeverMoveOnImport = value;
+            }
+        }
 
         // BookshelfNG exposed these MAM browse filters. Keep their serialized values and apply
         // them to Chaptarr's richer JSON search so existing indexer settings remain effective.
@@ -116,28 +145,39 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public DateTime? UnsatisfiedSnapshotUtc { get; set; }
         public DateTime? UnsatisfiedStatusRefreshedUtc { get; set; }
 
-        // Required by ITorrentIndexerSettings but hidden from UI
+        // Keep the legacy seed criteria in the persisted settings and provider schema. The
+        // SeedTimeHours field remains the native MAM control; this nested shape keeps existing
+        // BookshelfNG settings and API clients round-trippable.
+        [FieldDefinition(20)]
         public SeedCriteriaSettings SeedCriteria
         {
             get
             {
-                var criteria = new SeedCriteriaSettings();
-                if (SeedTimeHours.HasValue && SeedTimeHours.Value > 0)
+                if (_seedCriteria == null)
                 {
-                    criteria.SeedTime = SeedTimeHours.Value * 60;
+                    _seedCriteria = new SeedCriteriaSettings();
                 }
 
-                criteria.NeverMoveOnImport = NeverMoveOnImport;
+                if (!_seedCriteria.SeedTime.HasValue && SeedTimeHours is > 0)
+                {
+                    _seedCriteria.SeedTime = SeedTimeHours.Value * 60;
+                }
 
-                return criteria;
+                _seedCriteria.NeverMoveOnImport = NeverMoveOnImport;
+
+                return _seedCriteria;
             }
 
             set
             {
+                _seedCriteria = value ?? new SeedCriteriaSettings();
+                _neverMoveOnImport = _seedCriteria.NeverMoveOnImport;
+                _seedTimeComesFromHours = _seedTimeHours is > 0 &&
+                                          _seedCriteria.SeedTime == _seedTimeHours.Value * 60;
             }
         }
 
-        // Required by ITorrentIndexerSettings but hidden from UI
+        [FieldDefinition(21, Type = FieldType.Checkbox, Label = "provider.field.feaf93d215894", HelpText = "provider.field.f0af80d5651c2", Advanced = true)]
         public bool RejectBlocklistedTorrentHashesWhileGrabbing { get; set; }
 
         public NzbDroneValidationResult Validate()

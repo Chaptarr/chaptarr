@@ -158,7 +158,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Other",
           "kind": "Label",
-          "line": 234,
+          "line": 274,
           "sourceLine": "[FieldOption(Label = \"Other\")] Other = 47",
           "sourceLineSha256": "de750bfdfbc83d26dc36690fe96f9cf049a3973d4e72992cfce6e3a5417148fe"
         }
@@ -277,7 +277,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Korean",
           "kind": "Label",
-          "line": 204,
+          "line": 244,
           "sourceLine": "[FieldOption(Label = \"provider.option.o04656c6fe003\")] Korean = 41,",
           "sourceLineSha256": "a70ef2aca55f9ff8fcfc4406d377de83444c204302cd38b11ace1736da5fd897"
         }
@@ -294,7 +294,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Romanian",
           "kind": "Label",
-          "line": 217,
+          "line": 257,
           "sourceLine": "[FieldOption(Label = \"provider.option.o096b861df653\")] Romanian = 30,",
           "sourceLineSha256": "d4bf289f9219be430a69e07ab2db1c4d8f4d32d847359403d634da0770c04f16"
         }
@@ -311,7 +311,7 @@
           "enum": "MyAnonaMouseFreeleechWedgeAction",
           "member": "Required",
           "kind": "Label",
-          "line": 245,
+          "line": 285,
           "sourceLine": "[FieldOption(Label = \"provider.option.o0be971351722\", Hint = \"provider.option.o836f9584c3e0\")]",
           "sourceLineSha256": "657613a42f18037d8dabfb497266b008190d05a8ef2b68f1ac8de88b820c1654"
         }
@@ -345,7 +345,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Tamil",
           "kind": "Label",
-          "line": 227,
+          "line": 267,
           "sourceLine": "[FieldOption(Label = \"provider.option.o135d78ac8f56\")] Tamil = 11,",
           "sourceLineSha256": "7bc2382219ae6f5ce357985d46d8b12223d7ce5fd0ca7dc22dfed7a92804594d"
         }
@@ -362,7 +362,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "ScottishGaelic",
           "kind": "Label",
-          "line": 219,
+          "line": 259,
           "sourceLine": "[FieldOption(Label = \"provider.option.o1435d07cdf1c\")] ScottishGaelic = 24,",
           "sourceLineSha256": "56fa8f4ee980ed926864f2f23b6c21b00163f6c2281dbbfb848a571fc0bb894f"
         }
@@ -430,7 +430,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Bosnian",
           "kind": "Label",
-          "line": 176,
+          "line": 216,
           "sourceLine": "[FieldOption(Label = \"provider.option.o1d25285d7182\")] Bosnian = 51,",
           "sourceLineSha256": "e4a1e97bcb48f9143eff59d82c04d2d672c5920d3308971d261403d02b7b559d"
         }
@@ -447,7 +447,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Javanese",
           "kind": "Label",
-          "line": 202,
+          "line": 242,
           "sourceLine": "[FieldOption(Label = \"provider.option.o1d8b8d4e409f\")] Javanese = 12,",
           "sourceLineSha256": "ee273fec27b5a0bb8ea6ab671b9bd0c46bd70eacdac3c7aa01a1902307173db4"
         }
@@ -464,7 +464,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Malayalam",
           "kind": "Label",
-          "line": 209,
+          "line": 249,
           "sourceLine": "[FieldOption(Label = \"provider.option.o2247ef59ce64\")] Malayalam = 58,",
           "sourceLineSha256": "8f0b0fcb2cb65e12ec9990ad5f79f34307e7ae8e4569f3d101b5d90e5b8d15ac"
         }
@@ -481,7 +481,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Latvian",
           "kind": "Label",
-          "line": 207,
+          "line": 247,
           "sourceLine": "[FieldOption(Label = \"provider.option.o28fa038bb8bc\")] Latvian = 62,",
           "sourceLineSha256": "461b9d621ad37adb82d3133bee7e509d5eaedd3f26fcb2d5680947a834c3a076"
         }
@@ -507,7 +507,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "Freeleech",
           "kind": "Label",
-          "line": 157,
+          "line": 197,
           "sourceLine": "[FieldOption(Label = \"provider.option.o294a0c3d28c4\", Hint = \"provider.option.oaab534cd510a\")]",
           "sourceLineSha256": "89b1183cbfd5ee45b864925281273f218b19d81eda9c825c379a3fddb8bb8677"
         }
@@ -526,7 +526,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Icelandic",
           "kind": "Label",
-          "line": 197,
+          "line": 237,
           "sourceLine": "[FieldOption(Label = \"provider.option.o2bca68c58bb4\")] Icelandic = 63,",
           "sourceLineSha256": "1eea12544a847133b26ccdb50fe25ca4b7baa12a2aeb216e27c8c46a678cb372"
         }
@@ -543,7 +543,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Urdu",
           "kind": "Label",
-          "line": 232,
+          "line": 272,
           "sourceLine": "[FieldOption(Label = \"provider.option.o2c6ef73fc9e2\")] Urdu = 15,",
           "sourceLineSha256": "bfce8ee7fcc6ad3da28dd3d665be95a0d4b20a4840cfee65479eee41e2a53756"
         }
@@ -560,7 +560,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Latin",
           "kind": "Label",
-          "line": 206,
+          "line": 246,
           "sourceLine": "[FieldOption(Label = \"provider.option.o2d38c456a2ec\")] Latin = 46,",
           "sourceLineSha256": "d2294204d4cc992176a773f7d1ae628f159e8f3948110d55909df76bf4951686"
         }
@@ -577,7 +577,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Burmese",
           "kind": "Label",
-          "line": 178,
+          "line": 218,
           "sourceLine": "[FieldOption(Label = \"provider.option.o2e9fa8e62006\")] Burmese = 6,",
           "sourceLineSha256": "c46958414a42084457df53146be624ad297f92e316794026776f35e910f14407"
         }
@@ -611,7 +611,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Hebrew",
           "kind": "Label",
-          "line": 194,
+          "line": 234,
           "sourceLine": "[FieldOption(Label = \"provider.option.o33e00df2aac3\")] Hebrew = 27,",
           "sourceLineSha256": "22f47379737f5aa7dde8af6f18be6cae70263e1e52160dd0f86c220019b2b841"
         }
@@ -628,7 +628,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Spanish",
           "kind": "Label",
-          "line": 223,
+          "line": 263,
           "sourceLine": "[FieldOption(Label = \"provider.option.o3411059cb8e0\")] Spanish = 4,",
           "sourceLineSha256": "ae8f1d78b487079e725d3b4a14f44ecb5b84f4b1157052dffcd319c7477db1ed"
         }
@@ -679,7 +679,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "All",
           "kind": "Label",
-          "line": 151,
+          "line": 191,
           "sourceLine": "[FieldOption(Label = \"provider.option.o3e6bbeeff4ef\", Hint = \"provider.option.o415155739590\")]",
           "sourceLineSha256": "8ef0c2336c155153695d76312fd242f4900ed7b049e80d34907dc5ffec2be5a3"
         }
@@ -696,7 +696,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "All",
           "kind": "Hint",
-          "line": 151,
+          "line": 191,
           "sourceLine": "[FieldOption(Label = \"provider.option.o3e6bbeeff4ef\", Hint = \"provider.option.o415155739590\")]",
           "sourceLineSha256": "8ef0c2336c155153695d76312fd242f4900ed7b049e80d34907dc5ffec2be5a3"
         }
@@ -748,7 +748,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Dutch",
           "kind": "Label",
-          "line": 185,
+          "line": 225,
           "sourceLine": "[FieldOption(Label = \"provider.option.o45f16144c18c\")] Dutch = 22,",
           "sourceLineSha256": "e98e190f595d6f93e9d3a9e932c61009622336e9eef219c252e9246558d8edb4"
         }
@@ -782,7 +782,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Kannada",
           "kind": "Label",
-          "line": 203,
+          "line": 243,
           "sourceLine": "[FieldOption(Label = \"provider.option.o4829406f52d7\")] Kannada = 5,",
           "sourceLineSha256": "f0e69be7c591d65b61e57467eae8d50daa8d21d5f10726f668386a7e3416d5ae"
         }
@@ -816,7 +816,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Estonian",
           "kind": "Label",
-          "line": 186,
+          "line": 226,
           "sourceLine": "[FieldOption(Label = \"provider.option.o4d8bdb8972a2\")] Estonian = 61,",
           "sourceLineSha256": "d18aece295ef68dcb942f8550c1ea267cbc7381b20e688efce869d7a527e7ecf"
         }
@@ -833,7 +833,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Indonesian",
           "kind": "Label",
-          "line": 198,
+          "line": 238,
           "sourceLine": "[FieldOption(Label = \"provider.option.o4fe1bb67f3b9\")] Indonesian = 53,",
           "sourceLineSha256": "f8cc6fe2fb9cae295ad861fb583dd71ee91b11c596e93ccf4c92cd331a08d16c"
         }
@@ -850,7 +850,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Manx",
           "kind": "Label",
-          "line": 210,
+          "line": 250,
           "sourceLine": "[FieldOption(Label = \"provider.option.o54b0bff947fb\")] Manx = 57,",
           "sourceLineSha256": "5fbc6250d1ba5a10808f00f9708cb0c7d519776936961368c52702db83c97b83"
         }
@@ -867,7 +867,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Finnish",
           "kind": "Label",
-          "line": 188,
+          "line": 228,
           "sourceLine": "[FieldOption(Label = \"provider.option.o5710b435f90a\")] Finnish = 23,",
           "sourceLineSha256": "c57d3dba810b1bf63f26676c8ff8159b6f80628bcb7b29728e53cfbaa769d452"
         }
@@ -884,7 +884,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Hungarian",
           "kind": "Label",
-          "line": 196,
+          "line": 236,
           "sourceLine": "[FieldOption(Label = \"provider.option.o58801e6907f0\")] Hungarian = 28,",
           "sourceLineSha256": "b8538d888daff6f9c60688c3601a2a176ce822e72be2eca06c7dfa8ca8f5d12c"
         }
@@ -918,7 +918,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Russian",
           "kind": "Label",
-          "line": 218,
+          "line": 258,
           "sourceLine": "[FieldOption(Label = \"provider.option.o5bcc40adf6e0\")] Russian = 16,",
           "sourceLineSha256": "7bf09c1d180e950eecfbf7d0052b41347c70dba29d9355b15374b90b88f1e039"
         }
@@ -935,7 +935,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Greek",
           "kind": "Label",
-          "line": 191,
+          "line": 231,
           "sourceLine": "[FieldOption(Label = \"provider.option.o5c74e5b8100c\")] Greek = 26,",
           "sourceLineSha256": "e139a22ec8846f56fff318232d4dd0a561f1b7be95124c0b776e4bbb577e68f4"
         }
@@ -952,7 +952,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Tagalog",
           "kind": "Label",
-          "line": 226,
+          "line": 266,
           "sourceLine": "[FieldOption(Label = \"provider.option.o605eac303049\")] Tagalog = 29,",
           "sourceLineSha256": "aaeba8b1290774d5dad632cb1381b240e03b733b5b611529f8d96f6e98077c2c"
         }
@@ -969,7 +969,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "GreekAncient",
           "kind": "Label",
-          "line": 192,
+          "line": 232,
           "sourceLine": "[FieldOption(Label = \"provider.option.o60a7067462bf\")] GreekAncient = 59,",
           "sourceLineSha256": "59945a115c2999249c14d81e00d9f36cf29269ee561f202663543b812cabf27c"
         }
@@ -986,7 +986,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Hindi",
           "kind": "Label",
-          "line": 195,
+          "line": 235,
           "sourceLine": "[FieldOption(Label = \"provider.option.o63c2dc51d089\")] Hindi = 8,",
           "sourceLineSha256": "f689038ac32561fc68806bf3cdf931133b4364dbd5f9cb538816be19852814d5"
         }
@@ -1003,7 +1003,7 @@
           "enum": "MyAnonaMouseFreeleechWedgeAction",
           "member": "Never",
           "kind": "Label",
-          "line": 239,
+          "line": 279,
           "sourceLine": "[FieldOption(Label = \"provider.option.o687198870652\", Hint = \"provider.option.od54cdf586b7b\")]",
           "sourceLineSha256": "851075f9d5f3f4c6f09fb70fdcc099c6e34c88e3f4ddabe192e9c0699c3efefa"
         }
@@ -1022,7 +1022,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Afrikaans",
           "kind": "Label",
-          "line": 173,
+          "line": 213,
           "sourceLine": "[FieldOption(Label = \"provider.option.o6884e4dc7300\")] Afrikaans = 17,",
           "sourceLineSha256": "92a9728a85fbd1fdc7c3b85f9955947eb9a1b37bfd76aef39030e3c93e592792"
         }
@@ -1039,7 +1039,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Marathi",
           "kind": "Label",
-          "line": 211,
+          "line": 251,
           "sourceLine": "[FieldOption(Label = \"provider.option.o6bbef3a79c78\")] Marathi = 9,",
           "sourceLineSha256": "57350b8a69220cc0fb2ebc315b0287da60af79b05cac19494fc9ce606cc1090f"
         }
@@ -1056,7 +1056,7 @@
           "enum": "MyAnonaMouseFreeleechWedgeAction",
           "member": "Preferred",
           "kind": "Label",
-          "line": 242,
+          "line": 282,
           "sourceLine": "[FieldOption(Label = \"provider.option.o6c3105944211\", Hint = \"provider.option.o9cb1fa5198db\")]",
           "sourceLineSha256": "4dbc8b7f03634221d27c7c2f3af79fedfdbfd1513e3c01dcba6c229dccc273da"
         }
@@ -1073,7 +1073,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Turkish",
           "kind": "Label",
-          "line": 230,
+          "line": 270,
           "sourceLine": "[FieldOption(Label = \"provider.option.o6e7aac65db01\")] Turkish = 42,",
           "sourceLineSha256": "12ea6bd8cdf5c2d17ae8650a7540b8295e9dfbf98a9f1135c2f09c2cd592d141"
         }
@@ -1090,7 +1090,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Ukrainian",
           "kind": "Label",
-          "line": 231,
+          "line": 271,
           "sourceLine": "[FieldOption(Label = \"provider.option.o6f424303fa12\")] Ukrainian = 25,",
           "sourceLineSha256": "b3dc7ec2e9e4a1454557b697d45ea73fa972e2af446e483d26c35d337f2dd474"
         }
@@ -1124,7 +1124,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Norwegian",
           "kind": "Label",
-          "line": 212,
+          "line": 252,
           "sourceLine": "[FieldOption(Label = \"provider.option.o71f4cf5c7a23\")] Norwegian = 48,",
           "sourceLineSha256": "a6375d3bd3e6780c06985b04db465ec008908bbd6a6d0cb9b52c8a006d74ffbe"
         }
@@ -1141,7 +1141,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "CastilianSpanish",
           "kind": "Label",
-          "line": 224,
+          "line": 264,
           "sourceLine": "[FieldOption(Label = \"provider.option.o7285d46b982d\")] CastilianSpanish = 55,",
           "sourceLineSha256": "4c5f5a5381505620e34cdbe9c1f9f74094713ab5aaae6c3f65a83f259f9564c2"
         }
@@ -1158,7 +1158,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "FreeleechOrVip",
           "kind": "Label",
-          "line": 160,
+          "line": 200,
           "sourceLine": "[FieldOption(Label = \"provider.option.o72a071498ead\", Hint = \"provider.option.ob31cf1a5e75d\")]",
           "sourceLineSha256": "14954c8153c1b1d9306d2e1d08dcb313429f5c96d575c40c0c73e7c0955ea044"
         }
@@ -1178,7 +1178,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "French",
           "kind": "Label",
-          "line": 189,
+          "line": 229,
           "sourceLine": "[FieldOption(Label = \"provider.option.o7458199fe97a\")] French = 36,",
           "sourceLineSha256": "01376ac4e07b0b5e96deb6f67c8699612cf8c483e110d2fbd0a1b0672dcc01c5"
         }
@@ -1212,7 +1212,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Croatian",
           "kind": "Label",
-          "line": 182,
+          "line": 222,
           "sourceLine": "[FieldOption(Label = \"provider.option.o754787c2f88c\")] Croatian = 49,",
           "sourceLineSha256": "9c62423ef5bb3e8aff5fcf564555fcb2cb4600e4ce8a9f5dbd1a5edf71fba6dd"
         }
@@ -1229,7 +1229,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Polish",
           "kind": "Label",
-          "line": 213,
+          "line": 253,
           "sourceLine": "[FieldOption(Label = \"provider.option.o770341d6e89e\")] Polish = 45,",
           "sourceLineSha256": "8a891ab38a351212eda85cf0f5a52dc53c993fe9d9989c45fb564253b7fbc611"
         }
@@ -1246,7 +1246,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "NotVip",
           "kind": "Hint",
-          "line": 166,
+          "line": 206,
           "sourceLine": "[FieldOption(Label = \"provider.option.obff67db96859\", Hint = \"provider.option.o7a21be239c11\")]",
           "sourceLineSha256": "95df83476f41eae32a28c9e3325d6420bb8808945869811abae2305ea07bb2dd"
         }
@@ -1299,7 +1299,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "Vip",
           "kind": "Hint",
-          "line": 163,
+          "line": 203,
           "sourceLine": "[FieldOption(Label = \"provider.option.o986e2890737d\", Hint = \"provider.option.o7c3056a206f0\")]",
           "sourceLineSha256": "19c92cea9f6c9873f6c5dbb4d9889c71e5b9e987ed2bda73b83863ea15abc9de"
         }
@@ -1335,7 +1335,7 @@
           "enum": "MyAnonaMouseFreeleechWedgeAction",
           "member": "Required",
           "kind": "Hint",
-          "line": 245,
+          "line": 285,
           "sourceLine": "[FieldOption(Label = \"provider.option.o0be971351722\", Hint = \"provider.option.o836f9584c3e0\")]",
           "sourceLineSha256": "657613a42f18037d8dabfb497266b008190d05a8ef2b68f1ac8de88b820c1654"
         }
@@ -1354,7 +1354,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Catalan",
           "kind": "Label",
-          "line": 180,
+          "line": 220,
           "sourceLine": "[FieldOption(Label = \"provider.option.o843c489421f4\")] Catalan = 19,",
           "sourceLineSha256": "d8e26a78358eb0a84a35e7ca8e3bc341d3eb134ca6cf48dcbc24ed7ecd14086c"
         }
@@ -1371,7 +1371,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Lithuanian",
           "kind": "Label",
-          "line": 205,
+          "line": 245,
           "sourceLine": "[FieldOption(Label = \"provider.option.o8625f6a2065b\")] Lithuanian = 50,",
           "sourceLineSha256": "dd8f9fddd33224c2ab3e05458cf7cb21ad1721a0a785ae0a6dfde6e7620bd988"
         }
@@ -1388,7 +1388,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Chinese",
           "kind": "Label",
-          "line": 181,
+          "line": 221,
           "sourceLine": "[FieldOption(Label = \"provider.option.o8a9779f42128\")] Chinese = 2,",
           "sourceLineSha256": "24f19bcf559d98a4be9f41ea53915d482b5827887e553619fa1bc7dd00d6e90b"
         }
@@ -1405,7 +1405,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Czech",
           "kind": "Label",
-          "line": 183,
+          "line": 223,
           "sourceLine": "[FieldOption(Label = \"provider.option.o8b463ea23a7e\")] Czech = 20,",
           "sourceLineSha256": "8bf8a6f44ed4eb31898e654762d50334a999265a24edd858d076be20c1a50f66"
         }
@@ -1458,7 +1458,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "BrazilianPortuguese",
           "kind": "Label",
-          "line": 215,
+          "line": 255,
           "sourceLine": "[FieldOption(Label = \"provider.option.o911140b89c71\")] BrazilianPortuguese = 52,",
           "sourceLineSha256": "2ec142d3392bf99dfdab5cc1ebc87e059a20d79858a092ed7f4cd71905b40da3"
         }
@@ -1492,7 +1492,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "Vip",
           "kind": "Label",
-          "line": 163,
+          "line": 203,
           "sourceLine": "[FieldOption(Label = \"provider.option.o986e2890737d\", Hint = \"provider.option.o7c3056a206f0\")]",
           "sourceLineSha256": "19c92cea9f6c9873f6c5dbb4d9889c71e5b9e987ed2bda73b83863ea15abc9de"
         }
@@ -1528,7 +1528,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Portuguese",
           "kind": "Label",
-          "line": 214,
+          "line": 254,
           "sourceLine": "[FieldOption(Label = \"provider.option.o98b01b890687\")] Portuguese = 34,",
           "sourceLineSha256": "0b1930b75e277822f05ffb7a61c27b3c9b28e00b0d44a0e7898b1d98163af740"
         }
@@ -1545,7 +1545,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "Active",
           "kind": "Hint",
-          "line": 154,
+          "line": 194,
           "sourceLine": "[FieldOption(Label = \"provider.option.oc83a723bae52\", Hint = \"provider.option.o99a1dca2bd66\")]",
           "sourceLineSha256": "81d144e5e961d67ee3272358834376c8171359839c91177b4315f861695fbd78"
         }
@@ -1598,7 +1598,7 @@
           "enum": "MyAnonaMouseFreeleechWedgeAction",
           "member": "Preferred",
           "kind": "Hint",
-          "line": 242,
+          "line": 282,
           "sourceLine": "[FieldOption(Label = \"provider.option.o6c3105944211\", Hint = \"provider.option.o9cb1fa5198db\")]",
           "sourceLineSha256": "4dbc8b7f03634221d27c7c2f3af79fedfdbfd1513e3c01dcba6c229dccc273da"
         }
@@ -1615,7 +1615,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Punjabi",
           "kind": "Label",
-          "line": 216,
+          "line": 256,
           "sourceLine": "[FieldOption(Label = \"provider.option.o9e61f8c4fbca\")] Punjabi = 14,",
           "sourceLineSha256": "ef17128bc39f96d995402a4bf490096a8d39c1db6067dacbbfbf412f180f999e"
         }
@@ -1676,7 +1676,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Sanskrit",
           "kind": "Label",
-          "line": 220,
+          "line": 260,
           "sourceLine": "[FieldOption(Label = \"provider.option.oa3ab29b2b806\")] Sanskrit = 60,",
           "sourceLineSha256": "92101bddfdbe913f3bba5e0572e632fec85ae505c5581de781b1f10ea217dd03"
         }
@@ -1693,7 +1693,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Telugu",
           "kind": "Label",
-          "line": 228,
+          "line": 268,
           "sourceLine": "[FieldOption(Label = \"provider.option.oa4504b3d0ff7\")] Telugu = 10,",
           "sourceLineSha256": "4b4d570826d962c366d5e63f22232823e1e0d165a2bffa1b08c799aaf1e98704"
         }
@@ -1727,7 +1727,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "German",
           "kind": "Label",
-          "line": 190,
+          "line": 230,
           "sourceLine": "[FieldOption(Label = \"provider.option.oa659b60d246d\")] German = 37,",
           "sourceLineSha256": "dc0c9ff4b9be773984b85a49ebfe7c8cc0390ebd48aac83cc9e124b8ca57259c"
         }
@@ -1824,7 +1824,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Swedish",
           "kind": "Label",
-          "line": 225,
+          "line": 265,
           "sourceLine": "[FieldOption(Label = \"provider.option.oa89a9329d3d4\")] Swedish = 40,",
           "sourceLineSha256": "899a680f44fce4c79d60951668efa053815415f81a5246809fe539afc74ee706"
         }
@@ -1841,7 +1841,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Gujarati",
           "kind": "Label",
-          "line": 193,
+          "line": 233,
           "sourceLine": "[FieldOption(Label = \"provider.option.oaa1324f5df47\")] Gujarati = 3,",
           "sourceLineSha256": "6ac0cb3786a2f1052f689adac441879d9b2bf1fb06e1dc2ff8e1d625ab96b6e7"
         }
@@ -1858,7 +1858,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "Freeleech",
           "kind": "Hint",
-          "line": 157,
+          "line": 197,
           "sourceLine": "[FieldOption(Label = \"provider.option.o294a0c3d28c4\", Hint = \"provider.option.oaab534cd510a\")]",
           "sourceLineSha256": "89b1183cbfd5ee45b864925281273f218b19d81eda9c825c379a3fddb8bb8677"
         }
@@ -1877,7 +1877,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Thai",
           "kind": "Label",
-          "line": 229,
+          "line": 269,
           "sourceLine": "[FieldOption(Label = \"provider.option.oad705ee19c04\")] Thai = 7,",
           "sourceLineSha256": "dda8f4a6c83375aa29ed49c0aa2b13773b41b38a8b1d2e11bf0450f19f04c525"
         }
@@ -1894,7 +1894,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Cantonese",
           "kind": "Label",
-          "line": 179,
+          "line": 219,
           "sourceLine": "[FieldOption(Label = \"provider.option.oad83a00f609f\")] Cantonese = 44,",
           "sourceLineSha256": "3e2fa887cbe08f346da92c9660edf838284160cdcbe35c05e0be3c2286bb76f4"
         }
@@ -1946,7 +1946,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "FreeleechOrVip",
           "kind": "Hint",
-          "line": 160,
+          "line": 200,
           "sourceLine": "[FieldOption(Label = \"provider.option.o72a071498ead\", Hint = \"provider.option.ob31cf1a5e75d\")]",
           "sourceLineSha256": "14954c8153c1b1d9306d2e1d08dcb313429f5c96d575c40c0c73e7c0955ea044"
         }
@@ -1966,7 +1966,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Serbian",
           "kind": "Label",
-          "line": 221,
+          "line": 261,
           "sourceLine": "[FieldOption(Label = \"provider.option.ob4a077dadb30\")] Serbian = 31,",
           "sourceLineSha256": "4678e8464228b5708b22cc60a5f6e640d0a75857cfbba04de449a0568020a7a9"
         }
@@ -1983,7 +1983,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "English",
           "kind": "Label",
-          "line": 172,
+          "line": 212,
           "sourceLine": "[FieldOption(Label = \"provider.option.oba118bf7fc9c\")] English = 1,",
           "sourceLineSha256": "ce3b96ea59730b3ee0cf32a2d6c844d115978adb48e2f22ef8c0bc475e015f65"
         }
@@ -2000,7 +2000,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Arabic",
           "kind": "Label",
-          "line": 174,
+          "line": 214,
           "sourceLine": "[FieldOption(Label = \"provider.option.obafb66f32cd7\")] Arabic = 32,",
           "sourceLineSha256": "da053dbdceab2108dbe8a89bd7c83175ba3dc4ab98975d0e79fe484542e973b6"
         }
@@ -2017,7 +2017,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Japanese",
           "kind": "Label",
-          "line": 201,
+          "line": 241,
           "sourceLine": "[FieldOption(Label = \"provider.option.obe4ee906d3ef\")] Japanese = 38,",
           "sourceLineSha256": "98ec9a849bbbad436241873f6a6c41c786b69805329016382467d08eaf4ff905"
         }
@@ -2034,7 +2034,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "NotVip",
           "kind": "Label",
-          "line": 166,
+          "line": 206,
           "sourceLine": "[FieldOption(Label = \"provider.option.obff67db96859\", Hint = \"provider.option.o7a21be239c11\")]",
           "sourceLineSha256": "95df83476f41eae32a28c9e3325d6420bb8808945869811abae2305ea07bb2dd"
         }
@@ -2205,7 +2205,7 @@
           "enum": "MyAnonaMouseSearchType",
           "member": "Active",
           "kind": "Label",
-          "line": 154,
+          "line": 194,
           "sourceLine": "[FieldOption(Label = \"provider.option.oc83a723bae52\", Hint = \"provider.option.o99a1dca2bd66\")]",
           "sourceLineSha256": "81d144e5e961d67ee3272358834376c8171359839c91177b4315f861695fbd78"
         }
@@ -2292,7 +2292,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Malay",
           "kind": "Label",
-          "line": 208,
+          "line": 248,
           "sourceLine": "[FieldOption(Label = \"provider.option.ocd43b2d3b020\")] Malay = 33,",
           "sourceLineSha256": "d09668c55a606b225758be4986efa478b32a04d96af05a1f596b7d0efd5fe496"
         }
@@ -2335,7 +2335,7 @@
           "enum": "MyAnonaMouseFreeleechWedgeAction",
           "member": "Never",
           "kind": "Hint",
-          "line": 239,
+          "line": 279,
           "sourceLine": "[FieldOption(Label = \"provider.option.o687198870652\", Hint = \"provider.option.od54cdf586b7b\")]",
           "sourceLineSha256": "851075f9d5f3f4c6f09fb70fdcc099c6e34c88e3f4ddabe192e9c0699c3efefa"
         }
@@ -2354,7 +2354,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Irish",
           "kind": "Label",
-          "line": 199,
+          "line": 239,
           "sourceLine": "[FieldOption(Label = \"provider.option.od65819e43e55\")] Irish = 56,",
           "sourceLineSha256": "3a029410550cde64847ffcd163febb930072e546a9e58214a53fad09101c50d5"
         }
@@ -2416,7 +2416,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Slovenian",
           "kind": "Label",
-          "line": 222,
+          "line": 262,
           "sourceLine": "[FieldOption(Label = \"provider.option.odea070feef80\")] Slovenian = 54,",
           "sourceLineSha256": "b57c9a2be1ce196935a4a386143ef485d68ab251ec94f245d486cf9280af76ac"
         }
@@ -2450,7 +2450,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Farsi",
           "kind": "Label",
-          "line": 187,
+          "line": 227,
           "sourceLine": "[FieldOption(Label = \"provider.option.oe4d40d318e99\")] Farsi = 39,",
           "sourceLineSha256": "f5d4949a027898035ebdc208e5b505ab527469b8ee9dacb239ed09799d43a26c"
         }
@@ -2467,7 +2467,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Bengali",
           "kind": "Label",
-          "line": 175,
+          "line": 215,
           "sourceLine": "[FieldOption(Label = \"provider.option.oe7f4fe2631bb\")] Bengali = 35,",
           "sourceLineSha256": "c8f69c4315ccf8e0308ebf64384d67b9ac1b4491c7cfb121fdda21adf114843c"
         }
@@ -2528,7 +2528,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Bulgarian",
           "kind": "Label",
-          "line": 177,
+          "line": 217,
           "sourceLine": "[FieldOption(Label = \"provider.option.oecd986094baf\")] Bulgarian = 18,",
           "sourceLineSha256": "6427b48c2cf702c1cc2d13e292437090dc776612b89470e7dae808259669080d"
         }
@@ -2545,7 +2545,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Vietnamese",
           "kind": "Label",
-          "line": 233,
+          "line": 273,
           "sourceLine": "[FieldOption(Label = \"provider.option.of25499e9df5c\")] Vietnamese = 13,",
           "sourceLineSha256": "4f6297a3ab6d641748b7c1335cdce8e77a24fe1b1371d690cc90c6afba16fd8d"
         }
@@ -2652,7 +2652,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Italian",
           "kind": "Label",
-          "line": 200,
+          "line": 240,
           "sourceLine": "[FieldOption(Label = \"provider.option.ofe1d9c7db376\")] Italian = 43,",
           "sourceLineSha256": "efbc1440d20fc4de873e35e3e8cdd4f4f1417094db2fd745ae51c97751d74d5b"
         }
@@ -2669,7 +2669,7 @@
           "enum": "MyAnonaMouseSearchLanguages",
           "member": "Danish",
           "kind": "Label",
-          "line": 184,
+          "line": 224,
           "sourceLine": "[FieldOption(Label = \"provider.option.ofe4338ad620c\")] Danish = 21,",
           "sourceLineSha256": "bbbe37cee1ce10c3d0f8c49d3c702691a9c353edc517ee062f84146e639f160b"
         }

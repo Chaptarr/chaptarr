@@ -6,20 +6,23 @@ The bookshelfng-api-differential Compose file starts the digest-pinned public
 BookshelfNG 0.4.21.76 image beside the ChaptarrNG image built from the current
 checkout. It seeds separate expanded schema-158 fixtures, replaces placeholder
 provider IDs with valid numeric Hardcover and typed Open Library identities,
-normalizes the fixture generator's current-time migration timestamps, then
-verifies the two database files are byte identical. It compares read-only legacy
-API lists and detail routes after ChaptarrNG's normal startup migration. The script records
+normalizes the fixture generator's current-time migration timestamps, and
+verifies the two data fixtures are byte identical before adding a valid
+schema-158 BookshelfNG migration profile to the target. This makes ChaptarrNG
+serve the same compatibility mode used by an installed migrated database. It
+compares read-only legacy API lists and detail routes. The script records
 the source image digest and image ID,
 target commit and image ID, source database hash, per-case response hashes, and
 JSON mismatch paths. Legacy fields, saved values, selector values, and collection
 identity must remain equivalent; ChaptarrNG-only fields and records are reported
 as additive. Objects with IDs are matched by ID and provider fields by name.
 Provider labels, help, hints, links, control types, and display order are counted
-and reported separately because ChaptarrNG uses its own provider forms. Direct
-Download URL arrays are compared with the target's ordered newline-delimited
-value, so URL order and contents remain strict. Source collection order is still
-checked. Secret-valued response fields are compared as empty or present and are
-never written into the report.
+and reported separately because ChaptarrNG uses its own provider forms. The
+BookshelfNG compatibility API projects DirectDownload URLs back to the legacy
+ordered array shape; array order and contents remain strict while the native
+ChaptarrNG UI keeps its newline-delimited text control. Source collection order
+is still checked. Secret-valued response fields are compared as empty or
+present and are never written into the report.
 
 Run it with an empty task-owned directory. The generated database, config,
 library placeholders, and sanitized report stay under that directory. The

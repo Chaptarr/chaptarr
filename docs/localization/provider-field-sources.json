@@ -440,7 +440,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 71,
+          "line": 75,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(7, Type = FieldType.Number, Label = \"IndexerSettingsSeedTime\", Unit = \"hours\", HelpText = \"provider.field.f47441f72616d\")]",
           "sourceLineSha256": "d35222d3905d95ededf03103c9ec5e8457d69391ca9ad5c59a266ae90cde37bf"
@@ -768,7 +768,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 90,
+          "line": 111,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(13, Type = FieldType.Number, Label = \"provider.field.f5cb8dfbc2510\", Unit = \"slots\", HelpText = \"provider.field.f00d387283c10\")]",
           "sourceLineSha256": "57025a884fcb4300d6b6b16b82076325b842d5bdce2b7c2daa01266de73fcc62"
@@ -1100,6 +1100,13 @@
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(11, Type = FieldType.Checkbox, Label = \"provider.field.feaf93d215894\", HelpText = \"provider.field.f0af80d5651c2\", Advanced = true)]",
           "sourceLineSha256": "119c56f813b687b9df0b213583f066d05b4577639992251f0887ff5dbbc07b42"
+        },
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "line": 180,
+          "kind": "HelpText",
+          "sourceLine": "[FieldDefinition(21, Type = FieldType.Checkbox, Label = \"provider.field.feaf93d215894\", HelpText = \"provider.field.f0af80d5651c2\", Advanced = true)]",
+          "sourceLineSha256": "057b394c44a7acccd2066bf11ad79b48c61d5552c3fae99ca4f6a3bbbdc1eda9"
         }
       ],
       "protectedLiterals": [
@@ -2413,7 +2420,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 110,
+          "line": 139,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(19, Type = FieldType.Select, Label = \"provider.field.f794ff3ca7f46\", SelectOptions = typeof(MyAnonaMouseSearchLanguages), HelpText = \"provider.field.f38207e4f9b29\")]",
           "sourceLineSha256": "33f2ad9e3689c61e9b6a4a22c39aa1aade9c99eb58ce31555baeffd88a304f8e"
@@ -2495,14 +2502,14 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 78,
+          "line": 99,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(9, Type = FieldType.Textbox, Label = \"provider.field.fb02d807fec76\", HelpText = \"provider.field.f3bd6c86c637a\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "5027985a4a0f25e04944b6d8a8ff79c3de091a428ac9bc066bcfba08087cb713"
         },
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 81,
+          "line": 102,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(10, Type = FieldType.Checkbox, Label = \"provider.field.f7e906a8a7a41\", HelpText = \"provider.field.f3bd6c86c637a\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "dd8a55013be497a4ef972046e52944f41cee932b2604f2133ef0ebbd492f3f32"
@@ -2733,7 +2740,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 71,
+          "line": 75,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(7, Type = FieldType.Number, Label = \"IndexerSettingsSeedTime\", Unit = \"hours\", HelpText = \"provider.field.f47441f72616d\")]",
           "sourceLineSha256": "d35222d3905d95ededf03103c9ec5e8457d69391ca9ad5c59a266ae90cde37bf"
@@ -2804,7 +2811,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 104,
+          "line": 133,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(17, Type = FieldType.Checkbox, Label = \"provider.field.f492adad97f7b\")]",
           "sourceLineSha256": "1268f60009f1e319658ce07e63a75b44af0e63db12b41474a89bb2c39e031b83"
@@ -2869,7 +2876,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 56,
+          "line": 60,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(2, Type = FieldType.Select, Label = \"provider.field.f515ca00fdbc1\", SelectOptions = typeof(MyAnonaMouseFreeleechWedgeAction), HelpText = \"provider.field.f4c3929f32227\")]",
           "sourceLineSha256": "3e4925dcd53d137b6c15ab46929d4ab9572c92ea0643a8998291177f71a417bb"
@@ -2977,7 +2984,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 56,
+          "line": 60,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(2, Type = FieldType.Select, Label = \"provider.field.f515ca00fdbc1\", SelectOptions = typeof(MyAnonaMouseFreeleechWedgeAction), HelpText = \"provider.field.f4c3929f32227\")]",
           "sourceLineSha256": "3e4925dcd53d137b6c15ab46929d4ab9572c92ea0643a8998291177f71a417bb"
@@ -3007,7 +3014,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 68,
+          "line": 72,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(6, Type = FieldType.Checkbox, Label = \"provider.field.f5269857c4a80\", HelpText = \"provider.field.fddbb45739308\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "b6d65730e20c15f2b3e4fbe6ccacdc0277ea8c747e506837f782157c4d422781"
@@ -3155,7 +3162,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 107,
+          "line": 136,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(18, Type = FieldType.Checkbox, Label = \"provider.field.f5bc9475e1083\")]",
           "sourceLineSha256": "72584b7013fc41f099eb1cbf21ad0525e07f4042dba7cf0ce9ac34c1795f65d3"
@@ -3203,7 +3210,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 90,
+          "line": 111,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(13, Type = FieldType.Number, Label = \"provider.field.f5cb8dfbc2510\", Unit = \"slots\", HelpText = \"provider.field.f00d387283c10\")]",
           "sourceLineSha256": "57025a884fcb4300d6b6b16b82076325b842d5bdce2b7c2daa01266de73fcc62"
@@ -3248,7 +3255,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 59,
+          "line": 63,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(3, Type = FieldType.Checkbox, Label = \"provider.field.fb3ba54306f30\", HelpText = \"provider.field.f5d22c0abb0f6\")]",
           "sourceLineSha256": "60d86cd0eed943a0729c94eac05ddf27bfef51cd52ce467a0dfde7c74a25b991"
@@ -3265,7 +3272,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 98,
+          "line": 127,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(15, Type = FieldType.Select, Label = \"provider.field.f9a57b04a9014\", SelectOptions = typeof(MyAnonaMouseSearchType), HelpText = \"provider.field.f5da30e901390\")]",
           "sourceLineSha256": "b1b45c4129a393d38a47bd5508bbc5c006da2d7e0b988410457736f092e22381"
@@ -3830,7 +3837,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 46,
+          "line": 50,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(1, Label = \"provider.field.fa5d0dbd394ef\", Type = FieldType.Password, Privacy = PrivacyLevel.Password, HelpText = \"provider.field.f77f1b50c39ac\")]",
           "sourceLineSha256": "3c3da1b177135a43c51bffddafdbaa95836bc30b819876a271f2c4a2932479ac"
@@ -3845,7 +3852,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 110,
+          "line": 139,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(19, Type = FieldType.Select, Label = \"provider.field.f794ff3ca7f46\", SelectOptions = typeof(MyAnonaMouseSearchLanguages), HelpText = \"provider.field.f38207e4f9b29\")]",
           "sourceLineSha256": "33f2ad9e3689c61e9b6a4a22c39aa1aade9c99eb58ce31555baeffd88a304f8e"
@@ -3890,7 +3897,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 53,
+          "line": 57,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(1, Label = \"provider.field.f7b6980f35f3c\", Type = FieldType.Checkbox, HelpText = \"provider.field.f965f27b9207d\", Advanced = true)]",
           "sourceLineSha256": "0c44459bc8a1a44331aa58b92327f8810fa2c2af86a669575bba57fb045b3e84"
@@ -3938,7 +3945,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 101,
+          "line": 130,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(16, Type = FieldType.Checkbox, Label = \"provider.field.f7d8829f167e7\")]",
           "sourceLineSha256": "44d3e739ef118cfba7131c5f83262ee353a32f1b6bd5ee6d43881761d59c433a"
@@ -3953,7 +3960,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 81,
+          "line": 102,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(10, Type = FieldType.Checkbox, Label = \"provider.field.f7e906a8a7a41\", HelpText = \"provider.field.f3bd6c86c637a\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "dd8a55013be497a4ef972046e52944f41cee932b2604f2133ef0ebbd492f3f32"
@@ -4534,7 +4541,7 @@
         },
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 74,
+          "line": 95,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(8, Type = FieldType.Number, Label = \"provider.field.fa4001360c131\", Unit = \"days\", HelpText = \"provider.field.f8ef2df0a1d96\", Advanced = true)]",
           "sourceLineSha256": "34fc4e6645b4bbc045eb799f788d2386fd5414440daf6ede1af3ba5fccc796a0"
@@ -4722,7 +4729,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 53,
+          "line": 57,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(1, Label = \"provider.field.f7b6980f35f3c\", Type = FieldType.Checkbox, HelpText = \"provider.field.f965f27b9207d\", Advanced = true)]",
           "sourceLineSha256": "0c44459bc8a1a44331aa58b92327f8810fa2c2af86a669575bba57fb045b3e84"
@@ -4911,7 +4918,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 98,
+          "line": 127,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(15, Type = FieldType.Select, Label = \"provider.field.f9a57b04a9014\", SelectOptions = typeof(MyAnonaMouseSearchType), HelpText = \"provider.field.f5da30e901390\")]",
           "sourceLineSha256": "b1b45c4129a393d38a47bd5508bbc5c006da2d7e0b988410457736f092e22381"
@@ -5096,7 +5103,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 84,
+          "line": 105,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(11, Type = FieldType.Checkbox, Label = \"provider.field.fa29bea30de58\", HelpText = \"provider.field.fcc2215a99125\", Advanced = true)]",
           "sourceLineSha256": "277a55c5015d034b663fcfc987cb08dd5702a77f1063d7fa078852418614b1af"
@@ -5177,7 +5184,7 @@
         },
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 74,
+          "line": 95,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(8, Type = FieldType.Number, Label = \"provider.field.fa4001360c131\", Unit = \"days\", HelpText = \"provider.field.f8ef2df0a1d96\", Advanced = true)]",
           "sourceLineSha256": "34fc4e6645b4bbc045eb799f788d2386fd5414440daf6ede1af3ba5fccc796a0"
@@ -5268,7 +5275,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 46,
+          "line": 50,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(1, Label = \"provider.field.fa5d0dbd394ef\", Type = FieldType.Password, Privacy = PrivacyLevel.Password, HelpText = \"provider.field.f77f1b50c39ac\")]",
           "sourceLineSha256": "3c3da1b177135a43c51bffddafdbaa95836bc30b819876a271f2c4a2932479ac"
@@ -5675,7 +5682,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 78,
+          "line": 99,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(9, Type = FieldType.Textbox, Label = \"provider.field.fb02d807fec76\", HelpText = \"provider.field.f3bd6c86c637a\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "5027985a4a0f25e04944b6d8a8ff79c3de091a428ac9bc066bcfba08087cb713"
@@ -5774,7 +5781,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 59,
+          "line": 63,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(3, Type = FieldType.Checkbox, Label = \"provider.field.fb3ba54306f30\", HelpText = \"provider.field.f5d22c0abb0f6\")]",
           "sourceLineSha256": "60d86cd0eed943a0729c94eac05ddf27bfef51cd52ce467a0dfde7c74a25b991"
@@ -5930,7 +5937,7 @@
         },
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 62,
+          "line": 66,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(4, Type = FieldType.Textbox, Label = \"provider.field.fd783e4d6293b\", HelpText = \"provider.field.fb8265760181c\")]",
           "sourceLineSha256": "999e38dee4459f450a962eead347dd3d386d5cfbcdcd71adf2f4e03a9268774c"
@@ -6358,7 +6365,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 84,
+          "line": 105,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(11, Type = FieldType.Checkbox, Label = \"provider.field.fa29bea30de58\", HelpText = \"provider.field.fcc2215a99125\", Advanced = true)]",
           "sourceLineSha256": "277a55c5015d034b663fcfc987cb08dd5702a77f1063d7fa078852418614b1af"
@@ -6660,7 +6667,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 65,
+          "line": 69,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(5, Type = FieldType.Checkbox, Label = \"provider.field.fd1d33dec9414\", HelpText = \"provider.field.fda201a931c3d\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "fbeb8f5294f55b4449a5bbcab951c666e9bc4963a6c2ba7842d103a545ecc7a1"
@@ -6726,7 +6733,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 87,
+          "line": 108,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(12, Type = FieldType.Number, Label = \"provider.field.fececc0ba3a53\", Unit = \"slots\", HelpText = \"provider.field.fd2727e11e19f\")]",
           "sourceLineSha256": "5e28b385ec7e852006c701210c4820683d38a0ec9a01d9beee3d7b50e9e03918"
@@ -6910,7 +6917,7 @@
         },
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 62,
+          "line": 66,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(4, Type = FieldType.Textbox, Label = \"provider.field.fd783e4d6293b\", HelpText = \"provider.field.fb8265760181c\")]",
           "sourceLineSha256": "999e38dee4459f450a962eead347dd3d386d5cfbcdcd71adf2f4e03a9268774c"
@@ -7018,7 +7025,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 65,
+          "line": 69,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(5, Type = FieldType.Checkbox, Label = \"provider.field.fd1d33dec9414\", HelpText = \"provider.field.fda201a931c3d\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "fbeb8f5294f55b4449a5bbcab951c666e9bc4963a6c2ba7842d103a545ecc7a1"
@@ -7068,7 +7075,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 68,
+          "line": 72,
           "kind": "HelpText",
           "sourceLine": "[FieldDefinition(6, Type = FieldType.Checkbox, Label = \"provider.field.f5269857c4a80\", HelpText = \"provider.field.fddbb45739308\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "b6d65730e20c15f2b3e4fbe6ccacdc0277ea8c747e506837f782157c4d422781"
@@ -7457,6 +7464,13 @@
           "kind": "Label",
           "sourceLine": "[FieldDefinition(11, Type = FieldType.Checkbox, Label = \"provider.field.feaf93d215894\", HelpText = \"provider.field.f0af80d5651c2\", Advanced = true)]",
           "sourceLineSha256": "119c56f813b687b9df0b213583f066d05b4577639992251f0887ff5dbbc07b42"
+        },
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "line": 180,
+          "kind": "Label",
+          "sourceLine": "[FieldDefinition(21, Type = FieldType.Checkbox, Label = \"provider.field.feaf93d215894\", HelpText = \"provider.field.f0af80d5651c2\", Advanced = true)]",
+          "sourceLineSha256": "057b394c44a7acccd2066bf11ad79b48c61d5552c3fae99ca4f6a3bbbdc1eda9"
         }
       ],
       "protectedLiterals": []
@@ -7485,7 +7499,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 41,
+          "line": 45,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(0, Label = \"provider.field.feb650fa1243e\", Hidden = HiddenType.Hidden)]",
           "sourceLineSha256": "b57cfd581975b2e60752299fecf9560099a6cbc0a10286b2a78d7bce6476b818"
@@ -7550,7 +7564,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
-          "line": 87,
+          "line": 108,
           "kind": "Label",
           "sourceLine": "[FieldDefinition(12, Type = FieldType.Number, Label = \"provider.field.fececc0ba3a53\", Unit = \"slots\", HelpText = \"provider.field.fd2727e11e19f\")]",
           "sourceLineSha256": "5e28b385ec7e852006c701210c4820683d38a0ec9a01d9beee3d7b50e9e03918"
@@ -8143,11 +8157,11 @@
     }
   ],
   "counts": {
-    "total": 811,
+    "total": 813,
     "existingId": 168,
     "changedFiles": 68,
     "mappedDistinctSources": 409,
     "newSourceKeys": 393,
-    "mappedCallsites": 643
+    "mappedCallsites": 645
   }
 }

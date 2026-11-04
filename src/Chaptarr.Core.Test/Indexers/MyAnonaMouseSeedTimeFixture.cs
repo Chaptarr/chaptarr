@@ -15,8 +15,9 @@ namespace Chaptarr.Core.Test.Indexers
         {
             var settings = new MyAnonaMouseSettings
             {
-                SeedTimeHours = null
+                SeedTimeHours = 72
             };
+            settings.SeedTimeHours = null;
 
             var json = STJson.ToJson(settings);
             Assert.That(json, Does.Not.Contain("seedTimeHours"));
@@ -25,6 +26,34 @@ namespace Chaptarr.Core.Test.Indexers
 
             Assert.That(roundTripped.SeedTimeHours, Is.Null);
             Assert.That(roundTripped.SeedCriteria.SeedTime, Is.Null);
+        }
+
+        [Test]
+        public void should_preserve_bookshelf_seed_criteria_and_blocklist_settings_when_round_tripped()
+        {
+            var settings = new MyAnonaMouseSettings
+            {
+                MamId = "test",
+                SeedCriteria = new SeedCriteriaSettings
+                {
+                    SeedRatio = 1.5,
+                    SeedTime = 72 * 60,
+                    DiscographySeedTime = 7 * 24 * 60,
+                    NeverMoveOnImport = true
+                },
+                RejectBlocklistedTorrentHashesWhileGrabbing = true
+            };
+
+            var roundTripped = STJson.Deserialize<MyAnonaMouseSettings>(STJson.ToJson(settings));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(roundTripped.SeedCriteria.SeedRatio, Is.EqualTo(1.5));
+                Assert.That(roundTripped.SeedCriteria.SeedTime, Is.EqualTo(72 * 60));
+                Assert.That(roundTripped.SeedCriteria.DiscographySeedTime, Is.EqualTo(7 * 24 * 60));
+                Assert.That(roundTripped.NeverMoveOnImport, Is.True);
+                Assert.That(roundTripped.RejectBlocklistedTorrentHashesWhileGrabbing, Is.True);
+            });
         }
 
         [Test]

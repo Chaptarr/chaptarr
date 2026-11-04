@@ -8,8 +8,16 @@ from pathlib import Path
 
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("database", nargs="+", type=Path)
+parser.add_argument("database", nargs="*", type=Path)
+parser.add_argument(
+    "--seed-target-migration-profile",
+    type=Path,
+    help="Mark the target fixture as a schema-158 BookshelfNG migration result.",
+)
 args = parser.parse_args()
+
+if not args.database and not args.seed_target_migration_profile:
+    parser.error("provide one or more fixture databases or a target migration-profile database")
 
 expected_counts = {
     "AuthorMetadata": (4, 'SELECT COUNT(*) FROM "AuthorMetadata"'),
@@ -72,3 +80,32 @@ for path in args.database:
             raise RuntimeError(f"Disposable fixture integrity check failed: {integrity}.")
 
 print(f"Normalized {len(args.database)} disposable fixture(s) with valid Hardcover and Open Library IDs.")
+
+if args.seed_target_migration_profile:
+    profile_values = {
+        "BookshelfNGDatabaseMigrated": "true",
+        "BookshelfNGProviderDialect": "gr",
+        "BookshelfNGCompatibilityProfileVersion": "2",
+        "BookshelfNGSourceProduct": "BookshelfNG",
+        "BookshelfNGSourceSchemaVersion": "158",
+        "BookshelfNGApiBasePath": "",
+        "BookshelfNGFormatSemantics": "audiobook-ebook-split-v1",
+        "BookshelfNGIdentityMapVersion": "1",
+        "BookshelfNGMigrationOutcome": "converted",
+    }
+
+    with sqlite3.connect(args.seed_target_migration_profile) as connection:
+        next_id = connection.execute('SELECT COALESCE(MAX("Id"), 0) + 1 FROM "Config"').fetchone()[0]
+        for key, value in profile_values.items():
+            connection.execute('DELETE FROM "Config" WHERE "Key" = ?', (key,))
+            connection.execute(
+                'INSERT INTO "Config" ("Id", "Key", "Value") VALUES (?, ?, ?)',
+                (next_id, key, value),
+            )
+            next_id += 1
+        connection.commit()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise RuntimeError(f"Target migration-profile fixture integrity check failed: {integrity}.")
+
+    print("Seeded a valid schema-158 BookshelfNG compatibility profile on the target fixture.")

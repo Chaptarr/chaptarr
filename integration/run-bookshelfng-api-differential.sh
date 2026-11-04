@@ -68,6 +68,11 @@ test "$source_database_sha" = "$target_database_sha"
 printf 'Fixture database SHA-256: %s\n' "$source_database_sha"
 export BOOKSHELFNG_FIXTURE_SHA256="$source_database_sha"
 
+# Exercise the same API mode that an installed, migrated ChaptarrNG instance uses.
+# The source and target databases above are identical up to this migration marker.
+python3 "$ROOT/integration/normalize-bookshelfng-api-differential-fixture.py" \
+  --seed-target-migration-profile "$CHAPTARRNG_TARGET_CONFIG/readarr.db"
+
 docker pull "$BOOKSHELFNG_SOURCE_IMAGE"
 source_image_id="$(docker image inspect --format '{{.Id}}' "$BOOKSHELFNG_SOURCE_IMAGE")"
 printf 'BookshelfNG source image: %s (%s)\n' "$BOOKSHELFNG_SOURCE_IMAGE" "$source_image_id"
