@@ -336,6 +336,12 @@ test('Chocolatey deferred service upgrades retain both NSSM environments and rec
   assert.ok(sourceVerifierStart >= 0 && migrationVerifierStart > sourceVerifierStart,
     'BookshelfNG source verifier could not be isolated for contract checks');
   const sourceVerifier = smoke.slice(sourceVerifierStart, migrationVerifierStart);
+  assert.match(smoke, /nativeDatabase is null[\s\S]*?GetBookshelfDataCanary\(databasePath\)[\s\S]*?GetNativeChaptarrDataCanary\(databasePath\)/,
+    'the Windows canary command must read BookshelfNG and native ChaptarrNG databases using their respective schemas');
+  assert.match(smoke, /void VerifyChaptarrDatabase\([\s\S]*?GetNativeChaptarrDataCanary\(databasePath\)/,
+    'retained native migration targets must be checked with native-schema canaries');
+  assert.match(smoke, /string GetNativeChaptarrDataCanary\([\s\S]*?SELECT Name FROM Authors[\s\S]*?SELECT Title FROM Editions WHERE Id = 40[\s\S]*?SELECT Path FROM BookFiles WHERE Id = 51/,
+    'native migration canaries must cover author, edition, and file records without BookshelfNG-only tables');
   const migrationBlockStart = installer.indexOf('if ($hasMigrationData -and -not $alreadyMigrated) {');
   const deferredRecoveryStart = installer.indexOf('if ($hadService -and $hasMigrationData -and -not $wasRunning) {', migrationBlockStart);
   assert.ok(migrationBlockStart >= 0 && deferredRecoveryStart > migrationBlockStart,

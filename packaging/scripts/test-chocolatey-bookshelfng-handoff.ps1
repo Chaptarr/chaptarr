@@ -141,7 +141,7 @@ function Invoke-MigrationFixture {
   param([Parameter(Mandatory = $true)][string[]] $Arguments)
   $output = @(& $script:smokeExecutable @Arguments 2>&1)
   if ($LASTEXITCODE -ne 0) {
-    throw "The Windows migration fixture command failed: $($output -join "`n")"
+    throw "The Windows migration fixture command failed ($($Arguments -join ' ')): $($output -join "`n")"
   }
   return @($output | ForEach-Object { $_.ToString() })
 }

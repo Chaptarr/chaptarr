@@ -191,7 +191,10 @@ int? RunBookshelfAcceptanceCommand(string[] arguments)
                     throw new FileNotFoundException("No BookshelfNG or ChaptarrNG SQLite database was found.", targetDirectory);
                 }
 
-                Console.WriteLine(GetBookshelfDataCanary(databasePath));
+                var canary = nativeDatabase is null
+                    ? GetBookshelfDataCanary(databasePath)
+                    : GetNativeChaptarrDataCanary(databasePath);
+                Console.WriteLine(canary);
                 break;
             }
             case "--verify-bookshelfng-source":
@@ -378,7 +381,7 @@ void VerifyChaptarrDatabase(string databasePath)
 
     var databaseDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
     var expected = GetExpectedFixtureCanary(Path.Combine(databaseDirectory, "migration-acceptance-library").Replace('\\', '/'));
-    if (!string.Equals(GetBookshelfDataCanary(databasePath), expected, StringComparison.Ordinal))
+    if (!string.Equals(GetNativeChaptarrDataCanary(databasePath), expected, StringComparison.Ordinal))
     {
         throw new InvalidDataException("The retained ChaptarrNG database did not preserve the migrated fixture canaries.");
     }
@@ -443,6 +446,32 @@ string GetBookshelfDataCanary(string databasePath)
     {
         QueryScalar<string>(connection, "SELECT Value FROM Config WHERE Key = 'FixtureSetting';"),
         QueryScalar<string>(connection, "SELECT Name FROM AuthorMetadata WHERE Id = 10;"),
+        QueryScalar<string>(connection, "SELECT Path FROM Authors WHERE Id = 20;"),
+        QueryScalar<string>(connection, "SELECT EbookPath FROM Authors WHERE Id = 20;"),
+        QueryScalar<string>(connection, "SELECT AudiobookPath FROM Authors WHERE Id = 20;"),
+        QueryScalar<string>(connection, "SELECT Title FROM Books WHERE Id = 30;"),
+        QueryScalar<string>(connection, "SELECT Title FROM Editions WHERE Id = 40;"),
+        QueryScalar<string>(connection, "SELECT Title FROM Editions WHERE Id = 41;"),
+        QueryScalar<string>(connection, "SELECT Path FROM BookFiles WHERE Id = 50;"),
+        QueryScalar<string>(connection, "SELECT Path FROM BookFiles WHERE Id = 51;")
+    };
+
+    return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", values)))).ToLowerInvariant();
+}
+
+string GetNativeChaptarrDataCanary(string databasePath)
+{
+    if (!File.Exists(databasePath))
+    {
+        throw new FileNotFoundException("The ChaptarrNG migration target database was not found.", databasePath);
+    }
+
+    using var connection = new SqliteConnection(CreateConnectionString(databasePath, SqliteOpenMode.ReadOnly));
+    connection.Open();
+    var values = new[]
+    {
+        QueryScalar<string>(connection, "SELECT Value FROM Config WHERE Key = 'FixtureSetting';"),
+        QueryScalar<string>(connection, "SELECT Name FROM Authors WHERE Id = 20;"),
         QueryScalar<string>(connection, "SELECT Path FROM Authors WHERE Id = 20;"),
         QueryScalar<string>(connection, "SELECT EbookPath FROM Authors WHERE Id = 20;"),
         QueryScalar<string>(connection, "SELECT AudiobookPath FROM Authors WHERE Id = 20;"),
