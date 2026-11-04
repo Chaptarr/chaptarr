@@ -336,6 +336,24 @@ assert.equal(
   false,
   "ChaptarrNG must persist the legacy monitoring edit.",
 );
+await compareMutation("author.monitor.disable", "PUT", "/author/editor", {
+  authorIds: [21],
+  monitored: false,
+});
+const monitoredAuthorReadback = await compare(
+  "author.monitor.disable.readback",
+  "/author/21",
+);
+assert.equal(
+  monitoredAuthorReadback.source.value?.monitored,
+  false,
+  "BookshelfNG must persist the legacy author monitoring edit.",
+);
+assert.equal(
+  monitoredAuthorReadback.target.value?.monitored,
+  false,
+  "ChaptarrNG must persist the legacy author monitoring edit.",
+);
 await compareMutation("book.delete.mixed-format", "DELETE", "/book/editor", {
   bookIds: [34],
   deleteFiles: false,
