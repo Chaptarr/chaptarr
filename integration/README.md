@@ -37,13 +37,19 @@ The script removes only its uniquely named containers and network when it exits.
     bash integration/run-bookshelfng-api-differential.sh
 
 The workflow dispatch defaults to a GitHub-hosted Ubuntu runner and retains an
-explicit private JIT option. The read comparison currently covers authors,
-books, series, files, history, roots, profiles, indexers, download clients, and
-notifications, including author/book detail and book-file lookups. The two
-write cases cover only a small part of the mutation surface. The suite remains
-synthetic and partial; it does not establish all mutation or command semantics,
-provider fulfillment, representative operator data, media decoding, rollback,
-or installed-channel acceptance.
+explicit private JIT option. The read comparison covers authors, books, series,
+files, history, roots, profiles, indexers, download clients, and notifications,
+including author/book detail and book-file lookups. The isolated read-only
+sweep also covers blocklist and paged books/history, settings and provider
+schemas, import lists, wanted and queue state, release profiles, tags, system
+status, and route inventory. The source BookshelfNG `v0.4.21.76` OpenAPI
+document declares 236 method/path pairs; the target OpenAPI document declares
+334 and contains every source pair, with 98 target-only pairs. This is route
+declaration evidence only. The write cases still cover only a small part of
+the mutation surface. The suite remains synthetic and partial; it does not
+establish all mutation or command semantics, provider fulfillment,
+representative operator data, media decoding, rollback, or installed-channel
+acceptance.
 
 The Node contract comparator is mounted read-only beside the runner. Its
 focused checks are in `test-bookshelfng-api-contract.mjs`; the workflow runs
