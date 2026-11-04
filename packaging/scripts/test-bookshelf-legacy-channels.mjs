@@ -255,6 +255,17 @@ test('Helm candidate upgrade consumes helper arguments before forwarding Helm fl
   assert.match(upgradeCandidate, /bookshelfMigration\.mode=\$mode[\s\S]*?"\$@"/);
 });
 
+test('Helm automatic migration restarts the deferred candidate without replacing its PVC', () => {
+  const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
+  const manualMode = installedHandoff.indexOf('log "Manual mode preserved schema 158, config, and canary."');
+  const scaleDown = installedHandoff.indexOf('upgrade_candidate manual 0 --wait --timeout 15m', manualMode);
+  const automaticMode = installedHandoff.indexOf('upgrade_candidate automatic 1 --wait --timeout 30m', scaleDown);
+  assert.ok(manualMode >= 0 && scaleDown > manualMode && automaticMode > scaleDown,
+    'manual defer must be proven before stopping the unready pod and restarting in automatic mode');
+  assert.match(installedHandoff.slice(scaleDown, automaticMode), /wait_stopped bookshelfng-0[\s\S]*?assert_pvc_identity/,
+    'the deferred candidate must stop without replacing its persistent claim');
+});
+
 test('Helm fixture seeder can initialize the chart’s fresh root-owned PVC', () => {
   const installedHandoff = read('scripts/test_bookshelfng_helm_install_handoff.sh');
   const seedPod = installedHandoff.match(/cat > "\$EVIDENCE_DIR\/seed-pod\.yaml" <<YAML\n([\s\S]*?)\nYAML/)?.[1];

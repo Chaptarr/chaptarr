@@ -410,6 +410,11 @@ assert_source_file_hashes "$SOURCE_SQL_DUMP_SHA256" "$CONFIG_SHA256" "$CANARY_SH
 test "$(pod_exec sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 158
 log "Manual mode preserved schema 158, config, and canary."
 
+log "Stopping the deferred candidate while keeping the same Helm claim before switching to automatic mode"
+upgrade_candidate manual 0 --wait --timeout 15m
+wait_stopped bookshelfng-0
+assert_pvc_identity
+
 log "Choosing automatic migration against the same installed Helm release and persistent volume"
 upgrade_candidate automatic 1 --wait --timeout 30m
 kubectl rollout status -n "$NAMESPACE" statefulset/bookshelfng --timeout=30m
