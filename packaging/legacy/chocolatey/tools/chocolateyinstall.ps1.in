@@ -966,6 +966,22 @@ try {
     }
     Write-SharedMigrationJournal -FingerprintName 'source-config' -FingerprintPath (Join-Path $dataDir 'config.xml')
     Write-SharedMigrationJournal -FingerprintName 'target-artifact' -FingerprintPath (Join-Path $stageDir 'bin\Chaptarr.Console.exe')
+
+    # The service's normal startup can migrate the Chaptarr schema in place,
+    # but it cannot perform the BookshelfNG data conversion. Apply that
+    # conversion explicitly while every source client is stopped, before the
+    # candidate service starts against the target database.
+    $migrationDatabaseMutationMayHaveStarted = $true
+    $migrationArguments = @(
+      '-migrate-bookshelf',
+      '-confirm-bookshelf-service-stopped',
+      "-data=$dataDir"
+    )
+    if ($mergeSqliteSources) { $migrationArguments += '-merge-bookshelf-databases' }
+    $migrationExit = Invoke-BookshelfUtility $previewConsole $migrationArguments $effectiveEnvironment
+    if ($migrationExit -ne 0) {
+      throw "BookshelfNG migration failed with exit code $migrationExit. The installer will attempt to restore the retained source database."
+    }
   }
 
   if ($hadService -and $hasMigrationData -and -not $wasRunning) {

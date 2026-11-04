@@ -617,6 +617,24 @@ jobs:
           Remove-Item -LiteralPath $archiveDirectory -Force
         }
 
+    - name: Stage failed Windows Chocolatey handoff diagnostics
+      if: >-
+        failure() && matrix.platform == 'windows-x64' &&
+        github.event_name == 'workflow_dispatch' &&
+        inputs.windows_chocolatey_only == true
+      shell: pwsh
+      run: |
+        $artifactDirectory = Join-Path $env:RUNNER_TEMP 'bookshelfng-windows-installed-handoff-${{ github.run_id }}'
+        New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
+        $handoffDirectory = Join-Path $env:RUNNER_TEMP 'chocolatey-bookshelfng-handoff-${{ github.run_id }}'
+        if (Test-Path -LiteralPath $handoffDirectory) {
+          Copy-Item -LiteralPath $handoffDirectory -Destination (Join-Path $artifactDirectory 'runner-temp') -Recurse -Force
+        }
+        $programDataDirectory = Join-Path $env:ProgramData 'BookshelfNG'
+        if (Test-Path -LiteralPath $programDataDirectory) {
+          Copy-Item -LiteralPath $programDataDirectory -Destination (Join-Path $artifactDirectory 'programdata') -Recurse -Force
+        }
+
     - name: Upload failed Windows Chocolatey handoff diagnostics
       if: >-
         failure() && matrix.platform == 'windows-x64' &&
@@ -625,9 +643,7 @@ jobs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: bookshelfng-windows-installed-handoff-${{ github.run_id }}
-        path: |
-          ${{ runner.temp }}/chocolatey-bookshelfng-handoff-${{ github.run_id }}/**
-          C:\ProgramData\BookshelfNG\**
+        path: ${{ runner.temp }}/bookshelfng-windows-installed-handoff-${{ github.run_id }}
         if-no-files-found: warn
         retention-days: 30
 

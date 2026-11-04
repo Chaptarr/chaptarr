@@ -325,6 +325,19 @@ test('Chocolatey deferred service upgrades retain both NSSM environments and rec
   assert.ok(sourceVerifierStart >= 0 && migrationVerifierStart > sourceVerifierStart,
     'BookshelfNG source verifier could not be isolated for contract checks');
   const sourceVerifier = smoke.slice(sourceVerifierStart, migrationVerifierStart);
+  const migrationBlockStart = installer.indexOf('if ($hasMigrationData -and -not $alreadyMigrated) {');
+  const deferredRecoveryStart = installer.indexOf('if ($hadService -and $hasMigrationData -and -not $wasRunning) {', migrationBlockStart);
+  assert.ok(migrationBlockStart >= 0 && deferredRecoveryStart > migrationBlockStart,
+    'Chocolatey migration preflight and application block could not be isolated');
+  const migrationBlock = installer.slice(migrationBlockStart, deferredRecoveryStart);
+  const previewIndex = migrationBlock.indexOf('$previewExit = Invoke-BookshelfUtility');
+  const applyIndex = migrationBlock.indexOf('$migrationExit = Invoke-BookshelfUtility');
+  assert.ok(previewIndex >= 0 && applyIndex > previewIndex,
+    'Chocolatey must apply migration only after its read-only preview passes');
+  assert.match(migrationBlock, /\$migrationArguments = @\([\s\S]*?'-migrate-bookshelf'[\s\S]*?'-confirm-bookshelf-service-stopped'[\s\S]*?"-data=\$dataDir"/,
+    'Chocolatey must run the explicit conversion with the stopped-service guard against the selected data path');
+  assert.match(migrationBlock, /migrationDatabaseMutationMayHaveStarted = \$true[\s\S]*?if \(\$mergeSqliteSources\) \{ \$migrationArguments \+= '-merge-bookshelf-databases' \}/,
+    'Chocolatey rollback must cover conversion and preserve the opt-in dual-database path');
   const manualAcceptanceStart = handoff.indexOf('$manualResult = Invoke-Chocolatey');
   const manualAutomaticStart = handoff.indexOf('$env:CHAPTARRNG_TEST_ARCHIVE_PATH = $ArchivePath', manualAcceptanceStart);
   assert.ok(manualAcceptanceStart >= 0 && manualAutomaticStart > manualAcceptanceStart,
@@ -339,6 +352,7 @@ test('Chocolatey deferred service upgrades retain both NSSM environments and rec
   assert.match(installer, /OldAppEnvironmentExtra = @\(\$oldAppEnvironmentExtra\)/);
   assert.match(installer, /Get-EffectiveExtraEnvironment/);
   assert.match(installer, /targetDatabaseExit = Invoke-BookshelfUtility/);
+  assert.match(installer, /BookshelfNG migration failed with exit code \$migrationExit/);
   assert.match(installer, /BookshelfSource = -not \$alreadyMigrated/);
   assert.match(installer, /URLBASE/);
   assert.match(installer, /<EventTrigger>/);
@@ -404,11 +418,15 @@ test('Chocolatey installed handoff passes private rollback inputs to nested scri
 
 test('focused Windows Chocolatey failures retain installed-handoff diagnostics', () => {
   const workflow = read('.github/workflows/build.yml');
+  const stage = workflow.match(/- name: Stage failed Windows Chocolatey handoff diagnostics([\s\S]*?)(?=\n    - name:)/)?.[1];
   const upload = workflow.match(/- name: Upload failed Windows Chocolatey handoff diagnostics([\s\S]*?)(?=\n    - name:)/)?.[1];
+  assert.ok(stage, 'the focused Chocolatey workflow must stage failed installed-handoff state');
   assert.ok(upload, 'the focused Chocolatey workflow must upload failed installed-handoff state');
+  assert.match(stage, /failure\(\)[\s\S]*?inputs\.windows_chocolatey_only == true/);
+  assert.match(stage, /Copy-Item -LiteralPath \$handoffDirectory[\s\S]*?Copy-Item -LiteralPath \$programDataDirectory/);
   assert.match(upload, /failure\(\)[\s\S]*?inputs\.windows_chocolatey_only == true/);
-  assert.match(upload, /\$\{\{ runner\.temp \}\}\/chocolatey-bookshelfng-handoff-/);
-  assert.match(upload, /C:\\ProgramData\\BookshelfNG\\\*\*/);
+  assert.match(upload, /\$\{\{ runner\.temp \}\}\/bookshelfng-windows-installed-handoff-/);
+  assert.doesNotMatch(upload, /chocolatey-bookshelfng-handoff-|ProgramData/);
   assert.match(upload, /if-no-files-found: warn/);
 });
 
@@ -769,6 +787,10 @@ test('Linux and Windows VM jobs execute package-specific migration-choice checks
   assert.match(buildJob, /name: Test BookshelfNG AUR migration choice[\s\S]*?if: matrix\.platform == 'linux-x64'[\s\S]*?test-bookshelfng-aur-choice\.sh/);
   assert.match(buildJob, /name: Test candidate BookshelfNG RPM bridge package[\s\S]*?if: matrix\.platform == 'linux-x64'[\s\S]*?test-build-bookshelfng-rpm-bridge\.sh/);
   assert.match(buildJob, /name: Test Chocolatey BookshelfNG migration choice[\s\S]*?if: matrix\.platform == 'windows-x64'[\s\S]*?test-chocolatey-migration-choice\.ps1/);
+  assert.match(buildJob, /name: Stage failed Windows Chocolatey handoff diagnostics[\s\S]*?Copy-Item -LiteralPath \$handoffDirectory[\s\S]*?Copy-Item -LiteralPath \$programDataDirectory/,
+    'Windows handoff diagnostics must be staged under one artifact root');
+  assert.match(buildJob, /name: Upload failed Windows Chocolatey handoff diagnostics[\s\S]*?path: \$\{\{ runner\.temp \}\}\/bookshelfng-windows-installed-handoff-\$\{\{ github\.run_id \}\}/,
+    'Windows handoff diagnostics upload must use the staged single-root directory');
   assert.match(read('packaging/scripts/test-build-bookshelfng-deb-bridge.sh'), /bookshelfng-ask-headless\.log[\s\S]*?no terminal is available/);
   assert.match(read('packaging/scripts/test-build-bookshelfng-rpm-bridge.sh'), /ask-headless\.log[\s\S]*?no terminal is available/);
   assert.match(read('packaging/scripts/test-bookshelfng-aur-choice.sh'), /ask-headless\.log[\s\S]*?No terminal is available/);
