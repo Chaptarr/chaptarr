@@ -13,6 +13,8 @@ const ui = require('../../docs/localization/followup-ui-sources.json');
 const english = require('../../src/NzbDrone.Core/Localization/Core/en.json');
 const root = path.resolve(__dirname, '../..');
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
+const digestText = (value) => digest(String(value).replace(/\r\n?/g, '\n'));
+const digestTextFile = (relativePath) => digestText(fs.readFileSync(path.join(root, relativePath), 'utf8'));
 
 function loadFunctions(relativePath, names, present) {
   const file = path.join(root, relativePath);
@@ -66,7 +68,7 @@ test('new source ledger binds 69 absent keys and ten reused keys to current regi
       assert.equal(wrapperAudit.newUniqueCallsites, 25);
       continue;
     }
-    assert.equal(digest(fs.readFileSync(path.join(root, file))), hash, file);
+    assert.equal(digestTextFile(file), hash, file);
   }
   const serverIds = new Set(records.map((record) => record.id));
   for (const id of ledger.newServerIds) assert.ok(serverIds.has(id), id);
@@ -93,7 +95,11 @@ test('new source ledger binds 69 absent keys and ten reused keys to current regi
   }
   assert.equal(Object.keys(english).length, 4101);
   assert.equal(missing, 828);
-  for (const [file, hash] of Object.entries(ledger.targetCatalogSha256)) assert.equal(digest(fs.readFileSync(path.join(root, file))), hash, file);
+  for (const [file, hash] of Object.entries(ledger.targetCatalogSha256)) assert.equal(digestTextFile(file), hash, file);
+});
+
+test('registry hashes are stable across LF and CRLF checkouts', () => {
+  assert.equal(digestText('source\nregistry\n'), digestText('source\r\nregistry\r\n'));
 });
 
 test('book evidence translates fixed detail tooltips and preserves observed/provider values', () => {
