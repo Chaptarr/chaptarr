@@ -11,12 +11,15 @@ verifies the two database files are byte identical. It compares read-only legacy
 API lists and detail routes after ChaptarrNG's normal startup migration. The script records
 the source image digest and image ID,
 target commit and image ID, source database hash, per-case response hashes, and
-JSON mismatch paths. Source fields and values must remain present and equivalent;
-ChaptarrNG-only fields and records are reported as additive. Objects with IDs
-are matched by ID, provider fields by name, and select options by value, so
-reordering form fields does not create false failures. Source collection order
-is still checked. Secret-valued response fields are compared as empty or
-present and are never written into the report.
+JSON mismatch paths. Legacy fields, saved values, selector values, and collection
+identity must remain equivalent; ChaptarrNG-only fields and records are reported
+as additive. Objects with IDs are matched by ID and provider fields by name.
+Provider labels, help, hints, links, control types, and display order are counted
+and reported separately because ChaptarrNG uses its own provider forms. Direct
+Download URL arrays are compared with the target's ordered newline-delimited
+value, so URL order and contents remain strict. Source collection order is still
+checked. Secret-valued response fields are compared as empty or present and are
+never written into the report.
 
 Run it with an empty task-owned directory. The generated database, config,
 library placeholders, and sanitized report stay under that directory. The

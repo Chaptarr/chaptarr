@@ -6,6 +6,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   compareResponses,
+  normalizeProviderApiResponse,
   sanitizeApiResponse,
 } from "./bookshelfng-api-contract.mjs";
 
@@ -93,35 +94,47 @@ async function waitForPing(baseUrl, name) {
 
 const results = [];
 
-async function compare(caseId, path) {
+async function compare(caseId, path, providerResource = false) {
   const [source, target] = await Promise.all([
     getJson(sourceUrl, sourceKey, path),
     getJson(targetUrl, targetKey, path),
   ]);
-  const comparison =
-    source.status === 200 && target.status === 200
-      ? compareResponses(source.value, target.value, { includeDebugValues })
-      : [
-          {
-            path: "/httpStatus",
-            kind: "http-status-difference",
-            sourceStatus: source.status,
-            targetStatus: target.status,
-          },
-        ];
-  const mismatchDetails = Array.isArray(comparison)
-    ? comparison
-    : comparison.mismatchDetails;
-  const mismatchPaths = Array.isArray(comparison)
-    ? mismatchDetails.map((detail) => detail.path)
-    : comparison.mismatchPaths;
-  const additiveDetails = Array.isArray(comparison)
-    ? []
-    : comparison.additiveDetails;
-  const additivePaths = Array.isArray(comparison)
-    ? []
-    : comparison.additivePaths;
-  results.push({
+  let comparison;
+  let providerPresentationDifferencePaths = [];
+  if (source.status === 200 && target.status === 200) {
+    if (providerResource) {
+      const originalComparison = compareResponses(source.value, target.value);
+      comparison = compareResponses(
+        normalizeProviderApiResponse(source.value),
+        normalizeProviderApiResponse(target.value),
+        { includeDebugValues },
+      );
+      const semanticPaths = new Set(comparison.mismatchPaths);
+      providerPresentationDifferencePaths = originalComparison.mismatchPaths
+        .filter((mismatchPath) => !semanticPaths.has(mismatchPath));
+    } else {
+      comparison = compareResponses(source.value, target.value, { includeDebugValues });
+    }
+  } else {
+    comparison = {
+      mismatchPaths: ["/httpStatus"],
+      mismatchDetails: [
+        {
+          path: "/httpStatus",
+          kind: "http-status-difference",
+          sourceStatus: source.status,
+          targetStatus: target.status,
+        },
+      ],
+      additivePaths: [],
+      additiveDetails: [],
+    };
+  }
+  const mismatchDetails = comparison.mismatchDetails;
+  const mismatchPaths = comparison.mismatchPaths;
+  const additiveDetails = comparison.additiveDetails;
+  const additivePaths = comparison.additivePaths;
+  const result = {
     caseId,
     method: "GET",
     path,
@@ -135,11 +148,14 @@ async function compare(caseId, path) {
     mismatchDetails,
     additivePaths,
     additiveDetails,
+    providerPresentationDifferenceCount: providerPresentationDifferencePaths.length,
+    providerPresentationDifferencePaths: providerPresentationDifferencePaths.slice(0, 20),
     result:
       source.status === 200 && target.status === 200 && mismatchPaths.length === 0
         ? "pass"
         : "fail",
-  });
+  };
+  results.push(result);
   return { source, target };
 }
 
@@ -151,9 +167,9 @@ const cases = [
   ["root-folders.list", "/rootFolder"],
   ["quality-profiles.list", "/qualityProfile"],
   ["metadata-profiles.list", "/metadataProfile"],
-  ["indexers.list", "/indexer"],
-  ["download-clients.list", "/downloadClient"],
-  ["notifications.list", "/notification"],
+  ["indexers.list", "/indexer", true],
+  ["download-clients.list", "/downloadClient", true],
+  ["notifications.list", "/notification", true],
 ];
 
 await Promise.all([
@@ -161,8 +177,19 @@ await Promise.all([
   waitForPing(targetUrl, "ChaptarrNG"),
 ]);
 
-for (const [caseId, path] of cases) {
-  await compare(caseId, path);
+for (const [caseId, path, providerResource = false] of cases) {
+  const { source, target } = await compare(caseId, path, providerResource);
+  if (
+    providerResource &&
+    Array.isArray(source.value) &&
+    Array.isArray(target.value)
+  ) {
+    for (const provider of source.value) {
+      if (Number.isInteger(provider?.id)) {
+        await compare(`${caseId}.detail.${provider.id}`, `${path}/${provider.id}`, true);
+      }
+    }
+  }
 }
 
 const authorsResult = results.find((result) => result.caseId === "authors.list");
@@ -206,7 +233,7 @@ if (
 }
 
 const report = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   suite: "bookshelfng-read-api-differential",
   source: {
     release: "BookshelfNG 0.4.21.76",
@@ -225,6 +252,8 @@ const report = {
     objectKeys: "sorted recursively",
     collectionIdentity: "matched by id when available; source collection order preserved",
     providerFields: "matched by name; select options matched by value",
+    providerPresentation: "labels, hints, help, links, control type, and display order are reported separately; persisted field values and option values remain strict",
+    directDownloadUrls: "newline-delimited target URLs are compared with the legacy ordered tag array",
     secretFields: "compared as empty or present, never recorded",
   },
   debugValues: includeDebugValues,
@@ -232,6 +261,10 @@ const report = {
   passed: results.filter((result) => result.result === "pass").length,
   failed: results.filter((result) => result.result !== "pass").length,
   additiveDifferenceCount: results.reduce((total, result) => total + result.additivePaths.length, 0),
+  providerPresentationDifferenceCount: results.reduce(
+    (total, result) => total + result.providerPresentationDifferenceCount,
+    0,
+  ),
   results,
 };
 
@@ -248,6 +281,7 @@ console.log(
       caseCount: report.caseCount,
       passed: report.passed,
       failed: report.failed,
+      providerPresentationDifferenceCount: report.providerPresentationDifferenceCount,
       reportPath,
     },
     null,

@@ -45,6 +45,73 @@ export function sanitizeApiResponse(value, key = "") {
   return value;
 }
 
+const providerPresentationKeys = new Set([
+  "advanced",
+  "helpLink",
+  "helpText",
+  "helpTextWarning",
+  "hidden",
+  "isFloat",
+  "label",
+  "order",
+  "placeholder",
+  "section",
+  "type",
+  "unit",
+]);
+
+export function normalizeProviderApiResponse(value) {
+  if (Array.isArray(value)) {
+    return value.map(normalizeProviderApiResponse);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const normalized = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "infoLink") continue;
+    if (key === "fields" && Array.isArray(child)) {
+      normalized[key] = child.map((field) => {
+        if (!field || typeof field !== "object") {
+          return field;
+        }
+
+        const normalizedField = {};
+        for (const [fieldKey, fieldValue] of Object.entries(field)) {
+          if (providerPresentationKeys.has(fieldKey)) continue;
+          if (fieldKey === "selectOptions" && Array.isArray(fieldValue)) {
+            normalizedField[fieldKey] = fieldValue.map((option) => {
+              if (!option || typeof option !== "object") return option;
+              return Object.fromEntries(
+                Object.entries(option).filter(([optionKey]) =>
+                  optionKey === "value" || optionKey === "parentValue",
+                ),
+              );
+            });
+          } else if (
+            fieldKey === "value" &&
+            field.name === "Urls" &&
+            value.configContract === "DirectDownloadSettings" &&
+            typeof fieldValue === "string"
+          ) {
+            normalizedField[fieldKey] = fieldValue
+              .split(/\r?\n/)
+              .map((url) => url.trim())
+              .filter(Boolean);
+          } else {
+            normalizedField[fieldKey] = fieldValue;
+          }
+        }
+        return normalizedField;
+      });
+    } else {
+      normalized[key] = normalizeProviderApiResponse(child);
+    }
+  }
+  return normalized;
+}
+
 function identityKey(value, path) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 

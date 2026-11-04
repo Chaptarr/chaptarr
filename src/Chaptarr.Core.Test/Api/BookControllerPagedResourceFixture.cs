@@ -226,6 +226,49 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
+        public void should_keep_the_legacy_cached_cover_url_in_a_migrated_bookshelf_book_list()
+        {
+            var legacyIdentityMap = CreateLegacyIdentityMapMock();
+            legacyIdentityMap
+                .Setup(service => service.GetMappingsByTargetIds("Book", It.Is<IEnumerable<int>>(ids => ids.SequenceEqual(new[] { 31 }))))
+                .Returns(new List<BookshelfLegacyIdentityMapEntry>
+                {
+                    new() { SourceId = 30, TargetId = 31 }
+                });
+
+            var migratedBook = new Book
+            {
+                Id = 31,
+                AuthorId = 20,
+                MediaType = BookMediaType.Ebook,
+                Title = "Fixture ebook",
+                CleanTitle = "fixture ebook",
+                TitleSlug = "fixture-ebook",
+                Images = new List<MediaCoverModel>
+                {
+                    new(MediaCoverTypes.Cover, "/MediaCoverProxy/fake-hash/cover.jpg")
+                }
+            };
+
+            var bookService = new Mock<IBookService>();
+            bookService
+                .Setup(service => service.GetBooksForDisplay(null, null))
+                .Returns(new List<Book> { migratedBook });
+
+            var authorService = new Mock<IAuthorService>();
+            authorService
+                .Setup(service => service.GetAllAuthors())
+                .Returns(new List<Author> { new() { Id = 20, Name = "Fixture author" } });
+
+            var controller = CreateController(bookService.Object, legacyIdentityMap.Object, authorService: authorService.Object);
+
+            var result = controller.GetBooks(authorId: null, bookIds: null, bookId: null);
+
+            Assert.That(result.Single().Id, Is.EqualTo(30));
+            Assert.That(result.Single().Images?.Single().Url, Is.EqualTo("/MediaCover/Books/30/cover.jpg"));
+        }
+
+        [Test]
         public void should_download_media_for_every_format_of_an_unscoped_migrated_book_id()
         {
             var legacyIdentityMap = CreateLegacyIdentityMapMock();
@@ -250,7 +293,8 @@ namespace Chaptarr.Core.Test.Api
         private static BookController CreateController(
             IBookService bookService,
             IBookshelfLegacyIdentityMapService legacyIdentityMap = null,
-            IManageCommandQueue commandQueue = null)
+            IManageCommandQueue commandQueue = null,
+            IAuthorService authorService = null)
         {
             var seriesLinks = new Mock<ISeriesBookLinkService>();
             seriesLinks.Setup(service => service.GetLinksByBook(It.IsAny<List<int>>()))
@@ -259,9 +303,11 @@ namespace Chaptarr.Core.Test.Api
             var authorStatistics = new Mock<IAuthorStatisticsService>();
             authorStatistics.Setup(service => service.AuthorStatistics(It.IsAny<string>()))
                 .Returns(new List<AuthorStatistics>());
+            authorStatistics.Setup(service => service.BookshelfAuthorStatistics())
+                .Returns(new List<AuthorStatistics>());
 
             var controller = new BookController(
-                authorService: null,
+                authorService: authorService,
                 bookService: bookService,
                 addBookService: null,
                 editionService: null,

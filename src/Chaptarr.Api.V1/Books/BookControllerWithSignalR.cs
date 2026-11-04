@@ -168,13 +168,7 @@ namespace Chaptarr.Api.V1.Books
                 .ToList();
             resource.Id = mapping.SourceId;
             resource.LocalBookId = mapping.SourceId.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
-            foreach (var image in resource.Images ?? new List<MediaCover>())
-            {
-                // BookshelfNG clients use the persisted legacy cover path. Keep that URL in
-                // the compatibility projection so existing config-mounted cover files remain
-                // available across migration, even when Chaptarr has not indexed the cover yet.
-                image.Url = $"/MediaCover/Books/{mapping.SourceId}/cover.jpg";
-            }
+            ProjectLegacyBookshelfCoverImageUrls(resource, mapping.SourceId);
             resource.MediaType = null;
             resource.AudiobookMonitored = null;
             resource.EbookMonitored = null;
@@ -260,6 +254,7 @@ namespace Chaptarr.Api.V1.Books
                 ProjectLegacyAuthorMetadataIdentity(resource, rows[0].AuthorId, legacyMetadataIdByAuthorId);
                 resource.Id = legacyId;
                 resource.LocalBookId = legacyId.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                ProjectLegacyBookshelfCoverImageUrls(resource, legacyId);
                 resource.MediaType = null;
                 resource.AudiobookMonitored = null;
                 resource.EbookMonitored = null;
@@ -302,6 +297,17 @@ namespace Chaptarr.Api.V1.Books
             }
 
             return projected;
+        }
+
+        private static void ProjectLegacyBookshelfCoverImageUrls(BookResource resource, int legacyBookId)
+        {
+            foreach (var image in resource?.Images ?? new List<MediaCover>())
+            {
+                // BookshelfNG clients use the persisted legacy cover path. Keep that URL in
+                // the compatibility projection so existing config-mounted cover files remain
+                // available across migration, even when Chaptarr has not indexed the cover yet.
+                image.Url = $"/MediaCover/Books/{legacyBookId}/cover.jpg";
+            }
         }
 
         private void ProjectLegacyAuthorMetadataIdentity(BookResource resource, int authorId)

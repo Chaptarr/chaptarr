@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http.ClientSchema;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using FluentValidation;
 using FluentValidation.Results;
@@ -48,7 +49,15 @@ namespace Chaptarr.Api.V1
             var definition = _providerFactory.Get(id);
             _providerFactory.SetProviderCharacteristics(definition);
 
-            return _resourceMapper.ToResource(definition);
+            return ToResource(definition);
+        }
+
+        private TProviderResource ToResource(TProviderDefinition definition)
+        {
+            var resource = _resourceMapper.ToResource(definition);
+            return HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true
+                ? ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyFields(resource)
+                : resource;
         }
 
         [HttpGet]
@@ -63,7 +72,7 @@ namespace Chaptarr.Api.V1
             {
                 _providerFactory.SetProviderCharacteristics(definition);
 
-                result.Add(_resourceMapper.ToResource(definition));
+                result.Add(ToResource(definition));
             }
 
             return result.OrderBy(p => p.Name).ToList();
@@ -145,7 +154,7 @@ namespace Chaptarr.Api.V1
 
             _bulkResourceMapper.UpdateModel(providerResource, definitionsToUpdate);
 
-            return Accepted(_providerFactory.Update(definitionsToUpdate).Select(x => _resourceMapper.ToResource(x)));
+            return Accepted(_providerFactory.Update(definitionsToUpdate).Select(ToResource));
         }
 
         private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate)
@@ -208,11 +217,11 @@ namespace Chaptarr.Api.V1
 
             foreach (var providerDefinition in defaultDefinitions)
             {
-                var providerResource = _resourceMapper.ToResource(providerDefinition);
+                var providerResource = ToResource(providerDefinition);
                 var presetDefinitions = _providerFactory.GetPresetDefinitions(providerDefinition);
 
                 providerResource.Presets = presetDefinitions
-                    .Select(v => _resourceMapper.ToResource(v))
+                    .Select(ToResource)
                     .ToList();
 
                 result.Add(providerResource);

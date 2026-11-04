@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   compareResponses,
+  normalizeProviderApiResponse,
   sanitizeApiResponse,
 } from "./bookshelfng-api-contract.mjs";
 
@@ -77,4 +78,51 @@ assert.deepEqual(
   },
 );
 
-console.log("BookshelfNG API contract comparator: 8 checks passed");
+const sourceDirectDownload = [{
+  id: 121,
+  configContract: "DirectDownloadSettings",
+  infoLink: "https://wiki.servarr.com/readarr/supported#directdownloadindexer",
+  fields: [{
+    name: "Urls",
+    type: "tag",
+    order: 0,
+    label: "URLs",
+    helpText: "One URL per tag.",
+    value: ["https://primary.example", "https://secondary.example"],
+  }],
+}];
+const targetDirectDownload = [{
+  id: 121,
+  configContract: "DirectDownloadSettings",
+  infoLink: "https://discord.gg/nqFGsGUug2",
+  fields: [{
+    name: "Urls",
+    type: "textArea",
+    order: 0,
+    label: "URLs",
+    helpText: "One URL per line.",
+    value: "https://primary.example\nhttps://secondary.example",
+  }],
+}];
+assert.deepEqual(
+  compareResponses(
+    normalizeProviderApiResponse(sourceDirectDownload),
+    normalizeProviderApiResponse(targetDirectDownload),
+  ).mismatchPaths,
+  [],
+);
+assert.deepEqual(
+  compareResponses(
+    normalizeProviderApiResponse(sourceDirectDownload),
+    normalizeProviderApiResponse(targetDirectDownload.map((provider) => ({
+      ...provider,
+      fields: provider.fields.map((field) => ({
+        ...field,
+        value: "https://primary.example\nhttps://changed.example",
+      })),
+    }))),
+  ).mismatchPaths,
+  ["/0/fields/0/value/1"],
+);
+
+console.log("BookshelfNG API contract comparator: 10 checks passed");

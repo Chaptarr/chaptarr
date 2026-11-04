@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Chaptarr.Http.ClientSchema;
 using Chaptarr.Http.REST;
+using NzbDrone.Core.Indexers.DirectDownload;
 using NzbDrone.Core.ThingiProvider;
 
 namespace Chaptarr.Api.V1
@@ -85,6 +87,34 @@ namespace Chaptarr.Api.V1
                 : (IProviderConfig)SchemaBuilder.ReadFromSchema(resource.Fields ?? new List<Field>(), configContract);
 
             return definition;
+        }
+    }
+
+    internal static class ProviderResourceCompatibilityProjection
+    {
+        public static TProviderResource ProjectBookshelfLegacyFields<TProviderResource>(TProviderResource resource)
+            where TProviderResource : ProviderResource<TProviderResource>
+        {
+            if (resource?.ConfigContract != nameof(DirectDownloadSettings))
+            {
+                return resource;
+            }
+
+            var urls = resource.Fields?.FirstOrDefault(field => field.Name == nameof(DirectDownloadSettings.Urls));
+            if (urls == null)
+            {
+                return resource;
+            }
+
+            // BookshelfNG exposed this setting as a tag field with an array value. ChaptarrNG
+            // stores the same ordered URLs as newline-delimited text for its native textarea.
+            urls.Type = "tag";
+            if (urls.Value is string configuredUrls)
+            {
+                urls.Value = DirectDownloadSettings.NormalizeUrls(configuredUrls).ToList();
+            }
+
+            return resource;
         }
     }
 }
