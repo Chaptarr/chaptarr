@@ -385,7 +385,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 952,
+          "line": 964,
           "sourceLine": "new ValidationFailure(\"Import\", $\"Failed to import author: {ex.Message}\")",
           "sourceLineSha256": "ef42c2b8cfe1f769ee79b72f93ba8a25960ce22fb8dc939bb7d86870b624552e",
           "category": "validation-failure",
@@ -3052,7 +3052,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1668,
+          "line": 1691,
           "sourceLine": "return StatusCode(502, \"Failed to download selected photo\");",
           "sourceLineSha256": "b1c630af29c0af3348d48cfef6130f44063d816b3aed32b6f143696b6aeca059",
           "category": "direct-api-result",
@@ -4017,7 +4017,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1332,
+          "line": 1344,
           "sourceLine": "Message = \"Cannot re-add author because the metadata refresh preflight failed. The existing author was not deleted.\"",
           "sourceLineSha256": "160eac750111bd813e5fdc67f8d21ec22b8f893f35e78799248ae95085472382",
           "category": "api-message-resource",
@@ -4713,7 +4713,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 913,
+          "line": 925,
           "sourceLine": "new ValidationFailure(\"Import\", \"Failed to import author from provider\")",
           "sourceLineSha256": "378f7948d50d99186b9862822557ade0121bbb5deed7177323f6da03260d074e",
           "category": "validation-failure",
@@ -5206,7 +5206,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1732,
+          "line": 1755,
           "sourceLine": "Message = \"Image downloaded successfully\"",
           "sourceLineSha256": "61e06447da181ff32740b8a82919d35b0f37210840d78fcdf9eef2f9aba06ae3",
           "category": "api-message-resource",
@@ -5252,7 +5252,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1719,
+          "line": 1742,
           "sourceLine": "return BadRequest(new ApiErrorResource { Error = \"Image not found in author metadata\" });",
           "sourceLineSha256": "a37149445a94bfa703059f21d2af6d552d3de8c1915169a468d64cb261d430d3",
           "category": "api-response-resource",
@@ -5306,7 +5306,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1740,
+          "line": 1763,
           "sourceLine": "Message = \"Image download in progress\"",
           "sourceLineSha256": "9806dcd8e96e83074b7cc8486f8cc2682d8a2384ce1c54b21076ff4454f32427",
           "category": "api-message-resource",
@@ -5562,7 +5562,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1754,
+          "line": 1777,
           "sourceLine": "Message = \"Failed to download image\"",
           "sourceLineSha256": "fb3b4b234e59ac41c0efcb72df554380373c8c992dc0621bd0cb6d0dc58ccee4",
           "category": "api-message-resource",
@@ -5654,7 +5654,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1264,
+          "line": 1276,
           "sourceLine": "return BadRequest(new ApiErrorResource { Message = \"Cannot combine file deletion with re-add.\" });",
           "sourceLineSha256": "3073ed115dc0e5ca2ab676578c853c2bf44062a251469b88286aea8ba52f1b39",
           "category": "api-message-resource",
@@ -5677,7 +5677,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 546,
+          "line": 558,
           "sourceLine": "Message = \"The author isn't available yet on the metadata server. Chaptarr has queued the import and will automatically add them when they become available (you can visit the chaptarrbot channel in our discord to ask for updates).\"",
           "sourceLineSha256": "92803a7710c4db3c0fa6d6a7c2161d511b4e307a0fd80bda1c05958e75cc0343",
           "category": "api-message-resource",
@@ -5685,7 +5685,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 926,
+          "line": 938,
           "sourceLine": "message = \"The author isn't available yet on the metadata server. Chaptarr has queued the import and will automatically add them when they become available (you can visit the chaptarrbot channel in our discord to ask for updates).\"",
           "sourceLineSha256": "3972acf2a1b19dd9f742d04bed389cb65718fa6cbe616e30d75363264d4c688c",
           "category": "anonymous-api-message",
@@ -5737,7 +5737,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1324,
+          "line": 1336,
           "sourceLine": "Message = \"Cannot re-add author: the author is not available on the metadata server.\"",
           "sourceLineSha256": "64e843abe41359f1f5a6f3179dd02e0b5db4dd15d3b1a0d8eea7094edd92482d",
           "category": "api-message-resource",
@@ -6424,7 +6424,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 533,
+          "line": 545,
           "sourceLine": "Message = \"The author isn't available yet on the metadata server.\"",
           "sourceLineSha256": "23620b432d52799d5d986da7d41976de35a3827a59f29f8578dfad75f159478b",
           "category": "api-message-resource",
@@ -8309,7 +8309,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1665,
+          "line": 1688,
           "sourceLine": "return BadRequest(\"Selected photo is a provider placeholder\");",
           "sourceLineSha256": "abc652ae20b036a9223089d52ef8e53c79b2040aa6a96291fa5dcbd0b95ad8e5",
           "category": "direct-api-result",
@@ -9598,7 +9598,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 643,
+          "line": 655,
           "sourceLine": "new ValidationFailure(\"RootFolder\", \"Selected root folder is not configured. Add it in Settings → Media Management.\")",
           "sourceLineSha256": "9d148bd5d4bb6abe68b990acd543e3a46fcf59b2e81b33848e8a89b6d19682a4",
           "category": "validation-failure",
@@ -11156,7 +11156,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1654,
+          "line": 1677,
           "sourceLine": "return BadRequest(\"Photo not found\");",
           "sourceLineSha256": "ecf868e51ef7995870ecc504d204187c5c15793e7a237dae4c88720372863fe8",
           "category": "direct-api-result",
@@ -11230,7 +11230,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 611,
+          "line": 623,
           "sourceLine": "new ValidationFailure(\"MediaType\", \"Invalid mediaType. Expected 'audiobook' or 'ebook'.\")",
           "sourceLineSha256": "4315900e45e2bf89c7c259d5f7bf7818f087af8662f1510741a59464c42f25b8",
           "category": "validation-failure",
@@ -11562,7 +11562,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1707,
+          "line": 1730,
           "sourceLine": "return BadRequest(new ApiErrorResource { Error = \"ImageUrl is required\" });",
           "sourceLineSha256": "de040de6050ac69e574e24c85684f5429f61f691feaa21a3397ae6ef35c584f6",
           "category": "api-response-resource",
@@ -12868,7 +12868,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 668,
+          "line": 680,
           "sourceLine": "new ValidationFailure(\"RootFolder\", $\"No {expected} root folders are configured. Add one in Settings → Media Management.\")",
           "sourceLineSha256": "ba8997a2c610ed4aaa626cfd95d181f70abba511495efef3664ac5684de2301b",
           "category": "validation-failure",
@@ -13444,7 +13444,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1286,
+          "line": 1298,
           "sourceLine": "return BadRequest(new ApiErrorResource { Message = \"Cannot re-add author: no provider ID found.\" });",
           "sourceLineSha256": "757cad7fad12160042f7f9a8bffd2610314359d20ffb9129bce021a7acee9304",
           "category": "api-message-resource",
@@ -13923,7 +13923,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 684,
+          "line": 696,
           "sourceLine": "new ValidationFailure(\"Monitor\", \"Specific-book monitoring requires book provider IDs; use the book add endpoint instead.\")",
           "sourceLineSha256": "811663131fc8c2c0221a3f928fccd28d694975d5f8d37f3adcdacf248fe46e4b",
           "category": "validation-failure",
@@ -13960,7 +13960,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 652,
+          "line": 664,
           "sourceLine": "new ValidationFailure(\"RootFolder\", $\"Selected root folder is not configured for {expected}.\")",
           "sourceLineSha256": "df7a63fa1ad8c5e0d37cc685045eebf501df8e66ebe90bc59bade88c6735b5c3",
           "category": "validation-failure",
@@ -14890,7 +14890,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1108,
+          "line": 1120,
           "sourceLine": "new ValidationFailure(\"Monitor\", \"Invalid monitor value. Expected all, future, missing, existing, first, latest, none, or specificBook.\")",
           "sourceLineSha256": "d51865e0433d1d3f921b6309b6d3e473f1571ad9a541b07fd3121b70e6e1f393",
           "category": "validation-failure",
@@ -15049,7 +15049,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1702,
+          "line": 1725,
           "sourceLine": "return NotFound(new ApiErrorResource { Error = \"Author not found\" });",
           "sourceLineSha256": "1a230685230b43c0d660066c8376bc47a33a659f02188a88ee65f26e98dd8d52",
           "category": "api-response-resource",
@@ -15257,7 +15257,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1761,
+          "line": 1784,
           "sourceLine": "return StatusCode(500, new ApiErrorResource { Error = \"Internal server error\" });",
           "sourceLineSha256": "5d741de959df79116c013133d9306170f7a9d82d95f8de837095fa10694bf815",
           "category": "api-response-resource",
@@ -15265,7 +15265,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1687,
+          "line": 1710,
           "sourceLine": "return StatusCode(500, \"Internal server error\");",
           "sourceLineSha256": "9d51f0b0bbebda442c680a04c178d58f77b5670debc2239fa152badc680bec5f",
           "category": "direct-api-result",

@@ -437,7 +437,7 @@ assert_ping chaptarrng-migrated
 assert_pvc_identity
 test "$(pod_exec sqlite3 -readonly /config/readarr.db 'PRAGMA integrity_check;')" = ok
 test -z "$(pod_exec sqlite3 -readonly /config/readarr.db 'PRAGMA foreign_key_check;')"
-test "$(pod_exec sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 124
+test "$(pod_exec sqlite3 -readonly /config/readarr.db 'SELECT MAX(Version) FROM VersionInfo;')" = 125
 assert_migrated_fixture
 grep -Fxq 'helm-handoff-canary=preserve-me' < <(pod_exec cat /config/channel-test-canary.txt)
 pod_exec /bin/sh -ec '
