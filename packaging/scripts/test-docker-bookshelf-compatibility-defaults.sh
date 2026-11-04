@@ -391,6 +391,14 @@ run_case 'ask mode without a terminal records deferral and does not start Chapta
   set -euo pipefail
   data_dir="$1/ask-no-terminal"
   mkdir -p "$data_dir"
+  stub_bin="$1/ask-bin"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/dotnet" <<"SH"
+#!/bin/sh
+# This case tests the headless Ask decision, not the migration-status command.
+exit 1
+SH
+  chmod 0755 "$stub_bin/dotnet"
   printf "synthetic BookshelfNG database\n" > "$data_dir/readarr.db"
   app_started="$1/ask-app-started"
   app="$1/ask-app"
@@ -401,7 +409,7 @@ run_case 'ask mode without a terminal records deferral and does not start Chapta
   export CHAPTARR_COMPAT_DATA_DIR="$data_dir"
   export CHAPTARR_CONFIG_FILE="$data_dir/config.xml"
   export BOOKSHELFNG_MIGRATION_MODE=ask
-  if timeout --signal=TERM --kill-after=2 5 sh "$2" "$app" > "$1/ask.log" 2>&1; then
+  if PATH="$stub_bin:$PATH" timeout --signal=TERM --kill-after=2 5 sh "$2" "$app" > "$1/ask.log" 2>&1; then
     status=0
   else
     status=$?
