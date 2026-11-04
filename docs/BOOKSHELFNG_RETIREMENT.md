@@ -2,10 +2,10 @@
 
 ## Current status — 2026-11-04 UTC
 
-At application-code head `d3a67c58` (repository head `4643daf2` contains only
-runner policy, acceptance-workflow, test, and documentation changes),
-BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest public
-releases; the local `0.9.978` candidate is unpublished. Public GitHub-hosted
+At application-code head `d3a67c58`; later main commits are runner policy,
+acceptance-workflow, test, and documentation updates. BookshelfNG `0.4.21.76`
+and ChaptarrNG `v0.9.977` remain the latest public releases; the local `0.9.978`
+candidate is unpublished. Public GitHub-hosted
 runners are authorized again for trusted
 build and validation jobs; private ephemeral JIT remains available. See
 [`AGENTS.md`](../AGENTS.md) for the current runner policy.
