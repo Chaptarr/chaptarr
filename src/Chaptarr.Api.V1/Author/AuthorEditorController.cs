@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -22,6 +23,7 @@ namespace Chaptarr.Api.V1.Author
         private readonly IQualityProfileService _qualityProfileService;
         private readonly IMetadataProfileService _metadataProfileService;
         private readonly IBackfillAuthorRootFolders _rootFolderBackfill;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
 
         public AuthorEditorController(
             IAuthorService authorService,
@@ -29,9 +31,11 @@ namespace Chaptarr.Api.V1.Author
             IRootFolderService rootFolderService,
             IQualityProfileService qualityProfileService,
             IMetadataProfileService metadataProfileService,
-            IBackfillAuthorRootFolders rootFolderBackfill)
+            IBackfillAuthorRootFolders rootFolderBackfill,
+            IBookshelfLegacyIdentityMapService legacyIdentityMapService = null)
         {
             _rootFolderBackfill = rootFolderBackfill;
+            _legacyIdentityMapService = legacyIdentityMapService;
             _authorService = authorService;
             _commandQueueManager = commandQueueManager;
             _rootFolderService = rootFolderService;
@@ -273,7 +277,26 @@ namespace Chaptarr.Api.V1.Author
                     "Repeat with the filter set to eBooks, then re-run Sync Monitored Audio/eBooks.";
             }
 
-            return Accepted(updatedAuthors.ToResource());
+            var facadeContext = HttpContext?.GetReadarrFacadeContext();
+            var resources = updatedAuthors.ToResource(facadeContext);
+            if (facadeContext?.IsBookshelfCompatibility == true && _legacyIdentityMapService != null)
+            {
+                var legacyMetadataIdByAuthorId = (_legacyIdentityMapService.GetMappingsByTargetIds(
+                        "AuthorMetadata",
+                        resources.Where(authorResource => authorResource != null).Select(authorResource => authorResource.Id)) ?? new List<BookshelfLegacyIdentityMapEntry>())
+                    .GroupBy(mapping => mapping.TargetId)
+                    .Where(group => group.Select(mapping => mapping.SourceId).Distinct().Count() == 1)
+                    .ToDictionary(group => group.Key, group => group.First().SourceId);
+
+                foreach (var authorResource in resources.Where(authorResource => authorResource != null))
+                {
+                    authorResource.AuthorMetadataId = legacyMetadataIdByAuthorId.TryGetValue(authorResource.Id, out var legacyMetadataId)
+                        ? legacyMetadataId
+                        : authorResource.Id;
+                }
+            }
+
+            return Accepted(resources);
         }
 
         private string GetValidationError(AuthorEditorResource resource, List<RootFolder> rootFolders)
