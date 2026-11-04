@@ -103,6 +103,15 @@ assert_pvc_identity() {
     require test "$actual_uid" = "$SOURCE_PVC_UID"
 }
 
+require_sql_count() {
+    local description="$1" expected="$2" sql="$3" actual
+    actual="$(pod_exec sqlite3 -readonly /config/readarr.db "$sql")"
+    if [[ "$actual" != "$expected" ]]; then
+        log "FAILED populated fixture assertion: $description expected=$expected actual=$actual SQL=$sql"
+        return 1
+    fi
+}
+
 pod_logical_hash() {
     pod_exec /bin/sh -ec '
       sqlite3 -readonly /config/readarr.db ".dump" > /tmp/bookshelfng-source.sql
@@ -176,25 +185,24 @@ upgrade_candidate() {
 }
 
 assert_migrated_fixture() {
-    local sql='/config/readarr.db'
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM Books WHERE Id=30 AND MediaType=0 AND AudiobookMonitored=1 AND ForeignEditionId='hc:audio-40';")" = 1
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        'SELECT COUNT(*) FROM Books WHERE Id=31 AND MediaType=1 AND EbookMonitored=0 AND ForeignEditionId IS NULL;')" = 1
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM Editions WHERE Id=40 AND BookId=30 AND HardcoverEditionId='audio-40' AND NarratorNames='[\"A Narrator\"]';")" = 1
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM Editions WHERE Id=41 AND BookId=31 AND OpenLibraryEditionId='ol:OL123M';")" = 1
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM BookFiles WHERE Id=50 AND Path='/library/Fixture Author/book.m4b' AND LastRemoteSearchTime='2026-01-04T05:06:07Z';")" = 1
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM BookFiles WHERE Id=51 AND MediaType='ebook' AND Path='/library/Fixture Author/book.epub';")" = 1
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM SeriesBookLink WHERE SeriesId=70 AND BookId IN (30,31);")" = 2
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM DownloadClients WHERE Id=109 AND Settings LIKE '%legacy-audio%' AND Settings LIKE '%legacy-ebooks%';")" = 1
-    require test "$(pod_exec sqlite3 -readonly "$sql" \
-        "SELECT COUNT(*) FROM Config WHERE Key='FixtureSetting' AND Value='preserved';")" = 1
+    require_sql_count 'audiobook book identity, monitoring, and selected edition' 1 \
+        "SELECT COUNT(*) FROM Books WHERE Id=30 AND MediaType=0 AND AudiobookMonitored=1 AND ForeignEditionId='hc:audio-40';"
+    require_sql_count 'ebook book identity and unselected edition state' 1 \
+        'SELECT COUNT(*) FROM Books WHERE Id=31 AND MediaType=1 AND EbookMonitored=0 AND ForeignEditionId IS NULL;'
+    require_sql_count 'audiobook edition provider identity and narrator' 1 \
+        "SELECT COUNT(*) FROM Editions WHERE Id=40 AND BookId=30 AND HardcoverEditionId='audio-40' AND NarratorNames='[\"A Narrator\"]';"
+    require_sql_count 'ebook edition provider identity' 1 \
+        "SELECT COUNT(*) FROM Editions WHERE Id=41 AND BookId=31 AND OpenLibraryEditionId='ol:OL123M';"
+    require_sql_count 'audiobook file path and catalog-search timestamp' 1 \
+        "SELECT COUNT(*) FROM BookFiles WHERE Id=50 AND Path='/library/Fixture Author/book.m4b' AND LastRemoteSearchTime='2026-01-04T05:06:07Z';"
+    require_sql_count 'ebook file path and media type' 1 \
+        "SELECT COUNT(*) FROM BookFiles WHERE Id=51 AND MediaType='ebook' AND Path='/library/Fixture Author/book.epub';"
+    require_sql_count 'series membership split across both media rows' 2 \
+        'SELECT COUNT(*) FROM SeriesBookLink WHERE SeriesId=70 AND BookId IN (30,31);'
+    require_sql_count 'download-client media categories' 1 \
+        "SELECT COUNT(*) FROM DownloadClients WHERE Id=109 AND Settings LIKE '%legacy-audio%' AND Settings LIKE '%legacy-ebooks%';"
+    require_sql_count 'saved custom configuration value' 1 \
+        "SELECT COUNT(*) FROM Config WHERE Key='FixtureSetting' AND Value='preserved';"
 }
 
 test -d "$REFERENCE_CHART"
