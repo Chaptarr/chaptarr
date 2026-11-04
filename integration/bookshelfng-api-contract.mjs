@@ -1,5 +1,50 @@
 import { isDeepStrictEqual } from "node:util";
 
+const secretKey =
+  /(?:password|secret|token|api.?key|authorization|credential|mam.?id|session.?id)/i;
+
+export function sanitizeApiResponse(value, key = "") {
+  if (secretKey.test(key)) {
+    return value === null || value === undefined || value === ""
+      ? ""
+      : "<redacted-present>";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      if (key !== "fields" || !item || typeof item !== "object") {
+        return sanitizeApiResponse(item);
+      }
+      const fieldDescription = [item.name, item.label, item.key, item.id]
+        .filter((part) => typeof part === "string")
+        .join(" ");
+      const redactValue =
+        item.privacy === true ||
+        item.type === "password" ||
+        secretKey.test(fieldDescription);
+      return Object.fromEntries(
+        Object.keys(item)
+          .sort()
+          .map((fieldKey) => [
+            fieldKey,
+            fieldKey === "value" && redactValue
+              ? item.value === null || item.value === undefined || item.value === ""
+                ? ""
+                : "<redacted-present>"
+              : sanitizeApiResponse(item[fieldKey], fieldKey),
+          ]),
+      );
+    });
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((childKey) => [childKey, sanitizeApiResponse(value[childKey], childKey)]),
+    );
+  }
+  return value;
+}
+
 function identityKey(value, path) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 

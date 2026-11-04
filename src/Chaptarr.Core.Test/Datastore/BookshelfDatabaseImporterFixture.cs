@@ -605,8 +605,20 @@ namespace Chaptarr.Core.Test.Datastore
             {
                 foreach (var provider in downloadClients)
                 {
+                    var expectedSettings = provider.Settings;
+                    if (provider.Implementation == "QBittorrent" && provider.Contract == "QBittorrentSettings")
+                    {
+                        var settings = JObject.Parse(expectedSettings);
+                        if (!settings.Properties().Any(property =>
+                                property.Name.Equals("MusicCategory", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            settings["musicCategory"] = "readarr";
+                            expectedSettings = settings.ToString(Formatting.None);
+                        }
+                    }
+
                     Assert.That(ReadMigratedProvider(_sourcePath, "DownloadClients", provider.Id),
-                        Is.EqualTo((provider.Implementation, provider.Contract, provider.Settings)),
+                        Is.EqualTo((provider.Implementation, provider.Contract, expectedSettings)),
                         $"{provider.Implementation} download-client settings should survive migration");
                 }
 
@@ -766,8 +778,12 @@ namespace Chaptarr.Core.Test.Datastore
             });
 
             Assert.That(QueryScalar<string>(_sourcePath, "SELECT HardcoverAuthorId FROM Authors WHERE Id = 20;"), Is.EqualTo("hc:author-10"));
+            Assert.That(QueryScalar<int>(_sourcePath, "SELECT BookshelfNGQualityProfileId FROM Authors WHERE Id = 20;"), Is.EqualTo(1));
+            Assert.That(QueryScalar<int>(_sourcePath, "SELECT BookshelfNGAudiobookQualityProfileId FROM Authors WHERE Id = 20;"), Is.EqualTo(1));
+            Assert.That(QueryScalar<int>(_sourcePath, "SELECT BookshelfNGEbookQualityProfileId FROM Authors WHERE Id = 20;"), Is.EqualTo(2));
             Assert.That(QueryScalar<int>(_sourcePath, "SELECT AudiobookQualityProfileId FROM Authors WHERE Id = 20;"), Is.EqualTo(1));
             Assert.That(QueryScalar<int>(_sourcePath, "SELECT EbookQualityProfileId FROM Authors WHERE Id = 20;"), Is.EqualTo(4));
+            Assert.That(QueryScalar<int>(_sourcePath, "SELECT COUNT(*) FROM BookshelfLegacyIdentityMap WHERE Source = 'BookshelfNG' AND EntityType = 'QualityProfile' AND SourceId = 2 AND TargetId = 4 AND MediaType = 1;"), Is.EqualTo(1));
             Assert.That(QueryScalar<string>(_sourcePath, "SELECT AudiobookPath FROM Authors WHERE Id = 20;"), Is.EqualTo("/library/Fixture Author/Audiobooks"));
             Assert.That(QueryScalar<string>(_sourcePath, "SELECT EbookPath FROM Authors WHERE Id = 20;"), Is.EqualTo("/library/Fixture Author/Ebooks"));
             Assert.That(QueryScalar<int>(_sourcePath, "SELECT AudiobookMetadataProfileId FROM Authors WHERE Id = 20;"), Is.EqualTo(1));
@@ -792,6 +808,8 @@ namespace Chaptarr.Core.Test.Datastore
                 QueryScalar<string>(_sourcePath, "SELECT Settings FROM DownloadClients WHERE Id = 109;"));
             Assert.That(qBittorrentSettings.AudiobookCategory, Is.EqualTo("legacy-audio"));
             Assert.That(qBittorrentSettings.EbookCategory, Is.EqualTo("legacy-ebooks"));
+            Assert.That(qBittorrentSettings.MusicCategory, Is.EqualTo("readarr"),
+                "a missing BookshelfNG legacy category uses its source default rather than ChaptarrNG's native default");
             Assert.That(QueryScalar<int>(_sourcePath, "SELECT COUNT(*) FROM Indexers WHERE Id = 120 AND EnableRss = 1 AND SupportsRss = 0 AND SupportsSearch = 0;"), Is.EqualTo(1));
             Assert.That(QueryScalar<string>(_sourcePath, "SELECT ConfigContract FROM Indexers WHERE Id = 120;"), Is.EqualTo(nameof(MyAnonaMouseSettings)));
             var mamSettings = NzbDrone.Common.Serializer.STJson.Deserialize<MyAnonaMouseSettings>(

@@ -58,6 +58,9 @@ namespace NzbDrone.Core.Books
         public DateTime Added { get; set; }
         // Retain the original single-profile field for BookshelfNG API compatibility.
         public int QualityProfileId { get; set; }
+        public int? BookshelfNGQualityProfileId { get; set; }
+        public int? BookshelfNGAudiobookQualityProfileId { get; set; }
+        public int? BookshelfNGEbookQualityProfileId { get; set; }
         public int? AudiobookQualityProfileId { get; set; }
         public int? EbookQualityProfileId { get; set; }
         public int? MetadataProfileId { get; set; } // DEPRECATED: Legacy field, being phased out in favor of media-specific profiles
@@ -270,6 +273,9 @@ namespace NzbDrone.Core.Books
             EbookRootFolderPath = other.EbookRootFolderPath;
             Added = other.Added;
             QualityProfileId = other.QualityProfileId;
+            BookshelfNGQualityProfileId = other.BookshelfNGQualityProfileId;
+            BookshelfNGAudiobookQualityProfileId = other.BookshelfNGAudiobookQualityProfileId;
+            BookshelfNGEbookQualityProfileId = other.BookshelfNGEbookQualityProfileId;
             AudiobookQualityProfileId = other.AudiobookQualityProfileId;
             AudiobookQualityProfile = other.AudiobookQualityProfile;
             EbookQualityProfileId = other.EbookQualityProfileId;
@@ -303,6 +309,21 @@ namespace NzbDrone.Core.Books
             if (other.QualityProfileId > 0)
             {
                 QualityProfileId = other.QualityProfileId;
+            }
+
+            if (other.BookshelfNGQualityProfileId.HasValue)
+            {
+                BookshelfNGQualityProfileId = other.BookshelfNGQualityProfileId;
+            }
+
+            if (other.BookshelfNGAudiobookQualityProfileId.HasValue)
+            {
+                BookshelfNGAudiobookQualityProfileId = other.BookshelfNGAudiobookQualityProfileId;
+            }
+
+            if (other.BookshelfNGEbookQualityProfileId.HasValue)
+            {
+                BookshelfNGEbookQualityProfileId = other.BookshelfNGEbookQualityProfileId;
             }
 
             // Don't overwrite quality profiles if they're already set

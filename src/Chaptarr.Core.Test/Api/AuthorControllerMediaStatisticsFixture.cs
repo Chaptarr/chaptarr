@@ -45,6 +45,30 @@ namespace Chaptarr.Core.Test.Api
             });
         }
 
+        [Test]
+        public void bookshelf_compatibility_should_set_zero_legacy_statistics_when_no_books_exist()
+        {
+            var resources = new List<AuthorResource>
+            {
+                new AuthorResource { Id = 1, Statistics = new AuthorStatisticsResource { BookCount = 4, TotalBookCount = 4 } },
+                new AuthorResource { Id = 2, Statistics = new AuthorStatisticsResource { BookCount = 9, TotalBookCount = 9 } }
+            };
+            var legacyStatistics = new Dictionary<int, AuthorStatistics>
+            {
+                [1] = Statistics(authorId: 1, books: 3, files: 1, size: 100)
+            };
+
+            AuthorController.LinkBookshelfAuthorStatistics(resources, legacyStatistics);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resources[0].Statistics.BookCount, Is.EqualTo(3));
+                Assert.That(resources[1].Statistics.BookCount, Is.Zero,
+                    "BookshelfNG returns zero statistics for authors that have no statistics row");
+                Assert.That(resources[1].Statistics.TotalBookCount, Is.Zero);
+            });
+        }
+
         private static AuthorStatistics Statistics(int authorId, int books, int files, long size)
         {
             return new AuthorStatistics

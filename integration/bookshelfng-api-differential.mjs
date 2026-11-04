@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { compareResponses } from "./bookshelfng-api-contract.mjs";
+import {
+  compareResponses,
+  sanitizeApiResponse,
+} from "./bookshelfng-api-contract.mjs";
 
 const sourceUrl = (
   process.env.BOOKSHELFNG_API_URL ?? "http://127.0.0.1:18787/api/v1"
@@ -36,51 +39,6 @@ for (const [name, value] of Object.entries({
   assert.ok(value, name + " is required.");
 }
 
-const secretKey =
-  /(?:password|secret|token|api.?key|authorization|credential)/i;
-
-function sanitize(value, key = "") {
-  if (secretKey.test(key)) {
-    return value === null || value === undefined || value === ""
-      ? ""
-      : "<redacted-present>";
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => {
-      if (key !== "fields" || !item || typeof item !== "object") {
-        return sanitize(item);
-      }
-      const fieldDescription = [item.name, item.label, item.key, item.id]
-        .filter((part) => typeof part === "string")
-        .join(" ");
-      const redactValue =
-        item.privacy === true ||
-        item.type === "password" ||
-        secretKey.test(fieldDescription);
-      return Object.fromEntries(
-        Object.keys(item)
-          .sort()
-          .map((fieldKey) => [
-            fieldKey,
-            fieldKey === "value" && redactValue
-              ? item.value === null || item.value === undefined || item.value === ""
-                ? ""
-                : "<redacted-present>"
-              : sanitize(item[fieldKey], fieldKey),
-          ]),
-      );
-    });
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((childKey) => [childKey, sanitize(value[childKey], childKey)]),
-    );
-  }
-  return value;
-}
-
 function sha256(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -97,7 +55,7 @@ async function getJson(baseUrl, apiKey, path) {
     try {
       return {
         status: response.status,
-        value: sanitize(await response.json()),
+        value: sanitizeApiResponse(await response.json()),
         error: null,
       };
     } catch {

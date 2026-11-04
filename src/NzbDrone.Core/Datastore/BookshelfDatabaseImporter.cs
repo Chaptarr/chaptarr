@@ -12,6 +12,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients.QBittorrent;
 using NzbDrone.Core.Extras.Metadata;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.ImportLists.Goodreads;
@@ -326,6 +327,8 @@ namespace NzbDrone.Core.Datastore
 
                 map[(sourceId, 0)] = audiobookId;
                 map[(sourceId, 1)] = ebookId;
+                RecordBookshelfLegacyIdentity(target, transaction, "QualityProfile", sourceId, audiobookId, 0);
+                RecordBookshelfLegacyIdentity(target, transaction, "QualityProfile", sourceId, ebookId, 1);
             }
 
             report.RecordTable("QualityProfiles", sourceCount, 0, sourceCount, 0, 0,
@@ -489,6 +492,9 @@ namespace NzbDrone.Core.Datastore
                 var qualityId = GetNullableInt(row, "QualityProfileId");
                 var audioQualityId = GetNullableInt(row, "AudiobookQualityProfileId") ?? qualityId;
                 var ebookQualityId = GetNullableInt(row, "EbookQualityProfileId") ?? qualityId;
+                SetIfPresent(values, "BookshelfNGQualityProfileId", qualityId);
+                SetIfPresent(values, "BookshelfNGAudiobookQualityProfileId", GetNullableInt(row, "AudiobookQualityProfileId"));
+                SetIfPresent(values, "BookshelfNGEbookQualityProfileId", GetNullableInt(row, "EbookQualityProfileId"));
                 values["QualityProfileId"] = audioQualityId.HasValue ? MapQualityProfile(qualityProfiles, audioQualityId.Value, 0, "author quality") : 1;
                 values["AudiobookQualityProfileId"] = audioQualityId.HasValue ? MapQualityProfile(qualityProfiles, audioQualityId.Value, 0, "author audiobook quality") : null;
                 values["EbookQualityProfileId"] = ebookQualityId.HasValue ? MapQualityProfile(qualityProfiles, ebookQualityId.Value, 1, "author ebook quality") : null;
@@ -1623,6 +1629,7 @@ namespace NzbDrone.Core.Datastore
 
                 var values = Intersect(row, targetColumns);
                 CheckProviderSettingsCompatibility(row, values, compatibleContracts, unsupported, implementationAliases);
+                ApplyBookshelfProviderDefaults(table, row, values);
                 InsertRow(target, transaction, table, targetColumns, values);
             }
 
@@ -1632,6 +1639,40 @@ namespace NzbDrone.Core.Datastore
                     table,
                     unsupported,
                     report));
+        }
+
+        private static void ApplyBookshelfProviderDefaults(
+            string table,
+            IReadOnlyDictionary<string, object> sourceRow,
+            IDictionary<string, object> targetRow)
+        {
+            if (!string.Equals(table, "DownloadClients", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(GetString(sourceRow, "Implementation"), "QBittorrent", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(GetString(sourceRow, "ConfigContract"), nameof(QBittorrentSettings), StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var settingsJson = GetString(sourceRow, "Settings");
+            JObject settings;
+            try
+            {
+                settings = JObject.Parse(string.IsNullOrWhiteSpace(settingsJson) ? "{}" : settingsJson);
+            }
+            catch (JsonException)
+            {
+                return;
+            }
+
+            // BookshelfNG's QBittorrentSettings constructor defaults its legacy category to "readarr".
+            // The ChaptarrNG-native default is "chaptarr", so persist the source default when the
+            // legacy database omitted the property instead of changing category routing on migration.
+            if (!settings.Properties().Any(property =>
+                    property.Name.Equals(nameof(QBittorrentSettings.MusicCategory), StringComparison.OrdinalIgnoreCase)))
+            {
+                settings["musicCategory"] = "readarr";
+                SetIfPresent(targetRow, "Settings", settings.ToString(Formatting.None));
+            }
         }
 
         private static void CheckProviderSettingsCompatibility(

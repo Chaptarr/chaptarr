@@ -54,6 +54,9 @@ namespace Chaptarr.Core.Test.Api
                 Name = "Migrated author",
                 LastSelectedMediaType = "ebook",
                 QualityProfileId = 2,
+                BookshelfNGQualityProfileId = 2,
+                BookshelfNGAudiobookQualityProfileId = 1,
+                BookshelfNGEbookQualityProfileId = 2,
                 AudiobookQualityProfileId = 2,
                 EbookQualityProfileId = 4,
                 MetadataProfileId = 5,
@@ -65,7 +68,41 @@ namespace Chaptarr.Core.Test.Api
             var resource = AuthorResourceMapper.ToResource(author, facade);
 
             Assert.That(resource.QualityProfileId, Is.EqualTo(2));
+            Assert.That(resource.AudiobookQualityProfileId, Is.EqualTo(1));
+            Assert.That(resource.EbookQualityProfileId, Is.EqualTo(2));
             Assert.That(resource.MetadataProfileId, Is.EqualTo(5));
+        }
+
+        [Test]
+        public void bookshelf_profile_inputs_should_map_to_target_ids_and_keep_source_ids_for_compatibility()
+        {
+            var resource = new AuthorResource
+            {
+                QualityProfileId = 2,
+                AudiobookQualityProfileId = 2,
+                EbookQualityProfileId = 2
+            };
+            var mappings = new[]
+            {
+                new BookshelfLegacyIdentityMapEntry { SourceId = 2, TargetId = 3, MediaType = (int)BookMediaType.Audiobook },
+                new BookshelfLegacyIdentityMapEntry { SourceId = 2, TargetId = 7, MediaType = (int)BookMediaType.Ebook }
+            };
+
+            AuthorResourceMapper.MapBookshelfQualityProfileIds(resource, mappings);
+            var model = resource.ToModel(new ReadarrFacadeContext("bookshelf", null, "", isBookshelfCompatibility: true));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.QualityProfileId, Is.EqualTo(3));
+                Assert.That(resource.AudiobookQualityProfileId, Is.EqualTo(3));
+                Assert.That(resource.EbookQualityProfileId, Is.EqualTo(7));
+                Assert.That(model.QualityProfileId, Is.EqualTo(3));
+                Assert.That(model.AudiobookQualityProfileId, Is.EqualTo(3));
+                Assert.That(model.EbookQualityProfileId, Is.EqualTo(7));
+                Assert.That(model.BookshelfNGQualityProfileId, Is.EqualTo(2));
+                Assert.That(model.BookshelfNGAudiobookQualityProfileId, Is.EqualTo(2));
+                Assert.That(model.BookshelfNGEbookQualityProfileId, Is.EqualTo(2));
+            });
         }
 
         [Test]

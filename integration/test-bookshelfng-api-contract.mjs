@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { compareResponses } from "./bookshelfng-api-contract.mjs";
+import {
+  compareResponses,
+  sanitizeApiResponse,
+} from "./bookshelfng-api-contract.mjs";
 
 const additiveFields = compareResponses(
   { id: 1, title: "The Book" },
@@ -57,4 +60,21 @@ const reorderedLegacyCollection = compareResponses(
 );
 assert.deepEqual(reorderedLegacyCollection.mismatchPaths, ["/order"]);
 
-console.log("BookshelfNG API contract comparator: 7 checks passed");
+assert.deepEqual(
+  sanitizeApiResponse({
+    mamId: "fixture-token",
+    fields: [
+      { name: "Mam Id", type: "textbox", value: "fixture-token" },
+      { name: "username", type: "textbox", value: "reader" },
+    ],
+  }),
+  {
+    fields: [
+      { name: "Mam Id", type: "textbox", value: "<redacted-present>" },
+      { name: "username", type: "textbox", value: "reader" },
+    ],
+    mamId: "<redacted-present>",
+  },
+);
+
+console.log("BookshelfNG API contract comparator: 8 checks passed");

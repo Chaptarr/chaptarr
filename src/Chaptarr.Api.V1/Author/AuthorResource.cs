@@ -5,6 +5,8 @@ using Chaptarr.Api.V1.Books;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -50,6 +52,18 @@ namespace Chaptarr.Api.V1.Author
         public int? QualityProfileId { get; set; }
         public int? AudiobookQualityProfileId { get; set; }
         public int? EbookQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal int? OriginalBookshelfNGQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal int? OriginalBookshelfNGAudiobookQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal int? OriginalBookshelfNGEbookQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal bool OriginalBookshelfQualityProfileIdsCaptured { get; set; }
         public int? MetadataProfileId { get; set; }  // DEPRECATED: Made nullable to handle legacy data gracefully
         
         // Per-type metadata profiles
@@ -161,8 +175,12 @@ namespace Chaptarr.Api.V1.Author
                 QualityProfileId = GetBookshelfQualityProfileId(model, facadeContext) ?? 0,
                 RootFolderPath = GetBookshelfRootFolderPath(model),
                 MonitorNewItems = GetBookshelfMonitorNewItems(model),
-                AudiobookQualityProfileId = model.AudiobookQualityProfileId,
-                EbookQualityProfileId = model.EbookQualityProfileId,
+                AudiobookQualityProfileId = facadeContext?.IsBookshelfCompatibility == true
+                    ? model.BookshelfNGAudiobookQualityProfileId ?? model.AudiobookQualityProfileId
+                    : model.AudiobookQualityProfileId,
+                EbookQualityProfileId = facadeContext?.IsBookshelfCompatibility == true
+                    ? model.BookshelfNGEbookQualityProfileId ?? model.EbookQualityProfileId
+                    : model.EbookQualityProfileId,
                 MetadataProfileId = GetBookshelfMetadataProfileId(model, facadeContext) ?? 0,
                 AudiobookMetadataProfileId = model.AudiobookMetadataProfileId,
                 EbookMetadataProfileId = model.EbookMetadataProfileId,
@@ -284,7 +302,7 @@ namespace Chaptarr.Api.V1.Author
         {
             if (facadeContext?.IsBookshelfCompatibility == true)
             {
-                return model.QualityProfileId;
+                return model.BookshelfNGQualityProfileId ?? model.QualityProfileId;
             }
 
             return string.Equals(model.LastSelectedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
@@ -550,6 +568,15 @@ namespace Chaptarr.Api.V1.Author
                 AudiobookPath = resource.AudiobookPath,
                 EbookPath = resource.EbookPath,
                 QualityProfileId = resource.QualityProfileId ?? audiobookQualityProfileId ?? ebookQualityProfileId ?? 1,
+                BookshelfNGQualityProfileId = resource.OriginalBookshelfQualityProfileIdsCaptured
+                    ? resource.OriginalBookshelfNGQualityProfileId
+                    : resource.QualityProfileId,
+                BookshelfNGAudiobookQualityProfileId = resource.OriginalBookshelfQualityProfileIdsCaptured
+                    ? resource.OriginalBookshelfNGAudiobookQualityProfileId
+                    : resource.AudiobookQualityProfileId,
+                BookshelfNGEbookQualityProfileId = resource.OriginalBookshelfQualityProfileIdsCaptured
+                    ? resource.OriginalBookshelfNGEbookQualityProfileId
+                    : resource.EbookQualityProfileId,
                 AudiobookQualityProfileId = audiobookQualityProfileId,
                 EbookQualityProfileId = ebookQualityProfileId,
                 MetadataProfileId = resource.MetadataProfileId,
@@ -949,6 +976,65 @@ namespace Chaptarr.Api.V1.Author
         public static List<NzbDrone.Core.Books.Author> ToModel(this IEnumerable<AuthorResource> resources)
         {
             return resources.Select(ToModel).ToList();
+        }
+
+        internal static void MapBookshelfQualityProfileIds(
+            AuthorResource resource,
+            IEnumerable<BookshelfLegacyIdentityMapEntry> mappings)
+        {
+            if (resource == null)
+            {
+                return;
+            }
+
+            if (!resource.OriginalBookshelfQualityProfileIdsCaptured)
+            {
+                resource.OriginalBookshelfNGQualityProfileId = resource.QualityProfileId;
+                resource.OriginalBookshelfNGAudiobookQualityProfileId = resource.AudiobookQualityProfileId;
+                resource.OriginalBookshelfNGEbookQualityProfileId = resource.EbookQualityProfileId;
+                resource.OriginalBookshelfQualityProfileIdsCaptured = true;
+            }
+            var identityMappings = mappings?.ToList() ?? new List<BookshelfLegacyIdentityMapEntry>();
+
+            int? Map(int? sourceId, int mediaType, string fieldName)
+            {
+                if (!sourceId.HasValue || sourceId.Value <= 0)
+                {
+                    return sourceId;
+                }
+
+                var sourceMappings = identityMappings.Where(mapping => mapping.SourceId == sourceId.Value).ToList();
+                if (sourceMappings.Count == 0)
+                {
+                    return sourceId;
+                }
+
+                var matchingTargets = sourceMappings
+                    .Where(mapping => mapping.MediaType == mediaType)
+                    .Select(mapping => mapping.TargetId)
+                    .Distinct()
+                    .ToList();
+
+                if (matchingTargets.Count == 1)
+                {
+                    return matchingTargets[0];
+                }
+
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure(fieldName, "The BookshelfNG quality profile mapping is missing or ambiguous for this media type.")
+                });
+            }
+
+            resource.QualityProfileId = Map(resource.QualityProfileId, (int)BookMediaType.Audiobook, "QualityProfileId");
+            resource.AudiobookQualityProfileId = Map(
+                resource.AudiobookQualityProfileId,
+                (int)BookMediaType.Audiobook,
+                "AudiobookQualityProfileId");
+            resource.EbookQualityProfileId = Map(
+                resource.EbookQualityProfileId,
+                (int)BookMediaType.Ebook,
+                "EbookQualityProfileId");
         }
     }
 }
