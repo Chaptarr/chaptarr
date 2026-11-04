@@ -286,7 +286,7 @@ try {
   if ((Get-MigrationCanary) -ne $canaryBeforeManual -or -not (Test-Path -LiteralPath $legacyDatabase -PathType Leaf)) {
     throw 'Manual defer changed the seeded BookshelfNG records or removed readarr.db.'
   }
-  $sourceBackupsAfterManual = @(Get-ChildItem -LiteralPath $legacyDataDirectory -Filter '*.bookshelfng-backup-*.db' -File -ErrorAction SilentlyContinue)
+  $sourceBackupsAfterManual = @(Get-ChildItem -LiteralPath $legacyDataDirectory -Filter '*.bookshelfng-backup-*.db' -File -Force -ErrorAction SilentlyContinue)
   if ($sourceBackupsAfterManual.Count -gt 0) {
     throw 'Manual defer created a BookshelfNG source backup before migration was accepted.'
   }
@@ -417,7 +417,7 @@ try {
   if ((Get-MigrationCanary) -ne $canaryBeforeManual) {
     throw 'The ChaptarrNG candidate changed the migrated author, book, edition, file, path, or setting canary after startup.'
   }
-  $retainedBackup = Get-ChildItem -LiteralPath $legacyDataDirectory -Filter '*.bookshelfng-backup-*.db' -File -ErrorAction SilentlyContinue |
+  $retainedBackup = Get-ChildItem -LiteralPath $legacyDataDirectory -Filter '*.bookshelfng-backup-*.db' -File -Force -ErrorAction SilentlyContinue |
     Select-Object -First 1
   if (-not $retainedBackup) { throw 'The automatic Chocolatey handoff did not retain a BookshelfNG source database backup.' }
 

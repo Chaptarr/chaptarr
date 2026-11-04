@@ -287,29 +287,42 @@ def pid_is_running(pid: int) -> bool:
 
 def stop_candidate(process, master: int, log) -> None:
     descendants = set(child_process_ids(process.pid))
-    terminal_open = True
     if process.poll() is None:
+        # Send the same signal the PTY's Ctrl+C generates directly to the
+        # supervisor. This avoids terminal line-discipline differences across
+        # macOS runner architectures while leaving the supervisor's EXIT trap
+        # responsible for stopping ChaptarrNG and removing its handoff lock.
         try:
-            # The launcher owns this PTY. Let its normal Ctrl+C handler stop
-            # the candidate first, as it does when a user closes the console.
-            os.write(master, b"\x03")
-        except OSError:
+            os.kill(process.pid, signal.SIGINT)
+        except ProcessLookupError:
             pass
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            # macOS can leave a terminal-backed shell alive after the app has
-            # handled Ctrl+C. Closing the PTY sends SIGHUP to its foreground
-            # process group and lets the supervisor run its normal cleanup.
+
+        def wait_for_supervisor(timeout: int) -> bool:
+            import select
+
+            deadline = time.monotonic() + timeout
+            output = bytearray()
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([master], [], [], 0.1)
+                if ready:
+                    collect_terminal(master, log, output)
+                if process.poll() is not None:
+                    return True
+            return process.poll() is not None
+
+        if not wait_for_supervisor(45):
+            print("Candidate supervisor did not stop after SIGINT; sending SIGHUP.", flush=True)
             try:
-                os.close(master)
-            except OSError:
+                os.kill(process.pid, signal.SIGHUP)
+            except ProcessLookupError:
                 pass
-            terminal_open = False
-            try:
-                process.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                pass
+            if not wait_for_supervisor(45):
+                print("Candidate supervisor did not stop after SIGHUP; sending SIGTERM.", flush=True)
+                try:
+                    os.kill(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                wait_for_supervisor(45)
 
     # macOS has no setsid --wait, so the app can remain a child in the
     # launcher's process tree. Signal those exact child PIDs rather than
@@ -351,8 +364,10 @@ def stop_candidate(process, master: int, log) -> None:
     require(not remaining, f"Candidate child processes remained after cleanup: {remaining}")
     if process in RUNNING:
         RUNNING.remove(process)
-    if terminal_open:
+    try:
         os.close(master)
+    except OSError:
+        pass
     log.close()
 
 
@@ -506,8 +521,10 @@ def run_yes_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[s
     stop_candidate(process, master, log)
     require((data_dir / ".chaptarrng-bookshelfng-desktop-handoff").read_text().strip() == "healthy",
             "healthy state was not retained after stopping the candidate")
-    require(not (data_dir / ".chaptarrng-bookshelfng-desktop.lock").exists(),
-            "candidate did not remove its handoff lock after stopping")
+    lock_dir = data_dir / ".chaptarrng-bookshelfng-desktop.lock"
+    lock_entries = sorted(path.name for path in lock_dir.iterdir()) if lock_dir.is_dir() else []
+    require(not lock_dir.exists(),
+            f"candidate did not remove its handoff lock after stopping; remaining entries: {lock_entries}")
 
 
 def run_rollback_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str]) -> None:

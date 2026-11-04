@@ -802,9 +802,9 @@ if ($hadService) {
 Complete-PriorBookshelfHandoff
 $backupNamesBefore = @()
 if ($mergeSqliteSources) {
-  $backupNamesBefore = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chaptarr.db.bookshelfng-backup-*.db' -File -ErrorAction SilentlyContinue | ForEach-Object Name)
+  $backupNamesBefore = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chaptarr.db.bookshelfng-backup-*.db' -File -Force -ErrorAction SilentlyContinue | ForEach-Object Name)
 } elseif ($sqliteSourceName) {
-  $backupNamesBefore = @(Get-ChildItem -LiteralPath $dataDir -Filter "$sqliteSourceName.bookshelfng-backup-*.db" -File -ErrorAction SilentlyContinue | ForEach-Object Name)
+  $backupNamesBefore = @(Get-ChildItem -LiteralPath $dataDir -Filter "$sqliteSourceName.bookshelfng-backup-*.db" -File -Force -ErrorAction SilentlyContinue | ForEach-Object Name)
 }
 $configPath = Join-Path $dataDir 'config.xml'
 if (Test-Path -LiteralPath $configPath) {
@@ -1192,8 +1192,12 @@ try {
       }
     } elseif ($sqliteSourceExisted) {
       $backupPrefix = if ($rollbackSqliteDatabaseName) { "$rollbackSqliteDatabaseName.bookshelfng-backup-*.db" } else { 'readarr.db.bookshelfng-backup-*.db' }
-      $newDatabaseBackup = Get-ChildItem -LiteralPath $dataDir -Filter $backupPrefix -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notin $backupNamesBefore } |
+      $databaseBackupsAfter = @(Get-ChildItem -LiteralPath $dataDir -Filter $backupPrefix -File -Force -ErrorAction SilentlyContinue)
+      $newDatabaseBackup = $databaseBackupsAfter |
+        Where-Object {
+          $_.Name -notin $backupNamesBefore -and
+          ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0
+        } |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
       if ($newDatabaseBackup) {
@@ -1242,7 +1246,9 @@ try {
         }
       } else {
         $databaseRollbackSafe = $false
-        Write-Warning 'Migration may have started, but no new SQLite source backup was found. Keep the BookshelfNG service stopped and inspect the retained database before recovery.'
+        $backupNamesAfter = @($databaseBackupsAfter | ForEach-Object Name) -join ', '
+        $backupNamesBeforeSummary = @($backupNamesBefore) -join ', '
+        Write-Warning "Migration may have started, but no new SQLite source backup was found (matching backups after migration: [$backupNamesAfter]; before migration: [$backupNamesBeforeSummary]). Keep the BookshelfNG service stopped and inspect the retained database before recovery."
       }
     } else {
       try {
