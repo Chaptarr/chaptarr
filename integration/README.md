@@ -10,7 +10,8 @@ normalizes the fixture generator's current-time migration timestamps, and
 verifies the two data fixtures are byte identical before adding a valid
 schema-158 BookshelfNG migration profile to the target. This makes ChaptarrNG
 serve the same compatibility mode used by an installed migrated database. It
-compares read-only legacy API lists and detail routes. The script records
+compares legacy API lists and detail routes, then exercises focused monitoring
+and deletion writes. The script records
 the source image digest and image ID,
 target commit and image ID, source database hash, per-case response hashes, and
 JSON mismatch paths. Legacy fields, saved values, selector values, and collection
@@ -36,12 +37,13 @@ The script removes only its uniquely named containers and network when it exits.
     bash integration/run-bookshelfng-api-differential.sh
 
 The workflow dispatch defaults to a GitHub-hosted Ubuntu runner and retains an
-explicit private JIT option. The comparison currently covers authors, books,
-series, files, history, roots, profiles, indexers, download clients, and
-notifications, including author/book detail and book-file lookups. It is
-read-only and synthetic; it does not establish mutation semantics, provider
-fulfillment, representative operator data, media decoding, rollback, or
-installed-channel acceptance.
+explicit private JIT option. The read comparison currently covers authors,
+books, series, files, history, roots, profiles, indexers, download clients, and
+notifications, including author/book detail and book-file lookups. The two
+write cases cover only a small part of the mutation surface. The suite remains
+synthetic and partial; it does not establish all mutation or command semantics,
+provider fulfillment, representative operator data, media decoding, rollback,
+or installed-channel acceptance.
 
 The Node contract comparator is mounted read-only beside the runner. Its
 focused checks are in `test-bookshelfng-api-contract.mjs`; the workflow runs
@@ -49,6 +51,12 @@ them before building the disposable services. Review both mismatches and
 additive differences in the report. Additive API output still needs an
 old-client compatibility review even when it does not fail the source-contract
 comparison.
+
+The differential also sends two legacy writes to both isolated copies: it
+disables monitoring for a seeded work and deletes a mixed-format work without
+deleting files. It compares the write responses and readback state, including
+that one legacy delete removes both ChaptarrNG format rows. This is a focused
+mutation smoke, not coverage of every BookshelfNG API operation or command.
 
 For local triage, `CHAPTARRNG_DIFFERENTIAL_SKIP_BUILD=true` may reuse an
 already-built image only when `HEAD` matches the requested commit and all

@@ -71,6 +71,39 @@ async function getJson(baseUrl, apiKey, path) {
   }
 }
 
+async function requestJson(baseUrl, apiKey, method, path, body) {
+  try {
+    const response = await fetch(baseUrl + path, {
+      method,
+      headers: {
+        "X-Api-Key": apiKey,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = response.status === 204 ? "" : await response.text();
+    if (!text) {
+      return { status: response.status, value: null, error: null };
+    }
+    try {
+      return {
+        status: response.status,
+        value: sanitizeApiResponse(JSON.parse(text)),
+        error: null,
+      };
+    } catch {
+      return { status: response.status, value: null, error: "invalid-json" };
+    }
+  } catch (error) {
+    return {
+      status: 0,
+      value: null,
+      error: error instanceof Error ? error.name : "request-failed",
+    };
+  }
+}
+
 async function waitForPing(baseUrl, name) {
   const pingUrl = new URL("/ping", baseUrl).toString();
   for (let attempt = 1; attempt <= 120; attempt++) {
@@ -159,6 +192,58 @@ async function compare(caseId, path, providerResource = false) {
   return { source, target };
 }
 
+async function compareMutation(caseId, method, path, body) {
+  const [source, target] = await Promise.all([
+    requestJson(sourceUrl, sourceKey, method, path, body),
+    requestJson(targetUrl, targetKey, method, path, body),
+  ]);
+  const comparison =
+    source.status === target.status &&
+    source.error === null &&
+    target.error === null
+      ? compareResponses(source.value, target.value, { includeDebugValues })
+      : {
+          mismatchPaths: ["/response"],
+          mismatchDetails: [
+            {
+              path: "/response",
+              kind: "response-status-or-body-difference",
+              sourceStatus: source.status,
+              targetStatus: target.status,
+              sourceError: source.error,
+              targetError: target.error,
+            },
+          ],
+          additivePaths: [],
+          additiveDetails: [],
+        };
+  results.push({
+    caseId,
+    method,
+    path,
+    sourceStatus: source.status,
+    targetStatus: target.status,
+    sourceError: source.error,
+    targetError: target.error,
+    sourceSha256: source.value === null ? null : sha256(source.value),
+    targetSha256: target.value === null ? null : sha256(target.value),
+    mismatchPaths: comparison.mismatchPaths,
+    mismatchDetails: comparison.mismatchDetails,
+    additivePaths: comparison.additivePaths,
+    additiveDetails: comparison.additiveDetails,
+    providerPresentationDifferenceCount: 0,
+    providerPresentationDifferencePaths: [],
+    result:
+      source.status > 0 &&
+      source.status === target.status &&
+      source.error === null &&
+      target.error === null &&
+      comparison.mismatchPaths.length === 0
+        ? "pass"
+        : "fail",
+  });
+}
+
 const cases = [
   ["authors.list", "/author"],
   ["books.list", "/book"],
@@ -232,9 +317,53 @@ if (
   }
 }
 
+// Exercise legacy write contracts against the two isolated copies. The
+// monitoring edit verifies the old work ID still addresses its migrated
+// audiobook, and the delete verifies one old mixed-format ID removes both
+// target rows that represent the same legacy work.
+await compareMutation("book.monitor.disable", "PUT", "/book/editor", {
+  bookIds: [31],
+  monitored: false,
+});
+const monitoredReadback = await compare("book.monitor.disable.readback", "/book/31");
+assert.equal(
+  monitoredReadback.source.value?.monitored,
+  false,
+  "BookshelfNG must persist the legacy monitoring edit.",
+);
+assert.equal(
+  monitoredReadback.target.value?.monitored,
+  false,
+  "ChaptarrNG must persist the legacy monitoring edit.",
+);
+await compareMutation("book.delete.mixed-format", "DELETE", "/book/editor", {
+  bookIds: [34],
+  deleteFiles: false,
+  addImportListExclusion: false,
+});
+const deletedReadback = await compare("book.delete.mixed-format.readback", "/book");
+assert.ok(
+  Array.isArray(deletedReadback.source.value),
+  "BookshelfNG book list must remain readable after deletion.",
+);
+assert.ok(
+  Array.isArray(deletedReadback.target.value),
+  "ChaptarrNG book list must remain readable after deletion.",
+);
+assert.equal(
+  deletedReadback.source.value.some((book) => book.id === 34),
+  false,
+  "BookshelfNG must delete the requested legacy work.",
+);
+assert.equal(
+  deletedReadback.target.value.some((book) => book.id === 34),
+  false,
+  "ChaptarrNG must delete every target row mapped to the requested legacy work.",
+);
+
 const report = {
-  schemaVersion: 4,
-  suite: "bookshelfng-read-api-differential",
+  schemaVersion: 5,
+  suite: "bookshelfng-api-differential",
   source: {
     release: "BookshelfNG 0.4.21.76",
     image: sourceImage,
@@ -258,6 +387,7 @@ const report = {
   },
   debugValues: includeDebugValues,
   caseCount: results.length,
+  mutationCaseCount: results.filter((result) => result.method !== "GET").length,
   passed: results.filter((result) => result.result === "pass").length,
   failed: results.filter((result) => result.result !== "pass").length,
   additiveDifferenceCount: results.reduce((total, result) => total + result.additivePaths.length, 0),
@@ -279,6 +409,7 @@ console.log(
       suite: report.suite,
       targetCommit: report.target.commit,
       caseCount: report.caseCount,
+      mutationCaseCount: report.mutationCaseCount,
       passed: report.passed,
       failed: report.failed,
       providerPresentationDifferenceCount: report.providerPresentationDifferenceCount,
