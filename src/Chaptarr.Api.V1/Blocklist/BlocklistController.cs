@@ -5,11 +5,13 @@ using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.CustomFormats;
 using Chaptarr.Http;
 using Chaptarr.Http.Extensions;
+using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.MetadataSource;
 using NzbDrone.Http.REST.Attributes;
 
 namespace Chaptarr.Api.V1.Blocklist
@@ -20,14 +22,20 @@ namespace Chaptarr.Api.V1.Blocklist
         private readonly IBlocklistService _blocklistService;
         private readonly IAuthorService _authorService;
         private readonly ICustomFormatCalculationService _formatCalculator;
+        private readonly IBookService _bookService;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
 
         public BlocklistController(IBlocklistService blocklistService,
                                    IAuthorService authorService,
-                                   ICustomFormatCalculationService formatCalculator)
+                                   ICustomFormatCalculationService formatCalculator,
+                                   IBookService bookService,
+                                   IBookshelfLegacyIdentityMapService legacyIdentityMapService)
         {
             _blocklistService = blocklistService;
             _authorService = authorService;
             _formatCalculator = formatCalculator;
+            _bookService = bookService;
+            _legacyIdentityMapService = legacyIdentityMapService;
         }
 
         [HttpGet]
@@ -64,20 +72,156 @@ namespace Chaptarr.Api.V1.Blocklist
                 return null;
             }
 
-            return pagingSpec.ApplyToPage(_blocklistService.Paged, model =>
-            {
-                var resource = BlocklistResourceMapper.MapToResource(model);
+            var page = _blocklistService.Paged(pagingSpec);
+            var models = page.Records ?? new List<NzbDrone.Core.Blocklisting.Blocklist>();
+            var facadeContext = HttpContext?.GetReadarrFacadeContext();
+            var bookshelfCompatibility = facadeContext?.IsBookshelfCompatibility == true;
 
+            var authors = models
+                .Select(model => ResolveAuthor(model.AuthorProviderIds))
+                .Where(author => author != null)
+                .DistinctBy(author => author.Id)
+                .ToList();
+            var authorIds = authors.Select(author => author.Id).ToList();
+            var legacyAuthorIdByTargetId = bookshelfCompatibility
+                ? GetUniqueSourceIds(_legacyIdentityMapService?.GetMappingsByTargetIds("Author", authorIds))
+                : new Dictionary<int, int>();
+            var legacyMetadataIdByTargetId = bookshelfCompatibility
+                ? GetUniqueSourceIds(_legacyIdentityMapService?.GetMappingsByTargetIds("AuthorMetadata", authorIds))
+                : new Dictionary<int, int>();
+
+            var targetBookIdsByProviderId = bookshelfCompatibility
+                ? BuildTargetBookIdsByProviderId(models.SelectMany(model => model.BookProviderIds ?? Enumerable.Empty<string>()))
+                : new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+            var allTargetBookIds = targetBookIdsByProviderId.Values.SelectMany(ids => ids).Distinct().ToList();
+            var legacyBookIdsByTargetId = bookshelfCompatibility
+                ? (_legacyIdentityMapService?.GetMappingsByTargetIds("Book", allTargetBookIds) ?? new List<BookshelfLegacyIdentityMapEntry>())
+                    .GroupBy(mapping => mapping.TargetId)
+                    .ToDictionary(group => group.Key, group => group.Select(mapping => mapping.SourceId).Distinct().OrderBy(id => id).ToList())
+                : new Dictionary<int, List<int>>();
+
+            var records = models.Select(model =>
+            {
                 var author = ResolveAuthor(model.AuthorProviderIds);
+                var authorId = author != null && legacyAuthorIdByTargetId.TryGetValue(author.Id, out var legacyAuthorId)
+                    ? (int?)legacyAuthorId
+                    : null;
+                var metadataId = author != null && legacyMetadataIdByTargetId.TryGetValue(author.Id, out var legacyMetadataId)
+                    ? (int?)legacyMetadataId
+                    : null;
+                var legacyBookIds = GetLegacyBookIds(model.BookProviderIds, targetBookIdsByProviderId, legacyBookIdsByTargetId);
+                var resource = BlocklistResourceMapper.MapToResource(
+                    model,
+                    author,
+                    facadeContext,
+                    authorId,
+                    metadataId,
+                    legacyBookIds);
+
                 if (author != null)
                 {
-                    resource.AuthorId = author.Id;
-                    resource.Author = author.ToResource();
                     resource.CustomFormats = _formatCalculator.ParseCustomFormat(model, author).ToResource(includeDetails: false);
                 }
 
                 return resource;
-            });
+            }).ToList();
+
+            return new PagingResource<BlocklistResource>
+            {
+                Page = page.Page,
+                PageSize = page.PageSize,
+                SortKey = page.SortKey,
+                SortDirection = page.SortDirection,
+                TotalRecords = page.TotalRecords,
+                Records = records
+            };
+        }
+
+        private Dictionary<string, List<int>> BuildTargetBookIdsByProviderId(IEnumerable<string> providerIds)
+        {
+            var result = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+            if (_bookService == null)
+            {
+                return result;
+            }
+
+            var distinctProviderIds = providerIds?
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<string>();
+            foreach (var providerId in distinctProviderIds)
+            {
+                string normalized;
+                try
+                {
+                    normalized = ProviderIdHelper.Normalize(providerId, defaultPrefix: null);
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(normalized))
+                {
+                    continue;
+                }
+
+                var separator = normalized.IndexOf(':');
+                var provider = normalized.Substring(0, separator);
+                var targetIds = new List<int>();
+                foreach (var mediaType in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+                {
+                    targetIds.AddRange((_bookService.FindAllByProviderId(provider, normalized, mediaType) ?? new List<Book>())
+                        .Where(book => book != null)
+                        .Select(book => book.Id));
+                }
+
+                result[normalized] = targetIds.Distinct().OrderBy(id => id).ToList();
+            }
+
+            return result;
+        }
+
+        private static List<int> GetLegacyBookIds(
+            IEnumerable<string> providerIds,
+            IReadOnlyDictionary<string, List<int>> targetBookIdsByProviderId,
+            IReadOnlyDictionary<int, List<int>> legacyBookIdsByTargetId)
+        {
+            var result = new List<int>();
+            foreach (var providerId in providerIds ?? Enumerable.Empty<string>())
+            {
+                string normalized;
+                try
+                {
+                    normalized = ProviderIdHelper.Normalize(providerId, defaultPrefix: null);
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(normalized) || !targetBookIdsByProviderId.TryGetValue(normalized, out var targetIds))
+                {
+                    continue;
+                }
+
+                foreach (var targetId in targetIds)
+                {
+                    if (legacyBookIdsByTargetId.TryGetValue(targetId, out var sourceIds))
+                    {
+                        result.AddRange(sourceIds);
+                    }
+                }
+            }
+
+            return result.Distinct().ToList();
+        }
+
+        private static Dictionary<int, int> GetUniqueSourceIds(IEnumerable<BookshelfLegacyIdentityMapEntry> mappings)
+        {
+            return (mappings ?? Enumerable.Empty<BookshelfLegacyIdentityMapEntry>())
+                .GroupBy(mapping => mapping.TargetId)
+                .Where(group => group.Select(mapping => mapping.SourceId).Distinct().Count() == 1)
+                .ToDictionary(group => group.Key, group => group.First().SourceId);
         }
 
         private Dictionary<string, NzbDrone.Core.Books.Author> BuildAuthorByProviderIdMap()
