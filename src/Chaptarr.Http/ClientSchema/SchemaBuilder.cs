@@ -271,6 +271,11 @@ namespace Chaptarr.Http.ClientSchema
                 {
                     null => null,
                     JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString(),
+                    JsonElement element when element.ValueKind == JsonValueKind.Array => string.Join(
+                        Environment.NewLine,
+                        element.EnumerateArray().Select(value => value.ValueKind == JsonValueKind.String
+                            ? value.GetString()
+                            : value.GetRawText())),
                     JsonElement element => element.GetRawText(),
                     _ => fieldValue.ToString()
                 };

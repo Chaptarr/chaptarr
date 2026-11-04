@@ -168,6 +168,13 @@ namespace Chaptarr.Api.V1.Books
                 .ToList();
             resource.Id = mapping.SourceId;
             resource.LocalBookId = mapping.SourceId.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+            foreach (var image in resource.Images ?? new List<MediaCover>())
+            {
+                // BookshelfNG clients use the persisted legacy cover path. Keep that URL in
+                // the compatibility projection so existing config-mounted cover files remain
+                // available across migration, even when Chaptarr has not indexed the cover yet.
+                image.Url = $"/MediaCover/Books/{mapping.SourceId}/cover.jpg";
+            }
             resource.MediaType = null;
             resource.AudiobookMonitored = null;
             resource.EbookMonitored = null;

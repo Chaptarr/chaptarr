@@ -72,6 +72,26 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
+        public void should_accept_bookshelfng_tag_array_values_for_the_urls_schema_field()
+        {
+            var settings = new DirectDownloadSettings();
+            var urls = JsonSerializer.Deserialize<JsonElement>(
+                "[\"https://primary.example\",\"https://secondary.example\"]");
+
+            SchemaBuilder.ReadFromSchema(new()
+            {
+                new Field { Name = "urls", Value = urls }
+            }, settings);
+
+            Assert.That(settings.Urls, Is.EqualTo("https://primary.example\nhttps://secondary.example"));
+            Assert.That(DirectDownloadSettings.NormalizeUrls(settings.Urls), Is.EqualTo(new[]
+            {
+                "https://primary.example",
+                "https://secondary.example"
+            }));
+        }
+
+        [Test]
         public void should_normalize_urls_by_trimming_and_deduplicating_while_preserving_order()
         {
             var settings = new DirectDownloadSettings
