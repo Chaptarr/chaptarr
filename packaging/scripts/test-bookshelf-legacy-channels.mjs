@@ -394,6 +394,16 @@ test('Chocolatey installed handoff passes private rollback inputs to nested scri
   }
 });
 
+test('focused Windows Chocolatey failures retain installed-handoff diagnostics', () => {
+  const workflow = read('.github/workflows/build.yml');
+  const upload = workflow.match(/- name: Upload failed Windows Chocolatey handoff diagnostics([\s\S]*?)(?=\n    - name:)/)?.[1];
+  assert.ok(upload, 'the focused Chocolatey workflow must upload failed installed-handoff state');
+  assert.match(upload, /failure\(\)[\s\S]*?inputs\.windows_chocolatey_only == true/);
+  assert.match(upload, /\$\{\{ runner\.temp \}\}\/chocolatey-bookshelfng-handoff-/);
+  assert.match(upload, /C:\\ProgramData\\BookshelfNG\\\*\*/);
+  assert.match(upload, /if-no-files-found: warn/);
+});
+
 test('Windows standalone migration installer is opt-in and Close defers handoff', () => {
   const xaml = read('distribution/windows/installer-net/MainWindow.xaml');
   const code = read('distribution/windows/installer-net/MainWindow.xaml.cs');
