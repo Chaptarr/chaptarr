@@ -17,6 +17,9 @@ target commit and image ID, source database hash, per-case response hashes, and
 JSON mismatch paths. Legacy fields, saved values, selector values, and collection
 identity must remain equivalent; ChaptarrNG-only fields and records are reported
 as additive. Objects with IDs are matched by ID and provider fields by name.
+Provider schema entries are matched by stable implementation name, with missing
+implementations kept visible and schema ordering reported as presentation
+evidence instead of comparing shifted entries by array position.
 Provider labels, help, hints, links, control types, and display order are counted
 and reported separately because ChaptarrNG uses its own provider forms. The
 BookshelfNG compatibility API projects DirectDownload URLs back to the legacy

@@ -117,7 +117,23 @@ function identityKey(value, path) {
     return `id:${String(value.id)}`;
   }
 
+  if (typeof value.implementation === "string") {
+    return `implementation:${value.implementation}`;
+  }
+
   return null;
+}
+
+function isProviderSchemaArray(values) {
+  return Array.isArray(values) &&
+    values.length > 0 &&
+    values.every((value) =>
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !Object.hasOwn(value, "id") &&
+      typeof value.implementation === "string",
+    );
 }
 
 function debugValue(value, depth = 0) {
@@ -166,6 +182,8 @@ export function compareResponses(expected, actual, { includeDebugValues = false 
         targetIdentities.every((key) => key !== null) &&
         new Set(sourceIdentities).size === sourceIdentities.length &&
         new Set(targetIdentities).size === targetIdentities.length;
+      const providerSchemaArray =
+        isProviderSchemaArray(source) && isProviderSchemaArray(target);
 
       if (canMatchByIdentity) {
         const targetByIdentity = new Map(
@@ -178,6 +196,7 @@ export function compareResponses(expected, actual, { includeDebugValues = false 
 
         if (!path.endsWith("/fields") &&
             !path.endsWith("/selectOptions") &&
+            !providerSchemaArray &&
             !isDeepStrictEqual(commonSourceOrder, commonTargetOrder)) {
           record(mismatchDetails, { path: path + "/order", kind: "array-order" });
         }

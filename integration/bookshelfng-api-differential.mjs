@@ -44,6 +44,32 @@ function sha256(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function providerSchemaOrderDifferencePaths(source, target) {
+  const isSchemaArray = (value) =>
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) =>
+      item &&
+      typeof item === "object" &&
+      !Array.isArray(item) &&
+      !Object.hasOwn(item, "id") &&
+      typeof item.implementation === "string",
+    );
+  if (!isSchemaArray(source) || !isSchemaArray(target)) return [];
+
+  const targetImplementations = new Set(target.map((item) => item.implementation));
+  const sourceImplementations = new Set(source.map((item) => item.implementation));
+  const sharedSourceOrder = source
+    .map((item) => item.implementation)
+    .filter((implementation) => targetImplementations.has(implementation));
+  const sharedTargetOrder = target
+    .map((item) => item.implementation)
+    .filter((implementation) => sourceImplementations.has(implementation));
+  return JSON.stringify(sharedSourceOrder) === JSON.stringify(sharedTargetOrder)
+    ? []
+    : ["/provider-schema-order"];
+}
+
 async function getJson(baseUrl, apiKey, path) {
   try {
     const response = await fetch(baseUrl + path, {
@@ -155,7 +181,8 @@ async function compare(caseId, path, providerResource = false, expectedTargetSta
       );
       const semanticPaths = new Set(comparison.mismatchPaths);
       providerPresentationDifferencePaths = originalComparison.mismatchPaths
-        .filter((mismatchPath) => !semanticPaths.has(mismatchPath));
+        .filter((mismatchPath) => !semanticPaths.has(mismatchPath))
+        .concat(providerSchemaOrderDifferencePaths(source.value, target.value));
     } else {
       comparison = compareResponses(source.value, target.value, { includeDebugValues });
     }

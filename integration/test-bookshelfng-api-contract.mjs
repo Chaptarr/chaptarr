@@ -61,6 +61,20 @@ const reorderedLegacyCollection = compareResponses(
 );
 assert.deepEqual(reorderedLegacyCollection.mismatchPaths, ["/order"]);
 
+const reorderedProviderSchemas = compareResponses(
+  [
+    { implementation: "LegacyIndexer", fields: [{ name: "apiKey", value: "fixture" }] },
+    { implementation: "LegacyDownloadClient", fields: [{ name: "host", value: "localhost" }] },
+  ],
+  [
+    { implementation: "LegacyDownloadClient", fields: [{ name: "host", value: "localhost" }] },
+    { implementation: "LegacyIndexer", fields: [{ name: "apiKey", value: "fixture" }] },
+    { implementation: "ChaptarrOnly", fields: [] },
+  ],
+);
+assert.deepEqual(reorderedProviderSchemas.mismatchPaths, []);
+assert.deepEqual(reorderedProviderSchemas.additivePaths, ["/2"]);
+
 assert.deepEqual(
   sanitizeApiResponse({
     mamId: "fixture-token",
@@ -138,4 +152,4 @@ assert.deepEqual(
   ["/0/fields/0/value/1"],
 );
 
-console.log("BookshelfNG API contract comparator: 11 checks passed");
+console.log("BookshelfNG API contract comparator: 12 checks passed");
