@@ -16,6 +16,8 @@ namespace NzbDrone.Core.AuthorStats
         List<AuthorStatistics> AuthorStatistics(string mediaType);
         AuthorStatistics AuthorStatistics(int authorId, string mediaType);
         List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType);
+        List<AuthorStatistics> BookshelfAuthorStatistics();
+        AuthorStatistics BookshelfAuthorStatistics(int authorId);
         void InvalidateAuthorCache(int authorId);
     }
 
@@ -59,6 +61,20 @@ namespace NzbDrone.Core.AuthorStats
         {
             var bookStatistics = _cache.Get("AllAuthors", () => _authorStatisticsRepository.AuthorStatistics());
             return bookStatistics.GroupBy(statistics => statistics.AuthorId).Select(statistics => MapAuthorStatistics(statistics.ToList())).ToList();
+        }
+
+        public List<AuthorStatistics> BookshelfAuthorStatistics()
+        {
+            var bookStatistics = _cache.Get("BookshelfAllAuthors", () => _authorStatisticsRepository.BookshelfStatistics());
+            return bookStatistics.GroupBy(statistics => statistics.AuthorId).Select(statistics => MapAuthorStatistics(statistics.ToList())).ToList();
+        }
+
+        public AuthorStatistics BookshelfAuthorStatistics(int authorId)
+        {
+            var statistics = _cache.Get($"Bookshelf_{authorId}", () => _authorStatisticsRepository.BookshelfStatistics(authorId));
+            return statistics == null || statistics.Count == 0
+                ? new AuthorStatistics()
+                : MapAuthorStatistics(statistics);
         }
 
         public AuthorStatistics AuthorStatistics(int authorId)
@@ -160,6 +176,7 @@ namespace NzbDrone.Core.AuthorStats
             _cache.Remove("AllAuthors");
             _cache.Remove("AllAuthors_audiobook");
             _cache.Remove("AllAuthors_ebook");
+            _cache.Remove("BookshelfAllAuthors");
         }
 
         private void InvalidateAuthorCaches(int authorId)
@@ -173,6 +190,7 @@ namespace NzbDrone.Core.AuthorStats
             _cache.Remove(key);
             _cache.Remove($"{key}_audiobook");
             _cache.Remove($"{key}_ebook");
+            _cache.Remove($"Bookshelf_{authorId}");
         }
 
         private void InvalidateGlobalAndAuthors(IEnumerable<int> authorIds)

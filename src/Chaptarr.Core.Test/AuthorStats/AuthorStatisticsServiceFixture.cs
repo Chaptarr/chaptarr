@@ -39,6 +39,9 @@ namespace Chaptarr.Core.Test.AuthorStats
                 return Stats();
             }
 
+            public List<BookStatistics> BookshelfStatistics() => Stats();
+            public List<BookStatistics> BookshelfStatistics(int authorId) => Stats();
+
             private static List<BookStatistics> Stats()
             {
                 return new()

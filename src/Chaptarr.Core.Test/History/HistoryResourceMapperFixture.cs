@@ -71,6 +71,20 @@ namespace Chaptarr.Core.Test.History
         }
 
         [Test]
+        public void bookshelf_compatibility_should_project_unknown_audio_history_to_legacy_unknown_quality()
+        {
+            var resource = new HistoryResource
+            {
+                Quality = new QualityModel(Quality.UnknownAudio, new Revision(version: 2))
+            };
+
+            HistoryResourceMapper.ApplyBookshelfCompatibility(resource);
+
+            Assert.That(resource.Quality.Quality, Is.EqualTo(Quality.Unknown));
+            Assert.That(resource.Quality.Revision.Version, Is.EqualTo(2));
+        }
+
+        [Test]
         public void should_omit_custom_formats_for_unassigned_history()
         {
             var formatCalculator = new StubCustomFormatCalculationService();

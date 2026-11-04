@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -86,16 +87,20 @@ namespace Chaptarr.Api.V1.Profiles.Quality
 
         protected override QualityProfileResource GetResourceById(int id)
         {
-            return _qualityProfileService.Get(id).ToResource(filterToProfileType: true);
+            var bookshelfCompatibility = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true;
+            return _qualityProfileService.Get(id).ToResource(filterToProfileType: !bookshelfCompatibility);
         }
 
         [HttpGet]
         public List<QualityProfileResource> GetAll([FromQuery] string mediaType = null)
         {
             var requestedMediaType = QualityProfileMediaTypeParser.ParseOrNull(mediaType);
+            var bookshelfCompatibility = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true;
             var profiles = requestedMediaType.HasValue
                 ? _qualityProfileService.GetByType(requestedMediaType.Value.ToProfileType())
-                : _qualityProfileService.All();
+                : bookshelfCompatibility
+                    ? _qualityProfileService.GetByType(ProfileType.Audiobook)
+                    : _qualityProfileService.All();
 
             return profiles.ToResource(filterToProfileType: requestedMediaType.HasValue);
         }

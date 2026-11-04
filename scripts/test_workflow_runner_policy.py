@@ -156,6 +156,14 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             source,
         )
 
+    def test_bookshelfng_differential_mounts_contract_comparator_in_isolated_runner(self) -> None:
+        integration = WORKFLOW.parents[2] / "integration"
+        runner = (integration / "run-bookshelfng-api-differential.sh").read_text(encoding="utf-8")
+        compose = (integration / "bookshelfng-api-differential.compose.yml").read_text(encoding="utf-8")
+        self.assertIn("export BOOKSHELFNG_API_CONTRACT_SCRIPT=", runner)
+        self.assertIn("${BOOKSHELFNG_API_CONTRACT_SCRIPT:?", compose)
+        self.assertIn("target: /harness/bookshelfng-api-contract.mjs", compose)
+
     def test_standalone_asset_validation_allows_trusted_public_runners(self) -> None:
         path = WORKFLOW.parent / "standalone-asset-validation.yml"
         source = path.read_text(encoding="utf-8")

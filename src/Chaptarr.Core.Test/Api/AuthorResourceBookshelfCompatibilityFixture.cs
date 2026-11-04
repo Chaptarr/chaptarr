@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Chaptarr.Api.V1.Author;
+using Chaptarr.Http.Middleware;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 
@@ -42,6 +43,29 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.That(resource.QualityProfileId, Is.Zero);
             Assert.That(resource.MetadataProfileId, Is.Zero);
+        }
+
+        [Test]
+        public void bookshelf_compatibility_should_project_the_original_single_profile_ids()
+        {
+            var author = new Author
+            {
+                Id = 9,
+                Name = "Migrated author",
+                LastSelectedMediaType = "ebook",
+                QualityProfileId = 2,
+                AudiobookQualityProfileId = 2,
+                EbookQualityProfileId = 4,
+                MetadataProfileId = 5,
+                AudiobookMetadataProfileId = 5,
+                EbookMetadataProfileId = 5
+            };
+            var facade = new ReadarrFacadeContext("bookshelf", null, "", isBookshelfCompatibility: true);
+
+            var resource = AuthorResourceMapper.ToResource(author, facade);
+
+            Assert.That(resource.QualityProfileId, Is.EqualTo(2));
+            Assert.That(resource.MetadataProfileId, Is.EqualTo(5));
         }
 
         [Test]

@@ -158,12 +158,12 @@ namespace Chaptarr.Api.V1.Author
                 Path = model.Path,
                 AudiobookPath = model.AudiobookPath,
                 EbookPath = model.EbookPath,
-                QualityProfileId = GetBookshelfQualityProfileId(model) ?? 0,
+                QualityProfileId = GetBookshelfQualityProfileId(model, facadeContext) ?? 0,
                 RootFolderPath = GetBookshelfRootFolderPath(model),
                 MonitorNewItems = GetBookshelfMonitorNewItems(model),
                 AudiobookQualityProfileId = model.AudiobookQualityProfileId,
                 EbookQualityProfileId = model.EbookQualityProfileId,
-                MetadataProfileId = GetBookshelfMetadataProfileId(model) ?? 0,
+                MetadataProfileId = GetBookshelfMetadataProfileId(model, facadeContext) ?? 0,
                 AudiobookMetadataProfileId = model.AudiobookMetadataProfileId,
                 EbookMetadataProfileId = model.EbookMetadataProfileId,
                 Links = CloneLinks(model.Links),
@@ -280,8 +280,13 @@ namespace Chaptarr.Api.V1.Author
             }
         }
 
-        private static int? GetBookshelfQualityProfileId(NzbDrone.Core.Books.Author model)
+        private static int? GetBookshelfQualityProfileId(NzbDrone.Core.Books.Author model, ReadarrFacadeContext facadeContext)
         {
+            if (facadeContext?.IsBookshelfCompatibility == true)
+            {
+                return model.QualityProfileId;
+            }
+
             return string.Equals(model.LastSelectedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
                 ? model.EbookQualityProfileId ?? model.AudiobookQualityProfileId
                 : model.AudiobookQualityProfileId ?? model.EbookQualityProfileId;
@@ -294,8 +299,13 @@ namespace Chaptarr.Api.V1.Author
                 : model.AudiobookRootFolderPath ?? model.EbookRootFolderPath;
         }
 
-        private static int? GetBookshelfMetadataProfileId(NzbDrone.Core.Books.Author model)
+        private static int? GetBookshelfMetadataProfileId(NzbDrone.Core.Books.Author model, ReadarrFacadeContext facadeContext)
         {
+            if (facadeContext?.IsBookshelfCompatibility == true)
+            {
+                return model.MetadataProfileId;
+            }
+
             return string.Equals(model.LastSelectedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
                 ? model.EbookMetadataProfileId ?? model.MetadataProfileId ?? model.AudiobookMetadataProfileId
                 : model.AudiobookMetadataProfileId ?? model.MetadataProfileId ?? model.EbookMetadataProfileId;
@@ -539,6 +549,7 @@ namespace Chaptarr.Api.V1.Author
                 Path = resource.Path,
                 AudiobookPath = resource.AudiobookPath,
                 EbookPath = resource.EbookPath,
+                QualityProfileId = resource.QualityProfileId ?? audiobookQualityProfileId ?? ebookQualityProfileId ?? 1,
                 AudiobookQualityProfileId = audiobookQualityProfileId,
                 EbookQualityProfileId = ebookQualityProfileId,
                 MetadataProfileId = resource.MetadataProfileId,

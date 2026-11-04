@@ -109,6 +109,8 @@ namespace Chaptarr.Core.Test.Api.Wanted
             public List<AuthorStatistics> AuthorStatistics(string mediaType) => new();
             public AuthorStatistics AuthorStatistics(int authorId, string mediaType) => new();
             public List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType) => new();
+            public List<AuthorStatistics> BookshelfAuthorStatistics() => new();
+            public AuthorStatistics BookshelfAuthorStatistics(int authorId) => new();
             public void InvalidateAuthorCache(int authorId) { }
         }
 

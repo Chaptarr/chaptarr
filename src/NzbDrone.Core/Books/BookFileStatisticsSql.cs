@@ -12,6 +12,9 @@ namespace NzbDrone.Core.Books
         private static readonly string _audiobookExtensionCondition =
             BuildExtensionCondition(MediaFileExtensions.AudioExtensions, "\"BookFiles\".\"Path\"");
 
+        internal static string EbookExtensionCondition => _ebookExtensionCondition;
+        internal static string AudiobookExtensionCondition => _audiobookExtensionCondition;
+
         // Keep the common catalog query lean; format classification is used only by author
         // statistics.
         internal const string GroupedByBook = @"

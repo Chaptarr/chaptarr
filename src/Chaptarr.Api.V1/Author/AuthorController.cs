@@ -389,6 +389,13 @@ namespace Chaptarr.Api.V1.Author
                 var audiobookStatistics = _authorStatisticsService.AuthorStatistics("audiobook").ToDictionary(x => x.AuthorId);
                 var ebookStatistics = _authorStatisticsService.AuthorStatistics("ebook").ToDictionary(x => x.AuthorId);
                 LinkMediaTypeAuthorStatistics(authorResources, audiobookStatistics, ebookStatistics);
+
+                if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+                {
+                    var legacyStatistics = _authorStatisticsService.BookshelfAuthorStatistics()
+                        .ToDictionary(statistics => statistics.AuthorId);
+                    LinkAuthorStatistics(authorResources, legacyStatistics);
+                }
             }
             else
             {
@@ -1478,9 +1485,12 @@ namespace Chaptarr.Api.V1.Author
         private void FetchAndLinkAuthorStatistics(AuthorResource resource, string mediaType = null)
         {
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
-            var stats = normalizedMediaType == null
-                ? _authorStatisticsService.AuthorStatistics(resource.Id)
-                : _authorStatisticsService.AuthorStatistics(resource.Id, normalizedMediaType);
+            var bookshelfCompatibility = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true;
+            var stats = bookshelfCompatibility && normalizedMediaType == null
+                ? _authorStatisticsService.BookshelfAuthorStatistics(resource.Id)
+                : normalizedMediaType == null
+                    ? _authorStatisticsService.AuthorStatistics(resource.Id)
+                    : _authorStatisticsService.AuthorStatistics(resource.Id, normalizedMediaType);
             LinkAuthorStatistics(resource, stats);
         }
 

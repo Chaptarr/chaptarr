@@ -30,6 +30,7 @@ export BOOKSHELFNG_API_KEY="$(openssl rand -hex 32)"
 export CHAPTARRNG_API_KEY="$BOOKSHELFNG_API_KEY"
 export CHAPTARRNG_TARGET_COMMIT="$TARGET_COMMIT"
 export BOOKSHELFNG_API_DIFFERENTIAL_SCRIPT="$ROOT/integration/bookshelfng-api-differential.mjs"
+export BOOKSHELFNG_API_CONTRACT_SCRIPT="$ROOT/integration/bookshelfng-api-contract.mjs"
 export BOOKSHELFNG_DIFFERENTIAL_EVIDENCE="$REPORT_DIR"
 
 cleanup() {

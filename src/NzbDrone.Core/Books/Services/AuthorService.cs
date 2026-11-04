@@ -177,6 +177,11 @@ namespace NzbDrone.Core.Books
                 author.LastSelectedMediaType = "audiobook";
             }
 
+            if (author.QualityProfileId <= 0)
+            {
+                author.QualityProfileId = author.AudiobookQualityProfileId ?? author.EbookQualityProfileId ?? 1;
+            }
+
             // Ensure embedded documents can't violate NOT NULL constraints or deserialize to null.
             author.Aliases ??= new List<string>();
             author.Images ??= new List<MediaCover.MediaCover>();

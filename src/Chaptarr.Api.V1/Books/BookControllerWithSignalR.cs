@@ -72,7 +72,7 @@ namespace Chaptarr.Api.V1.Books
 
         protected BookResource MapToResource(Book book, bool includeAuthor)
         {
-            var stats = _authorStatisticsService.AuthorStatistics(book.AuthorId)
+            var stats = GetAuthorStatistics(book.AuthorId)
                 ?.BookStatistics
                 ?.FirstOrDefault(x => x.BookId == book.Id);
 
@@ -121,7 +121,7 @@ namespace Chaptarr.Api.V1.Books
                 }
             }
 
-            var resolvedStatsByBookId = statsByBookId ?? BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics());
+            var resolvedStatsByBookId = statsByBookId ?? BuildBookStatisticsById(GetAuthorStatistics());
 
             // Convert books to resources. Statistics are passed before mapping so narrator gating can
             // use file counts even when lean list endpoints intentionally skip BookFiles hydration.
@@ -182,7 +182,7 @@ namespace Chaptarr.Api.V1.Books
             if (sourceWorkBooks.Count > 1)
             {
                 var targetIds = sourceWorkBooks.Select(book => book.Id).ToHashSet();
-                var stats = _authorStatisticsService.AuthorStatistics(sourceWorkBooks[0].AuthorId)
+                var stats = GetAuthorStatistics(sourceWorkBooks[0].AuthorId)
                     ?.BookStatistics
                     ?.Where(value => targetIds.Contains(value.BookId))
                     .ToList() ?? new List<BookStatistics>();
@@ -383,7 +383,28 @@ namespace Chaptarr.Api.V1.Books
 
         private void FetchAndLinkBookStatistics(BookResource resource)
         {
-            LinkAuthorStatistics(resource, _authorStatisticsService.AuthorStatistics(resource.AuthorId));
+            LinkAuthorStatistics(resource, GetAuthorStatistics(resource.AuthorId));
+        }
+
+        protected List<AuthorStatistics> GetAuthorStatistics(string mediaType = null)
+        {
+            if (string.IsNullOrWhiteSpace(mediaType) &&
+                HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                return _authorStatisticsService.BookshelfAuthorStatistics();
+            }
+
+            return _authorStatisticsService.AuthorStatistics(mediaType);
+        }
+
+        private AuthorStatistics GetAuthorStatistics(int authorId)
+        {
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                return _authorStatisticsService.BookshelfAuthorStatistics(authorId);
+            }
+
+            return _authorStatisticsService.AuthorStatistics(authorId);
         }
 
         private void LinkAuthorStatistics(List<BookResource> resources, List<AuthorStatistics> authorStatistics)

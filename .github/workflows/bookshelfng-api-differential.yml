@@ -62,6 +62,7 @@ jobs:
       - name: Run read-only API differential against identical disposable fixtures
         env:
           BOOKSHELFNG_DIFFERENTIAL_WORK_DIR: ${{ runner.temp }}/bookshelfng-api-differential-${{ github.run_id }}
+          BOOKSHELFNG_DIFFERENTIAL_DEBUG_VALUES: "true"
         run: bash integration/run-bookshelfng-api-differential.sh
 
       - name: Upload sanitized differential results and startup logs

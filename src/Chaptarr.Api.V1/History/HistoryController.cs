@@ -63,6 +63,11 @@ namespace Chaptarr.Api.V1.History
                 resource.QualityCutoffNotMet = qualityProfile != null ? _upgradableSpecification.QualityCutoffNotMet(qualityProfile, resource.Quality) : false;
             }
 
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                HistoryResourceMapper.ApplyBookshelfCompatibility(resource);
+            }
+
             return resource;
         }
 

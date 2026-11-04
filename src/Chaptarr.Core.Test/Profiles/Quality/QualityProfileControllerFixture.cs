@@ -4,6 +4,7 @@ using System.Data;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Net;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using FluentValidation;
 using Microsoft.AspNetCore.Http;
@@ -83,18 +84,20 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             public QualityProfile Add(QualityProfile profile) => throw new NotImplementedException();
             public void Update(QualityProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
-            public QualityProfile Get(int id) => throw new NotImplementedException();
+            public QualityProfile Get(int id) => _profiles.Single(profile => profile.Id == id);
             public bool Exists(int id) => throw new NotImplementedException();
         }
 
         private sealed class TestQualityProfileController : QualityApi.QualityProfileController
         {
-            public TestQualityProfileController(IEnumerable<CustomFormat> formats = null)
-                : base(new StubQualityProfileService(), new StubCustomFormatService(formats))
+            public TestQualityProfileController(IEnumerable<CustomFormat> formats = null, params QualityProfile[] profiles)
+                : base(new StubQualityProfileService(formats, profiles), new StubCustomFormatService(formats))
             {
                 ControllerContext.HttpContext = new DefaultHttpContext();
                 ControllerContext.HttpContext.Request.Method = "POST";
             }
+
+            public QualityApi.QualityProfileResource GetResourceForTest(int id) => GetResourceById(id);
 
             public void ValidateForTest(QualityApi.QualityProfileResource resource)
             {
@@ -113,6 +116,39 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             Assert.That(resource.ProfileType, Is.EqualTo(ProfileType.Audiobook));
             Assert.That(resource.Cutoff, Is.EqualTo(CoreQuality.Unknown.Id));            Assert.That(AllowedQualityIds(resource), Is.EqualTo(new[] { CoreQuality.Unknown.Id }));
             Assert.DoesNotThrow(() => QualityApi.ProfileResourceMapper.ToModel(resource));
+        }
+
+        [Test]
+        public void bookshelf_compatibility_should_return_only_original_profiles_without_filtering_the_legacy_quality_list()
+        {
+            var ebookQuality = new QualityProfileQualityItem
+            {
+                Quality = CoreQuality.MOBI,
+                Allowed = true
+            };
+            var controller = new TestQualityProfileController(
+                profiles: new[]
+                {
+                    CreateProfile(1, "Audio default", ProfileType.Audiobook),
+                    new QualityProfile
+                    {
+                        Id = 2,
+                        Name = "Ebook override",
+                        ProfileType = ProfileType.Audiobook,
+                        Cutoff = CoreQuality.MOBI.Id,
+                        Items = new List<QualityProfileQualityItem> { ebookQuality },
+                        FormatItems = new List<ProfileFormatItem>()
+                    },
+                    CreateProfile(3, "Ebook default", ProfileType.Ebook)
+                });
+            controller.ControllerContext.HttpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("bookshelf", null, "", isBookshelfCompatibility: true);
+
+            var profiles = controller.GetAll();
+            var legacyProfile = controller.GetResourceForTest(2);
+
+            Assert.That(profiles.Select(profile => profile.Id), Is.EqualTo(new[] { 1, 2 }));
+            Assert.That(legacyProfile.Items.SelectMany(AllQualityIds), Does.Contain(CoreQuality.MOBI.Id));
         }
 
         [Test]

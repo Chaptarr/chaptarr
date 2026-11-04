@@ -83,6 +83,44 @@ namespace Chaptarr.Core.Test.AuthorStats
         }
 
         [Test]
+        public void bookshelf_statistics_should_count_only_monitored_editions_and_merge_split_media_rows()
+        {
+            WithRepository((repository, connectionString) =>
+            {
+                using (var connection = new SqliteConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute(@"
+INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""MediaType"", ""AudiobookMonitored"", ""EbookMonitored"", ""ReleaseDate"") VALUES
+    (13, 1, 0, 1, 0, NULL),
+    (14, 1, 1, 0, 1, NULL);
+INSERT INTO ""BookshelfLegacyIdentityMap"" (""Source"", ""EntityType"", ""SourceId"", ""TargetId"", ""MediaType"") VALUES
+    ('BookshelfNG', 'Book', 13, 13, 0),
+    ('BookshelfNG', 'Book', 13, 14, 1);
+INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"") VALUES (130, 13, 1), (140, 14, 1);
+INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"", ""Path"") VALUES
+    (1300, 130, 50, '/books/legacy.m4b'),
+    (1400, 140, 70, '/books/legacy.epub');");
+                }
+
+                var stats = repository.BookshelfStatistics(1).ToDictionary(stat => stat.BookId);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(stats[10].BookFileCount, Is.EqualTo(1), "an unmonitored edition file is omitted from the legacy contract");
+                    Assert.That(stats[10].SizeOnDisk, Is.EqualTo(20));
+                    Assert.That(stats[13].BookFileCount, Is.EqualTo(2), "split audiobook and ebook rows represent one legacy book");
+                    Assert.That(stats[13].SizeOnDisk, Is.EqualTo(120));
+                    Assert.That(stats[13].AudiobookFileCount, Is.EqualTo(1));
+                    Assert.That(stats[13].EbookFileCount, Is.EqualTo(1));
+                    Assert.That(stats[13].TotalBookCount, Is.EqualTo(1));
+                    Assert.That(stats[13].AvailableBookCount, Is.EqualTo(1));
+                    Assert.That(stats[13].BookCount, Is.EqualTo(1));
+                });
+            });
+        }
+
+        [Test]
         public void should_follow_edition_repoints_and_count_files_on_unmonitored_editions()
         {
             WithRepository((repository, connectionString) =>
@@ -254,6 +292,13 @@ CREATE TABLE ""BookFiles"" (
     ""EditionId"" INTEGER NOT NULL,
     ""Size"" INTEGER NOT NULL,
     ""Path"" TEXT NULL
+);
+CREATE TABLE ""BookshelfLegacyIdentityMap"" (
+    ""Source"" TEXT NOT NULL,
+    ""EntityType"" TEXT NOT NULL,
+    ""SourceId"" INTEGER NOT NULL,
+    ""TargetId"" INTEGER NOT NULL,
+    ""MediaType"" INTEGER NULL
 );
 
 CREATE INDEX ""IX_Editions_BookId_Monitored_Id""

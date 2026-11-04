@@ -660,7 +660,7 @@ namespace Chaptarr.Api.V1.Books
                 // General /api/v1/book is a sync/index endpoint. Metadata profile pruning is enforced
                 // at hydrate/refresh time; doing it again here would force all-edition loading.
                 var filteredBooks = validBooks;
-                var statsByBookId = BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics(normalizedMediaType));
+                var statsByBookId = BuildBookStatisticsById(GetAuthorStatistics(normalizedMediaType));
 
                 // Apply monitored filter if requested.
                 // Monitored view: show monitored books plus physical copies with files.
@@ -1389,7 +1389,7 @@ namespace Chaptarr.Api.V1.Books
 
                 var pageGroups = legacyGroups.Skip(legacyOffset).Take(legacyPageSize).ToList();
                 var pageRows = pageGroups.SelectMany(group => group.Rows).ToList();
-                var legacyStatsByBookId = BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics());
+                var legacyStatsByBookId = BuildBookStatisticsById(GetAuthorStatistics());
                 var legacyPagedResource = new PagedBookApiResource
                 {
                     Records = MapToResource(
@@ -1418,7 +1418,7 @@ namespace Chaptarr.Api.V1.Books
             }
 
             var pagedBooks = _bookService.GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted);
-            var statsByBookId = BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics(normalizedMediaType));
+            var statsByBookId = BuildBookStatisticsById(GetAuthorStatistics(normalizedMediaType));
 
             // Convert Book entities to BookResource
             var pagedResource = new PagedBookApiResource

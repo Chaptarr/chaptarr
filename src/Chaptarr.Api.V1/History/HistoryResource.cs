@@ -33,6 +33,14 @@ namespace Chaptarr.Api.V1.History
 
     public static class HistoryResourceMapper
     {
+        public static void ApplyBookshelfCompatibility(HistoryResource resource)
+        {
+            if (resource?.Quality?.Quality == Quality.UnknownAudio)
+            {
+                resource.Quality = new QualityModel(Quality.Unknown, resource.Quality.Revision);
+            }
+        }
+
         public static HistoryResource ToResource(this EntityHistory model, ICustomFormatCalculationService formatCalculator)
         {
             if (model == null)

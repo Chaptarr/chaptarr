@@ -37,11 +37,12 @@ read-only and synthetic; it does not establish mutation semantics, provider
 fulfillment, representative operator data, media decoding, rollback, or
 installed-channel acceptance.
 
-The Node contract comparator has focused checks in
-`test-bookshelfng-api-contract.mjs`; the workflow runs them before building the
-disposable services. Review both mismatches and additive differences in the
-report. Additive API output still needs an old-client compatibility review even
-when it does not fail the source-contract comparison.
+The Node contract comparator is mounted read-only beside the runner. Its
+focused checks are in `test-bookshelfng-api-contract.mjs`; the workflow runs
+them before building the disposable services. Review both mismatches and
+additive differences in the report. Additive API output still needs an
+old-client compatibility review even when it does not fail the source-contract
+comparison.
 
 For local triage, `CHAPTARRNG_DIFFERENTIAL_SKIP_BUILD=true` may reuse an
 already-built image only when `HEAD` matches the requested commit and all

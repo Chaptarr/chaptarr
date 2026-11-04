@@ -62,6 +62,10 @@ services:
         target: /harness/bookshelfng-api-differential.mjs
         read_only: true
       - type: bind
+        source: ${BOOKSHELFNG_API_CONTRACT_SCRIPT:?Set the read-only contract comparator path}
+        target: /harness/bookshelfng-api-contract.mjs
+        read_only: true
+      - type: bind
         source: ${BOOKSHELFNG_DIFFERENTIAL_EVIDENCE:?Set the differential evidence directory}
         target: /evidence
     networks:

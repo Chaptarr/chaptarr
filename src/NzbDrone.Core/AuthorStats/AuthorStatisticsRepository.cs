@@ -14,6 +14,8 @@ namespace NzbDrone.Core.AuthorStats
         List<BookStatistics> AuthorStatistics(string mediaType);
         List<BookStatistics> AuthorStatistics(int authorId, string mediaType);
         List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType);
+        List<BookStatistics> BookshelfStatistics();
+        List<BookStatistics> BookshelfStatistics(int authorId);
     }
 
     public class AuthorStatisticsRepository : IAuthorStatisticsRepository
@@ -25,6 +27,40 @@ namespace NzbDrone.Core.AuthorStats
             @") AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""Books"".""Id""";
 
         private readonly IMainDatabase _database;
+        private const string _bookshelfSelect = @"
+SELECT
+    ""Authors"".""Id"" AS ""AuthorId"",
+    COALESCE(
+        MIN(CASE WHEN ""Books"".""MediaType"" = 0 THEN ""Books"".""Id"" END),
+        MIN(CASE WHEN ""Books"".""MediaType"" = 1 THEN ""Books"".""Id"" END),
+        MIN(""Books"".""Id"")
+    ) AS ""BookId"",
+    COUNT(""BookFiles"".""Id"") AS ""BookFileCount"",
+    SUM(CASE WHEN {ebookExtension} THEN 1 ELSE 0 END) AS ""EbookFileCount"",
+    SUM(CASE WHEN {audioExtension} THEN 1 ELSE 0 END) AS ""AudiobookFileCount"",
+    COALESCE(SUM(COALESCE(""BookFiles"".""Size"", 0)), 0) AS ""SizeOnDisk"",
+    COALESCE(SUM(CASE WHEN {ebookExtension} THEN COALESCE(""BookFiles"".""Size"", 0) ELSE 0 END), 0) AS ""EbookSizeOnDisk"",
+    COALESCE(SUM(CASE WHEN {audioExtension} THEN COALESCE(""BookFiles"".""Size"", 0) ELSE 0 END), 0) AS ""AudiobookSizeOnDisk"",
+    1 AS ""TotalBookCount"",
+    MAX(CASE WHEN ""BookFiles"".""Id"" IS NULL THEN 0 ELSE 1 END) AS ""AvailableBookCount"",
+    CASE WHEN
+        (MAX(CASE WHEN {monitoredPredicate} THEN 1 ELSE 0 END) = 1 AND
+         (MIN(""Books"".""ReleaseDate"") < @currentDate OR MIN(""Books"".""ReleaseDate"") IS NULL)) OR
+        MIN(""Books"".""ReleaseDate"") IS NULL OR
+        MAX(CASE WHEN ""BookFiles"".""Id"" IS NULL THEN 0 ELSE 1 END) = 1
+        THEN 1 ELSE 0 END AS ""BookCount""
+FROM ""Editions""
+JOIN ""Books"" ON ""Books"".""Id"" = ""Editions"".""BookId""
+JOIN ""Authors"" ON ""Authors"".""Id"" = ""Books"".""AuthorId""
+LEFT JOIN ""BookFiles"" ON ""BookFiles"".""EditionId"" = ""Editions"".""Id""
+LEFT JOIN ""BookshelfLegacyIdentityMap"" AS ""LegacyBook""
+       ON ""LegacyBook"".""Source"" = 'BookshelfNG'
+      AND ""LegacyBook"".""EntityType"" = 'Book'
+      AND ""LegacyBook"".""TargetId"" = ""Books"".""Id""
+WHERE ""Editions"".""Monitored"" = {trueIndicator}
+  {authorFilter}
+GROUP BY ""Authors"".""Id"", COALESCE(""LegacyBook"".""SourceId"", ""Books"".""Id"")
+ORDER BY ""Authors"".""Id"", ""BookId""";
 
         public AuthorStatisticsRepository(IMainDatabase database)
         {
@@ -68,6 +104,16 @@ namespace NzbDrone.Core.AuthorStats
             return Query(builder);
         }
 
+        public List<BookStatistics> BookshelfStatistics()
+        {
+            return QueryBookshelfStatistics(null);
+        }
+
+        public List<BookStatistics> BookshelfStatistics(int authorId)
+        {
+            return QueryBookshelfStatistics(authorId);
+        }
+
         internal static string BuildBaseSql(DatabaseType databaseType)
         {
             return Builder(databaseType).AddTemplate(_selectTemplate).RawSql;
@@ -93,6 +139,21 @@ namespace NzbDrone.Core.AuthorStats
             {
                 return connection.Query<BookStatistics>(sql.RawSql, sql.Parameters).ToList();
             }
+        }
+
+        private List<BookStatistics> QueryBookshelfStatistics(int? authorId)
+        {
+            var trueIndicator = _database.DatabaseType == DatabaseType.PostgreSQL ? "true" : "1";
+            var authorFilter = authorId.HasValue ? "AND \"Authors\".\"Id\" = @authorId" : string.Empty;
+            var sql = _bookshelfSelect
+                .Replace("{ebookExtension}", BookFileStatisticsSql.EbookExtensionCondition, StringComparison.Ordinal)
+                .Replace("{audioExtension}", BookFileStatisticsSql.AudiobookExtensionCondition, StringComparison.Ordinal)
+                .Replace("{monitoredPredicate}", BuildMonitoredPredicate(trueIndicator), StringComparison.Ordinal)
+                .Replace("{trueIndicator}", trueIndicator, StringComparison.Ordinal)
+                .Replace("{authorFilter}", authorFilter, StringComparison.Ordinal);
+
+            using var connection = _database.OpenConnection();
+            return connection.Query<BookStatistics>(sql, new { currentDate = DateTime.UtcNow, authorId }).ToList();
         }
 
         private static SqlBuilder Builder(DatabaseType databaseType, int? authorId = null)
