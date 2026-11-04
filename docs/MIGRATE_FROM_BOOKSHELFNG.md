@@ -1,57 +1,14 @@
 # Move a BookshelfNG installation to ChaptarrNG
 
-> **Current status (2026-11-04 UTC; code head `d3a67c58`):** BookshelfNG
-> `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest public releases; the
-> local `0.9.978` candidate is unpublished. Trusted jobs may use compatible
-> public GitHub-hosted runners again under [`AGENTS.md`](../AGENTS.md); private
-> ephemeral JIT remains available for jobs that need it.
+> **Current status (2026-11-04; application head `6614d55c`):** BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest public releases; the local `0.9.978` candidate remains unpublished. Trusted validation may use compatible public GitHub-hosted runners under [`AGENTS.md`](../AGENTS.md); private ephemeral JIT is also available.
 >
-> Earlier full public Build run
-> [41755889814](https://github.com/snapetech-org/chaptarrng/actions/runs/41755889814)
-> at `29b5f31f` passed PostgreSQL migrations and the standard Docker build, but
-> failed Linux/macOS RTL/localization and Windows translation-catalog checks
-> before those jobs reached their full build and test stages. Draft PR #190
-> remains untouched.
+> Full public Build [41913869433](https://github.com/snapetech-org/chaptarrng/actions/runs/41913869433) passed on application head `b7c542e5`, including Linux, Windows, macOS Intel, PostgreSQL migration smoke, Docker, Windows installer, and Chocolatey handoff. Fedora RPM [41915888461](https://github.com/snapetech-org/chaptarrng/actions/runs/41915888461), standalone macOS Intel [41914844476](https://github.com/snapetech-org/chaptarrng/actions/runs/41914844476), and installed Helm [41914852490](https://github.com/snapetech-org/chaptarrng/actions/runs/41914852490) handoffs passed on the same application code. Public standalone ARM64 handoff [41916855989](https://github.com/snapetech-org/chaptarrng/actions/runs/41916855989) passed on descendant `7e9fbcf2`, whose changes were test/docs only. Exact-head Build [41919631600](https://github.com/snapetech-org/chaptarrng/actions/runs/41919631600) on `7f39b52b` completed with Docker, PostgreSQL, macOS, and Windows passing, including the Windows Chocolatey handoff; Linux alone failed on a stale policy-test label assertion. Commit `5308d7f9` corrected the assertion, and the policy suite passes 21/21 locally. Exact-head public Build [41925573068](https://github.com/snapetech-org/chaptarrng/actions/runs/41925573068) passed on `6614d55c`: Linux, macOS Intel, Windows, PostgreSQL migrations, and Docker succeeded, including the Windows installer upgrade/rollback, selected data-directory, and Chocolatey `.76` handoff checks.
 >
-> Earlier Windows Chocolatey run
-> [41756297204](https://github.com/snapetech-org/chaptarrng/actions/runs/41756297204)
-> passed .NET tests, build, service round trip, and migration health, then
-> exposed rollback backup discovery missing the retained SQLite source. The
-> installer now includes hidden backups and reports the names it examines;
-> exact-head rerun at `8b26fa3e` was superseded by focused public Windows run
-> [41785474409](https://github.com/snapetech-org/chaptarrng/actions/runs/41785474409)
-> on `d12798d1`. It passed the full Windows .NET suite, installer build and
-> SQLite fingerprint, service upgrade/rollback, selected data-directory
-> preservation, and the installed BookshelfNG `.76` to exact-candidate
-> Chocolatey handoff. Manual defer, injected migration-health rollback with
-> source recovery, and automatic migration all passed.
+> Read-only API differential [41914066690](https://github.com/snapetech-org/chaptarrng/actions/runs/41914066690) passed 31/31 cases on the expanded synthetic schema-158 fixture. Read/write run [41916683513](https://github.com/snapetech-org/chaptarrng/actions/runs/41916683513) exposed a `/api/v1/book/editor` response mismatch, fixed in `7f39b52b`; exact-head run [41919639403](https://github.com/snapetech-org/chaptarrng/actions/runs/41919639403) then passed 35/35 cases, including monitoring and mixed-format deletion writes and readbacks. A broader run [41921091303](https://github.com/snapetech-org/chaptarrng/actions/runs/41921091303) added legacy author bulk monitoring and exposed a response mismatch in metadata ID, ebook quality-profile ID, and provider ID. Commit `6614d55c` fixes that projection and adds a regression fixture; the full Core suite passed 4,976, skipped 29, and failed 0. Exact-head API differential [41922942122](https://github.com/snapetech-org/chaptarrng/actions/runs/41922942122) passed 37/37 cases with zero strict mismatches, including all three writes and readbacks. It reported 741 additive target properties and 251 provider-presentation differences. The harness is still a subset of all 236 shared route/method pairs and command behavior.
 >
-> Full public Build run
-> [41789426720](https://github.com/snapetech-org/chaptarrng/actions/runs/41789426720)
-> at `d12798d1` passed Linux and macOS build/test/artifact jobs, PostgreSQL
-> migration smoke, and the standard Docker build. Windows found that the
-> locale test hashed a JSON registry after CRLF checkout conversion. Commit
-> `d3a67c58` normalizes text line endings before hashing and adds an LF/CRLF
-> regression test. Full public rerun
-> [41792679639](https://github.com/snapetech-org/chaptarrng/actions/runs/41792679639)
-> passed on `d3a67c58`: Linux, Windows, macOS, PostgreSQL migration smoke, and
-> the standard Docker build all succeeded. The Windows job passed the installer
-> fingerprint, service upgrade/rollback, selected-data-directory check, and
-> installed Chocolatey `.76` automatic handoff.
+> A local Release Console rehearsal on application head `8d902d26` passed preview, apply, migration check, restore preview, and explicit rollback on an expanded synthetic schema-158 fixture. Preview preserved the source; apply produced schema 125 with clean integrity and foreign-key checks; rollback restored the source backup byte-for-byte and retained the ChaptarrNG target. Details and the API regression evidence are in the [fixture evidence](maintainers/BOOKSHELFNG_MIGRATION_FIXTURE_EVIDENCE.md).
 >
-> Installed macOS acceptance
-> [41761249985](https://github.com/snapetech-org/chaptarrng/actions/runs/41761249985)
-> passed on Intel and ARM64 at `8b26fa3e`: No, headless Manual, Yes, health,
-> source backup, and failed-start rollback. Helm installed acceptance
-> [41756992768](https://github.com/snapetech-org/chaptarrng/actions/runs/41756992768)
-> passed populated migration, provider-ID/narrator checks, health, database
-> integrity, source backup, chart rollback, and BookshelfNG recovery with
-> matching database/config/canary fingerprints.
->
-> Keep BookshelfNG running and backed up. Representative operator data, live
-> provider/media behavior, remaining installed-channel recovery, external
-> delivery, and operator acceptance remain open. These CI and synthetic-fixture
-> results do not authorize publication or production cutover.
+> This is not 100% parity or cutover acceptance. Keep BookshelfNG running and backed up. Representative operator-data acceptance, live provider and media fulfillment, SeerrNG fulfillment, exhaustive unchanged-client routes/mutations/commands, remaining installed-channel and external-feed acceptance, and final operator acceptance remain open. No release, migration bridge, or production cutover is authorized by these candidate tests.
 
 > **Historical source-path audit snapshot (2026-10-31):** The ledger compares
 > BookshelfNG `1bd7f2dc` to ChaptarrNG

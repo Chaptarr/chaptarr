@@ -1,5 +1,80 @@
 # BookshelfNG migration fixture evidence
 
+## Expanded schema-158 migration rehearsal (2026-11-04)
+
+The source-built Release Console from application commit `8d902d26` passed a
+full preview/apply/check/restore-preview/rollback round trip against the
+expanded synthetic BookshelfNG schema-158 fixture. Later commits `b7c542e5`
+and `7e9fbcf2` changed tests/docs only; fix commits `7f39b52b` and
+`6614d55c` add BookshelfNG book- and author-editor response projections below.
+Preview left the
+source database hash unchanged. Apply retained a valid source backup and
+produced schema 125 with SQLite integrity `ok` and zero foreign-key violations.
+
+The converted target contained four authors, nine books representing six
+source works, nine editions, four files, four history rows, three
+download-history rows, two blocklist rows, two series, four series-book links,
+and 34 legacy-identity mappings. Provider settings were preserved. Synthetic
+MyAnonamouse seed
+criteria, seed time, discography, blocklist behavior, and ordered DirectDownload
+URL settings were also verified in the target.
+
+Migration check and restore preview passed; restore preview left both the
+converted target and retained source backup unchanged. Explicit rollback
+restored the source database byte-for-byte to its retained backup and kept the
+converted ChaptarrNG database separately. The restored source remained schema
+158 with clean integrity and foreign-key checks.
+
+The source Release build completed with zero warnings and errors. The full Core
+suite passed 4,976 tests, skipped 29, and had no failures; focused book- and
+author-response projection tests each passed 1/1. This is synthetic SQLite evidence. It
+does not establish representative operator-data acceptance, PostgreSQL
+operator-data conversion, live provider fulfillment, real-media recovery, full
+API mutation parity, installed-channel acceptance, external delivery, or
+production cutover.
+
+## BookshelfNG API write-response regression (2026-11-04)
+
+The public read/write differential on test/docs commit `7e9fbcf2` passed
+34/35 cases and exposed a real BookshelfNG compatibility gap in
+`PUT /api/v1/book/editor`: the monitoring change persisted, but the ChaptarrNG
+response projected prefixed Hardcover IDs and omitted `grabbed=false`.
+Commit `7f39b52b` now uses facade-aware book-resource mapping for the mutation
+response and applies the legacy identity projection. A focused regression
+fixture verifies the source book ID, bare provider IDs, and false grabbed
+state.
+
+The focused test passed 1/1 and the full Core suite passed 4,975 tests with 29
+skipped and no failures. Exact-head public API differential
+[`41919639403`](https://github.com/snapetech-org/chaptarrng/actions/runs/41919639403)
+passed 35/35 cases, including both writes and readbacks. It reported 707
+additive target properties and 251 provider-presentation differences; these
+were not strict legacy-contract mismatches. The full Build
+[`41919631600`](https://github.com/snapetech-org/chaptarrng/actions/runs/41919631600)
+on `7f39b52b` completed with Docker, PostgreSQL, macOS, and Windows passing,
+including the Chocolatey handoff; Linux failed on a stale workflow-policy test
+label. Test-only commit `5308d7f9` corrected the assertion, and the local policy
+suite passes 21/21. Exact-head public Build
+[`41925573068`](https://github.com/snapetech-org/chaptarrng/actions/runs/41925573068)
+passed on `6614d55c` across Linux, macOS Intel, Windows, PostgreSQL migrations,
+and Docker, including Windows installer upgrade/rollback, selected data
+directory, and Chocolatey `.76` handoff checks. The differential does not establish
+all 236 shared API method/path contracts, command behavior, provider
+fulfillment, or unchanged-client end-to-end parity.
+
+The next public differential, [`41921091303`](https://github.com/snapetech-org/chaptarrng/actions/runs/41921091303),
+added legacy author bulk monitoring and passed 36/37 cases. It exposed a
+second response-projection gap: `authorMetadataId`, `ebookQualityProfileId`,
+and `foreignAuthorId` used target values instead of BookshelfNG values. Commit
+`6614d55c` now applies facade-aware author mapping and restores the legacy
+metadata ID from `BookshelfLegacyIdentityMap`; a focused controller regression
+passes and the full Core suite passes 4,976 with 29 skipped. Exact-head API run
+[`41922942122`](https://github.com/snapetech-org/chaptarrng/actions/runs/41922942122)
+passed 37/37 cases with zero strict mismatches, including all three writes and
+their readbacks. The report recorded 741 additive target properties and 251
+provider-presentation differences. The complete route/command contract
+remains outstanding.
+
 ## Operator-data SQLite conversion and rollback (2026-10-25)
 
 ChaptarrNG `3bfb4b15` passed a Release solution build with zero warnings and
