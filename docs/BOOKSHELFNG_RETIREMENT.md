@@ -2,9 +2,11 @@
 
 ## Current status — 2026-11-04 UTC
 
-At code head `d3a67c58`, BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977`
-remain the latest public releases; the local `0.9.978` candidate is
-unpublished. Public GitHub-hosted runners are authorized again for trusted
+At application-code head `d3a67c58` (repository head `4643daf2` contains only
+runner policy, acceptance-workflow, test, and documentation changes),
+BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest public
+releases; the local `0.9.978` candidate is unpublished. Public GitHub-hosted
+runners are authorized again for trusted
 build and validation jobs; private ephemeral JIT remains available. See
 [`AGENTS.md`](../AGENTS.md) for the current runner policy.
 
@@ -67,7 +69,11 @@ Manual, Yes, health, source backup, and failed-start rollback. The ARM64 job
 was canceled twice after 15 minutes queued without a runner assignment, with no
 test steps started. The workflow now accepts an architecture selector so the
 next validation can target ARM64 without rebuilding the passing Intel archive.
-These are hosted-runner capacity results, not product-test failures.
+ARM64-only run
+[#41851491849](https://github.com/snapetech-org/chaptarrng/actions/runs/41851491849)
+at `4643daf2` expanded exactly one job on the explicit private Apple route but
+remains queued without a runner; no test step has started. These are runner
+capacity results, not product-test failures.
 
 Keep BookshelfNG operational. Representative SQLite/PostgreSQL operator-data
 migration and rollback, real media, live provider fulfillment, every installed
