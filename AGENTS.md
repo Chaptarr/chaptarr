@@ -16,6 +16,13 @@ and cutover behind their existing fail-closed acceptance gates. Treat exact-head
 validation, installed acceptance, operator data, and production readiness as
 separate evidence.
 
+## CodeQL — owner directive, 2026-10-30
+
+CodeQL is disabled across snapetech-org repositories. Do not add, enable,
+invoke, restore, or reroute CodeQL workflows unless the owner explicitly
+reverses this directive. Other build, test, scan, packaging, and release work
+follows the runner policy above.
+
 # ChaptarrNG build notes
 
 ## Six Labors license — check these paths first
