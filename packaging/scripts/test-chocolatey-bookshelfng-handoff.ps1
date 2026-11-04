@@ -96,6 +96,12 @@ function Get-NssmSetting {
   return $value
 }
 
+function Format-RedactedServiceSetting {
+  param([AllowNull()][string] $Value)
+  if ($null -eq $Value) { return '<null>' }
+  return [regex]::Replace($Value, '(?i)(?<name>api(?:[-_]?key)|password|token|secret)(?<separator>\s*[:=]\s*|\s+)(?<value>"[^"]*"|''[^'']*''|\S+)', '${name}${separator}<redacted>')
+}
+
 function Wait-BookshelfService {
   param([int] $TimeoutSeconds = 90)
   $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -343,10 +349,22 @@ try {
     $rollbackOutputTail = @($rollbackResult.Output | Select-Object -Last 40) -join "`n"
     throw "The injected migration failure did not restore and restart the original BookshelfNG service. Actual state=$actualState, start name=$actualStartName, start mode=$actualStartMode; expected start name=$serviceStartNameBeforeManual and start mode=$serviceStartModeBeforeManual. Wait error=$serviceRecoveryWaitFailure. Chocolatey output tail:`n$rollbackOutputTail"
   }
-  if ((Get-NssmSetting 'Application') -ne $applicationBeforeManual -or
-      (Get-NssmSetting 'AppParameters') -ne $parametersBeforeManual -or
-      (Get-NssmSetting 'AppDirectory') -ne $directoryBeforeManual) {
-    throw 'The injected migration failure did not restore the original BookshelfNG service paths and parameters.'
+  $applicationAfterRollback = Get-NssmSetting 'Application'
+  $parametersAfterRollback = Get-NssmSetting 'AppParameters'
+  $directoryAfterRollback = Get-NssmSetting 'AppDirectory'
+  $serviceSettingsChanged = @(
+    ($applicationAfterRollback -ne $applicationBeforeManual),
+    ($parametersAfterRollback -ne $parametersBeforeManual),
+    ($directoryAfterRollback -ne $directoryBeforeManual)
+  ) -contains $true
+  if ($serviceSettingsChanged) {
+    $expectedApplication = Format-RedactedServiceSetting $applicationBeforeManual
+    $actualApplication = Format-RedactedServiceSetting $applicationAfterRollback
+    $expectedParameters = Format-RedactedServiceSetting $parametersBeforeManual
+    $actualParameters = Format-RedactedServiceSetting $parametersAfterRollback
+    $expectedDirectory = Format-RedactedServiceSetting $directoryBeforeManual
+    $actualDirectory = Format-RedactedServiceSetting $directoryAfterRollback
+    throw "The injected migration failure did not restore the original BookshelfNG service paths and parameters. Expected Application=[$expectedApplication], AppParameters=[$expectedParameters], AppDirectory=[$expectedDirectory]; actual Application=[$actualApplication], AppParameters=[$actualParameters], AppDirectory=[$actualDirectory]."
   }
   if ((Get-FileHash -LiteralPath $applicationBeforeManual -Algorithm SHA256).Hash -ne $applicationHashBeforeManual) {
     throw 'The injected migration failure changed the original BookshelfNG executable.'
