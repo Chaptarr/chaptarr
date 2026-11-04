@@ -36,12 +36,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       inputs.action == 'ci' &&
-      (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
-      (
-        inputs.architecture == 'all' ||
-        (inputs.architecture == 'x64' && matrix.architecture == 'X64') ||
-        (inputs.architecture == 'arm64' && matrix.architecture == 'ARM64')
-      )
+      (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
     runs-on: >-
       ${{ inputs.runner_pool == 'public' &&
           (matrix.architecture == 'X64' && 'macos-15-intel' || 'macos-15') ||
@@ -51,6 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        architecture: ${{ fromJSON(inputs.architecture == 'all' && '["X64","ARM64"]' || inputs.architecture == 'x64' && '["X64"]' || '["ARM64"]') }}
         include:
         - rid: osx-x64
           architecture: X64
