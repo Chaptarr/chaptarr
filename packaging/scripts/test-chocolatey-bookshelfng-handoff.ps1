@@ -388,10 +388,22 @@ try {
 
   $env:CHAPTARRNG_TEST_ARCHIVE_PATH = $ArchivePath
   $env:CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS = '600'
+  $previousMachineArchivePath = [Environment]::GetEnvironmentVariable('CHAPTARRNG_TEST_ARCHIVE_PATH', 'Machine')
+  $previousMachineHandoffFailure = [Environment]::GetEnvironmentVariable('CHAPTARRNG_TEST_FAIL_HANDOFF', 'Machine')
+  $previousMachineHandoffTimeout = [Environment]::GetEnvironmentVariable('CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS', 'Machine')
   try {
+    # Chocolatey may elevate its package script, and service recovery runs as
+    # LocalSystem; expose the local archive and timeout while disabling failure injection.
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_ARCHIVE_PATH', $ArchivePath, 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_FAIL_HANDOFF', $null, 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS', '600', 'Machine')
     $automaticResult = Invoke-Chocolatey @('upgrade', 'bookshelfng', '--version', $Version, '--source', $candidateSource, '--yes', '--no-progress', '--force', '--params', "'/ProviderMode=Goodreads'")
   } finally {
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_ARCHIVE_PATH', $previousMachineArchivePath, 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARRNG_TEST_FAIL_HANDOFF', $previousMachineHandoffFailure, 'Machine')
+    [Environment]::SetEnvironmentVariable('CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS', $previousMachineHandoffTimeout, 'Machine')
     Remove-Item Env:\CHAPTARRNG_TEST_ARCHIVE_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:\CHAPTARRNG_TEST_FAIL_HANDOFF -ErrorAction SilentlyContinue
     Remove-Item Env:\CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS -ErrorAction SilentlyContinue
   }
   if ($automaticResult.ExitCode -ne 0) { throw "The automatic Chocolatey bridge update failed: $($automaticResult.Output -join "`n")" }

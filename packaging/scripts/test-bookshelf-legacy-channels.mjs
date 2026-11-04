@@ -444,7 +444,7 @@ test('Chocolatey migration fingerprints do not depend on Get-FileHash module aut
   }
 });
 
-test('Chocolatey installed handoff passes private rollback inputs to nested scripts and restores machine state', () => {
+test('Chocolatey installed handoff passes local archive inputs to nested scripts and restores machine state', () => {
   const installedHandoff = read('packaging/scripts/test-chocolatey-bookshelfng-handoff.ps1');
   for (const name of [
     'CHAPTARRNG_TEST_ARCHIVE_PATH',
@@ -454,6 +454,23 @@ test('Chocolatey installed handoff passes private rollback inputs to nested scri
     assert.match(installedHandoff, new RegExp(`GetEnvironmentVariable\\('${name}', 'Machine'\\)`));
     assert.match(installedHandoff, new RegExp(`SetEnvironmentVariable\\('${name}',[\\s\\S]*?'Machine'\\)`));
   }
+
+  const automaticRunStart = installedHandoff.indexOf('$automaticResult = Invoke-Chocolatey');
+  const automaticSetupStart = installedHandoff.lastIndexOf('  $env:CHAPTARRNG_TEST_ARCHIVE_PATH = $ArchivePath', automaticRunStart);
+  const automaticRunEnd = installedHandoff.indexOf('if ($automaticResult.ExitCode', automaticRunStart);
+  assert.ok(automaticSetupStart >= 0 && automaticRunEnd > automaticRunStart,
+    'Chocolatey automatic update fixture could not be isolated');
+  const automaticRun = installedHandoff.slice(automaticSetupStart, automaticRunEnd);
+  for (const name of [
+    'CHAPTARRNG_TEST_ARCHIVE_PATH',
+    'CHAPTARRNG_TEST_FAIL_HANDOFF',
+    'CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS',
+  ]) {
+    assert.match(automaticRun, new RegExp(`GetEnvironmentVariable\\('${name}', 'Machine'\\)`));
+    assert.match(automaticRun, new RegExp(`SetEnvironmentVariable\\('${name}',[\\s\\S]*?'Machine'\\)`));
+  }
+  assert.match(automaticRun, /SetEnvironmentVariable\('CHAPTARRNG_TEST_FAIL_HANDOFF', \$null, 'Machine'\)/,
+    'automatic migration must expose the candidate archive while keeping failure injection disabled');
 });
 
 test('focused Windows Chocolatey failures retain installed-handoff diagnostics', () => {
