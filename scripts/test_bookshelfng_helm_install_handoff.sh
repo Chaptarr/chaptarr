@@ -185,6 +185,10 @@ upgrade_candidate() {
 }
 
 assert_migrated_fixture() {
+    log "Checking converted edition provider identity and narrator values:"
+    pod_exec sqlite3 -readonly -header -column /config/readarr.db \
+        'SELECT Id, BookId, ForeignEditionId, HardcoverEditionId, OpenLibraryEditionId, Narrator, NarratorNames FROM Editions WHERE Id IN (40,41) ORDER BY Id;' \
+        | tee "$EVIDENCE_DIR/migrated-editions.txt"
     require_sql_count 'audiobook book identity, monitoring, and selected edition' 1 \
         "SELECT COUNT(*) FROM Books WHERE Id=30 AND MediaType=0 AND AudiobookMonitored=1 AND ForeignEditionId='hc:audio-40';"
     require_sql_count 'ebook book identity and unselected edition state' 1 \
