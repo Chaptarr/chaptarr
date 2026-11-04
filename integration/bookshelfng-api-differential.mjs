@@ -253,7 +253,7 @@ const report = {
     collectionIdentity: "matched by id when available; source collection order preserved",
     providerFields: "matched by name; select options matched by value",
     providerPresentation: "labels, hints, help, links, control type, and display order are reported separately; persisted field values and option values remain strict",
-    directDownloadUrls: "newline-delimited target URLs are compared with the legacy ordered tag array",
+    directDownloadUrls: "ordered legacy tag arrays remain strict; the target compatibility API must project the same array shape",
     secretFields: "compared as empty or present, never recorded",
   },
   debugValues: includeDebugValues,

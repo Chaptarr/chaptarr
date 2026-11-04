@@ -100,7 +100,8 @@ namespace Chaptarr.Api.V1
                 return resource;
             }
 
-            var urls = resource.Fields?.FirstOrDefault(field => field.Name == nameof(DirectDownloadSettings.Urls));
+            var urls = resource.Fields?.FirstOrDefault(field =>
+                string.Equals(field.Name, nameof(DirectDownloadSettings.Urls), StringComparison.OrdinalIgnoreCase));
             if (urls == null)
             {
                 return resource;

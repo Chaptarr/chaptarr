@@ -83,7 +83,7 @@ const sourceDirectDownload = [{
   configContract: "DirectDownloadSettings",
   infoLink: "https://wiki.servarr.com/readarr/supported#directdownloadindexer",
   fields: [{
-    name: "Urls",
+    name: "urls",
     type: "tag",
     order: 0,
     label: "URLs",
@@ -96,12 +96,12 @@ const targetDirectDownload = [{
   configContract: "DirectDownloadSettings",
   infoLink: "https://discord.gg/nqFGsGUug2",
   fields: [{
-    name: "Urls",
+    name: "urls",
     type: "textArea",
     order: 0,
     label: "URLs",
     helpText: "One URL per line.",
-    value: "https://primary.example\nhttps://secondary.example",
+    value: ["https://primary.example", "https://secondary.example"],
   }],
 }];
 assert.deepEqual(
@@ -118,11 +118,24 @@ assert.deepEqual(
       ...provider,
       fields: provider.fields.map((field) => ({
         ...field,
-        value: "https://primary.example\nhttps://changed.example",
+        value: "https://primary.example\nhttps://secondary.example",
+      })),
+    }))),
+  ).mismatchPaths,
+  ["/0/fields/0/value"],
+);
+assert.deepEqual(
+  compareResponses(
+    normalizeProviderApiResponse(sourceDirectDownload),
+    normalizeProviderApiResponse(targetDirectDownload.map((provider) => ({
+      ...provider,
+      fields: provider.fields.map((field) => ({
+        ...field,
+        value: ["https://primary.example", "https://changed.example"],
       })),
     }))),
   ).mismatchPaths,
   ["/0/fields/0/value/1"],
 );
 
-console.log("BookshelfNG API contract comparator: 10 checks passed");
+console.log("BookshelfNG API contract comparator: 11 checks passed");

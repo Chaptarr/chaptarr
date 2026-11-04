@@ -89,16 +89,6 @@ export function normalizeProviderApiResponse(value) {
                 ),
               );
             });
-          } else if (
-            fieldKey === "value" &&
-            field.name === "Urls" &&
-            value.configContract === "DirectDownloadSettings" &&
-            typeof fieldValue === "string"
-          ) {
-            normalizedField[fieldKey] = fieldValue
-              .split(/\r?\n/)
-              .map((url) => url.trim())
-              .filter(Boolean);
           } else {
             normalizedField[fieldKey] = fieldValue;
           }

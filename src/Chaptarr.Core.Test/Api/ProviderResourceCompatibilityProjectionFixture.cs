@@ -21,7 +21,8 @@ namespace Chaptarr.Core.Test.Api
                 {
                     new()
                     {
-                        Name = nameof(DirectDownloadSettings.Urls),
+                        // SchemaBuilder camel-cases field names, so the runtime API uses "urls".
+                        Name = "urls",
                         Type = "textArea",
                         Value = "https://primary.example\nhttps://secondary.example"
                     }
