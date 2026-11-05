@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Chaptarr.Api.V1.Indexers;
 using Chaptarr.Http.ClientSchema;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Indexers.DirectDownload;
@@ -92,6 +93,39 @@ namespace Chaptarr.Api.V1
 
     internal static class ProviderResourceCompatibilityProjection
     {
+        public static TProviderResource ProjectBookshelfLegacyTemplateDefaults<TProviderResource>(TProviderResource resource)
+            where TProviderResource : ProviderResource<TProviderResource>
+        {
+            if (resource is not IndexerResource indexer || resource.Id != 0 ||
+                resource.ConfigContract != "MyAnonaMouseSettings")
+            {
+                return resource;
+            }
+
+            indexer.Enable = false;
+            indexer.EnableRss = false;
+            indexer.EnableAutomaticSearch = false;
+            indexer.EnableInteractiveSearch = false;
+            var defaults = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["baseUrl"] = "https://www.myanonamouse.net/",
+                ["mamId"] = string.Empty,
+                ["searchType"] = 0,
+                ["searchInDescription"] = false,
+                ["searchInSeries"] = false,
+                ["searchInFilenames"] = false
+            };
+            foreach (var field in resource.Fields ?? new List<Field>())
+            {
+                if (defaults.TryGetValue(field.Name, out var value))
+                {
+                    field.Value = value;
+                }
+            }
+
+            return resource;
+        }
+
         public static TProviderResource ProjectBookshelfLegacyProviderIdentity<TProviderResource>(TProviderResource resource)
             where TProviderResource : ProviderResource<TProviderResource>
         {

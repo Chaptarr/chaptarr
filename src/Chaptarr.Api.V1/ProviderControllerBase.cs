@@ -233,6 +233,15 @@ namespace Chaptarr.Api.V1
                     .Select(ToResource)
                     .ToList();
 
+                if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+                {
+                    ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(providerResource);
+                    foreach (var preset in providerResource.Presets)
+                    {
+                        ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(preset);
+                    }
+                }
+
                 result.Add(providerResource);
             }
 

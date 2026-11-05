@@ -13,6 +13,44 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class ProviderResourceCompatibilityProjectionFixture
     {
+        [TestCase(0, false, 0, false)]
+        [TestCase(120, true, 2, true)]
+        public void should_preserve_bookshelf_mam_template_defaults_without_overwriting_saved_settings(
+            int id, bool expectedEnabled, int expectedSearchType, bool expectedSeriesSearch)
+        {
+            var resource = new IndexerResource
+            {
+                Id = id,
+                ConfigContract = "MyAnonaMouseSettings",
+                Enable = true,
+                EnableRss = true,
+                EnableAutomaticSearch = true,
+                EnableInteractiveSearch = true,
+                Fields = new List<Field>
+                {
+                    new() { Name = "searchType", Value = 2 },
+                    new() { Name = "searchInSeries", Value = true },
+                    new() { Name = "mamId", Value = id == 0 ? null : "saved-session" },
+                    new() { Name = "baseUrl", Value = "https://www.myanonamouse.net" }
+                }
+            };
+
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Enable, Is.EqualTo(expectedEnabled));
+                Assert.That(resource.EnableRss, Is.EqualTo(expectedEnabled));
+                Assert.That(resource.EnableAutomaticSearch, Is.EqualTo(expectedEnabled));
+                Assert.That(resource.EnableInteractiveSearch, Is.EqualTo(expectedEnabled));
+                Assert.That(resource.Fields.Single(f => f.Name == "searchType").Value, Is.EqualTo(expectedSearchType));
+                Assert.That(resource.Fields.Single(f => f.Name == "searchInSeries").Value, Is.EqualTo(expectedSeriesSearch));
+                Assert.That(resource.Fields.Single(f => f.Name == "mamId").Value, Is.EqualTo(id == 0 ? string.Empty : "saved-session"));
+                Assert.That(resource.Fields.Single(f => f.Name == "baseUrl").Value,
+                    Is.EqualTo(id == 0 ? "https://www.myanonamouse.net/" : "https://www.myanonamouse.net"));
+            });
+        }
+
         [Test]
         public void should_project_direct_download_urls_to_the_bookshelf_tag_field_shape()
         {
