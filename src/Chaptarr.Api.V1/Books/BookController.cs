@@ -168,7 +168,8 @@ namespace Chaptarr.Api.V1.Books
                 return false;
             })
 		                         .WithMessage("At least one quality profile must be selected");
-	            PostValidator.RuleFor(s => s.Author.MetadataProfileId).SetValidator(metadataProfileExistsValidator);
+	            PostValidator.RuleFor(s => s.Author.MetadataProfileId).SetValidator(metadataProfileExistsValidator)
+                             .When(s => s.Author != null);
 	            PostValidator.RuleFor(s => s.Author.AudiobookQualityProfileId)
 	                         .SetValidator(qualityProfileExistsValidator)
 	                         .When(s => s.Author?.AudiobookQualityProfileId.HasValue == true && s.Author.AudiobookQualityProfileId.Value > 0);
@@ -182,9 +183,9 @@ namespace Chaptarr.Api.V1.Books
 	                         .SetValidator(metadataProfileExistsValidator)
 	                         .When(s => s.Author?.EbookMetadataProfileId.HasValue == true && s.Author.EbookMetadataProfileId.Value > 0);
             PostValidator.RuleFor(s => s.Author.AudiobookRootFolderPath).IsValidPath()
-		                         .When(s => s.Author.Path.IsNullOrWhiteSpace() && !s.Author.AudiobookRootFolderPath.IsNullOrWhiteSpace());
+		                         .When(s => s.Author != null && s.Author.Path.IsNullOrWhiteSpace() && !s.Author.AudiobookRootFolderPath.IsNullOrWhiteSpace());
             PostValidator.RuleFor(s => s.Author.EbookRootFolderPath).IsValidPath()
-	                         .When(s => s.Author.Path.IsNullOrWhiteSpace() && !s.Author.EbookRootFolderPath.IsNullOrWhiteSpace());
+	                         .When(s => s.Author != null && s.Author.Path.IsNullOrWhiteSpace() && !s.Author.EbookRootFolderPath.IsNullOrWhiteSpace());
             PostValidator.RuleFor(s => s.Author.RootFolderPath).IsValidPath()
                              .When(s => s.Author != null && s.Author.Path.IsNullOrWhiteSpace() && !s.Author.RootFolderPath.IsNullOrWhiteSpace());
 	        }

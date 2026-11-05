@@ -89,6 +89,20 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
+        public void should_reject_a_missing_author_without_throwing_from_nested_rules()
+        {
+            var controller = new TestableBookController(
+                new StubAuthorService(getAuthor: null, findByProviderId: (_, _) => null),
+                new MetadataProfileExistsValidator(new TestMetadataProfileService()),
+                LogManager.GetCurrentClassLogger());
+
+            var result = controller.ValidatePost(new BookResource { Title = "Missing author fixture" });
+
+            Assert.That(result.IsValid, Is.False);
+            Assert.That(result.Errors, Has.Some.Matches<ValidationFailure>(failure => failure.PropertyName == "Author"));
+        }
+
+        [Test]
         public void should_allow_existing_author_without_quality_profiles()
         {
             var controller = new TestableBookController(
