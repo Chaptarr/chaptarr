@@ -193,4 +193,18 @@ assert.deepEqual(
   ["/0/fields/0/value/1"],
 );
 
-console.log("BookshelfNG API contract comparator: 15 checks passed");
+const customFormatSource = [{ implementation: "IndexerFlagSpecification", fields: [{
+  name: "value", value: 4, helpText: "Legacy help", selectOptions: [{ value: 4, name: "DoubleUpload", order: 4 }],
+}] }];
+const customFormatTarget = structuredClone(customFormatSource);
+customFormatTarget[0].fields[0].helpText = "Localized help";
+customFormatTarget[0].fields[0].selectOptions[0].name = "Double Upload";
+customFormatTarget[0].fields[0].selectOptions[0].order = 114;
+const customComparison = () => compareResponses(normalizeProviderApiResponse(customFormatSource), normalizeProviderApiResponse(customFormatTarget));
+assert.deepEqual(customComparison().mismatchPaths, []);
+customFormatTarget[0].fields[0].value = 8;
+assert.deepEqual(customComparison().mismatchPaths, ["/0/fields/0/value"]);
+customFormatTarget[0].fields[0].value = 4;
+customFormatTarget[0].fields[0].selectOptions[0].value = 8;
+assert.ok(customComparison().mismatchPaths.length > 0);
+console.log("BookshelfNG API contract comparator: 18 checks passed");

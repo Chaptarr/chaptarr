@@ -351,7 +351,7 @@ const cases = [
   ["calendar.list", "/calendar"],
   ["custom-filters.list", "/customfilter"],
   ["custom-formats.list", "/customformat"],
-  ["custom-formats.schema", "/customformat/schema"],
+  ["custom-formats.schema", "/customformat/schema", true],
   ["delay-profiles.list", "/delayprofile"],
   ["development-config.list", "/config/development"],
   ["download-clients.schema", "/downloadclient/schema", true],
