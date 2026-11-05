@@ -12727,7 +12727,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/MetadataSource/Hardcover/HardcoverMetadataProxy.cs",
-          "line": 1515,
+          "line": 1521,
           "sourceLine": "throw new BadRequestException($\"Invalid Hardcover {type} id: {value}\");",
           "sourceLineSha256": "c4f9ceeef971ea6d5bcd53fbf6280877db621683230c305f056b70fa3110b7c8",
           "category": "api-error",

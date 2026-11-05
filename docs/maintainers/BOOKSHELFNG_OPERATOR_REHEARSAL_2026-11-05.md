@@ -378,13 +378,28 @@ fuzzy fallback and identification, then avoids applying the native title filter
 to that result. A legacy response projection preserves the source field set,
 empty torrent info-hash representation and optional grab request identities.
 
-A local diagnostic derivative with the rebuilt Core/API assemblies repeats both
-library searches: two source and two target releases, **zero differences** after
-excluding only the time-derived age fields. This is provisional local evidence;
-rebuilt canonical artifacts and full CI must validate the committed repair.
-The first full Core pass reports 5,206 passed, 29 skipped and no failures. The
-subsequent original-hash refinement passes 238 affected tests; final committed
-cross-platform CI remains pending.
+The final local diagnostic derivative repeats both library searches: two source
+and two target releases, **zero differences** after excluding only time-derived
+age fields. Commit `e816db99` contains the repair. Full cross-platform Build
+[42102844753](https://github.com/snapetech-org/chaptarrng/actions/runs/42102844753)
+passes at `340c9718`, which changes only localization callsite line references.
+Strict HTTP differential run
+[42101205257](https://github.com/snapetech-org/chaptarrng/actions/runs/42101205257)
+reports 94 cases: 89 pass, zero fail, four documented policy differences and one
+inconclusive source error. Canonical real-response replay remains separate from
+the local rebuilt-assembly comparison.
+
+All ten canonical archives from producer
+[42101210462](https://github.com/snapetech-org/chaptarrng/actions/runs/42101210462)
+have verified retained checksums. Its five native Linux installed migration and
+forced rollback suites pass. Windows x64/x86 and macOS x64/ARM64 retained-payload
+consumer [42103515268](https://github.com/snapetech-org/chaptarrng/actions/runs/42103515268)
+passes; the exact FreeBSD archive passes the same installed suite on the retained
+FreeBSD 15.1 VM. Both complete Seerr ebook and audiobook workflows pass against
+the untouched canonical musl x64 payload with the identified, unpublished client
+repair, including approval, acquisition, import, scan, restart, profile identity,
+one persisted media row and no orphan identifiers. These passes do not close
+headed GUI, external feeds, live download-client fulfillment or production gates.
 
 Replay prerequisites are explicit: download clients, import lists, RSS and
 notifications are disabled; queued commands and saved provider retry cooldowns
@@ -395,3 +410,43 @@ searches. All four clones' original database files are restored with matching
 hashes afterward. Raw responses, API keys, query/book metadata, source copies,
 patch/assembly hashes and restoration receipts remain private under
 `/var/tmp/chaptarrng-operator-data-20261105/live-provider-readonly-20261105/`.
+
+
+## Ongoing native Hardcover refresh regression
+
+A bounded, read-only GraphQL query succeeds with the preserved source token;
+adding the application's reading-format field also returns zero GraphQL errors.
+The saved V5 fallback URL instead returns a non-JSON HTTP 200 response. Lookup
+routes native Hardcover IDs directly, but that alone did not prove refresh:
+canonical `e816db99` single-author refresh reports command completion while
+`RefreshAuthorInfo` contacts V5 and records an error without updating metadata.
+The exact source `.76` refresh contacts GraphQL and updates the existing work.
+
+The repair routes native refresh and bulk scheduling through the native provider,
+creates independent audio/ebook snapshots, carries the provider reading-format
+ID into edition retention, and preserves predecessor metadata presentation and
+undeclared-format handling in migrated libraries. The final local derivative
+passes both full real-data library replays: each source and target contacts the
+captured GraphQL endpoint once, updates the existing work's genres and preserves
+its ID. Every compared source author/book field matches after excluding only
+`author/lastBook/lastInfoSync`, which records separate refresh times. No author,
+book or provider refresh errors remain. Each bounded author snapshot contains
+one work; this is ongoing refresh evidence, not an exhaustive upstream-catalog
+refresh or a new live acquisition pass. All raw bodies remain private.
+
+The full Core suite passes 5,222 tests with 29 skips and no failures; the final
+affected provider/lookup/refresh/bulk suite passes 121 tests. Localization tests
+pass, and source-catalog validation passes in its existing `--allow-pending`
+mode; the repository's pending translations remain pending. Canonical rebuild
+and installed validation for the new application code remain separate follow-up
+checks. Do not count the earlier completed commands as successful refresh
+acceptance. The Desktop Pool reservation still times out without acquiring a
+lease; no headed GUI pass is claimed.
+
+Both source download-client connections currently return HTTP 502 before
+successful authentication, including read-only requests from the actual source
+containers. No live download was attempted. Each library's current source
+settings match its own retained snapshot; an earlier comparison that deduplicated
+the connection and compared the audiobook settings to the primary settings was
+invalid and superseded. The HTTP 410 indexer and HTTP 502 client failures remain
+pre-existing source availability issues, not migration acceptance passes.

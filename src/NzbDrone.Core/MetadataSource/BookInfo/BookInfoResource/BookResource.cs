@@ -12,6 +12,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         public string Title { get; set; }
         public string Language { get; set; }
         public string Format { get; set; }
+        public int ReadingFormatId { get; set; }
         public string EditionInformation { get; set; }
         public string Publisher { get; set; }
         public string ImageUrl { get; set; }

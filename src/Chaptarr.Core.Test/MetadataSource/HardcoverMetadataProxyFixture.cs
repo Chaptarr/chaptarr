@@ -322,9 +322,11 @@ namespace NzbDrone.Core.Test.MetadataSource.Hardcover
 
             result.Works.Should().ContainSingle();
             result.Works[0].ForeignId.Should().Be(101);
+            result.Works[0].Books[0].ReadingFormatId.Should().Be(1);
             result.Works[0].Authors.Should().HaveCount(2);
             requests.Should().ContainSingle();
             var authorPayload = JObject.Parse(Encoding.UTF8.GetString(requests[0].ContentData));
+            authorPayload["query"].Value<string>().Should().Contain("reading_format_id");
             authorPayload["variables"]["limit"].Value<int>().Should().Be(50);
             authorPayload["variables"]["offset"].Value<int>().Should().Be(0);
         }
@@ -351,6 +353,7 @@ namespace NzbDrone.Core.Test.MetadataSource.Hardcover
 
             result.Works.Should().ContainSingle();
             result.Works[0].ForeignId.Should().Be(101);
+            result.Works[0].Books[0].ReadingFormatId.Should().Be(1);
         }
 
         private static string CreateAuthorResponse(bool mismatchedNestedAuthor = false)
@@ -486,6 +489,7 @@ namespace NzbDrone.Core.Test.MetadataSource.Hardcover
                         ""asin"": ""B000000001"",
                         ""isbn_13"": ""9780553293357"",
                         ""edition_format"": null,
+                        ""reading_format_id"": 1,
                         ""pages"": 255,
                         ""language"": { ""code3"": ""eng"" },
                         ""publisher"": { ""name"": ""Spectra"" },

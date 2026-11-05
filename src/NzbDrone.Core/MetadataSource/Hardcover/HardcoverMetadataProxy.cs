@@ -135,6 +135,7 @@ query GetWorkByASINISBN($identifier: String!) {
     asin
     isbn_13
     edition_format
+    reading_format_id
     pages
     language { code3 }
     publisher { name }
@@ -207,6 +208,7 @@ query GetWork($bookID: Int!) {
       asin
       isbn_13
       edition_format
+      reading_format_id
       pages
       language { code3 }
       publisher { name }
@@ -257,6 +259,7 @@ query GetWorksByIds($ids: [Int!]!) {
       asin
       isbn_13
       edition_format
+      reading_format_id
       pages
       language { code3 }
       publisher { name }
@@ -308,6 +311,7 @@ query GetEdition($editionID: Int!) {
         asin
         isbn_13
         edition_format
+        reading_format_id
         pages
         language { code3 }
         publisher { name }
@@ -382,6 +386,7 @@ query GetAuthorEditions($id: Int!, $limit: Int!, $offset: Int!) {
           asin
           isbn_13
           edition_format
+          reading_format_id
           pages
           language { code3 }
           publisher { name }
@@ -886,6 +891,7 @@ query GetAuthorEditions($id: Int!, $limit: Int!, $offset: Int!) {
                 Title = CleanSubtitle(title, subtitle),
                 Language = GetString(AsObject(edition["language"])?["code3"]),
                 Format = format.IsNullOrWhiteSpace() ? GetString(edition["physical_format"]) : format,
+                ReadingFormatId = GetInt(edition["reading_format_id"]),
                 NarratorNames = narratorNames,
                 EditionInformation = WithFallback(GetString(edition["edition_information"]), GetString(edition["physical_information"])),
                 Publisher = GetString(AsObject(edition["publisher"])?["name"]),

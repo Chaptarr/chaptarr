@@ -84,6 +84,12 @@ Treat that file as secret because a custom URL can contain credentials. Never
 print its values or commit it. Preserve precedence: saved setting, current
 environment, captured migrated fallback. Fresh installations keep native defaults.
 
+Native lookup alone does not establish native refresh routing. Exercise the
+single-author refresh and scheduled bulk diff paths with V5 unavailable, and
+verify both ebook and audiobook snapshots reach the normal profile/edition
+filters. A completed command can contain provider errors; inspect sync outcomes
+and resulting metadata rather than treating command completion as success.
+
 ## Seerr request acceptance
 
 An adapter request or an available status alone does not prove full SeerrNG

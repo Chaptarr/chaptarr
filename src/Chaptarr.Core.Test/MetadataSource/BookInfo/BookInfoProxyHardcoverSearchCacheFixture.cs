@@ -334,8 +334,10 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             Assert.Multiple(() =>
             {
                 Assert.That(author.HardcoverAuthorId, Is.EqualTo("hc:42"));
-                Assert.That(author.Books, Has.Count.EqualTo(1));
-                Assert.That(author.Books[0].HardcoverBookId, Is.EqualTo("hc:101"));
+                Assert.That(author.Books, Has.Count.EqualTo(2));
+                Assert.That(author.Books.Select(book => book.MediaType),
+                    Is.EquivalentTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+                Assert.That(author.Books.All(book => book.HardcoverBookId == "hc:101"), Is.True);
             });
         }
 

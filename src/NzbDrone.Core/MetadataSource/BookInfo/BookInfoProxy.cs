@@ -118,6 +118,40 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         public V5.V5AuthorChangesResponse GetBulkAuthorChanges(List<V5.V5AuthorETag> authorsWithETags)
         {
+            var nativeChanges = new List<V5.V5ChangedAuthor>();
+            var v5Items = new List<V5.V5AuthorETag>();
+            foreach (var item in authorsWithETags)
+            {
+                if (TryGetNativeHardcoverId(item.RequestedId, "hardcover-author:", out var id))
+                {
+                    // GraphQL has no V5 diff/ETag protocol. Refresh owned native
+                    // authors through their provider instead of consulting V5.
+                    nativeChanges.Add(new V5.V5ChangedAuthor
+                    {
+                        RequestedId = item.RequestedId,
+                        CanonicalId = "hc:" + id
+                    });
+                }
+                else
+                {
+                    v5Items.Add(item);
+                }
+            }
+
+            var response = v5Items.Count == 0
+                ? new V5.V5AuthorChangesResponse()
+                : GetV5BulkAuthorChanges(v5Items);
+            if (response != null)
+            {
+                response.Changed ??= new List<V5.V5ChangedAuthor>();
+                response.Changed.AddRange(nativeChanges);
+            }
+
+            return response;
+        }
+
+        private V5.V5AuthorChangesResponse GetV5BulkAuthorChanges(List<V5.V5AuthorETag> authorsWithETags)
+        {
             var metadataServerUrl = _configService.MetadataServerUrl;
             var url = $"{metadataServerUrl}/api/v5/authors/diff";
 
@@ -181,7 +215,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             if (TryGetNativeHardcoverId(foreignAuthorId, "hardcover-author:", out var hardcoverAuthorId))
             {
-                var nativeAuthor = MapAuthor(_hardcoverMetadataProxy.GetAuthor(hardcoverAuthorId, interactiveSearch), "hardcover");
+                var nativeAuthor = MapNativeHardcoverAuthor(_hardcoverMetadataProxy.GetAuthor(hardcoverAuthorId, interactiveSearch));
                 return _additionalBookMetadataProxy.ApplyAuthorImageSourcePreference(nativeAuthor);
             }
 
@@ -600,6 +634,20 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             try
             {
+                // Refresh uses the same provider route as lookup. Native Hardcover
+                // deployments do not require a V5 metadata service or its ETags.
+                if (TryGetNativeHardcoverId(authorId, "hardcover-author:", out _))
+                {
+                    try
+                    {
+                        return RefreshResult.Updated(GetAuthorInfo(authorId, useCache: false), null);
+                    }
+                    catch (AuthorNotFoundException)
+                    {
+                        return RefreshResult.NotFound();
+                    }
+                }
+
                 if (IsRanobeDbId(authorId))
                 {
                     var ranobeAuthor = _ranobeDbProxy.GetAuthorWithBooks(authorId, !forceRefresh && !bypassEtag, out var ranobeETag);
@@ -4312,6 +4360,52 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         }
 
 
+        private Author MapNativeHardcoverAuthor(AuthorResource resource)
+        {
+            var author = MapAuthor(resource, "hardcover");
+            var sourceBooks = author.Books;
+            var compatibility = _configService.BookshelfMatchCompatibility;
+            if (compatibility)
+            {
+                // Preserve the predecessor's author slug and link label when
+                // refreshing a migrated library, just as import preserves them.
+                author.TitleSlug = resource.ForeignId.ToString();
+                author.Links.ForEach(link => link.Name = "Goodreads");
+                sourceBooks.ForEach(book => book.Links.ForEach(link => link.Name = "Book Editions"));
+            }
+
+            author.Books = new List<Book>();
+            author.Series = new List<Series>();
+            foreach (var mediaType in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            {
+                // Each format needs an independent snapshot; profile/edition
+                // filtering subsequently decides which instances are enabled.
+                var books = sourceBooks.Select(book => RefreshEntityCopy.CloneBook(book, includeEditions: true)).ToList();
+                var series = (resource.Series ?? new List<SeriesResource>()).Select(item => MapSeries(item, "hardcover")).ToList();
+                books.ForEach(book =>
+                {
+                    book.MediaType = mediaType;
+                    book.Author = author;
+                    if (compatibility)
+                    {
+                        // Bookshelf retained editions with no declared format.
+                        // Apply the same media-scoped fallback as migration so
+                        // a later refresh cannot discard those source editions.
+                        foreach (var edition in book.Editions.Where(edition => edition.ReadingFormatId == 0))
+                        {
+                            edition.ReadingFormatId = mediaType == BookMediaType.Ebook ? 3 : 2;
+                        }
+                    }
+                });
+                series.ForEach(item => item.MediaType = mediaType);
+                MapSeriesLinks(series, books, resource.Series ?? new List<SeriesResource>(), "hardcover");
+                author.Books.AddRange(books);
+                author.Series.AddRange(series);
+            }
+
+            return author;
+        }
+
         private Author MapAuthor(AuthorResource resource, string provider = "goodreads")
         {
             var mapStopwatch = Stopwatch.StartNew();
@@ -4700,6 +4794,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 Language = resource.Language,
                 Overview = resource.Description,
                 Format = resource.Format,
+                ReadingFormatId = resource.ReadingFormatId,
                 Narrator = narratorNames.FirstOrDefault() ?? string.Empty,
                 NarratorNames = narratorNames,
                 IsEbook = resource.IsEbook,
