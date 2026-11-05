@@ -105,6 +105,13 @@ namespace Chaptarr.Api.V1
                 resource.Implementation = "ReadarrImport";
                 resource.ImplementationName = "Readarr";
                 resource.ConfigContract = "ReadarrSettings";
+
+                // The generated BookshelfNG template used the provider identity
+                // as its default name. Keep saved instance names intact.
+                if (resource.Id == 0)
+                {
+                    resource.Name = "ReadarrImport";
+                }
             }
             else if (string.Equals(resource.Implementation, "LegacyAudiobookshelfMetadata", StringComparison.Ordinal))
             {

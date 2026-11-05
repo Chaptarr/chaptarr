@@ -50,6 +50,8 @@ namespace Chaptarr.Core.Test.Api
         {
             var resource = new ImportListResource
             {
+                Id = 0,
+                Name = "ChaptarrImport",
                 Implementation = "ChaptarrImport",
                 ImplementationName = "Chaptarr",
                 ConfigContract = "ChaptarrSettings"
@@ -62,7 +64,38 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(resource.Implementation, Is.EqualTo("ReadarrImport"));
                 Assert.That(resource.ImplementationName, Is.EqualTo("Readarr"));
                 Assert.That(resource.ConfigContract, Is.EqualTo("ReadarrSettings"));
+                Assert.That(resource.Name, Is.EqualTo("ReadarrImport"));
             });
+        }
+
+        [Test]
+        public void should_preserve_saved_import_provider_name_when_projecting_legacy_identity()
+        {
+            var resource = new ImportListResource
+            {
+                Id = 42,
+                Name = "Personal book list",
+                Implementation = "ChaptarrImport",
+                ImplementationName = "Chaptarr",
+                ConfigContract = "ChaptarrSettings"
+            };
+
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyProviderIdentity(resource);
+
+            Assert.That(resource.Name, Is.EqualTo("Personal book list"));
+        }
+
+        [TestCase(NzbDrone.Core.ImportLists.ImportListType.Program, 0)]
+        [TestCase(NzbDrone.Core.ImportLists.ImportListType.Goodreads, 1)]
+        [TestCase(NzbDrone.Core.ImportLists.ImportListType.Hardcover, 2)]
+        [TestCase(NzbDrone.Core.ImportLists.ImportListType.Other, 3)]
+        public void should_keep_the_bookshelf_import_list_order_numbers(
+            NzbDrone.Core.ImportLists.ImportListType listType,
+            int expectedListOrder)
+        {
+            var resource = new ImportListResource { ListType = listType };
+
+            Assert.That(resource.ListOrder, Is.EqualTo(expectedListOrder));
         }
 
         [Test]

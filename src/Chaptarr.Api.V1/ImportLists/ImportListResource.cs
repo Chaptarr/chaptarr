@@ -16,8 +16,15 @@ namespace Chaptarr.Api.V1.ImportLists
         public int QualityProfileId { get; set; }
         public int MetadataProfileId { get; set; }
         public ImportListType ListType { get; set; }
-        // BookshelfNG exposed this same discriminator as an integer for v1 clients.
-        public int ListOrder => (int)ListType;
+        // BookshelfNG exposed this discriminator as an integer for v1 clients. Its
+        // enum places Hardcover before Other, while ChaptarrNG's native enum does
+        // the reverse. Keep the legacy numeric contract stable on this field.
+        public int ListOrder => ListType switch
+        {
+            ImportListType.Hardcover => 2,
+            ImportListType.Other => 3,
+            _ => (int)ListType
+        };
         public TimeSpan MinRefreshInterval { get; set; }
 
         public string HardcoverUsername { get; set; }
