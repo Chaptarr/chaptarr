@@ -141,10 +141,10 @@ process_group_is_running() {
 
 terminate_app_tree() {
   if [ -n "$app_process_group" ]; then
-    kill -TERM -- "-$app_process_group" 2>/dev/null || true
+    kill -TERM -"$app_process_group" 2>/dev/null || true
     stop_deadline=$(( $(date +%s) + 30 ))
     while process_group_is_running "$app_process_group" && [ "$(date +%s)" -lt "$stop_deadline" ]; do sleep 1; done
-    if process_group_is_running "$app_process_group"; then kill -KILL -- "-$app_process_group" 2>/dev/null || true; fi
+    if process_group_is_running "$app_process_group"; then kill -KILL -"$app_process_group" 2>/dev/null || true; fi
   elif [ -n "$app_pid" ] && process_is_running "$app_pid"; then
     kill -TERM "$app_pid" 2>/dev/null || true
     stop_deadline=$(( $(date +%s) + 30 ))

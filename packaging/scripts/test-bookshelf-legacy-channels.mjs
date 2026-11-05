@@ -139,7 +139,7 @@ test('AppImage keeps its desktop identity, BookshelfNG data directory, and Chapt
   assert.match(appRun, /Replace this AppImage with a newer compatible build/);
 });
 
-test('macOS and FreeBSD standalone archives include the optional, recoverable BookshelfNG handoff', () => {
+test('Linux, macOS and FreeBSD standalone archives include the optional, recoverable BookshelfNG handoff', () => {
   const builder = read('packaging/scripts/build-standalone.sh');
   const launcher = read('scripts/bookshelfng-standalone-launch.sh');
   const supervisor = read('packaging/legacy/desktop/bookshelfng-supervisor.sh');
@@ -152,7 +152,7 @@ test('macOS and FreeBSD standalone archives include the optional, recoverable Bo
     'macOS uses its supported BSD tar options');
   assert.match(builder, /elif command -v shasum[\s\S]*?shasum -a 256/,
     'macOS creates the candidate checksum with its system utility');
-  assert.ok(builder.includes('if [[ "$rid" == osx-* || "$rid" == freebsd-x64 ]]'));
+  assert.ok(builder.includes('if [[ "$rid" == linux-* || "$rid" == osx-* || "$rid" == freebsd-x64 ]]'));
   assert.match(builder, /bookshelfng-standalone-launch\.sh/);
   assert.match(builder, /bookshelfng-supervisor\.sh/);
   assert.match(launcher, /has_controlling_tty\(\) \{\s*\[ -t 0 \] && \( : <\/dev\/tty >\/dev\/tty \)/);

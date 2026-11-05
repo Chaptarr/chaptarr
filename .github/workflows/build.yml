@@ -246,6 +246,12 @@ jobs:
         TASK_SCRATCH_DIR: ${{ runner.temp }}
       run: bash packaging/scripts/test-bookshelfng-journal-fingerprint.sh
 
+    - name: Test desktop supervisor process-group shutdown
+      if: matrix.platform == 'linux-x64'
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: python3 packaging/scripts/test-desktop-supervisor-signals.py
+
     - name: Test workflow runner policy
       if: matrix.platform == 'linux-x64'
       run: python3 scripts/test_workflow_runner_policy.py

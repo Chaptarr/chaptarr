@@ -67,7 +67,7 @@ jobs:
           --repository "$GITHUB_REPOSITORY" --runtime-id "$RID")"
         printf 'CANDIDATE_REVISION=%s\n' "$candidate_revision" >> "$GITHUB_ENV"
         git merge-base --is-ancestor "$candidate_revision" "$GITHUB_SHA"
-        if ! git diff --quiet "$candidate_revision" "$GITHUB_SHA" -- src frontend package.json yarn.lock global.json packaging/scripts/build-standalone.sh; then
+        if ! git diff --quiet "$candidate_revision" "$GITHUB_SHA" -- src frontend package.json yarn.lock global.json Directory.Build.props Directory.Build.targets Directory.Packages.props NuGet.Config packaging/scripts/build-standalone.sh packaging/legacy/desktop scripts/bookshelfng-standalone-launch.sh; then
           echo 'Candidate application source changed; build a fresh retained archive.' >&2
           exit 1
         fi
@@ -159,7 +159,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" --runtime-id "$RID")"
           printf 'CANDIDATE_REVISION=%s\n' "$candidate_revision" >> "$GITHUB_ENV"
           git merge-base --is-ancestor "$candidate_revision" "$GITHUB_SHA"
-          if ! git diff --quiet "$candidate_revision" "$GITHUB_SHA" -- src frontend package.json yarn.lock global.json packaging/scripts/build-standalone.sh; then
+          if ! git diff --quiet "$candidate_revision" "$GITHUB_SHA" -- src frontend package.json yarn.lock global.json Directory.Build.props Directory.Build.targets Directory.Packages.props NuGet.Config packaging/scripts/build-standalone.sh packaging/legacy/desktop scripts/bookshelfng-standalone-launch.sh; then
             echo 'Candidate application source changed; build a fresh retained archive.' >&2
             exit 1
           fi

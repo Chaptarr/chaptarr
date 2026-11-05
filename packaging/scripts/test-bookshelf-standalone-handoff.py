@@ -86,6 +86,10 @@ def create_source_data(data_dir: Path) -> None:
         connection.executescript(fixture.read_text(encoding="utf-8"))
         connection.execute("UPDATE BookFiles SET Size=?, Path=? WHERE Id=50",
                            (4294967419, "/library/Fixture Author/Grüße — fixture.m4b"))
+        connection.execute("UPDATE Indexers SET EnableRss=0,EnableAutomaticSearch=0,EnableInteractiveSearch=0")
+        connection.execute("UPDATE DownloadClients SET Enable=0")
+        connection.execute("UPDATE ImportLists SET EnableAutomaticAdd=0,ShouldSearch=0")
+        connection.execute("UPDATE Notifications SET OnApplicationUpdate=0,OnHealthIssue=0,OnAuthorAdded=0")
         connection.commit()
     (data_dir / "config.xml").write_text(
         "<?xml version='1.0' encoding='utf-8'?>\n"
@@ -130,6 +134,7 @@ def start_predecessor(app: Path, data_dir: Path, log_path: Path) -> subprocess.P
         stdout=log,
         stderr=subprocess.STDOUT,
         start_new_session=True,
+        env={**os.environ, "HARDCOVER": "false", "HARDCOVER_NATIVE": "false"},
     )
     RUNNING.append(process)
     wait_http(process, 90, "BookshelfNG predecessor")
@@ -650,6 +655,7 @@ def main() -> int:
                 "Candidate archive does not contain an executable standalone handoff launcher")
         require(http_ready() is False, "The acceptance port 127.0.0.1:18787 is already in use")
         base_env = os.environ.copy()
+        base_env.update(HARDCOVER="false", HARDCOVER_NATIVE="false")
         base_env.pop("BOOKSHELFNG_MIGRATION_MODE", None)
 
         print(f"BookshelfNG predecessor SHA-256: {sha256(args.predecessor_archive)}", flush=True)
