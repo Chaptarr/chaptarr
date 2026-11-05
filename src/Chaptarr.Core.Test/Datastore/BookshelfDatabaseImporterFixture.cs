@@ -86,7 +86,14 @@ namespace Chaptarr.Core.Test.Datastore
             {
                 source.Open();
                 using var command = source.CreateCommand();
-                command.CommandText = $"UPDATE AuthorMetadata SET {field} = $value WHERE Id = 10;";
+                command.CommandText = field switch
+                {
+                    "Aliases" => "UPDATE AuthorMetadata SET Aliases = $value WHERE Id = 10;",
+                    "Images" => "UPDATE AuthorMetadata SET Images = $value WHERE Id = 10;",
+                    "Links" => "UPDATE AuthorMetadata SET Links = $value WHERE Id = 10;",
+                    "Genres" => "UPDATE AuthorMetadata SET Genres = $value WHERE Id = 10;",
+                    _ => throw new ArgumentOutOfRangeException(nameof(field))
+                };
                 command.Parameters.AddWithValue("$value", (object)json ?? DBNull.Value);
                 command.ExecuteNonQuery();
             }
