@@ -67,6 +67,18 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
+        public void should_route_imported_retired_endpoint_without_changing_saved_settings()
+        {
+            var generator = CreateGenerator();
+            generator.Settings.BaseUrl = "http://api.nzb.su";
+            var urls = UrlsInTier(generator.GetRecentRequests(), 0);
+            Assert.That(urls, Is.Not.Empty);
+            Assert.That(urls, Has.All.StartsWith("https://api.nzb.life/api?"));
+            Assert.That(urls, Has.All.Contains("apikey=key"));
+            Assert.That(generator.Settings.BaseUrl, Is.EqualTo("http://api.nzb.su"));
+        }
+
+        [Test]
         [TestCase(true)]
         [TestCase(false)]
         public void should_add_a_book_number_fallback_as_the_last_tier(bool interactive)

@@ -187,7 +187,7 @@ namespace NzbDrone.Core.Indexers.Newznab
             var categoriesQuery = string.Join(",", categories.Distinct());
 
             var baseUrl =
-                $"{Settings.BaseUrl.TrimEnd('/')}{Settings.ApiPath.TrimEnd('/')}?t={searchType}&cat={categoriesQuery}&extended=1{Settings.AdditionalParameters}";
+                $"{NewznabEndpointCompatibility.Normalize(Settings.BaseUrl).TrimEnd('/')}{Settings.ApiPath.TrimEnd('/')}?t={searchType}&cat={categoriesQuery}&extended=1{Settings.AdditionalParameters}";
 
             if (Settings.ApiKey.IsNotNullOrWhiteSpace())
             {

@@ -3325,7 +3325,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Indexers/Newznab/Newznab.cs",
-          "line": 152,
+          "line": 158,
           "sourceLine": "return new ValidationFailure(string.Empty, \"Indexer does not support required search parameters\");",
           "sourceLineSha256": "a39605095a291b498b2c4c2a01bd0fc7097e38ac70b248a98cf6484f85ea45ab",
           "category": "validation-failure",
@@ -8485,7 +8485,7 @@
         },
         {
           "file": "src/NzbDrone.Core/Indexers/Newznab/Newznab.cs",
-          "line": 158,
+          "line": 164,
           "sourceLine": "return new ValidationFailure(string.Empty, \"Unable to connect to indexer, check the log for more details\");",
           "sourceLineSha256": "2502e393f5c31b6030469a978f2a01420497cef797b0a5c808b816ddb2c473c2",
           "category": "validation-failure",

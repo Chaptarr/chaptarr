@@ -6,6 +6,7 @@ using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser;
@@ -43,6 +44,11 @@ namespace NzbDrone.Core.Indexers.Newznab
             };
         }
 
+        public override HttpRequest GetDownloadRequest(string link)
+        {
+            return base.GetDownloadRequest(NewznabEndpointCompatibility.Normalize(link));
+        }
+
         public override IParseIndexerResponse GetParser()
         {
             return new NewznabRssParser();
@@ -67,7 +73,7 @@ namespace NzbDrone.Core.Indexers.Newznab
             {
                 yield return GetDefinition("DOGnzb", GetSettings("https://api.dognzb.cr"));
                 yield return GetDefinition("DrunkenSlug", GetSettings("https://drunkenslug.com"));
-                // NZB.su API is hosted at api.nzb.life (api.nzb.su redirects).
+                // NZB.su retired its old endpoints; api.nzb.life retains existing accounts and keys.
                 yield return GetDefinition("Nzb.su", GetSettings("https://api.nzb.life"));
                 yield return GetDefinition("NZBCat", GetSettings("https://nzb.cat"));
                 yield return GetDefinition("NZBFinder.ws", GetSettings("https://nzbfinder.ws"));

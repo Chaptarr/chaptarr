@@ -203,9 +203,9 @@ namespace NzbDrone.Core.Indexers.Newznab
 
         private string GetEnhancedBaseUrl()
         {
-            return _settings?.NarratorMetadataBaseUrl.IsNotNullOrWhiteSpace() == true
+            return NewznabEndpointCompatibility.Normalize(_settings?.NarratorMetadataBaseUrl.IsNotNullOrWhiteSpace() == true
                 ? _settings.NarratorMetadataBaseUrl
-                : _settings?.BaseUrl;
+                : _settings?.BaseUrl);
         }
 
         private string GetEnhancedApiKey()

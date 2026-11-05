@@ -18,17 +18,33 @@ namespace Chaptarr.Core.Test.Indexers
         {
             public int ExecuteCount { get; private set; }
 
+            public string LastUrl { get; private set; }
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IIndexerHttpClient.Execute) && args?[0] is HttpRequest request)
                 {
                     ExecuteCount++;
+                    LastUrl = request.Url.FullUri;
                     var headers = new HttpHeader { ContentType = "text/plain" };
                     return new HttpResponse(request, headers, "Narration: Steven Pacey\nLength: 22 hours", HttpStatusCode.OK);
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}");
             }
+        }
+
+        [Test]
+        public void should_route_imported_narrator_endpoint()
+        {
+            var http = DispatchProxy.Create<IIndexerHttpClient, IndexerHttpClientProxy>();
+            var settings = new NewznabSettings { BaseUrl = "https://api.nzb.su", ApiPath = "/api", ApiKey = "fixture-key" };
+            var client = new NewznabNarratorMetadataClient(http, settings, 42, TimeSpan.Zero, new CacheManager(), LogManager.GetCurrentClassLogger());
+            var release = new ReleaseInfo { DownloadUrl = "https://api.nzb.su/api?t=get&id=release-123&apikey=fixture-key" };
+            Assert.That(client.TryPopulate(release), Is.True);
+            Assert.That(((IndexerHttpClientProxy)(object)http).LastUrl, Does.StartWith("https://api.nzb.life/api?"));
+            Assert.That(((IndexerHttpClientProxy)(object)http).LastUrl, Does.Contain("apikey=fixture-key"));
+            Assert.That(settings.BaseUrl, Is.EqualTo("https://api.nzb.su"));
         }
 
         [TestCase("https://api.nzb.life/getnzb/e457b6ab64a00ddf0905d70ff634c9e2.nzb&i=321976&r=abc", "e457b6ab64a00ddf0905d70ff634c9e2")]

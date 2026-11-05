@@ -18,6 +18,17 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class ProviderResourceCompatibilityProjectionFixture
     {
+        [TestCase(0, "Nzb.su", "https://api.nzb.life", "https://api.nzb.su")]
+        [TestCase(7, "Nzb.su", "https://api.nzb.life", "https://api.nzb.life")]
+        [TestCase(0, "Custom", "https://api.nzb.life", "https://api.nzb.life")]
+        [TestCase(0, "Nzb.su", "https://other.example", "https://other.example")]
+        public void should_preserve_only_legacy_nzbsu_template_endpoint(int id, string name, string url, string expected)
+        {
+            var resource = new IndexerResource { Id = id, Name = name, ConfigContract = "NewznabSettings", Fields = new List<Field> { new Field { Name = "baseUrl", Value = url } } };
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+            Assert.That(resource.Fields.Single().Value, Is.EqualTo(expected));
+        }
+
         [TestCase("DelugeSettings", "deluge")]
         [TestCase("NzbgetSettings", "tegbzn6789")]
         public void legacy_templates_should_retain_public_source_defaults_without_touching_saved_credentials(string contract, string expected)

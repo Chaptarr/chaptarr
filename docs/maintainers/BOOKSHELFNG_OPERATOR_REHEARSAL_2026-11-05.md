@@ -4,6 +4,37 @@ These are isolated rehearsals using consistent snapshots of both current
 BookshelfNG installations. Production services, databases, media and client
 configuration were not changed. No release or cutover is authorized.
 
+## Latest compatibility verification
+
+The metadata handoff now captures only the source container's effective
+`METADATA_URL` in a private mode-0600 sidecar and persists its fallback during
+conversion. The 109 importer/configuration tests and five capture guard tests
+pass; an isolated capture matches the retained source runtime setting. Strict
+HTTP run [42016737210](https://github.com/snapetech-org/chaptarrng/actions/runs/42016737210)
+compares 91 cases: 83 pass, five fail, one is inconclusive because the source
+returns HTTP 500, and two retain explicit production-route policy differences.
+The metadata configuration and all five catalog comparisons pass.
+
+Subsequent provider-template repairs pass 30 focused checks. Migrated rTorrent
+instances retain `readarr_imported`, so existing scripts continue seeing the
+imported view; fresh native instances keep their native view. Legacy schema
+responses preserve predecessor Download Station names/messages, public template
+password defaults and Plex template flags without changing saved credentials
+or native template defaults.
+
+NZB.su's [official retirement notice](https://www.nzb.su/) states that old API
+endpoints no longer redirect and existing accounts/keys move to `api.nzb.life`.
+Request-boundary routing covers capabilities, search/RSS, pending download links
+and narrator metadata. It preserves saved settings and encoded request data;
+lookalike hosts, credentials in URLs and custom ports are excluded. Legacy
+clients still receive their source preset, while native presets use the current
+endpoint. The 81 focused provider/Newznab checks and localization checks pass.
+This does not establish live acceptance using a paid NZB.su account.
+
+Archive run [42016737332](https://github.com/snapetech-org/chaptarrng/actions/runs/42016737332)
+passes all ten platforms, synthetic ebook/audiobook acquisition and authenticated
+cover fetching. These results do not constitute a global parity claim.
+
 ## Source and conversion
 
 Both sources run BookshelfNG `0.4.21.76`, immutable image

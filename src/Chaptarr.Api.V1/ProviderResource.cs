@@ -211,6 +211,22 @@ namespace Chaptarr.Api.V1
                 return resource;
             }
 
+            // Legacy clients retain their known preset; requests resolve this
+            // retired endpoint through the Newznab service handoff at runtime.
+            if (resource is IndexerResource && resource.ConfigContract == "NewznabSettings" && resource.Name == "Nzb.su")
+            {
+                foreach (var field in resource.Fields ?? new List<Field>())
+                {
+                    if (string.Equals(field.Name, "baseUrl", StringComparison.OrdinalIgnoreCase) &&
+                        field.Value is string url && url == "https://api.nzb.life")
+                    {
+                        field.Value = "https://api.nzb.su";
+                    }
+                }
+
+                return resource;
+            }
+
             if (resource is not IndexerResource indexer ||
                 resource.ConfigContract != "MyAnonaMouseSettings")
             {
