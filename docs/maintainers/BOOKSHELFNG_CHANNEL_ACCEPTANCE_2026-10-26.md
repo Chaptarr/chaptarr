@@ -11,9 +11,9 @@ acceptance gates.
 
 ## Current campaign — 2026-11-05
 
-Application candidate `2badb8c2` includes the legacy API base-path/flag repairs,
+Application candidate `bd23e039` includes the legacy API base-path/flag repairs,
 provider creation defaults, source-omitted provider defaults, retained Plex
-master-switch behavior and native settings, and original-author-cover fallback.
+master-switch behavior and native settings, and original-author-cover fallback. Later repairs preserve imported author metadata arrays and legacy work-date/page-count/percentage responses.
 It is unpublished. CodeQL remains disabled; trusted public runners are authorized.
 
 | Evidence | Revision and result |
@@ -28,8 +28,8 @@ It is unpublished. CodeQL remains disabled; trusted public runners are authorize
 | macOS standalone | [41971294040](https://github.com/snapetech-org/chaptarrng/actions/runs/41971294040), `8dcd4900`: x64 and arm64 No/Manual/Yes, health, source backup and failed-start rollback pass. |
 | Helm installed handoff | [41971352113](https://github.com/snapetech-org/chaptarrng/actions/runs/41971352113), `8dcd4900`: pass. |
 | Fedora 44 RPM installed handoff | [41971349047](https://github.com/snapetech-org/chaptarrng/actions/runs/41971349047), `8dcd4900`: pass. |
-| Full current-source CI | [41972954789](https://github.com/snapetech-org/chaptarrng/actions/runs/41972954789), `2badb8c2`: in progress; no completed-head claim. |
-| All ten standalone archives | [41973070848](https://github.com/snapetech-org/chaptarrng/actions/runs/41973070848), `2badb8c2`: queued/running; building payloads does not establish installed handoff for every RID. |
+| Full current-source CI | [41972954789](https://github.com/snapetech-org/chaptarrng/actions/runs/41972954789), `2badb8c2`: passed Linux, Windows, macOS, PostgreSQL and the standard multi-architecture Docker build. Linux reports 5,029 passed / 26 skipped and real-tool M4B 10/10. Follow-up [41986917119](https://github.com/snapetech-org/chaptarrng/actions/runs/41986917119) at `69ec4a3d` is running. |
+| All ten standalone archives | [41973070848](https://github.com/snapetech-org/chaptarrng/actions/runs/41973070848), `2badb8c2`: all ten archives passed; building payloads does not establish installed handoff for every RID. |
 
 The seven strict API failures concern development/host configuration,
 download-client/indexer/notification schemas, localization and system status.
@@ -43,11 +43,15 @@ Evidence is retained on `kspld0` under
 `/mnt/disks/scratch/task-worktrees/chaptarrng-parity-handoffs-20261104/`, including
 `linux-systemd-a8f5af1b/guest-evidence-8dcd4900`, API JSON, TRX files, runtime logs,
 archive checksums and `skia-musl-probe-2badb8c2`. The systemd VM is powered off;
-task HTTP containers and networks have been removed. Its retained overlay is
+earlier synthetic HTTP containers and networks have been removed. Separate
+private operator-data runtime containers remain active during validation. Its retained overlay is
 `/var/tmp/chaptarrng-systemd-a8f5af1b/system.qcow2`.
 
-Representative operator appdata/media and live-provider/SeerrNG fulfillment are
-not supplied by these synthetic tests. Headed UI acceptance is blocked because
+Both live operator SQLite snapshots have since passed isolated conversion and
+rollback. The author-metadata repair passes repeat conversion and 101 importer
+checks; eight real-media formats pass bounded reads and range downloads. See the
+[operator rehearsal](BOOKSHELFNG_OPERATOR_REHEARSAL_2026-11-05.md). Live-provider
+and complete SeerrNG fulfillment, media writes/imports and recovery remain open. Headed UI acceptance is blocked because
 all three Desktop Pool v2 slots are quarantined for other tasks' artifact-export
 recovery; no session was taken over or reset. External feeds/platform delivery
 and production acceptance remain open. No publication, bridge activation,

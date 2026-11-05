@@ -2,26 +2,35 @@
 
 ## Current status — 2026-11-05 UTC
 
-Application candidate `2badb8c2` is unpublished. Public release tags were checked
-through GitHub: BookshelfNG `v0.4.21.76` and ChaptarrNG `v0.9.977`. Public hosted
-runners are authorized for trusted validation; CodeQL remains disabled.
+Application candidate `bd23e039` is unpublished. Public hosted runners are
+authorized for trusted validation; CodeQL remains disabled.
 
-The current source repairs legacy API base-path and flag responses, provider
-creation defaults, omitted source provider defaults during migration, and Plex's
-retained global update switch in both API and migrated native settings. All 93
-importer fixtures and 34 focused Plex/API checks pass. The retained account passes
-actual HTTP authentication before and after migration. Installed Linux systemd
-No/Yes and post-conversion rollback passed at `8dcd4900`; the later cover repair has separate packaged HTTP and focused regression evidence.
+Fresh, consistent snapshots of both running BookshelfNG `.76` instances have now
+passed isolated conversion, migration checks and rollback. Original source
+services and media were not changed. The first real-data comparison exposed an
+author-metadata reset; `53d76bcc` repairs it, and repeat conversions preserve
+images, links, aliases and genres for all 1,379 and 1,400 managed authors. All
+101 importer fixtures pass. `bd23e039` additionally preserves legacy work release
+dates, selected-edition page counts and file-based percentage responses; 64
+focused book/API checks pass. These response changes still need packaged runtime
+confirmation. See the [operator rehearsal](maintainers/BOOKSHELFNG_OPERATOR_REHEARSAL_2026-11-05.md).
 
-Current-source full CI and channel results are recorded in the
-[channel acceptance matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
-The strict differential is still red; known presentation, identity, security and
-capability differences remain visible rather than being treated as blanket
-waivers. Representative operator data/media, live provider and complete SeerrNG
-fulfillment, headed UI, external distribution delivery and production acceptance
-remain open. The desktop pool's three slots are quarantined for other tasks'
-artifact-export recovery, so no headed UI pass is claimed. Publication, bridge
-activation, cutover and retirement remain unauthorized.
+Read-only real-media checks pass for EPUB, KEPUB, AZW3, MOBI, PDF, MP3, M4B and
+M4A; authenticated range downloads match original bytes. This establishes bounded
+read acceptance, not acquisition, write/import or failure-recovery acceptance.
+The two installations retain separate ports, API keys and accounts.
+
+Full public CI and all ten standalone archives passed at `2badb8c2`. Full public
+CI at `69ec4a3d` is running. Installed Linux systemd No/Yes and post-conversion
+rollback passed at `8dcd4900`; later changes retain separate focused evidence.
+Revision-specific results are recorded in the [channel acceptance matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
+
+The strict differential remains red; recorded presentation, identity, security
+and capability differences require explicit disposition. Live-provider and
+complete SeerrNG fulfillment, headed UI, external distribution delivery and
+production acceptance remain open. The Desktop Pool v2 acquisition still times
+out; no headed UI pass is claimed. Publication, bridge activation, cutover and
+retirement remain unauthorized.
 
 ## Historical checkpoint — 2026-11-04 UTC
 
