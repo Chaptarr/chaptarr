@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Api.V1.DownloadClient;
 using Chaptarr.Api.V1.Indexers;
+using Chaptarr.Api.V1.Notifications;
 using Chaptarr.Http.ClientSchema;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Indexers.DirectDownload;
@@ -123,6 +124,32 @@ namespace Chaptarr.Api.V1
 
             if (resource is DownloadClientResource)
             {
+                if (resource.Implementation is "TorrentDownloadStation" or "UsenetDownloadStation")
+                {
+                    resource.ImplementationName = "Download Station";
+                }
+
+                var message = resource.Implementation switch
+                {
+                    "TorrentDownloadStation" or "UsenetDownloadStation" => "Readarr is unable to connect to Download Station if 2-Factor Authentication is enabled on your DSM account",
+                    "Flood" => "Readarr will handle automatic removal of torrents based on the current seed criteria in Settings -> Indexers",
+                    "RTorrent" => "rTorrent will not pause torrents when they meet the seed criteria. Readarr will handle automatic removal of torrents based on the current seed criteria in Settings->Indexers only when Remove Completed is enabled.  After importing it will also set \"readarr_imported\" as an rTorrent view, which can be used in rTorrent scripts to customize behavior.",
+                    _ => null
+                };
+                if (message != null && resource.Message != null && resource.Message.Type != ProviderMessageType.Error)
+                {
+                    // Definitions can share this object with native responses.
+                    resource.Message = new ProviderMessage(message, resource.Message.Type);
+                }
+
+                // Public defaults from the predecessor template, never saved
+                // credentials. Native constructors keep their hardened defaults.
+                var publicPassword = resource.ConfigContract switch
+                {
+                    "DelugeSettings" => "deluge",
+                    "NzbgetSettings" => "tegbzn6789",
+                    _ => null
+                };
                 var category = resource.ConfigContract switch
                 {
                     "DelugeSettings" or "QBittorrentSettings" or "RTorrentSettings" or "UTorrentSettings" => "readarr",
@@ -131,6 +158,12 @@ namespace Chaptarr.Api.V1
                 };
                 foreach (var field in resource.Fields ?? new List<Field>())
                 {
+                    if (publicPassword != null && string.Equals(field.Name, "password", StringComparison.OrdinalIgnoreCase) &&
+                        (field.Value == null || field.Value is string password && password.Length == 0))
+                    {
+                        field.Value = publicPassword;
+                    }
+
                     if (category != null)
                     {
                         if (string.Equals(field.Name, "musicCategory", StringComparison.OrdinalIgnoreCase))
@@ -160,6 +193,21 @@ namespace Chaptarr.Api.V1
                     }
                 }
 
+                return resource;
+            }
+
+            if (resource is NotificationResource notification && resource.ConfigContract == "PlexServerSettings")
+            {
+                foreach (var field in resource.Fields ?? new List<Field>())
+                {
+                    if (string.Equals(field.Name, "useSsl", StringComparison.OrdinalIgnoreCase))
+                    {
+                        field.Value = false;
+                    }
+                }
+
+                notification.SupportsOnBookFileDelete = false;
+                notification.SupportsOnBookFileDeleteForUpgrade = false;
                 return resource;
             }
 

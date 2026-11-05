@@ -9,6 +9,7 @@ using Chaptarr.Http.ClientSchema;
 using NzbDrone.Core.Indexers.DirectDownload;
 using NzbDrone.Core.Download.Clients.QBittorrent;
 using NzbDrone.Core.Notifications.Plex.Server;
+using NzbDrone.Core.ThingiProvider;
 using System.Text.Json;
 using NUnit.Framework;
 
@@ -17,6 +18,82 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class ProviderResourceCompatibilityProjectionFixture
     {
+        [TestCase("DelugeSettings", "deluge")]
+        [TestCase("NzbgetSettings", "tegbzn6789")]
+        public void legacy_templates_should_retain_public_source_defaults_without_touching_saved_credentials(string contract, string expected)
+        {
+            var resource = new DownloadClientResource
+            {
+                ConfigContract = contract,
+                Fields = new List<Field> { new() { Name = "password", Value = string.Empty } }
+            };
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+            Assert.That(resource.Fields.Single().Value, Is.EqualTo(expected));
+
+            resource.Id = 42;
+            resource.Fields.Single().Value = "existing-private-value";
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+            Assert.That(resource.Fields.Single().Value, Is.EqualTo("existing-private-value"));
+            Assert.That(new NzbDrone.Core.Download.Clients.Deluge.DelugeSettings().Password, Is.Null.Or.Empty);
+            Assert.That(new NzbDrone.Core.Download.Clients.Nzbget.NzbgetSettings().Password, Is.Null.Or.Empty);
+        }
+
+        [TestCase("TorrentDownloadStation")]
+        [TestCase("UsenetDownloadStation")]
+        public void legacy_download_station_template_should_preserve_its_name_and_clone_shared_messages(string implementation)
+        {
+            var message = new ProviderMessage("Chaptarr native message", ProviderMessageType.Warning);
+            var resource = new DownloadClientResource
+            {
+                Implementation = implementation,
+                ImplementationName = "Download Station (native protocol label)",
+                Message = message
+            };
+
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+
+            Assert.That(resource.ImplementationName, Is.EqualTo("Download Station"));
+            Assert.That(resource.Message.Message, Is.EqualTo("Readarr is unable to connect to Download Station if 2-Factor Authentication is enabled on your DSM account"));
+            Assert.That(message.Message, Is.EqualTo("Chaptarr native message"));
+            Assert.That(resource.Message, Is.Not.SameAs(message));
+        }
+
+        [Test]
+        public void legacy_plex_template_should_preserve_source_defaults_and_capabilities()
+        {
+            var resource = new Chaptarr.Api.V1.Notifications.NotificationResource
+            {
+                ConfigContract = "PlexServerSettings",
+                SupportsOnBookFileDelete = true,
+                SupportsOnBookFileDeleteForUpgrade = true,
+                Fields = new List<Field> { new() { Name = "useSsl", Value = true } }
+            };
+
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+
+            Assert.That(resource.Fields.Single().Value, Is.EqualTo(false));
+            Assert.That(resource.SupportsOnBookFileDelete, Is.False);
+            Assert.That(resource.SupportsOnBookFileDeleteForUpgrade, Is.False);
+            Assert.That(new PlexServerSettings().UseSsl, Is.True);
+        }
+
+        [TestCase("Flood", "Readarr will handle automatic removal of torrents based on the current seed criteria in Settings -> Indexers")]
+        [TestCase("RTorrent", "rTorrent will not pause torrents when they meet the seed criteria. Readarr will handle automatic removal of torrents based on the current seed criteria in Settings->Indexers only when Remove Completed is enabled.  After importing it will also set \"readarr_imported\" as an rTorrent view, which can be used in rTorrent scripts to customize behavior.")]
+        public void legacy_template_info_should_preserve_the_predecessor_contract_without_rewriting_errors(string implementation, string expected)
+        {
+            var resource = new DownloadClientResource
+            {
+                Implementation = implementation,
+                Message = new ProviderMessage("Native information", ProviderMessageType.Info)
+            };
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+            Assert.That(resource.Message.Message, Is.EqualTo(expected));
+
+            resource.Message = new ProviderMessage("Opaque provider failure", ProviderMessageType.Error);
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+            Assert.That(resource.Message.Message, Is.EqualTo("Opaque provider failure"));
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void should_apply_legacy_plex_global_switch_and_preserve_it_when_omitted(bool enabled)

@@ -580,7 +580,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Download/Clients/rTorrent/RTorrent.cs",
-          "line": 376,
+          "line": 378,
           "sourceLine": "return new ValidationFailure(string.Empty, \"rTorrent version should be at least 0.9.0. Version reported is {0}\", version);",
           "sourceLineSha256": "e1c1e7c7678358a98ccbe21a37a1c1ebbe9fcb2347a0b64812c9354c28894195",
           "category": "validation-failure",
@@ -4198,7 +4198,7 @@
         },
         {
           "file": "src/NzbDrone.Core/Download/Clients/rTorrent/RTorrent.cs",
-          "line": 401,
+          "line": 403,
           "sourceLine": "return new NzbDroneValidationFailure(string.Empty, \"Failed to get the list of torrents: \" + ex.Message);",
           "sourceLineSha256": "c9dcc0a8e721bd4fd6b7a8f9f4ab55e277b1952d4067db98c6bbc0480c9e7bc4",
           "category": "validation-failure",
@@ -14490,7 +14490,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Download/Clients/rTorrent/RTorrent.cs",
-          "line": 383,
+          "line": 385,
           "sourceLine": "return new NzbDroneValidationFailure(\"Host\", \"Unable to connect to rTorrent\")",
           "sourceLineSha256": "7fd92eca152321d28ad25d4f9fc94e192b10849af283bd98acb99e407309259a",
           "category": "validation-failure",
