@@ -1060,19 +1060,21 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(MediaCoverRendition.IsSupportedImagePath(path), Is.False);
         }
 
-        [Test]
-        public void books_page_jpeg_rendition_request_should_fall_back_to_the_real_original()
+        [TestCase("Books/12", "cover")]
+        [TestCase("12", "poster")]
+        public void page_jpeg_rendition_request_should_fall_back_to_the_real_original(string folder, string filename)
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
             var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
             var disk = (DiskProviderProxy)(object)diskProvider;
-            disk.ExistingPaths.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover.jpeg"));
+            var original = Path.Combine(ConfigRoot, "MediaCover", folder.Replace('/', Path.DirectorySeparatorChar), filename + ".jpeg");
+            disk.ExistingPaths.Add(original);
             var mapper = new MediaCoverMapper(appFolder, diskProvider, LogManager.GetCurrentClassLogger());
 
-            var mapped = mapper.Map("/MediaCover/Books/12/cover-500.jpeg");
+            var mapped = mapper.Map("/MediaCover/" + folder + "/" + filename + "-500.jpeg");
 
-            Assert.That(mapped, Is.EqualTo(Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover.jpeg")));
+            Assert.That(mapped, Is.EqualTo(original));
             Assert.That(mapper.CanHandle("/MediaCover/Books/12/cover-metadata.json"), Is.False);
         }
 
