@@ -219,7 +219,7 @@ const sourceStatusFacts = {
   instanceName: "Readarr", authentication: "basic", urlBase: "",
 };
 const targetStatusFacts = {
-  appName: "Chaptarr", version: "0.9.978.0", migrationVersion: 125,
+  appName: "Chaptarr", version: "0.9.978.0", migrationVersion: 126,
   buildTime: "2026-11-05T11:13:36Z", startTime: "2026-11-05T11:14:00Z",
   startupPath: "/app", osName: "ubuntu", osVersion: "24.04", runtimeVersion: "10.0.14",
   instanceName: "Readarr", authentication: "basic", urlBase: "",

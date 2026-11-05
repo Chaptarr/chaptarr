@@ -76,9 +76,16 @@ SELECT ""Source"", ""EntityType"", ""SourceId"", ""TargetId"", ""MediaType""
 FROM ""BookshelfLegacyIdentityMap""
 WHERE ""Source"" = @Source
   AND LOWER(""EntityType"") = LOWER(@EntityType)
-  AND ""{idColumn}"" IN ({string.Join(", ", parameterNames)})
-ORDER BY ""SourceId"", ""MediaType"", ""TargetId"";"; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- idColumn is allow-listed to fixed column names above.
-                mappings.AddRange(connection.Query<BookshelfLegacyIdentityMapEntry>(sql, parameters));
+  AND ""{idColumn}"" IN ({string.Join(", ", parameterNames)});"; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- idColumn is allow-listed to fixed column names above.
+                // Sorting in SQL can make SQLite scan the source-order index
+                // instead of seeking TargetId. Sort only the selected rows here,
+                // retaining each database's previous NULL ordering per batch.
+                var nullsLast = connection is Npgsql.NpgsqlConnection;
+                mappings.AddRange(connection.Query<BookshelfLegacyIdentityMapEntry>(sql, parameters)
+                    .OrderBy(mapping => mapping.SourceId)
+                    .ThenBy(mapping => nullsLast && !mapping.MediaType.HasValue)
+                    .ThenBy(mapping => mapping.MediaType)
+                    .ThenBy(mapping => mapping.TargetId));
             }
 
             return mappings;

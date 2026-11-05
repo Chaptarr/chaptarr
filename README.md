@@ -28,8 +28,8 @@ For local MCP access, see the [SnapeTech MCP integration guide](docs/integration
 
 ### BookshelfNG migration status
 
-**Status checked: 2026-11-05 UTC.** Application candidate `3651598e` is
-unpublished. BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest
+**Status checked: 2026-11-05 UTC.** The unpublished candidate now includes
+schema-126 indexes for large-library migration identity lookups. BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest
 public releases. Trusted validation may use compatible public GitHub-hosted
 runners or private ephemeral JIT; see [`AGENTS.md`](AGENTS.md).
 

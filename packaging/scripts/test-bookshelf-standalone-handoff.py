@@ -420,7 +420,7 @@ def verify_target_database(data_dir: Path, source_hash: str, label: str) -> None
     details = database_details(database)
     require(details["integrity"] == "ok", f"{label}: target SQLite integrity failed")
     require(details["foreign_key_violations"] == 0, f"{label}: target has foreign-key violations")
-    require(details["version"] == 125, f"{label}: expected ChaptarrNG schema 125, found {details['version']}")
+    require(details["version"] == 126, f"{label}: expected ChaptarrNG schema 126, found {details['version']}")
     require(details["authors"] > 0 and details["books"] > 0 and details["editions"] > 0,
             f"{label}: populated author/book/edition data was not preserved")
     backups = list(data_dir.glob("readarr.db.bookshelfng-backup-*.db"))
@@ -433,7 +433,7 @@ def verify_candidate_backup(data_dir: Path) -> None:
     targets = list(data_dir.glob("readarr.db.chaptarrng-backup-*.db"))
     require(bool(targets), "forced rollback did not retain the failed ChaptarrNG target database")
     details = database_details(targets[-1])
-    require(details["version"] == 125 and details["integrity"] == "ok",
+    require(details["version"] == 126 and details["integrity"] == "ok",
             "forced rollback's retained target database is not a valid migrated database")
 
 

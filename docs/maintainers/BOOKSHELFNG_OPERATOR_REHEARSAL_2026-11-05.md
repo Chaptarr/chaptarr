@@ -253,3 +253,27 @@ restart. No source service or production Seerr data is changed. These candidate
 results do not imply the Seerr repair has been published or deployed. Source,
 image/module provenance and synthetic evidence remain under
 `/var/tmp/chaptarrng-seerr-web-acquisition-20261105/` on `kspld0`.
+
+## Large-library identity lookup regression
+
+The all-record source collection succeeds for both libraries: 1,379/1,400
+authors, 14,605/14,963 works and all 27,559/28,499 files, with HTTP 200 for every
+file batch. Native full collection is stopped for repair after repeatedly
+scanning the migration map. The primary copy contains 206,823 mappings. The old
+case-insensitive entity predicate could use only the index's `Source` prefix;
+resource projection repeated that scan for individual IDs.
+
+Migration 126 adds functional indexes for source and target lookups and removes
+the redundant old nonunique prefix index. The service sorts selected rows after
+the query, preserving SQLite/PostgreSQL null ordering; the previous SQL sort
+made SQLite choose a source-order scan over a target-ID seek even with a target
+index. Four real-migration query-plan checks reproduce the missing seeks before
+repair. All 112 focused migration/importer/identity checks now pass, including a
+mixed/null ordering regression.
+
+On an isolated primary-data copy, 16 warm SQL lookups per direction change from
+12.7/12.8 ms to 0.0034/0.0023 ms per source/target lookup, with identical result
+hashes and row counts. This measures SQL lookup cost, not complete HTTP latency.
+New schema-126 packaged migration/rollback and all-record HTTP comparison remain
+to be run. Original snapshots and production services are unchanged; stopped
+probe logs and benchmark evidence remain private with the operator rehearsal.

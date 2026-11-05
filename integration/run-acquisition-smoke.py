@@ -159,7 +159,7 @@ try:
     # SQLite's backup API can change page headers; compare schema and every row,
     # including sqlite_sequence, rather than requiring identical physical bytes.
     assert logical_database_hash(backups[0]) == source_hash
-    for database, version in [(root / 'config/readarr.db', 125), (backups[0], 158)]:
+    for database, version in [(root / 'config/readarr.db', 126), (backups[0], 158)]:
         with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as connection:
             assert connection.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []

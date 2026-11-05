@@ -316,8 +316,8 @@ export function compareResponses(expected, actual, { includeDebugValues = false 
 export function classifySystemDeploymentDifferences(source, target, native) {
   if (!source || !target || !native || source.appName !== "Readarr" ||
       target.appName !== "Chaptarr" || native.appName !== "Chaptarr" ||
-      source.migrationVersion !== 158 || target.migrationVersion !== 125 ||
-      native.migrationVersion !== 125 || source.version !== "0.4.21.76") return [];
+      source.migrationVersion !== 158 || target.migrationVersion !== 126 ||
+      native.migrationVersion !== 126 || source.version !== "0.4.21.76") return [];
   const version = (value) => typeof value === "string" && /^\d+\.\d+\.\d+(?:\.\d+)?$/.test(value);
   const timestamp = (value) => typeof value === "string" && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
   const absolutePath = (value) => typeof value === "string" && value.startsWith("/") && !value.includes("\0");
@@ -325,7 +325,7 @@ export function classifySystemDeploymentDifferences(source, target, native) {
   const osVersion = (value) => typeof value === "string" && /^\d+(?:\.\d+)*$/.test(value);
   const rules = {
     appName: (a, b) => a === "Readarr" && b === "Chaptarr",
-    migrationVersion: (a, b) => a === 158 && b === 125,
+    migrationVersion: (a, b) => a === 158 && b === 126,
     version: (a, b) => version(a) && version(b),
     runtimeVersion: (a, b) => version(a) && version(b),
     buildTime: (a, b) => timestamp(a) && timestamp(b),

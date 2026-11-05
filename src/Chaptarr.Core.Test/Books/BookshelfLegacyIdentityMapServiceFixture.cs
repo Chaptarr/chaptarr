@@ -104,6 +104,28 @@ INSERT INTO BookshelfLegacyIdentityMap VALUES ('OtherSource', 'Book', 30, 900, 0
             }));
         }
 
+        [Test]
+        public void should_preserve_source_media_and_target_order_when_querying_targets()
+        {
+            using var connection = new SqliteConnection(ConnectionString);
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = @"
+INSERT INTO BookshelfLegacyIdentityMap VALUES ('BookshelfNG', 'Book', 9, 101, 1);
+INSERT INTO BookshelfLegacyIdentityMap VALUES ('BookshelfNG', 'Book', 8, 102, NULL);
+INSERT INTO BookshelfLegacyIdentityMap VALUES ('BookshelfNG', 'Book', 8, 101, 1);
+INSERT INTO BookshelfLegacyIdentityMap VALUES ('BookshelfNG', 'Book', 8, 103, 0);";
+            command.ExecuteNonQuery();
+            var database = DispatchProxy.Create<IMainDatabase, MainDatabaseProxy>();
+            ((MainDatabaseProxy)(object)database).ConnectionString = ConnectionString;
+            var mappings = new BookshelfLegacyIdentityMapService(database)
+                .GetMappingsByTargetIds("bOoK", new[] { 103, 101, 102 });
+            Assert.That(mappings.Select(mapping => (mapping.SourceId, mapping.MediaType, mapping.TargetId)), Is.EqualTo(new[]
+            {
+                (8, (int?)null, 102), (8, (int?)0, 103), (8, (int?)1, 101), (9, (int?)1, 101)
+            }));
+        }
+
         private class MainDatabaseProxy : DispatchProxy
         {
             public string ConnectionString { get; set; }

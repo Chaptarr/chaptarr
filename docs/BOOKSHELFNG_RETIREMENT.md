@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-05 UTC
 
-Application candidate `3651598e` is unpublished. Public hosted runners are
+The unpublished candidate now includes schema-126 migration identity indexes. Public hosted runners are
 authorized for trusted validation; CodeQL remains disabled.
 
 Fresh, consistent snapshots of both running BookshelfNG `.76` instances have now
