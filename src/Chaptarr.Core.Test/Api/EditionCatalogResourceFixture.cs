@@ -19,8 +19,9 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class EditionCatalogResourceFixture
     {
-        [Test]
-        public void legacy_catalog_should_include_both_formats_and_project_split_edition_ids_once()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void legacy_catalog_should_include_both_formats_and_project_split_edition_ids_once(bool filesAlreadyLoaded)
         {
             var books = new Mock<IBookService>();
             books.Setup(service => service.GetBook(20)).Returns(new Book { Id = 20 });
@@ -40,6 +41,14 @@ namespace Chaptarr.Core.Test.Api
                 new() { Id = 17, BookId = 21, Title = "Ebook", IsEbook = true, ForeignEditionId = "hc:3007" },
                 new() { Id = 116, BookId = 21, Title = "Audio", IsEbook = true }
             };
+            editions[0].BookFiles = filesAlreadyLoaded ? new List<BookFile> { new() { EditionId = 16 } } : null;
+            editions[0].Images = new List<CoreMediaCover>
+            {
+                new(MediaCoverTypes.Cover, "https://covers.example/audio.jpg")
+                {
+                    RemoteUrl = "https://original.example/audio.jpg"
+                }
+            };
             var editionService = new Mock<IEditionService>();
             editionService.Setup(service => service.GetEditionsByBook(It.IsAny<int>()))
                 .Returns<int>(id => editions.Where(edition => edition.BookId == id).ToList());
@@ -48,9 +57,10 @@ namespace Chaptarr.Core.Test.Api
             var files = new Mock<IMediaFileService>();
             files.Setup(service => service.GetFilesByBook(It.IsAny<int>()))
                 .Returns<int>(id => id == 21 ? new List<BookFile> { new() { EditionId = 116 } } : new List<BookFile>());
+            var coverProxy = new Mock<IMediaCoverProxy>();
             var controller = new BookController(
                 null, books.Object, null, editionService.Object, null, null, null, files.Object, null,
-                new Mock<IMediaCoverProxy>().Object, null, null, null, null, null, null, null, null, null, null,
+                coverProxy.Object, null, null, null, null, null, null, null, null, null, null,
                 bookshelfLegacyIdentityMapService: identities.Object)
             {
                 ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
@@ -63,7 +73,10 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(catalog.Select(edition => edition.EditionId), Is.EqualTo(new[] { 16, 17 }));
             Assert.That(catalog.Select(edition => edition.ForeignEditionId), Is.EqualTo(new[] { "3006", "3007" }));
             Assert.That(catalog.Select(edition => edition.IsEbook), Is.EqualTo(new[] { false, true }));
-            Assert.That(catalog[0].Owned, Is.True);
+            Assert.That(catalog[0].Owned, Is.EqualTo(filesAlreadyLoaded));
+            Assert.That(catalog[0].ImageUrl, Is.EqualTo("https://original.example/audio.jpg"));
+            files.Verify(service => service.GetFilesByBook(It.IsAny<int>()), Times.Never);
+            coverProxy.Verify(service => service.ProxyRemoteUrls(It.IsAny<IEnumerable<CoreMediaCover>>()), Times.Never);
         }
 
         private class BookServiceProxy : DispatchProxy

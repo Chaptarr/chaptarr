@@ -123,7 +123,7 @@ namespace Chaptarr.Api.V1.Books
                 DurationSeconds = edition.DurationSeconds,
                 Publisher = edition.Publisher,
                 ReleaseDate = edition.ReleaseDate,
-                ImageUrl = cover?.Url,
+                ImageUrl = facadeContext?.IsBookshelfCompatibility == true ? cover?.RemoteUrl ?? cover?.Url : cover?.Url,
                 Monitored = edition.Monitored,
                 Owned = owned
             };

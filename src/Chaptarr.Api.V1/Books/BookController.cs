@@ -1304,16 +1304,10 @@ namespace Chaptarr.Api.V1.Books
         private List<EditionCatalogResource> GetBookshelfEditionCatalog(List<int> bookIds, ReadarrFacadeContext facadeContext)
         {
             var editions = _editionService.GetEditionsByBook(bookIds);
-            _mediaCoverProxy.ProxyRemoteUrls(editions.SelectMany(edition => edition.Images ?? new List<MediaCover>()));
             var mappings = _bookshelfLegacyIdentityMapService?.GetMappingsByTargetIds("Edition", editions.Select(edition => edition.Id))
                 .GroupBy(mapping => mapping.TargetId)
                 .ToDictionary(group => group.Key, group => group.First().SourceId)
                 ?? new Dictionary<int, int>();
-            var ownedEditionIds = bookIds
-                .SelectMany(bookId => _mediaFileService.GetFilesByBook(bookId) ?? new List<NzbDrone.Core.MediaFiles.BookFile>())
-                .Select(file => file.EditionId)
-                .ToHashSet();
-
             // One source edition can gain a synthetic sibling during format separation.
             // The unscoped legacy work still exposes its original edition exactly once.
             return editions
@@ -1323,7 +1317,9 @@ namespace Chaptarr.Api.V1.Books
                     var original = group.OrderByDescending(edition => edition.Id == group.Key)
                         .ThenBy(edition => edition.Id)
                         .First();
-                    var resource = original.ToCatalogResource(group.Any(edition => ownedEditionIds.Contains(edition.Id)), facadeContext);
+                    // Bookshelf's catalog reports only already-loaded ownership and
+                    // original cover URLs; native catalogs hydrate/proxy explicitly.
+                    var resource = original.ToCatalogResource(original.BookFiles?.Any() == true, facadeContext);
                     resource.EditionId = group.Key;
                     return resource;
                 })
