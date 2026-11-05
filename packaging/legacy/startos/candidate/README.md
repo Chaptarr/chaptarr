@@ -71,3 +71,13 @@ Application source: <https://github.com/snapetech-org/chaptarrng>
 ## Security scanning
 
 Run scripts/security-scan-local.sh for local Semgrep Community Edition and applicable Trivy scans. Public GitHub Actions workflows run these scans on changes and weekly, alongside any existing CodeQL workflow. See docs/security-scanning.md for offline setup and updates. Run scripts/install-security-hooks.sh once to enable the staged Semgrep pre-commit hook.
+
+
+The SDK 3 toolchain uses a scoped `@typescript-eslint/typescript-estree`
+`minimatch` override to `11.0.1` for
+[CVE-2026-118764](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
+Keep the lockfile aligned with that override. Generate the package version before
+running the TypeScript check: the source version placeholder is deliberately not
+a valid SDK version. Fresh `npm ci`, the generated-version TypeScript check and
+NCC bundle build validate this dependency repair; they do not establish installed
+StartOS handoff or external repository delivery.

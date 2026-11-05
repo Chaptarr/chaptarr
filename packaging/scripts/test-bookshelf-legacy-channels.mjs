@@ -917,6 +917,13 @@ test('StartOS candidate uses the patched SDK 3 dependency contract and documents
   assert.equal(packageJson.dependencies['@start9labs/start-sdk'], '3.1.0');
   assert.equal(packageLock.packages[''].dependencies['@start9labs/start-sdk'], '3.1.0');
   assert.equal(packageLock.packages['node_modules/@start9labs/start-sdk'].version, '3.1.0');
+  assert.equal(packageJson.overrides['@typescript-eslint/typescript-estree'].minimatch, '11.0.1');
+  for (const [path, dependency] of Object.entries(packageLock.packages)) {
+    if (!path.endsWith('/minimatch')) continue;
+    const [major, minor, patch] = dependency.version.split('.').map(Number);
+    const affected = major >= 7 && (major < 11 || (major === 11 && minor === 0 && patch === 0));
+    assert.equal(affected, false, `${path} must exclude CVE-2026-118764`);
+  }
   assert.match(dependencies, /sdk\.Dependencies\.of\(\)/);
   assert.match(index, /buildManifest\(versionGraph,\s*sdkManifest,\s*dependencies\)/);
   assert.match(init, /import \{ dependencies \} from '\.\.\/dependencies'/);

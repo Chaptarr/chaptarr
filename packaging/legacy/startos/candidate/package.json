@@ -21,6 +21,9 @@
     "singleQuote": true
   },
   "overrides": {
-    "@start9labs/start-sdk": "$@start9labs/start-sdk"
+    "@start9labs/start-sdk": "$@start9labs/start-sdk",
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "11.0.1"
+    }
   }
 }
