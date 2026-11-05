@@ -48,7 +48,7 @@ namespace Chaptarr.Core.Test.Api
                     }
                 }
             });
-            var profiles = new QualityProfileService(profileRepository, null, null, null, null, null, null);
+            var profiles = new QualityProfileService(profileRepository, null, null, null, null, null, null, null);
             var client = Service<IDownloadClient>((m, a) =>
             {
                 _mutations.Add(m.Name);

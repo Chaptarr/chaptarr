@@ -356,6 +356,7 @@ namespace Chaptarr.Core.Test.CustomFormats
                 formatService: null,
                 rootFolderService: null,
                 qualityDefinitionService: null,
+                configService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
             service.Handle(new CustomFormatAddedEvent(format, BuiltInCustomFormats.PreferredNarratorDefaultAudiobookScore));
@@ -425,6 +426,7 @@ namespace Chaptarr.Core.Test.CustomFormats
                 formatService: formatService,
                 rootFolderService: null,
                 qualityDefinitionService: null,
+                configService: null,
                 logger: LogManager.GetCurrentClassLogger());
         }
 

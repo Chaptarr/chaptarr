@@ -768,7 +768,7 @@ namespace NzbDrone.Core.DecisionEngine
             return profile?.Items?.Any(item => item.Allowed && item.GetQualities().Any(q => q.Id == quality.Id)) == true;
         }
 
-        private static int CompareDetectedQuality(Quality left, Quality right, Author author)
+        private int CompareDetectedQuality(Quality left, Quality right, Author author)
         {
             var leftProfile = author.GetQualityProfileForQuality(left);
             var rightProfile = author.GetQualityProfileForQuality(right);
@@ -780,7 +780,9 @@ namespace NzbDrone.Core.DecisionEngine
                 return new QualityModelComparer(leftProfile).Compare(left, right);
             }
 
-            return new QualityModel(left).CompareTo(new QualityModel(right));
+            return _configService?.BookshelfMatchCompatibility == true
+                ? BookshelfQualityCompatibility.Compare(left, right)
+                : new QualityModel(left).CompareTo(new QualityModel(right));
         }
 
         private DownloadDecision GetDecisionForReport(RemoteBook remoteBook, SearchCriteriaBase searchCriteria = null)

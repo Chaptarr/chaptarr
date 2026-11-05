@@ -60,6 +60,7 @@ namespace Chaptarr.Core.Test.Profiles.Quality
                     formatService: new StubCustomFormatService(formats),
                     rootFolderService: null,
                     qualityDefinitionService: null,
+                    configService: null,
                     logger: LogManager.GetCurrentClassLogger());
             }
 

@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.CustomFormats.Events;
 using NzbDrone.Core.ImportLists;
@@ -38,6 +39,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         private readonly ICustomFormatService _formatService;
         private readonly IRootFolderService _rootFolderService;
         private readonly IQualityDefinitionService _qualityDefinitionService;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public QualityProfileService(IProfileRepository profileRepository,
@@ -46,6 +48,7 @@ namespace NzbDrone.Core.Profiles.Qualities
                                      ICustomFormatService formatService,
                                      IRootFolderService rootFolderService,
                                      IQualityDefinitionService qualityDefinitionService,
+                                     IConfigService configService,
                                      Logger logger)
         {
             _profileRepository = profileRepository;
@@ -54,6 +57,7 @@ namespace NzbDrone.Core.Profiles.Qualities
             _rootFolderService = rootFolderService;
             _formatService = formatService;
             _qualityDefinitionService = qualityDefinitionService;
+            _configService = configService;
             _logger = logger;
         }
 
@@ -276,7 +280,14 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed)
         {
-            var groupedQualites = Quality.DefaultQualityDefinitions
+            var useBookshelfOrdering = _configService?.BookshelfMatchCompatibility == true;
+            IEnumerable<QualityDefinition> definitions = useBookshelfOrdering
+                ? BookshelfQualityCompatibility.GetDefaultDefinitions()
+                : Quality.DefaultQualityDefinitions;
+            var allowedQualities = useBookshelfOrdering
+                ? allowed.Where(quality => quality != Quality.Unknown).ToArray()
+                : allowed;
+            var groupedQualites = definitions
                 .OrderBy(q => q.GroupWeight)
                 .GroupBy(q => q.GroupWeight);
             var items = new List<QualityProfileQualityItem>();
@@ -288,11 +299,11 @@ namespace NzbDrone.Core.Profiles.Qualities
                 if (group.Count() == 1)
                 {
                     var quality = group.First().Quality;
-                    items.Add(new QualityProfileQualityItem { Quality = quality, Allowed = allowed.Contains(quality) });
+                    items.Add(new QualityProfileQualityItem { Quality = quality, Allowed = allowedQualities.Contains(quality) });
                     continue;
                 }
 
-                var groupAllowed = group.Any(g => allowed.Contains(g.Quality));
+                var groupAllowed = group.Any(g => allowedQualities.Contains(g.Quality));
 
                 items.Add(new QualityProfileQualityItem
                 {
