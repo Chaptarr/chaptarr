@@ -186,6 +186,46 @@ async function compareBasicAuthentication(caseId, password, expectedStatus, path
   });
 }
 
+async function verifyHostConfigReadback() {
+  // Raw secrets remain only in memory while exercising an unchanged client's
+  // GET/PUT flow. Reports contain only sanitized hashes and mismatch paths.
+  let before;
+  let savedStatus = 0;
+  let comparison = { mismatchPaths: ["/request"], mismatchDetails: [], additivePaths: [], additiveDetails: [] };
+  let secretsHidden = false;
+  try {
+    const headers = { "X-Api-Key": targetKey };
+    const response = await fetch(targetUrl + "/config/host", { headers, signal: AbortSignal.timeout(30_000) });
+    assert.equal(response.status, 200);
+    before = await response.json();
+    secretsHidden = before.password === "" && before.passwordConfirmation === "";
+    const saved = await fetch(targetUrl + "/config/host/1", {
+      method: "PUT", headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(before), signal: AbortSignal.timeout(30_000),
+    });
+    savedStatus = saved.status;
+    await saved.arrayBuffer();
+    const after = await getJson(targetUrl, targetKey, "/config/host");
+    comparison = compareResponses(sanitizeApiResponse(before), after.value);
+  } catch {
+    // Never serialize the request body, credential values or exception details.
+  }
+  const passed = secretsHidden && savedStatus === 202 && comparison.mismatchPaths.length === 0;
+  results.push({
+    caseId: "host-config.target-readback", method: "PUT", path: "/config/host/1",
+    sourceStatus: null, targetStatus: savedStatus,
+    sourceSha256: null, targetSha256: before ? sha256(sanitizeApiResponse(before)) : null,
+    mismatchPaths: passed ? [] : comparison.mismatchPaths.concat(secretsHidden ? [] : ["/password-visibility"], savedStatus === 202 ? [] : ["/httpStatus"]),
+    mismatchDetails: comparison.mismatchDetails,
+    additivePaths: comparison.additivePaths, additiveDetails: comparison.additiveDetails,
+    providerPresentationDifferenceCount: 0, providerPresentationDifferencePaths: [],
+    passwordWriteOnly: secretsHidden,
+    result: passed ? "pass" : "fail",
+  });
+  await compareBasicAuthentication("authentication.legacy-password-after-settings-save", "fixture-password", 200);
+  await compareBasicAuthentication("authentication.wrong-password-after-settings-save", "incorrect-fixture-password", 401);
+}
+
 async function compare(caseId, path, providerResource = false, expectedTargetStatus = null) {
   const [source, target] = await Promise.all([
     getJson(sourceUrl, sourceKey, path),
@@ -420,6 +460,8 @@ for (const [caseId, path, providerResource = false, expectedTargetStatus = null]
     }
   }
 }
+
+await verifyHostConfigReadback();
 
 const authorsResult = results.find((result) => result.caseId === "authors.list");
 const booksResult = results.find((result) => result.caseId === "books.list");

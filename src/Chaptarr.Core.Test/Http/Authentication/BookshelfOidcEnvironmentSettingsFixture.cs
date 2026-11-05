@@ -173,6 +173,22 @@ namespace Chaptarr.Core.Test.Http.Authentication
             Assert.That(BookshelfOidcEnvironmentSettings.AllowPrivateIssuer, Is.False);
         }
 
+        [TestCase(null, "Readarr")]
+        [TestCase("Readarr", "Readarr")]
+        [TestCase("Readarr Audiobooks", "Readarr Audiobooks")]
+        [TestCase("readarr - ebooks", "readarr - ebooks")]
+        [TestCase("", "Readarr")]
+        [TestCase("Unrelated", "Readarr")]
+        public void should_preserve_source_instance_name_rules_without_changing_native_default(string stored, string expected)
+        {
+            var config = stored == null ? CreateConfigFileProvider() : CreateConfigFileProvider(("InstanceName", stored));
+            Assert.That(config.GetBookshelfInstanceName(), Is.EqualTo(expected));
+            if (stored != null)
+            {
+                Assert.That(config.InstanceName, Is.EqualTo(NzbDrone.Common.EnvironmentInfo.BuildInfo.AppName));
+            }
+        }
+
         [Test]
         public void should_treat_unpersisted_postgres_database_defaults_as_implicit()
         {

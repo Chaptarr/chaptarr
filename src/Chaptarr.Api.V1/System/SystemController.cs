@@ -91,7 +91,9 @@ namespace Chaptarr.Api.V1.System
             return new SystemResource
             {
                 AppName = BuildInfo.AppName,
-                InstanceName = _configFileProvider.InstanceName,
+                InstanceName = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true
+                    ? _configFileProvider.GetBookshelfInstanceName()
+                    : _configFileProvider.InstanceName,
                 InstallationId = _configFileProvider.InstallationId,
                 Version = BuildInfo.Version.ToString(),
                 BuildTime = BuildInfo.BuildDateTime,

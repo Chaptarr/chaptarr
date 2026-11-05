@@ -49,6 +49,7 @@ namespace NzbDrone.Core.Configuration
         string UrlBase { get; }
         string UiFolder { get; }
         string InstanceName { get; }
+        string GetBookshelfInstanceName() => InstanceName;
         string InstallationId { get; }
         bool UpdateAutomatically { get; }
         UpdateMechanism UpdateMechanism { get; }
@@ -375,6 +376,18 @@ namespace NzbDrone.Core.Configuration
 
                 return BuildInfo.AppName;
             }
+        }
+
+        public string GetBookshelfInstanceName()
+        {
+            var name = _appOptions.InstanceName ?? GetValue("InstanceName", "Readarr", false);
+            return ResolveBookshelfInstanceName(name);
+        }
+
+        internal static string ResolveBookshelfInstanceName(string name)
+        {
+            // Match the predecessor's default and accepted custom instance names.
+            return name?.Contains("Readarr", StringComparison.OrdinalIgnoreCase) == true ? name : "Readarr";
         }
 
         public string InstallationId => GetValue("InstallationId", Guid.NewGuid().ToString("N"), true);
