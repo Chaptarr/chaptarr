@@ -4,11 +4,14 @@
 
 The bookshelfng-api-differential Compose file starts the digest-pinned public
 BookshelfNG 0.4.21.76 image beside the ChaptarrNG image built from the current
-checkout. It seeds separate expanded schema-158 fixtures, replaces placeholder
+checkout. It seeds one expanded schema-158 fixture, replaces placeholder
 provider IDs with valid numeric Hardcover and typed Open Library identities,
-normalizes the fixture generator's current-time migration timestamps, and
-verifies the two data fixtures are byte identical before adding a valid
-schema-158 BookshelfNG migration profile to the target. This makes ChaptarrNG
+normalizes the fixture generator's current-time migration timestamps, then
+starts BookshelfNG and waits for `/ping`. The harness snapshots the running
+source database with SQLite's online backup API, copies its generated
+`config.xml` and synthetic library files, and adds a valid schema-158
+BookshelfNG migration profile to the target. Runtime-seeded defaults and saved
+source settings therefore participate in the comparison. This makes ChaptarrNG
 serve the same compatibility mode used by an installed migrated database. It
 compares legacy API lists and detail routes, then exercises focused monitoring
 and deletion writes. The script records

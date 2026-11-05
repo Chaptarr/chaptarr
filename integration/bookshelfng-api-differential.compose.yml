@@ -25,7 +25,7 @@ services:
       dockerfile: Dockerfile.build
     environment:
       CHAPTARR__AUTH__APIKEY: ${CHAPTARRNG_API_KEY:?Set a disposable ChaptarrNG API key}
-      CHAPTARR__SERVER__PORT: "8789"
+      CHAPTARR__SERVER__PORT: "8787"
       HARDCOVER: "true"
       HARDCOVER_NATIVE: "true"
       PUID: ${TEST_PUID:?Set the host UID for disposable bind mounts}
@@ -46,7 +46,7 @@ services:
     command: ["node", "/harness/bookshelfng-api-differential.mjs"]
     environment:
       BOOKSHELFNG_API_URL: http://bookshelfng:8787/api/v1
-      CHAPTARRNG_API_URL: http://chaptarrng:8789/api/v1
+      CHAPTARRNG_API_URL: http://chaptarrng:8787/api/v1
       BOOKSHELFNG_API_KEY: ${BOOKSHELFNG_API_KEY:?Set a disposable BookshelfNG API key}
       CHAPTARRNG_API_KEY: ${CHAPTARRNG_API_KEY:?Set a disposable ChaptarrNG API key}
       BOOKSHELFNG_SOURCE_IMAGE: ${BOOKSHELFNG_SOURCE_IMAGE:?Set the digest-pinned BookshelfNG source image}

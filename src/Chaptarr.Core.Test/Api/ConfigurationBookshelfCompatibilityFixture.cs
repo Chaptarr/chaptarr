@@ -1,5 +1,6 @@
 using Chaptarr.Api.V1.Config;
 using Prowlarr.Api.V1.Config;
+using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.Configuration;
 
@@ -74,6 +75,17 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.That(modern.DefaultAudiobookRootFolderPath, Is.EqualTo("/new-audiobooks"));
             Assert.That(modern.DefaultEbookRootFolderPath, Is.EqualTo("/new-ebooks"));
+        }
+
+        [Test]
+        public void media_management_resource_should_expose_the_legacy_book_import_match_threshold()
+        {
+            var config = new Mock<IConfigService>();
+            config.SetupGet(value => value.BookImportMinimumMatchPercent).Returns(83);
+
+            var resource = MediaManagementConfigResourceMapper.ToResource(config.Object);
+
+            Assert.That(resource.BookImportMinimumMatchPercent, Is.EqualTo(83));
         }
     }
 }

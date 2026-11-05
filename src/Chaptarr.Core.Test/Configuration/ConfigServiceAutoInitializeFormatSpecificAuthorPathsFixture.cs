@@ -27,6 +27,29 @@ namespace Chaptarr.Core.Test.Configuration
             Assert.That(MediaManagementConfigResourceMapper.ToResource(service).AutoInitializeFormatSpecificAuthorPaths, Is.True);
         }
 
+        [Test]
+        public void migrated_bookshelf_instance_should_keep_its_extra_file_extension_default()
+        {
+            var repository = DispatchProxy.Create<IConfigRepository, InMemoryConfigRepositoryProxy>();
+            repository.Upsert("BookshelfNGDatabaseMigrated", "true");
+            var service = new ConfigService(repository, null, null, LogManager.GetCurrentClassLogger());
+
+            Assert.That(service.ExtraFileExtensions, Is.EqualTo("srt"));
+
+            service.ExtraFileExtensions = "srt,custom";
+
+            Assert.That(service.ExtraFileExtensions, Is.EqualTo("srt,custom"));
+        }
+
+        [Test]
+        public void native_instance_should_keep_the_chaptarr_extra_file_extension_default()
+        {
+            var repository = DispatchProxy.Create<IConfigRepository, InMemoryConfigRepositoryProxy>();
+            var service = new ConfigService(repository, null, null, LogManager.GetCurrentClassLogger());
+
+            Assert.That(service.ExtraFileExtensions, Is.EqualTo("jpg,png,cue,m3u,opf"));
+        }
+
         private class InMemoryConfigRepositoryProxy : DispatchProxy
         {
             private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);

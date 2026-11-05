@@ -2031,7 +2031,8 @@ namespace NzbDrone.Core.Datastore
 
             // The migrated Chaptarr database already has a valid default naming row.
             // BookshelfNG can have an empty NamingConfig table when the operator has
-            // never changed its defaults, so keep the target default in that case.
+            // never changed its defaults. Persist those legacy defaults in the target
+            // so an uncustomized migration keeps the same folder and file naming.
             if (sourceCount > 0)
             {
                 using var clear = target.CreateCommand();
@@ -2044,14 +2045,63 @@ namespace NzbDrone.Core.Datastore
                     EnsureAllSourceValuesMapped(row, targetColumns, "NamingConfig", NamingConfigMappedSourceColumns);
                     var values = Intersect(row, targetColumns);
                     SetIfPresent(values, "MultiEpisodeStyle", 0);
-                    SetIfPresent(values, "AuthorFolderFormat", GetString(row, "AuthorFolderFormat") ?? "{Author Name}");
-                    SetIfPresent(values, "StandardBookFormat", GetString(row, "StandardBookFormat") ?? "{Book Title}");
+                    var renameBooks = GetValue(row, "RenameBooks") ?? false;
+                    var replaceIllegalCharacters = GetValue(row, "ReplaceIllegalCharacters") ?? true;
+                    var colonReplacementFormat = GetValue(row, "ColonReplacementFormat") ?? (int)NzbDrone.Core.Organizer.ColonReplacementFormat.Smart;
+                    var authorFolderFormat = GetString(row, "AuthorFolderFormat") ?? "{Author Name}";
+                    var standardBookFormat = GetString(row, "StandardBookFormat") ?? "{Book Title}";
+                    SetIfPresent(values, "AuthorFolderFormat", authorFolderFormat);
+                    SetIfPresent(values, "StandardBookFormat", standardBookFormat);
+                    // BookshelfNG had one naming configuration for both media formats.
+                    // Carry it into the new ebook-specific fields as well as the legacy
+                    // audiobook fields so the split does not change future import paths.
+                    SetIfPresent(values, "EbookRenameBooks", renameBooks);
+                    SetIfPresent(values, "EbookReplaceIllegalCharacters", replaceIllegalCharacters);
+                    SetIfPresent(values, "EbookColonReplacementFormat", colonReplacementFormat);
+                    SetIfPresent(values, "EbookAuthorFolderFormat", authorFolderFormat);
+                    SetIfPresent(values, "EbookStandardBookFormat", standardBookFormat);
                     InsertRow(target, transaction, "NamingConfig", targetColumns, values);
                 }
             }
+            else
+            {
+                var bookshelfDefaults = NzbDrone.Core.Organizer.NamingConfig.Default;
+                bookshelfDefaults.AuthorFolderFormat = "{Author Name}";
+                bookshelfDefaults.StandardBookFormat = "{Book Title}" + Path.DirectorySeparatorChar + "{Author Name} - {Book Title}{ (PartNumber)}";
+                bookshelfDefaults.EbookRenameBooks = bookshelfDefaults.RenameBooks;
+                bookshelfDefaults.EbookReplaceIllegalCharacters = bookshelfDefaults.ReplaceIllegalCharacters;
+                bookshelfDefaults.EbookColonReplacementFormat = bookshelfDefaults.ColonReplacementFormat;
+                bookshelfDefaults.EbookAuthorFolderFormat = bookshelfDefaults.AuthorFolderFormat;
+                bookshelfDefaults.EbookStandardBookFormat = bookshelfDefaults.StandardBookFormat;
+
+                var values = typeof(NzbDrone.Core.Organizer.NamingConfig)
+                    .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                    .Where(property => property.Name != nameof(NzbDrone.Core.Organizer.NamingConfig.Id) && targetColumns.ContainsKey(property.Name))
+                    .ToDictionary(property => property.Name, property => property.GetValue(bookshelfDefaults), StringComparer.Ordinal);
+                SetIfPresent(values, "MultiEpisodeStyle", 0);
+
+                using (var select = target.CreateCommand())
+                {
+                    select.Transaction = transaction;
+                    select.CommandText = $"SELECT MIN({Quote("Id")}) FROM {Quote("NamingConfig")};";
+                    var existingId = select.ExecuteScalar();
+
+                    using var clear = target.CreateCommand();
+                    clear.Transaction = transaction;
+                    clear.CommandText = $"DELETE FROM {Quote("NamingConfig")};";
+                    clear.ExecuteNonQuery();
+
+                    if (existingId != null && existingId != DBNull.Value)
+                    {
+                        values["Id"] = Convert.ToInt32(existingId, CultureInfo.InvariantCulture);
+                    }
+                }
+
+                InsertRow(target, transaction, "NamingConfig", targetColumns, values);
+            }
 
             report.RecordTable("NamingConfig", sourceCount, 0, sourceCount, 0, 0,
-                "filename and folder patterns are preserved; target-only naming settings use Chaptarr defaults");
+                "BookshelfNG filename and folder patterns are preserved for both media types; target-only naming settings use Chaptarr defaults");
         }
 
         private static void ImportConfig(

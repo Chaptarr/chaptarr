@@ -155,8 +155,8 @@ if os.geteuid() == 0:
 if args.expanded_fixture:
     print(
         "Seeded disposable BookshelfNG schema 158 with 4 authors, 6 works, 9 editions, "
-        "4 synthetic book files, unresolved and unselected works, provider settings, "
-        "history, sidecars, series, and synthetic credentials."
+        "4 synthetic book files, unresolved and unselected works, "
+        "provider settings, history, sidecars, series, and synthetic credentials."
     )
 else:
     print("Seeded disposable BookshelfNG schema 158 with one author, one mixed-format book, two editions, and two synthetic library files.")

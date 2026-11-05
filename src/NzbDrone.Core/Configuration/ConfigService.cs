@@ -264,7 +264,7 @@ namespace NzbDrone.Core.Configuration
 
         public string ExtraFileExtensions
         {
-            get { return GetValue("ExtraFileExtensions", "jpg,png,cue,m3u,opf"); }
+            get { return GetValue("ExtraFileExtensions", BookshelfNGDatabaseMigrated ? "srt" : "jpg,png,cue,m3u,opf"); }
 
             set { SetValue("ExtraFileExtensions", value); }
         }

@@ -751,6 +751,35 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(QueryScalar<int>(_sourcePath, "SELECT RenameBooks FROM NamingConfig WHERE Id = 5;"), Is.EqualTo(1));
                 Assert.That(QueryScalar<string>(_sourcePath, "SELECT AuthorFolderFormat FROM NamingConfig WHERE Id = 5;"), Is.EqualTo("{Author NameLastFirst}"));
                 Assert.That(QueryScalar<string>(_sourcePath, "SELECT StandardBookFormat FROM NamingConfig WHERE Id = 5;"), Is.EqualTo("{Book Title} custom"));
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT EbookRenameBooks FROM NamingConfig WHERE Id = 5;"), Is.EqualTo(1));
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT EbookReplaceIllegalCharacters FROM NamingConfig WHERE Id = 5;"), Is.Zero);
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT EbookColonReplacementFormat FROM NamingConfig WHERE Id = 5;"), Is.EqualTo(4));
+                Assert.That(QueryScalar<string>(_sourcePath, "SELECT EbookAuthorFolderFormat FROM NamingConfig WHERE Id = 5;"), Is.EqualTo("{Author NameLastFirst}"));
+                Assert.That(QueryScalar<string>(_sourcePath, "SELECT EbookStandardBookFormat FROM NamingConfig WHERE Id = 5;"), Is.EqualTo("{Book Title} custom"));
+            });
+        }
+
+        [Test]
+        public void should_preserve_bookshelf_naming_defaults_when_no_settings_are_saved()
+        {
+            new MigrationController(LogManager.GetLogger(nameof(BookshelfDatabaseImporterFixture)), null).Migrate(
+                _sourceConnectionString,
+                new MigrationContext(MigrationType.Main),
+                DatabaseType.SQLite);
+
+            var expectedFormat = "{Book Title}" + Path.DirectorySeparatorChar + "{Author Name} - {Book Title}{ (PartNumber)}";
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT COUNT(*) FROM NamingConfig;"), Is.EqualTo(1));
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT Id FROM NamingConfig;"), Is.EqualTo(1));
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT RenameBooks FROM NamingConfig;"), Is.Zero);
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT ReplaceIllegalCharacters FROM NamingConfig;"), Is.EqualTo(1));
+                Assert.That(QueryScalar<int>(_sourcePath, "SELECT ColonReplacementFormat FROM NamingConfig;"), Is.EqualTo(4));
+                Assert.That(QueryScalar<string>(_sourcePath, "SELECT AuthorFolderFormat FROM NamingConfig;"), Is.EqualTo("{Author Name}"));
+                Assert.That(QueryScalar<string>(_sourcePath, "SELECT StandardBookFormat FROM NamingConfig;"), Is.EqualTo(expectedFormat));
+                Assert.That(QueryScalar<string>(_sourcePath, "SELECT EbookAuthorFolderFormat FROM NamingConfig;"), Is.EqualTo("{Author Name}"));
+                Assert.That(QueryScalar<string>(_sourcePath, "SELECT EbookStandardBookFormat FROM NamingConfig;"), Is.EqualTo(expectedFormat));
             });
         }
 

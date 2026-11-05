@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   differential-smoke:
-    name: Compare schema-158 API responses before and after migration
+    name: Compare BookshelfNG API responses before and after migration
     if: >-
       github.ref == 'refs/heads/main' &&
       inputs.action == 'ci' &&
@@ -59,7 +59,7 @@ jobs:
           printf 'BookshelfNG source image: %s\n' "$BOOKSHELFNG_SOURCE_IMAGE"
           printf 'ChaptarrNG target commit: %s\n' "$CHAPTARRNG_TARGET_COMMIT"
 
-      - name: Run read/write API differential against identical disposable fixtures
+      - name: Run read/write API differential from a runtime-seeded source snapshot
         env:
           BOOKSHELFNG_DIFFERENTIAL_WORK_DIR: ${{ runner.temp }}/bookshelfng-api-differential-${{ github.run_id }}
           BOOKSHELFNG_DIFFERENTIAL_DEBUG_VALUES: "true"

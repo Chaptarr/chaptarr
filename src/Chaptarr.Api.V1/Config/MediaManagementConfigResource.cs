@@ -27,6 +27,7 @@ namespace Chaptarr.Api.V1.Config
         public RescanAfterRefreshType RescanAfterRefresh { get; set; }
         public AllowFingerprinting AllowFingerprinting { get; set; }
         public BookMatchingStrictness BookMatchingStrictness { get; set; }
+        public int BookImportMinimumMatchPercent { get; set; }
         public bool UsePathAsTagsFallback { get; set; }
         public bool AutoAddMissingAuthorsFromCompletedDownloads { get; set; }
         public bool AutoInitializeFormatSpecificAuthorPaths { get; set; }
@@ -116,6 +117,7 @@ namespace Chaptarr.Api.V1.Config
                 RescanAfterRefresh = model.RescanAfterRefresh,
                 AllowFingerprinting = model.AllowFingerprinting,
                 BookMatchingStrictness = model.BookMatchingStrictness,
+                BookImportMinimumMatchPercent = model.BookImportMinimumMatchPercent,
                 UsePathAsTagsFallback = model.UsePathAsTagsFallback,
                 AutoAddMissingAuthorsFromCompletedDownloads = model.AutoAddMissingAuthorsFromCompletedDownloads,
                 AutoInitializeFormatSpecificAuthorPaths = model.AutoInitializeFormatSpecificAuthorPaths,
