@@ -47,7 +47,7 @@ namespace Chaptarr.Http.Middleware
                 context.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext(
                     dialect,
                     mediaType: null,
-                    prefix: "/api",
+                    prefix: string.Empty,
                     isBookshelfCompatibility: true);
             }
 

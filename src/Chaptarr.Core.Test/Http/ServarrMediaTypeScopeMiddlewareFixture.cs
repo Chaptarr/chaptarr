@@ -9,6 +9,31 @@ namespace Chaptarr.Core.Test.Http
     [TestFixture]
     public class ServarrMediaTypeScopeMiddlewareFixture
     {
+        [TestCase("")]
+        [TestCase("/library")]
+        public async Task should_preserve_the_original_base_path_for_migrated_api_clients(string basePath)
+        {
+            ReadarrFacadeContext facade = null;
+            var middleware = new ServarrMediaTypeScopeMiddleware(context =>
+            {
+                facade = context.GetReadarrFacadeContext();
+                return Task.CompletedTask;
+            });
+            var context = new DefaultHttpContext();
+            context.Request.PathBase = basePath;
+            context.Request.Path = "/api/v1/system/status";
+            var config = (ConfigServiceTestProxy)ConfigServiceTestProxy.Create();
+            config.BookshelfNGDatabaseMigrated = true;
+
+            await middleware.InvokeAsync(context, (NzbDrone.Core.Configuration.IConfigService)config);
+
+            Assert.That(facade?.IsBookshelfCompatibility, Is.True);
+            Assert.That(facade?.AcceptsBookshelfLegacyBookIds, Is.True);
+            Assert.That(facade?.Prefix, Is.Empty);
+            Assert.That(context.Request.PathBase.Value ?? string.Empty, Is.EqualTo(basePath));
+            Assert.That(context.Request.Path.Value, Is.EqualTo("/api/v1/system/status"));
+        }
+
         [TestCase("/ebook/api/v1/book/lookup", "ebook")]
         [TestCase("/ebooks/api/v1/book/lookup", "ebook")]
         [TestCase("/audiobook/api/v1/book/lookup", "audiobook")]
