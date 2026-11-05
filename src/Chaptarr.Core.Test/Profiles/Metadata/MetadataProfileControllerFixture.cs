@@ -134,7 +134,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
         [Test]
         public void schema_should_initialize_preferred_terms_for_new_profiles()
         {
-            var resource = new MetadataApi.MetadataProfileSchemaController().GetAll();
+            var resource = new MetadataApi.MetadataProfileSchemaController(configService: null).GetAll();
 
             Assert.Multiple(() =>
             {
