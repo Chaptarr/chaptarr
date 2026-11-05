@@ -116,7 +116,7 @@ if [[ "$rid" == linux-* || "$rid" == osx-* ]]; then
     "$bundle/scripts/capture-bookshelf-metadata-env.py"
 fi
 
-if [[ "$rid" == osx-* || "$rid" == freebsd-x64 ]]; then
+if [[ "$rid" == linux-* || "$rid" == osx-* || "$rid" == freebsd-x64 ]]; then
   handoff_dir="$bundle/scripts/bookshelfng-handoff"
   mkdir -p "$handoff_dir"
   install -m 0755 scripts/bookshelfng-standalone-launch.sh \
