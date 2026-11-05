@@ -6240,7 +6240,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/ProviderControllerBase.cs",
-          "line": 126,
+          "line": 130,
           "sourceLine": "throw new BadRequestException(\"ids must be provided\");",
           "sourceLineSha256": "60a4770f0a91e2b155bbd972ea823b81107efcdeec99c36fcedd6bfa863a097f",
           "category": "api-error",
