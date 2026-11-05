@@ -11,6 +11,16 @@ namespace Chaptarr.Core.Test.Http
     [TestFixture]
     public class SeerrApiKeyAccessPolicyFixture
     {
+        private const string ProxyHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        [TestCase("GET", "/MediaCoverProxy/" + ProxyHash + "/cover.jpg", true)]
+        [TestCase("GET", "/MediaCoverProxy/" + ProxyHash + "/poster.webp", true)]
+        [TestCase("POST", "/MediaCoverProxy/" + ProxyHash + "/cover.jpg", false)]
+        [TestCase("GET", "/MediaCoverProxy/short/cover.jpg", false)]
+        [TestCase("GET", "/MediaCoverProxy/" + ProxyHash + "/config.xml", false)]
+        [TestCase("GET", "/MediaCoverProxy/" + ProxyHash + "/cover.svg", false)]
+        [TestCase("GET", "/MediaCoverProxy/" + ProxyHash + "/../cover.jpg", false)]
+        [TestCase("GET", "/MediaCoverProxy/" + ProxyHash + "/cover.jpg/other", false)]
         [TestCase("GET", "/api/v1/system/capabilities", true)]
         [TestCase("GET", "/api/v1/system/health", false)]
         [TestCase("GET", "/api/v1/book/paged", true)]

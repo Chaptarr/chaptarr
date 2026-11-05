@@ -34,7 +34,7 @@ namespace Chaptarr.Http.Authentication
             }
 
             if (string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase) &&
-                IsMediaCoverPath(path))
+                (IsMediaCoverPath(path) || IsMediaCoverProxyPath(path)))
             {
                 return true;
             }
@@ -335,6 +335,15 @@ namespace Chaptarr.Http.Authentication
                    int.TryParse(segments[3], NumberStyles.None, CultureInfo.InvariantCulture, out var authorId) &&
                    authorId > 0 &&
                    IsSafeImageName(segments[4]);
+        }
+
+        internal static bool IsMediaCoverProxyPath(string path)
+        {
+            var segments = path?.Split('/');
+            return segments?.Length == 4 &&
+                   string.Equals(segments[1], "MediaCoverProxy", StringComparison.OrdinalIgnoreCase) &&
+                   segments[2].Length == 64 && segments[2].All(Uri.IsHexDigit) &&
+                   IsSafeImageName(segments[3]);
         }
 
         private static bool IsSafeImageName(string filename)

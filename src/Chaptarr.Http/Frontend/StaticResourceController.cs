@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using Chaptarr.Http.Authentication;
 using Chaptarr.Http.Extensions;
 using Chaptarr.Http.Frontend.Mappers;
 using NzbDrone.Core.MediaCover;
@@ -56,6 +57,16 @@ namespace Chaptarr.Http.Frontend
         public IActionResult BookCover(int bookId, string filename)
         {
             return MapCachedCover(bookId, filename, isBook: true);
+        }
+
+        [Authorize(AuthenticationSchemes = "API")]
+        [HttpGet("MediaCoverProxy/{hash}/{filename}")]
+        public IActionResult RegisteredProxyCover(string hash, string filename)
+        {
+            var path = "/MediaCoverProxy/" + hash + "/" + filename;
+            return SeerrApiKeyAccessPolicy.IsMediaCoverProxyPath(path)
+                ? MapResource(path.TrimStart('/'))
+                : NotFound();
         }
 
         private IActionResult MapCachedCover(int id, string filename, bool isBook)
