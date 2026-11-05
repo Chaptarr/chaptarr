@@ -21,26 +21,38 @@ M4A; authenticated range downloads match original bytes. This establishes bounde
 read acceptance, not acquisition, write/import or failure-recovery acceptance.
 The two installations retain separate ports, API keys and accounts.
 
-Full public CI passed at `13d490b6`; newer full CI
-[42021064161](https://github.com/snapetech-org/chaptarrng/actions/runs/42021064161)
-is running at `f3ab4cb2`. All ten standalone archives and both synthetic
-ebook/audiobook acquisition/restart rehearsals pass in
-[42021069122](https://github.com/snapetech-org/chaptarrng/actions/runs/42021069122)
-at `f3ab4cb2`.
-These use the deployed SeerrNG adapter and actual local qBittorrent transfers;
-reading content/audio bytes and source backups are preserved. The packaged
-registered-cover proxy additionally passes actual SeerrNG author/book image
-fetches and authentication boundaries with an original public fixture image. Installed Linux systemd No/Yes and post-conversion
-rollback passed at `8dcd4900`; later changes retain separate focused evidence.
-Revision-specific results are recorded in the [channel acceptance matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
+Full public Build [42031944612](https://github.com/snapetech-org/chaptarrng/actions/runs/42031944612)
+and all ten standalone archives
+[42031945553](https://github.com/snapetech-org/chaptarrng/actions/runs/42031945553)
+passed at schema-126 candidate `833d6d63`. The strict API run
+[42031944507](https://github.com/snapetech-org/chaptarrng/actions/runs/42031944507)
+also passed with explicit, independently verified runtime/security dispositions;
+its source-side invalid paged fixture remains inconclusive.
 
-The latest strict run retains two differences: write-only password hashes and
-actual runtime facts. Narrow verification for those dispositions is implemented
-and awaits execution; all original mismatch details remain visible. Live-provider and
-complete SeerrNG fulfillment, headed UI, external distribution delivery and
-production acceptance remain open. The Desktop Pool v2 acquisition still times
-out; no headed UI pass is claimed. Publication, bridge activation, cutover and
-retirement remain unauthorized.
+A subsequent comparison of every managed author, work and file in both real
+snapshots found additional response differences missed by the synthetic sample.
+The compatibility fixes preserve raw narrator text, every series label, original
+titles, empty unselected-edition metadata, null embedded relations, stored work
+monitor flags, source author image lists and unmapped audio quality weights.
+Unscoped split works prefer the monitored edition retaining the source provider
+identity. Legacy cover URLs retain their extension, URL base and last-write token;
+known extensionless cached image names are supported without accepting arbitrary
+extensionless files. The 151 focused regressions pass; a new packaged full-library
+comparison is still required before claiming these gaps closed.
+
+The full SeerrNG user/approval/acquisition/scan/restart rehearsal now audits database
+identity, duplicates and orphaned identifiers. It exposed client defects repaired
+in [SeerrNG PR 527](https://github.com/snapetech-org/seerrng/pull/527), whose trusted
+owner CI [42028627704](https://github.com/snapetech-org/seerrng/actions/runs/42028627704)
+passed. Both format rehearsals pass with the explicitly identified unpublished
+test image; the unchanged deployed client is not claimed repaired.
+
+Live-provider fulfillment, headed UI, remaining installed and external distribution
+acceptance, and production acceptance remain open. Desktop Pool v2 acquisition
+still times out; no headed UI pass is claimed. Publication, bridge activation,
+cutover and retirement remain unauthorized. Revision-specific results are recorded
+in the [operator rehearsal](maintainers/BOOKSHELFNG_OPERATOR_REHEARSAL_2026-11-05.md)
+and [channel acceptance matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
 
 ## Historical checkpoint — 2026-11-04 UTC
 

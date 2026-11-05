@@ -84,7 +84,7 @@ namespace Chaptarr.Api.V1.BookFiles
             }
             else
             {
-                resource = bookFile.ToResource();
+                resource = bookFile.ToResource(HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
             }
 
             ProjectLegacyBookFileResource(resource);

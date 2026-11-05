@@ -143,9 +143,11 @@ namespace Chaptarr.Api.V1.Author
                 return null;
             }
 
-            // Do not expose a provider placeholder while an existing row waits for the
-            // startup repair or its next metadata refresh to scrub persistence.
-            var displayImages = MediaCoverRendition.SelectCandidates(model.Images).ToList();
+            // Native display filters provider placeholders. The compatibility response
+            // retains the predecessor's stored image list, including those placeholders.
+            var displayImages = facadeContext?.IsBookshelfCompatibility == true
+                ? model.Images?.Where(image => image != null).ToList() ?? new List<MediaCover>()
+                : MediaCoverRendition.SelectCandidates(model.Images).ToList();
 
             var resource = new AuthorResource
             {

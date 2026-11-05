@@ -1403,7 +1403,14 @@ namespace Chaptarr.Api.V1.Author
         {
             foreach (var authorResource in authors)
             {
-                _coverMapper.ConvertToLocalUrls(authorResource.Id, MediaCoverEntity.Author, authorResource.Images, authorResource.SelectedPosterHash);
+                if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+                {
+                    _coverMapper.ConvertToBookshelfLocalUrls(authorResource.AuthorMetadataId, MediaCoverEntity.Author, authorResource.Images);
+                }
+                else
+                {
+                    _coverMapper.ConvertToLocalUrls(authorResource.Id, MediaCoverEntity.Author, authorResource.Images, authorResource.SelectedPosterHash);
+                }
             }
         }
 

@@ -206,9 +206,16 @@ namespace Chaptarr.Core.Test.Api
                 Title = "Fixture ebook",
                 CleanTitle = "fixture ebook",
                 TitleSlug = "fixture-ebook",
-                Images = new List<MediaCoverModel>
+                Editions = new List<Edition>
                 {
-                    new(MediaCoverTypes.Cover, "/MediaCoverProxy/fake-hash/cover.jpg")
+                    new()
+                    {
+                        Monitored = true,
+                        Images = new List<MediaCoverModel>
+                        {
+                            new(MediaCoverTypes.Cover, "https://images.example/cover.jpg")
+                        }
+                    }
                 }
             };
 
@@ -244,9 +251,16 @@ namespace Chaptarr.Core.Test.Api
                 Title = "Fixture ebook",
                 CleanTitle = "fixture ebook",
                 TitleSlug = "fixture-ebook",
-                Images = new List<MediaCoverModel>
+                Editions = new List<Edition>
                 {
-                    new(MediaCoverTypes.Cover, "/MediaCoverProxy/fake-hash/cover.jpg")
+                    new()
+                    {
+                        Monitored = true,
+                        Images = new List<MediaCoverModel>
+                        {
+                            new(MediaCoverTypes.Cover, "https://images.example/cover.jpg")
+                        }
+                    }
                 }
             };
 
@@ -306,6 +320,14 @@ namespace Chaptarr.Core.Test.Api
             authorStatistics.Setup(service => service.BookshelfAuthorStatistics())
                 .Returns(new List<AuthorStatistics>());
 
+            var legacyCovers = new MediaCoverService(null, null, null, null,
+                Mock.Of<NzbDrone.Common.Disk.IDiskProvider>(),
+                Mock.Of<NzbDrone.Common.EnvironmentInfo.IAppFolderInfo>(info => info.AppDataFolder == "/fixture/config"),
+                null, null, Mock.Of<NzbDrone.Core.Configuration.IConfigFileProvider>(), null, null, LogManager.GetCurrentClassLogger());
+            var coverMapper = new Mock<IMapCoversToLocal>();
+            coverMapper.Setup(mapper => mapper.ConvertToBookshelfLocalUrls(It.IsAny<int>(), It.IsAny<MediaCoverEntity>(), It.IsAny<IEnumerable<MediaCoverModel>>()))
+                .Callback<int, MediaCoverEntity, IEnumerable<MediaCoverModel>>(legacyCovers.ConvertToBookshelfLocalUrls);
+
             var controller = new BookController(
                 authorService: authorService,
                 bookService: bookService,
@@ -315,7 +337,7 @@ namespace Chaptarr.Core.Test.Api
                 seriesBookLinkService: seriesLinks.Object,
                 authorStatisticsService: authorStatistics.Object,
                 mediaFileService: null,
-                coverMapper: new Mock<NzbDrone.Core.MediaCover.IMapCoversToLocal>().Object,
+                coverMapper: coverMapper.Object,
                 mediaCoverProxy: null,
                 upgradableSpecification: null,
                 signalRBroadcaster: null,

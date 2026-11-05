@@ -1055,28 +1055,8 @@ namespace Chaptarr.Api.V1.Books
                 return 0;
             }
 
-            var monitoredBookIds = _editionService.GetEditionsByBook(books.Select(book => book.Id))
-                .Where(edition => edition?.Monitored == true)
-                .Select(edition => edition.BookId)
-                .ToHashSet();
-
-            return SelectLegacyPrimaryBookId(books, monitoredBookIds);
-        }
-
-        private static int SelectLegacyPrimaryBookId(IReadOnlyCollection<Book> books, IReadOnlySet<int> monitoredBookIds)
-        {
-            var monitored = books.Where(book => monitoredBookIds.Contains(book.Id)).ToList();
-            if (monitored.Count > 0)
-            {
-                return monitored.OrderBy(book => book.MediaType).ThenBy(book => book.Id).First().Id;
-            }
-
-            return books
-                .OrderByDescending(book => book.HasFiles)
-                .ThenBy(book => book.MediaType)
-                .ThenBy(book => book.Id)
-                .First()
-                .Id;
+            var editions = _editionService.GetEditionsByBook(books.Select(book => book.Id));
+            return new BookshelfLegacyBookSelector(editions).Select(books);
         }
 
         private Book ResolveBookForApi(int sourceId, string mediaType = null)
@@ -1394,10 +1374,7 @@ namespace Chaptarr.Api.V1.Books
                     .GroupBy(mapping => mapping.TargetId)
                     .ToDictionary(group => group.Key, group => group.First())
                     ?? new Dictionary<int, BookshelfLegacyIdentityMapEntry>();
-                var monitoredEditionBookIds = _editionService.GetEditionsByBook(allBooks.Select(book => book.Id))
-                    .Where(edition => edition?.Monitored == true)
-                    .Select(edition => edition.BookId)
-                    .ToHashSet();
+                var legacySelector = new BookshelfLegacyBookSelector(_editionService.GetEditionsByBook(allBooks.Select(book => book.Id)));
 
                 var legacyGroups = allBooks
                     .GroupBy(book => legacyMappings.TryGetValue(book.Id, out var mapping)
@@ -1406,7 +1383,7 @@ namespace Chaptarr.Api.V1.Books
                     .Select(group =>
                     {
                         var rows = group.ToList();
-                        var primaryBookId = SelectLegacyPrimaryBookId(rows, monitoredEditionBookIds);
+                        var primaryBookId = legacySelector.Select(rows);
                         return new
                         {
                             LegacyId = group.Key.Id,

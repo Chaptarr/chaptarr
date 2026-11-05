@@ -187,7 +187,8 @@ namespace NzbDrone.Core.Books
             author.Images ??= new List<MediaCover.MediaCover>();
             author.Images = author.Images
                 .Where(image => image != null &&
-                                !NzbDrone.Core.MediaCover.MediaCoverRendition.IsKnownPlaceholderImageUrl(image.Url))
+                                (_configService?.BookshelfNGDatabaseMigrated == true ||
+                                 !NzbDrone.Core.MediaCover.MediaCoverRendition.IsKnownPlaceholderImageUrl(image.Url)))
                 .ToList();
             author.Links ??= new List<Links>();
             author.Genres ??= new List<string>();

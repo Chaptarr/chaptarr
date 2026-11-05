@@ -156,21 +156,30 @@ namespace Chaptarr.Api.V1.Books
 
             options ??= BookResourceMappingOptions.Rich();
 
+            var legacy = options.FacadeContext?.IsBookshelfCompatibility == true;
             var selectedEdition = SelectMonitoredEdition(model.Editions);
             var title = (selectedEdition?.Title ?? model.Title) ?? string.Empty;
 
-            var seriesTitle = BookSeriesLabel.Build(model.SeriesLinks);
+            var seriesTitle = legacy
+                ? model.SeriesLinks?.OrderBy(link => link.SeriesPosition)
+                    .Select(link => link?.Series?.Value?.Title +
+                        (link?.Position.IsNotNullOrWhiteSpace() == true ? $" #{link.Position}" : string.Empty))
+                    .ConcatToString("; ")
+                : BookSeriesLabel.Build(model.SeriesLinks);
 
             // Lookup and search results are not persisted and therefore never carry links, so the
             // denormalized pair from the metadata server is all they have. For a library book the
             // links are the truth, including when there are none.
-            if (seriesTitle.IsNullOrWhiteSpace() &&
+            if (!legacy && seriesTitle.IsNullOrWhiteSpace() &&
                 (model.Id <= 0 || !string.IsNullOrWhiteSpace(model.RanobeDbBookId)))
             {
                 seriesTitle = BookSeriesLabel.Format(model.SeriesName, model.SeriesPosition);
             }
 
-            title = StripDuplicatedSeriesSuffix(title, BuildSuffixCandidates(model, seriesTitle));
+            if (!legacy)
+            {
+                title = StripDuplicatedSeriesSuffix(title, BuildSuffixCandidates(model, seriesTitle));
+            }
 
             var authorTitle = $"{model.Author?.SortNameLastFirst} {title}";
             var hasFiles = options.Statistics != null
@@ -222,7 +231,7 @@ namespace Chaptarr.Api.V1.Books
                 AnyEditionOk = model.AnyEditionOk,
                 Ratings = selectedEdition != null
                     ? (selectedEdition.Ratings ?? new Ratings())
-                    : (model.Ratings ?? new Ratings()),
+                    : (legacy ? new Ratings() : model.Ratings ?? new Ratings()),
                 ReleaseDate = options.FacadeContext?.IsBookshelfCompatibility == true
                     ? model.ReleaseDate
                     : selectedEdition?.ReleaseDate ?? model.ReleaseDate,
@@ -244,13 +253,13 @@ namespace Chaptarr.Api.V1.Books
                     : (options.IncludeOverview ? (model.Overview ?? string.Empty) : null),
                 Images = selectedEdition != null
                     ? (selectedEdition.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList()
-                    : (model.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList(),
+                    : (legacy ? new List<MediaCover>() : model.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList(),
                 Links = links,
                 Statistics = options.Statistics?.ToResource(options.FacadeContext?.IsBookshelfCompatibility == true),
                 AddOptions = model.AddOptions,
                 RemoteCover = string.Empty,
                 Grabbed = options.FacadeContext?.IsBookshelfCompatibility == true ? false : null,
-                Narrator = GetNarratorDisplay(model, selectedEdition),
+                Narrator = legacy ? selectedEdition?.Narrator : GetNarratorDisplay(model, selectedEdition),
                 AvailableNarrators = GetAvailableNarrators(model),
                 NarratorNames = GetNarratorNamesForDisplay(model, selectedEdition),
                 Duration = GetDuration(model, selectedEdition),
@@ -260,11 +269,16 @@ namespace Chaptarr.Api.V1.Books
                 IsOmnibus = model.IsOmnibus
             };
 
+            if (legacy)
+            {
+                resource.Images = resource.Images.JsonClone();
+            }
+
             // Gate narrator display for V1 (audiobooks only): show names only when they come from files
             // or an explicitly pinned edition selection. Narrator is edition metadata, not an API identity.
             var hasPinnedEdition = !model.AnyEditionOk;
 
-            if (model.MediaType == BookMediaType.Audiobook && !(hasFiles || hasPinnedEdition))
+            if (!legacy && model.MediaType == BookMediaType.Audiobook && !(hasFiles || hasPinnedEdition))
             {
                 // Hide narrator fields when not eligible
                 resource.Narrator = null;

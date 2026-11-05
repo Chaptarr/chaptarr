@@ -1044,6 +1044,9 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(MediaCoverRendition.GetOriginalPath(Path.Combine(folder, rendition)), Is.EqualTo(Path.Combine(folder, original)));
         }
 
+        [TestCase("/MediaCover/Books/12/cover")]
+        [TestCase("/MediaCover/12/poster?lastWrite=1234")]
+        [TestCase("cover")]
         [TestCase("/MediaCover/Books/12/cover-250.jpeg?lastWrite=1234")]
         [TestCase("/MediaCover/Books/12/cover-250.jfif")]
         [TestCase("/MediaCover/Books/12/cover-250.webp")]
@@ -1052,6 +1055,8 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(MediaCoverRendition.IsSupportedImagePath(path), Is.True);
         }
 
+        [TestCase("/MediaCover/Books/config/cover")]
+        [TestCase("/MediaCover/Books/12/../config/cover")]
         [TestCase("/MediaCover/Books/12/cover-metadata.json")]
         [TestCase("/MediaCover/Books/12/readme.txt")]
         [TestCase("/MediaCover/Books/12/no-extension")]

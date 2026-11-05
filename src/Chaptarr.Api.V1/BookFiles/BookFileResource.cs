@@ -36,7 +36,7 @@ namespace Chaptarr.Api.V1.BookFiles
 
     public static class BookFileResourceMapper
     {
-        private static int QualityWeight(QualityModel quality)
+        private static int QualityWeight(QualityModel quality, bool bookshelfDefaultWeights = false)
         {
             if (quality == null)
             {
@@ -44,12 +44,28 @@ namespace Chaptarr.Api.V1.BookFiles
             }
 
             var qualityWeight = Quality.DefaultQualityDefinitions.Single(q => q.Quality == quality.Quality).Weight;
+            if (bookshelfDefaultWeights)
+            {
+                qualityWeight = quality.Quality.Id switch
+                {
+                    10 => 100,
+                    11 => 110,
+                    12 => 105,
+                    _ => qualityWeight
+                };
+            }
+
             qualityWeight += quality.Revision.Real * 10;
             qualityWeight += quality.Revision.Version;
             return qualityWeight;
         }
 
         public static BookFileResource ToResource(this BookFile model)
+        {
+            return ToResource(model, false);
+        }
+
+        public static BookFileResource ToResource(this BookFile model, bool bookshelfDefaultWeights)
         {
             if (model == null)
             {
@@ -64,7 +80,7 @@ namespace Chaptarr.Api.V1.BookFiles
                 Size = model.Size,
                 DateAdded = model.DateAdded,
                 Quality = model.Quality,
-                QualityWeight = QualityWeight(model.Quality),
+                QualityWeight = QualityWeight(model.Quality, bookshelfDefaultWeights),
                 MediaInfo = model.MediaInfo.ToResource(),
                 MediaType = model.MediaType,
                 Narrator = model.Narrator,

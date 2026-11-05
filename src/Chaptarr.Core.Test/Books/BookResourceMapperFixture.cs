@@ -1,3 +1,4 @@
+using Chaptarr.Api.V1.Author;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -979,6 +980,75 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(resource.Grabbed, Is.False);
                 Assert.That(resource.ForeignEditionId, Is.EqualTo("ol:OL123M"));
             });
+        }
+
+        [TestCase("")]
+        [TestCase("Reader One / Reader Two")]
+        public void bookshelf_should_preserve_raw_narrator_title_and_all_series(string narrator)
+        {
+            var book = new Book
+            {
+                Id = 1,
+                Title = "Fixture (Cycle #2)",
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = true,
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    new SeriesBookLink { SeriesPosition = 2, Series = new Series { Title = "Universe" } },
+                    new SeriesBookLink { SeriesPosition = 1, Position = "2", IsPrimary = true, Series = new Series { Title = "Cycle" } }
+                },
+                Editions = new List<Edition>
+                {
+                    new Edition { Monitored = true, Title = "Fixture (Cycle #2)", Narrator = narrator }
+                }
+            };
+
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Title, Is.EqualTo("Fixture (Cycle #2)"));
+                Assert.That(resource.SeriesTitle, Is.EqualTo("Cycle #2; Universe"));
+                Assert.That(resource.Narrator, Is.EqualTo(narrator));
+            });
+        }
+
+        [Test]
+        public void bookshelf_without_monitored_edition_should_use_empty_edition_metadata()
+        {
+            var book = new Book
+            {
+                Id = 1,
+                Title = "Fixture",
+                Ratings = new Ratings { Votes = 5, Value = 4 },
+                Images = new List<CoreMediaCover> { new CoreMediaCover { Url = "https://example.test/cover.jpg" } }
+            };
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Ratings.Votes, Is.Zero);
+                Assert.That(resource.Ratings.Value, Is.Zero);
+                Assert.That(resource.Images, Is.Empty);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void only_legacy_author_resource_should_preserve_provider_placeholder(bool legacy)
+        {
+            const string placeholder = "https://assets.hardcover.app/author/910002/provider-default.jpg";
+            MediaCoverRendition.RegisterKnownPlaceholderImage(placeholder, "47736d50a054c80f646c094ecd9c00c3fb12f5c585817fa5a581140c364da30e");
+            var author = new Author { Images = new List<CoreMediaCover> { new(MediaCoverTypes.Poster, placeholder) } };
+            var resource = author.ToResource(legacy ? new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true) : null);
+
+            Assert.That(resource.Images.Count, Is.EqualTo(legacy ? 1 : 0));
         }
 
         private static MemoryTarget ConfigureLogging()

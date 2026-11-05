@@ -106,7 +106,16 @@ namespace NzbDrone.Core.MediaCover
 
             var suffixStart = path.IndexOfAny(new[] { '?', '#' });
             var pathOnly = suffixStart >= 0 ? path.Substring(0, suffixStart) : path;
-            return SupportedImageExtensions.Contains(Path.GetExtension(pathOnly));
+            if (SupportedImageExtensions.Contains(Path.GetExtension(pathOnly)))
+            {
+                return true;
+            }
+
+            // BookshelfNG cached some provider images without an extension. Accept only
+            // known image names, either as an API filename or within a numeric cache folder.
+            return Regex.IsMatch(pathOnly,
+                @"^(?:/MediaCover/(?:Books/)?[1-9][0-9]*/)?(?:poster|banner|fanart|screenshot|headshot|cover|disc|logo|clearlogo)(?:-[0-9]+)?$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
 
         public static IReadOnlyList<MediaCover> SelectCanonicalCovers(IEnumerable<MediaCover> covers)

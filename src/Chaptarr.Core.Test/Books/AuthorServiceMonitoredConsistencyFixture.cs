@@ -138,7 +138,7 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
-        private static AuthorService BuildService(StubAuthorRepository repository, IRootFolderService rootFolderService = null, StubEventAggregator eventAggregator = null, IMediaFileService mediaFileService = null)
+        private static AuthorService BuildService(StubAuthorRepository repository, IRootFolderService rootFolderService = null, StubEventAggregator eventAggregator = null, IMediaFileService mediaFileService = null, NzbDrone.Core.Configuration.IConfigService configService = null)
         {
             return new AuthorService(
                 repository,
@@ -149,7 +149,8 @@ namespace Chaptarr.Core.Test.Books
                 cacheManager: new CacheManager(),
                 bookRepository: null,
                 mediaFileService: mediaFileService,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: LogManager.GetCurrentClassLogger(),
+                configService: configService);
         }
 
         [Test]
@@ -289,8 +290,9 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repository.LastUpdatedAuthor.Monitored, Is.False);
         }
 
-        [Test]
-        public void update_author_should_not_persist_known_provider_placeholder_images()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void update_author_should_preserve_source_images_only_for_migrated_library(bool migrated)
         {
             const string placeholder = "https://assets.hardcover.app/author/910002/provider-default.jpg";
             const string realPhoto = "https://images.example/real-author.jpg";
@@ -301,7 +303,7 @@ namespace Chaptarr.Core.Test.Books
                 Name = "Example Author"
             };
             var repository = new StubAuthorRepository(new Dictionary<int, Author> { { stored.Id, stored } });
-            var service = BuildService(repository);
+            var service = BuildService(repository, configService: Moq.Mock.Of<NzbDrone.Core.Configuration.IConfigService>(config => config.BookshelfNGDatabaseMigrated == migrated));
             var update = new Author
             {
                 Id = stored.Id,
@@ -315,7 +317,7 @@ namespace Chaptarr.Core.Test.Books
 
             service.UpdateAuthor(update);
 
-            Assert.That(repository.LastUpdatedAuthor.Images.Select(image => image.Url), Is.EqualTo(new[] { realPhoto }));
+            Assert.That(repository.LastUpdatedAuthor.Images.Select(image => image.Url), Is.EqualTo(migrated ? new[] { placeholder, realPhoto } : new[] { realPhoto }));
         }
 
         [Test]

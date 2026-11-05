@@ -26,6 +26,11 @@ namespace NzbDrone.Core.MediaCover
     public interface IMapCoversToLocal
     {
         void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers, string selectedAuthorImageHash = null);
+        void ConvertToBookshelfLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers)
+        {
+            ConvertToLocalUrls(entityId, coverEntity, covers);
+        }
+
         string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null);
         void EnsureAuthorCovers(Author author);
         void EnsureBookCovers(Book book);
@@ -432,6 +437,33 @@ namespace NzbDrone.Core.MediaCover
             }
 
             return Path.Combine(GetAuthorCoverPath(entityId), coverType.ToString().ToLower() + heightSuffix + GetExtension(coverType, extension));
+        }
+
+        public void ConvertToBookshelfLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers)
+        {
+            if (entityId == 0)
+            {
+                ConvertToLocalUrls(entityId, coverEntity, covers);
+                return;
+            }
+
+            foreach (var cover in covers ?? Enumerable.Empty<MediaCover>())
+            {
+                if (cover == null || cover.CoverType == MediaCoverTypes.Unknown)
+                {
+                    continue;
+                }
+
+                var filePath = GetCoverPath(entityId, coverEntity, cover.CoverType, cover.Extension);
+                var filename = cover.CoverType.ToString().ToLowerInvariant() + GetExtension(cover.CoverType, cover.Extension);
+                cover.RemoteUrl = cover.Url;
+                cover.Url = _configFileProvider.UrlBase + "/MediaCover/" +
+                    (coverEntity == MediaCoverEntity.Book ? "Books/" : string.Empty) + entityId + "/" + filename;
+                if (_diskProvider.FolderExists(Path.GetDirectoryName(filePath)) && _diskProvider.FileExists(filePath))
+                {
+                    cover.Url += "?lastWrite=" + _diskProvider.FileGetLastWrite(filePath).Ticks;
+                }
+            }
         }
 
         public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers, string selectedAuthorImageHash = null)
