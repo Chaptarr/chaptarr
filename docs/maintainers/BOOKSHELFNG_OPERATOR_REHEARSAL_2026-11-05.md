@@ -4,6 +4,42 @@ These are isolated rehearsals using consistent snapshots of both current
 BookshelfNG installations. Production services, databases, media and client
 configuration were not changed. No release or cutover is authorized.
 
+## Exhaustive response audit follow-up
+
+Schema-126 candidate `833d6d63` passed full Build
+[42031944612](https://github.com/snapetech-org/chaptarrng/actions/runs/42031944612),
+all ten standalone archives
+[42031945553](https://github.com/snapetech-org/chaptarrng/actions/runs/42031945553),
+and strict API validation
+[42031944507](https://github.com/snapetech-org/chaptarrng/actions/runs/42031944507).
+Its functional identity-map indexes eliminate the real-library lookup scans.
+
+Every managed record was then collected from both exact `.76` source clones and
+fresh migrated candidates: 2,779 authors, 29,568 source works and 56,058 files.
+All collection requests return HTTP 200 with no missing, extra or duplicate IDs.
+The first comparison exposed response gaps outside the synthetic sample.
+Candidate `fafb831a` fixes work titles, ratings, edition identities, links, book
+cover URLs and most narrator/series differences. Both fresh populated migration
+and rollback rehearsals pass again, including source user rows, provider settings,
+author arrays, captured metadata defaults and all file counts; rollback matches
+all source tables and retained backup bytes.
+
+The follow-up identifies additional importer-discarded narrator text, series ties,
+author cover identity, embedded monitor aggregation and mapped audio default weights.
+The next source repair has 267 passing focused checks; its packaged exhaustive
+comparison remains pending. Keep earlier comparisons as failure evidence.
+Raw bodies, configurations and source metadata remain private under
+`/var/tmp/chaptarrng-operator-data-20261105/` on `kspld0`.
+
+The full Seerr ebook workflow also passes with unchanged source profile IDs and
+the repaired, explicitly identified client test image. Post-consumer database
+audits verify both migrated format quality/metadata profiles and their types.
+The acquisition harness now defaults to source profile IDs and records those
+audits after import and restart. This validates existing migrated author settings;
+new-author configuration and other client paths need their own acceptance.
+Seerr repair [PR 527](https://github.com/snapetech-org/seerrng/pull/527) passed
+trusted owner CI and is merged as `7b013338`; no client image was published.
+
 ## Latest compatibility verification
 
 The metadata handoff now captures only the source container's effective

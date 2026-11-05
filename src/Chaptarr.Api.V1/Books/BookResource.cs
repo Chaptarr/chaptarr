@@ -161,7 +161,7 @@ namespace Chaptarr.Api.V1.Books
             var title = (selectedEdition?.Title ?? model.Title) ?? string.Empty;
 
             var seriesTitle = legacy
-                ? model.SeriesLinks?.OrderBy(link => link.SeriesPosition)
+                ? model.SeriesLinks?.OrderBy(link => link.SeriesPosition).ThenBy(link => link.Id)
                     .Select(link => link?.Series?.Value?.Title +
                         (link?.Position.IsNotNullOrWhiteSpace() == true ? $" #{link.Position}" : string.Empty))
                     .ConcatToString("; ")

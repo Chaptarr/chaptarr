@@ -1399,13 +1399,13 @@ namespace Chaptarr.Api.V1.Author
             return Accepted();
         }
 
-        private void MapCoversToLocal(params AuthorResource[] authors)
+        internal void MapCoversToLocal(params AuthorResource[] authors)
         {
             foreach (var authorResource in authors)
             {
                 if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
                 {
-                    _coverMapper.ConvertToBookshelfLocalUrls(authorResource.AuthorMetadataId, MediaCoverEntity.Author, authorResource.Images);
+                    _coverMapper.ConvertToBookshelfLocalUrls(authorResource.Id, MediaCoverEntity.Author, authorResource.Images);
                 }
                 else
                 {
@@ -1425,6 +1425,16 @@ namespace Chaptarr.Api.V1.Author
             var legacyMetadataIds = GetBookshelfAuthorMetadataIds(
                 nextByAuthor.Values.Concat(lastByAuthor.Values).Select(book => book.AuthorId));
 
+            IReadOnlyDictionary<int, bool> legacyMonitoring = new Dictionary<int, bool>();
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true && _bookshelfLegacyIdentityMapService != null)
+            {
+                var selectedIds = nextByAuthor.Values.Concat(lastByAuthor.Values).Select(book => book.Id).Distinct();
+                var selectedMappings = _bookshelfLegacyIdentityMapService.GetMappingsByTargetIds("Book", selectedIds);
+                var siblingMappings = _bookshelfLegacyIdentityMapService.GetMappings("Book", selectedMappings.Select(mapping => mapping.SourceId).Distinct());
+                var siblings = _bookService.GetBooks(siblingMappings.Select(mapping => mapping.TargetId).Distinct());
+                legacyMonitoring = BuildBookshelfWorkMonitoring(siblings, siblingMappings);
+            }
+
             foreach (var authorResource in authors)
             {
                 if (authorResource == null)
@@ -1432,14 +1442,15 @@ namespace Chaptarr.Api.V1.Author
                     continue;
                 }
 
-                authorResource.NextBook = ToAuthorIndexBookResource(nextByAuthor.GetValueOrDefault(authorResource.Id), legacyMetadataIds);
-                authorResource.LastBook = ToAuthorIndexBookResource(lastByAuthor.GetValueOrDefault(authorResource.Id), legacyMetadataIds);
+                authorResource.NextBook = ToAuthorIndexBookResource(nextByAuthor.GetValueOrDefault(authorResource.Id), legacyMetadataIds, legacyMonitoring);
+                authorResource.LastBook = ToAuthorIndexBookResource(lastByAuthor.GetValueOrDefault(authorResource.Id), legacyMetadataIds, legacyMonitoring);
             }
         }
 
         private AuthorIndexBookResource ToAuthorIndexBookResource(
             NzbDrone.Core.Books.Book book,
-            IReadOnlyDictionary<int, int> legacyMetadataIds)
+            IReadOnlyDictionary<int, int> legacyMetadataIds,
+            IReadOnlyDictionary<int, bool> legacyMonitoring)
         {
             if (book == null)
             {
@@ -1449,7 +1460,27 @@ namespace Chaptarr.Api.V1.Author
             var legacyMetadataId = legacyMetadataIds.TryGetValue(book.AuthorId, out var metadataId)
                 ? metadataId
                 : book.AuthorId;
-            return book.ToAuthorIndexResource(legacyMetadataId, HttpContext?.GetReadarrFacadeContext());
+            var resource = book.ToAuthorIndexResource(legacyMetadataId, HttpContext?.GetReadarrFacadeContext());
+            if (legacyMonitoring.TryGetValue(book.Id, out var monitored))
+            {
+                resource.Monitored = monitored;
+            }
+
+            return resource;
+        }
+
+        internal static IReadOnlyDictionary<int, bool> BuildBookshelfWorkMonitoring(
+            IEnumerable<Book> books, IEnumerable<BookshelfLegacyIdentityMapEntry> mappings)
+        {
+            var bookById = books.GroupBy(book => book.Id).ToDictionary(group => group.Key, group => group.First());
+            return mappings.GroupBy(mapping => mapping.SourceId)
+                .SelectMany(group =>
+                {
+                    var monitored = group.Any(mapping => bookById.TryGetValue(mapping.TargetId, out var book) && book.IsMonitored());
+                    return group.Select(mapping => new { mapping.TargetId, Monitored = monitored });
+                })
+                .GroupBy(row => row.TargetId)
+                .ToDictionary(group => group.Key, group => group.Any(row => row.Monitored));
         }
 
         private void ApplyBookshelfAuthorMetadataIds(IEnumerable<AuthorResource> resources)

@@ -14,12 +14,14 @@ namespace Chaptarr.Core.Test.Api
         [TestCase(10, 100)]
         [TestCase(11, 110)]
         [TestCase(12, 105)]
-        public void unmapped_bookshelf_file_should_preserve_original_default_audio_weight(int qualityId, int weight)
+        public void bookshelf_file_should_preserve_original_default_audio_weight(int qualityId, int weight)
         {
             var model = new BookFile { Quality = new QualityModel((Quality)qualityId, new Revision(2, 1)) };
             var native = model.ToResource();
             var legacy = model.ToResource(bookshelfDefaultWeights: true);
 
+            var mapped = model.ToResource(new Author { Id = 20 }, null, bookshelfDefaultWeights: true);
+            Assert.That(mapped.QualityWeight, Is.EqualTo(weight + 12));
             Assert.That(legacy.QualityWeight, Is.EqualTo(weight + 12));
             Assert.That(native.QualityWeight, Is.EqualTo(Quality.DefaultQualityDefinitions.Single(definition => definition.Quality.Id == qualityId).Weight + 12));
         }

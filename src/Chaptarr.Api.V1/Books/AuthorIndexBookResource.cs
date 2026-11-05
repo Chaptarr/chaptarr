@@ -105,7 +105,7 @@ namespace Chaptarr.Api.V1.Books
                 Ratings = model.Ratings ?? new Ratings(),
                 LastSearchTime = model.LastSearchTime,
                 CleanTitle = model.CleanTitle,
-                Monitored = facadeContext?.IsBookshelfCompatibility == true ? model.Monitored : model.IsMonitored(),
+                Monitored = model.IsMonitored(),
                 AnyEditionOk = model.AnyEditionOk,
                 LastInfoSync = model.LastInfoSync,
                 Added = model.Added,

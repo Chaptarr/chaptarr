@@ -728,7 +728,8 @@ namespace NzbDrone.Core.Datastore
 
                 var primaryMediaType = mediaState.PreferredMediaType ?? mediaState.MediaTypes.Min();
                 var foreignEditionId = NormalizeSourceId(GetString(row, "ForeignEditionId"), "edition");
-                var narrator = GetString(row, "Narrator")?.Trim();
+                var sourceNarrator = GetString(row, "Narrator");
+                var narrator = sourceNarrator?.Trim();
                 var targetByMediaType = new Dictionary<int, EditionTargetMap>();
 
                 foreach (var mediaType in mediaState.MediaTypes.OrderBy(x => x))
@@ -763,7 +764,7 @@ namespace NzbDrone.Core.Datastore
                     values["ForeignEditionId"] = targetForeignEditionId;
                     SetIfPresent(values, "ReadingFormatId", readingFormatId);
                     SetProviderColumns(values, "Edition", targetForeignEditionId);
-                    SetIfPresent(values, "Narrator", mediaType == 0 ? narrator : null);
+                    SetIfPresent(values, "Narrator", isPrimary ? sourceNarrator : mediaType == 0 ? narrator : null);
                     if (!isPrimary)
                     {
                         SetIfPresent(values, "Format", mediaType == 1 ? "Ebook" : "Audiobook");

@@ -68,3 +68,12 @@ fulfillment. Exercise user submission, approval, acquisition, library scan and
 restart through the server HTTP API. Audit persisted media/request/requester
 identities, duplicate media counts and orphaned identifiers after consumers exit.
 Record exact client/candidate revisions and derived test-image provenance.
+
+## Full-library compatibility acceptance
+
+Synthetic API samples do not establish response parity. Compare every managed
+source author, work and file after a fresh migration; check duplicate, missing
+and extra IDs separately from field comparisons. Preserve raw predecessor
+metadata at import boundaries, and keep native display transformations scoped
+to native responses. Save real-data response bodies and configuration privately;
+commit only aggregate results and synthetic regressions.

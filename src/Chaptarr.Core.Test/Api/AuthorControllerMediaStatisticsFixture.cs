@@ -1,3 +1,4 @@
+using NzbDrone.Core.Books;
 using System.Collections.Generic;
 using Chaptarr.Api.V1.Author;
 using NUnit.Framework;
@@ -67,6 +68,28 @@ namespace Chaptarr.Core.Test.Api
                     "BookshelfNG returns zero statistics for authors that have no statistics row");
                 Assert.That(resources[1].Statistics.TotalBookCount, Is.Zero);
             });
+        }
+
+        [Test]
+        public void legacy_embedded_work_should_combine_format_monitoring_without_using_the_ignored_raw_flag()
+        {
+            var books = new List<Book>
+            {
+                new() { Id = 30, MediaType = BookMediaType.Audiobook, AudiobookMonitored = true },
+                new() { Id = 31, MediaType = BookMediaType.Ebook, EbookMonitored = false },
+                new() { Id = 32, MediaType = BookMediaType.Ebook, EbookMonitored = false }
+            };
+            var mappings = new List<BookshelfLegacyIdentityMapEntry>
+            {
+                new() { SourceId = 30, TargetId = 30 },
+                new() { SourceId = 30, TargetId = 31 },
+                new() { SourceId = 32, TargetId = 32 }
+            };
+
+            var flags = AuthorController.BuildBookshelfWorkMonitoring(books, mappings);
+            Assert.That(flags[30], Is.True);
+            Assert.That(flags[31], Is.True);
+            Assert.That(flags[32], Is.False);
         }
 
         private static AuthorStatistics Statistics(int authorId, int books, int files, long size)

@@ -79,6 +79,29 @@ namespace Chaptarr.Core.Test.Datastore
             Environment.SetEnvironmentVariable("METADATA_URL", _previousMetadataUrl);
         }
 
+        [TestCase(40, "")]
+        [TestCase(40, "  Reader One / Reader Two  ")]
+        [TestCase(41, "")]
+        [TestCase(41, "  Reader One / Reader Two  ")]
+        public void should_preserve_raw_narrator_metadata_on_the_original_edition(int editionId, string narrator)
+        {
+            using (var source = new SqliteConnection(_sourceConnectionString))
+            {
+                source.Open();
+                using var command = source.CreateCommand();
+                command.CommandText = "UPDATE Editions SET Narrator=$narrator WHERE Id=$id";
+                command.Parameters.AddWithValue("$id", editionId);
+                command.Parameters.AddWithValue("$narrator", narrator);
+                command.ExecuteNonQuery();
+            }
+
+            new MigrationController(LogManager.GetLogger(nameof(BookshelfDatabaseImporterFixture)), null).Migrate(
+                _sourceConnectionString, new MigrationContext(MigrationType.Main), DatabaseType.SQLite);
+
+            Assert.That(QueryScalar<int>(_sourcePath, $"SELECT Narrator IS NULL FROM Editions WHERE Id = {editionId};"), Is.Zero);
+            Assert.That(QueryScalar<string>(_sourcePath, $"SELECT Narrator FROM Editions WHERE Id = {editionId};"), Is.EqualTo(narrator));
+        }
+
         [TestCase("Aliases", "[\"Another author name\"]")]
         [TestCase("Images", "[{\"CoverType\":\"Poster\",\"Url\":\"https://catalog.example/author.jpg\"}]")]
         [TestCase("Links", "[{\"Name\":\"Hardcover\",\"Url\":\"https://hardcover.app/authors/fixture\"}]")]

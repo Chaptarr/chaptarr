@@ -80,7 +80,7 @@ namespace Chaptarr.Api.V1.BookFiles
             BookFileResource resource;
             if (bookFile.EditionId > 0 && bookFile.Author != null)
             {
-                resource = bookFile.ToResource(bookFile.Author, _upgradableSpecification);
+                resource = bookFile.ToResource(bookFile.Author, _upgradableSpecification, HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
             }
             else
             {
@@ -93,7 +93,7 @@ namespace Chaptarr.Api.V1.BookFiles
 
         private BookFileResource MapToResource(BookFile bookFile, NzbDrone.Core.Books.Author author)
         {
-            var resource = bookFile.ToResource(author, _upgradableSpecification);
+            var resource = bookFile.ToResource(author, _upgradableSpecification, HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
             ProjectLegacyBookFileResource(resource);
             return resource;
         }

@@ -32,19 +32,19 @@ its source-side invalid paged fixture remains inconclusive.
 A subsequent comparison of every managed author, work and file in both real
 snapshots found additional response differences missed by the synthetic sample.
 The compatibility fixes preserve raw narrator text, every series label, original
-titles, empty unselected-edition metadata, null embedded relations, stored work
-monitor flags, source author image lists and unmapped audio quality weights.
+titles, empty unselected-edition metadata, null embedded relations, combined work
+monitoring, source author image lists and unmapped audio quality weights.
 Unscoped split works prefer the monitored edition retaining the source provider
 identity. Legacy cover URLs retain their extension, URL base and last-write token;
 known extensionless cached image names are supported without accepting arbitrary
-extensionless files. The 151 focused regressions pass; a new packaged full-library
+extensionless files. The 267 focused API/importer regressions pass; a new packaged full-library
 comparison is still required before claiming these gaps closed.
 
 The full SeerrNG user/approval/acquisition/scan/restart rehearsal now audits database
 identity, duplicates and orphaned identifiers. It exposed client defects repaired
 in [SeerrNG PR 527](https://github.com/snapetech-org/seerrng/pull/527), whose trusted
 owner CI [42028627704](https://github.com/snapetech-org/seerrng/actions/runs/42028627704)
-passed. Both format rehearsals pass with the explicitly identified unpublished
+passed; the repair is merged as `7b013338`. Both format rehearsals pass with the explicitly identified unpublished
 test image; the unchanged deployed client is not claimed repaired.
 
 Live-provider fulfillment, headed UI, remaining installed and external distribution

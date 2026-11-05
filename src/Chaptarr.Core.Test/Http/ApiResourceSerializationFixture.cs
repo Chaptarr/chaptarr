@@ -28,12 +28,12 @@ namespace Chaptarr.Core.Test.Http
 
         [TestCase(false)]
         [TestCase(true)]
-        public void legacy_author_index_should_preserve_the_stored_work_monitor_flag(bool legacy)
+        public void author_index_should_use_format_monitoring_without_a_legacy_work_override(bool legacy)
         {
             var book = new Book { Monitored = true, MediaType = BookMediaType.Ebook, EbookMonitored = false };
             var context = legacy ? new Chaptarr.Http.Middleware.ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true) : null;
 
-            Assert.That(book.ToAuthorIndexResource(15, context).Monitored, Is.EqualTo(legacy));
+            Assert.That(book.ToAuthorIndexResource(15, context).Monitored, Is.False);
         }
 
         [Test]

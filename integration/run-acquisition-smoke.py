@@ -25,6 +25,7 @@ parser.add_argument('--seerr-source-revision', help='Declared source commit for 
 parser.add_argument('--seerr-image', default='ghcr.io/snapetech-org/seerrng@sha256:e433d13a2c50fdc96948361f3c090ed9bb12e8788fc6741337737c973e956aff')
 parser.add_argument('--request-mode', choices=['adapter', 'seerr-web'], default='adapter')
 parser.add_argument('--media-type', choices=['ebook', 'audiobook'], default='ebook')
+parser.add_argument('--profile-id-space', choices=['native', 'source'], default='source', help='Use native profile IDs or the unchanged Bookshelf service configuration')
 args = parser.parse_args()
 if args.seerr_source_revision and not re.fullmatch(r"[0-9a-f]{40}", args.seerr_source_revision):
     parser.error("--seerr-source-revision must be a full lowercase Git commit")
@@ -113,7 +114,7 @@ def logical_database_hash(database):
         # rows while making the comparison independent of physical row order.
         return hashlib.sha256('\n'.join(sorted(connection.iterdump())).encode()).hexdigest()
 
-command(['python3', fixtures / 'prepare.py', root, args.media_type])
+command(['python3', fixtures / 'prepare.py', root, args.media_type, args.profile_id_space])
 source_hash = logical_database_hash(root / 'config/readarr.db')
 shutil.copyfile(fixtures / 'provider.mjs', root / 'provider/server.mjs')
 for key, image in images.items():
@@ -125,7 +126,7 @@ for key, image in images.items():
     'candidate': str(candidate), 'candidateExecutableSha256': hashlib.sha256((candidate / 'Chaptarr').read_bytes()).hexdigest(),
     'candidateAssemblySha256': {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted(candidate.glob('*.dll'))},
     'harnessDirty': bool(command(['git', '-C', repo, 'status', '--porcelain', '--', 'integration/acquisition', 'integration/run-acquisition-smoke.py']).strip()),
-    'requestMode': args.request_mode,
+    'requestMode': args.request_mode, 'profileIdSpace': args.profile_id_space,
     'declaredSeerrSourceRevision': args.seerr_source_revision,
     'harnessSourceSha256': {str(file.relative_to(repo)): hashlib.sha256(file.read_bytes()).hexdigest()
                             for file in [Path(__file__).resolve(), *sorted(fixtures.glob('*'))] if file.is_file()},
@@ -142,6 +143,7 @@ try:
     if args.request_mode == 'seerr-web':
         seerr('web-verify.mjs', 'seerr-web-import.log')
     stop_stack('first-run')
+    command(['python3', fixtures / 'verify-profile-settings.py', root, 'import'], 'profile-settings.log')
     if args.request_mode == 'seerr-web':
         command(['python3', fixtures / 'verify-seerr-state.py', root, 'import'], 'seerr-web-database.log')
     start_stack()
@@ -152,6 +154,7 @@ try:
         seerr('web-verify.mjs', 'seerr-web-restart.log', '--restart')
     command(['python3', fixtures / 'verify-content.py', root], 'restart-content.log')
     stop_stack('restarted')
+    command(['python3', fixtures / 'verify-profile-settings.py', root, 'restart'], 'restart-profile-settings.log')
     if args.request_mode == 'seerr-web':
         command(['python3', fixtures / 'verify-seerr-state.py', root, 'restart'], 'seerr-web-restart-database.log')
     backups = list((root / 'config').glob('readarr.db.bookshelfng-backup-*.db'))
@@ -164,7 +167,7 @@ try:
             assert connection.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
             assert connection.execute('SELECT MAX(Version) FROM VersionInfo').fetchone()[0] == version
-    (root / 'result.json').write_text(json.dumps({'mediaType': args.media_type, 'requestMode': args.request_mode, 'seerrWebRequestAndApproval': args.request_mode == 'seerr-web', 'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True}))
+    (root / 'result.json').write_text(json.dumps({'mediaType': args.media_type, 'requestMode': args.request_mode, 'profileIdSpace': args.profile_id_space, 'seerrWebRequestAndApproval': args.request_mode == 'seerr-web', 'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True}))
     print('PASS: migration, Seerr', args.request_mode, 'request, real local torrent transfer,', args.media_type, 'import and restart availability. Evidence:', root)
 finally:
     stop_stack('final-run')

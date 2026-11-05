@@ -1051,6 +1051,26 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(resource.Images.Count, Is.EqualTo(legacy ? 1 : 0));
         }
 
+        [Test]
+        public void bookshelf_series_with_equal_positions_should_follow_source_link_order()
+        {
+            var book = new Book
+            {
+                Id = 1,
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    new() { Id = 20, SeriesPosition = 1, Series = new Series { Title = "Second" } },
+                    new() { Id = 10, SeriesPosition = 1, Series = new Series { Title = "First" } }
+                }
+            };
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            });
+
+            Assert.That(resource.SeriesTitle, Is.EqualTo("First; Second"));
+        }
+
         private static MemoryTarget ConfigureLogging()
         {
             var memoryTarget = new MemoryTarget("memory")

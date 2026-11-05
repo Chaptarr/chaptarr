@@ -6,6 +6,8 @@ p.mkdir(parents=True,mode=0o700,exist_ok=False)
 media_type=sys.argv[2] if len(sys.argv)>2 else 'ebook'
 assert media_type in ['ebook','audiobook']
 audio=media_type=='audiobook'
+profile_id_space=sys.argv[3] if len(sys.argv)>3 else 'source'
+assert profile_id_space in ['native','source']
 for d in ['config','library','downloads','seed','qbit-seed/qBittorrent/config','qbit-download/qBittorrent/config','provider']:(p/d).mkdir(parents=True,mode=0o700,exist_ok=True)
 db=p/'config/readarr.db'
 assert not db.exists(),'Refuse to overwrite prior rehearsal'
@@ -46,7 +48,7 @@ content=payload.read_bytes();piece=16384
 info={'name':name,'length':len(content),'piece length':piece,'pieces':b''.join(hashlib.sha1(content[n:n+piece], usedforsecurity=False).digest() for n in range(0,len(content),piece)),'private':1}
 torrent=bencode({'info':info,'created by':'ChaptarrNG isolated acceptance'});(p/'provider/fixture.torrent').write_bytes(torrent)
 # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
-(p/'manifest.json').write_text(json.dumps({'mediaType':media_type,'bookId':30 if audio else 31,'editionId':40 if audio else 41,'editionTitle':'Fixture Audiobook' if audio else 'Fixture Ebook','qualityProfileId':3 if audio else 4,'metadataProfileId':1 if audio else 2,'category':3030 if audio else 7020,'releaseTitle':'Fixture Author - Fixture Audiobook [MP3]' if audio else 'Fixture Author - Fixture Ebook [EPUB]','filename':name,'size':len(content),'sha256':hashlib.sha256(content).hexdigest(),'infoHash':hashlib.sha1(bencode(info), usedforsecurity=False).hexdigest()},indent=2))
+(p/'manifest.json').write_text(json.dumps({'mediaType':media_type,'bookId':30 if audio else 31,'editionId':40 if audio else 41,'editionTitle':'Fixture Audiobook' if audio else 'Fixture Ebook','profileIdSpace':profile_id_space,'qualityProfileId':(1 if audio else 2) if profile_id_space=='source' else (1 if audio else 4),'nativeQualityProfileId':1 if audio else 4,'metadataProfileId':1 if audio else 2,'category':3030 if audio else 7020,'releaseTitle':'Fixture Author - Fixture Audiobook [MP3]' if audio else 'Fixture Author - Fixture Ebook [EPUB]','filename':name,'size':len(content),'sha256':hashlib.sha256(content).hexdigest(),'infoHash':hashlib.sha1(bencode(info), usedforsecurity=False).hexdigest()},indent=2))
 for kind,web,peer,path in [('seed',8081,6881,'/seed'),('download',8080,6882,'/downloads')]:
  (p/('qbit-'+kind)/'qBittorrent/config/qBittorrent.conf').write_text('[LegalNotice]\nAccepted=true\n[BitTorrent]\nSession\\DefaultSavePath='+path+'\nSession\\Port='+str(peer)+'\nSession\\DHTEnabled=false\nSession\\LSDEnabled=false\nSession\\PeXEnabled=false\n[Preferences]\nWebUI\\LocalHostAuth=false\nWebUI\\Address=127.0.0.1\nWebUI\\Port='+str(web)+'\n')
 print('Isolated schema-158 source, provider/client settings, original EPUB and valid torrent prepared.')

@@ -1,3 +1,5 @@
+using Moq;
+using NzbDrone.Core.MediaCover;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -97,7 +99,22 @@ namespace Chaptarr.Core.Test.Api
                 failure.ErrorMessage == "Invalid Path: 'not/an/absolute/path'"));
         }
 
-        private static AuthorController BuildController(out AuthorLibraryServiceProxy authorLibraryProxy)
+        [Test]
+        public void bookshelf_cover_should_use_the_managed_author_id_instead_of_the_metadata_id()
+        {
+            var covers = new Mock<IMapCoversToLocal>();
+            var controller = BuildController(out _, covers.Object);
+            var context = new DefaultHttpContext();
+            context.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true);
+            controller.ControllerContext = new ControllerContext { HttpContext = context };
+            var resource = new AuthorResource { Id = 20, AuthorMetadataId = 10 };
+
+            controller.MapCoversToLocal(resource);
+
+            covers.Verify(mapper => mapper.ConvertToBookshelfLocalUrls(20, MediaCoverEntity.Author, resource.Images), Times.Once);
+        }
+
+        private static AuthorController BuildController(out AuthorLibraryServiceProxy authorLibraryProxy, IMapCoversToLocal coverMapper = null)
         {
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
@@ -118,7 +135,7 @@ namespace Chaptarr.Core.Test.Api
                 seriesService: null,
                 authorLibraryService: authorLibraryService,
                 authorStatisticsService: null,
-                coverMapper: null,
+                coverMapper: coverMapper,
                 commandQueueManager: null,
                 rootFolderService: rootFolderService,
                 eventAggregator: null,

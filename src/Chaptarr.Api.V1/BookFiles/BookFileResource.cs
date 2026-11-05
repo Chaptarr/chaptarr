@@ -92,7 +92,7 @@ namespace Chaptarr.Api.V1.BookFiles
             };
         }
 
-        public static BookFileResource ToResource(this BookFile model, NzbDrone.Core.Books.Author author, IUpgradableSpecification upgradableSpecification)
+        public static BookFileResource ToResource(this BookFile model, NzbDrone.Core.Books.Author author, IUpgradableSpecification upgradableSpecification, bool bookshelfDefaultWeights = false)
         {
             if (model == null)
             {
@@ -109,7 +109,7 @@ namespace Chaptarr.Api.V1.BookFiles
                 Size = model.Size,
                 DateAdded = model.DateAdded,
                 Quality = model.Quality,
-                QualityWeight = QualityWeight(model.Quality),
+                QualityWeight = QualityWeight(model.Quality, bookshelfDefaultWeights),
                 MediaInfo = model.MediaInfo.ToResource(),
                 MediaType = model.MediaType,
                 Narrator = model.Narrator,
