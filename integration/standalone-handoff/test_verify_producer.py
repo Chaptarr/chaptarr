@@ -16,12 +16,12 @@ class ProducerTrustTests(unittest.TestCase):
                     'head_sha': 'a' * 40}
         self.jobs = {'jobs': [{'name': 'Build and verify win-x64 archive', 'conclusion': 'success'}]}
 
-    def verify(self, run=None, jobs=None):
+    def verify(self, run=None, jobs=None, optimized=False):
         with tempfile.TemporaryDirectory(prefix='standalone-producer-guard-') as directory:
             root = Path(directory)
             (root / 'run.json').write_text(json.dumps(run or self.run))
             (root / 'jobs.json').write_text(json.dumps(jobs or self.jobs))
-            return subprocess.run([sys.executable, str(SCRIPT), '--run', str(root / 'run.json'),
+            return subprocess.run([sys.executable, *(['-O'] if optimized else []), str(SCRIPT), '--run', str(root / 'run.json'),
                                    '--jobs', str(root / 'jobs.json'), '--repository', 'snapetech-org/chaptarrng',
                                    '--runtime-id', 'win-x64'], capture_output=True, text=True)
 
@@ -40,6 +40,10 @@ class ProducerTrustTests(unittest.TestCase):
             with self.subTest(change=change):
                 run = {**self.run, **change}
                 self.assertNotEqual(self.verify(run).returncode, 0)
+
+    def test_optimized_python_cannot_disable_the_provenance_checks(self):
+        run = {**self.run, 'head_repository': {'full_name': 'untrusted/fork'}}
+        self.assertNotEqual(self.verify(run, optimized=True).returncode, 0)
 
     def test_rejects_failed_missing_and_ambiguous_archive_jobs(self):
         for jobs in [{'jobs': []}, {'jobs': [{'name': 'Build and verify win-x64 archive', 'conclusion': 'failure'}]},

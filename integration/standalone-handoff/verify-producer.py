@@ -13,10 +13,15 @@ parser.add_argument('--runtime-id', required=True)
 args = parser.parse_args()
 run = json.loads(args.run.read_text(encoding='utf-8-sig'))
 jobs = json.loads(args.jobs.read_text(encoding='utf-8-sig'))['jobs']
-assert run['head_repository']['full_name'] == args.repository
-assert run['head_branch'] == 'main' and run['event'] == 'workflow_dispatch'
-assert run['path'].split('@', 1)[0] == '.github/workflows/standalone-asset-validation.yml'
-assert re.fullmatch('[0-9a-f]{40}', run['head_sha'])
+if run['head_repository']['full_name'] != args.repository:
+    raise ValueError('Producer repository differs from the trusted repository')
+if run['head_branch'] != 'main' or run['event'] != 'workflow_dispatch':
+    raise ValueError('Producer must be a trusted main-branch manual validation run')
+if run['path'].split('@', 1)[0] != '.github/workflows/standalone-asset-validation.yml':
+    raise ValueError('Unexpected archive producer workflow')
+if not re.fullmatch('[0-9a-f]{40}', run['head_sha']):
+    raise ValueError('Malformed producer revision')
 matches = [job for job in jobs if job['name'] == 'Build and verify ' + args.runtime_id + ' archive']
-assert len(matches) == 1 and matches[0]['conclusion'] == 'success', 'Producer archive job has not succeeded'
+if len(matches) != 1 or matches[0]['conclusion'] != 'success':
+    raise ValueError('Producer archive job has not succeeded')
 print(run['head_sha'])
