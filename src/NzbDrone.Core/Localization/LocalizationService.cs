@@ -20,6 +20,8 @@ namespace NzbDrone.Core.Localization
     {
         Dictionary<string, string> GetLocalizationDictionary();
 
+        Dictionary<string, string> GetBookshelfLocalizationDictionary() => GetLocalizationDictionary();
+
         string GetCurrentLocale();
 
         string GetLocalizedString(string phrase);
@@ -59,6 +61,40 @@ namespace NzbDrone.Core.Localization
         public Dictionary<string, string> GetLocalizationDictionary()
         {
             return GetLocalizationDictionary(GetSetLocale());
+        }
+
+        public Dictionary<string, string> GetBookshelfLocalizationDictionary()
+        {
+            // Preserve the predecessor's language IDs and regional fallback,
+            // independently of the native UI registry's newer locale aliases.
+            var isoLanguage = IsoLanguages.Get((Language)_configService.UILanguage) ?? IsoLanguages.Get(Language.English);
+            var culture = isoLanguage.TwoLetterCode;
+            if (isoLanguage.CountryCode.IsNotNullOrWhiteSpace())
+            {
+                culture += "_" + isoLanguage.CountryCode;
+            }
+
+            return _cache.Get("bookshelf-localization:" + culture, () =>
+            {
+                // Never mutate the shared native UI cache when projecting a
+                // predecessor client response, including translated overrides.
+                var result = new Dictionary<string, string>(GetLocalizationDictionary(), StringComparer.OrdinalIgnoreCase);
+                var prefix = Path.Combine(_appFolderInfo.StartUpFolder, "Localization", "BookshelfCompatibility");
+                var englishPath = Path.Combine(prefix, DefaultCulture + ".json");
+                if (!File.Exists(englishPath))
+                {
+                    throw new FileNotFoundException("BookshelfNG localization compatibility data is missing", englishPath);
+                }
+
+                var legacy = GetDictionary(prefix, new UiLocale { File = culture }, DefaultCulture + ".json", allowMissingCulture: true)
+                    .GetAwaiter().GetResult();
+                foreach (var pair in legacy)
+                {
+                    result[pair.Key] = pair.Value;
+                }
+
+                return result;
+            });
         }
 
         public string GetLocalizedString(string phrase)
@@ -166,7 +202,7 @@ namespace NzbDrone.Core.Localization
                 () => GetDictionary(prefix, locale, DefaultCulture + ".json").GetAwaiter().GetResult());
         }
 
-        private async Task<Dictionary<string, string>> GetDictionary(string prefix, UiLocale locale, string baseFilename)
+        private async Task<Dictionary<string, string>> GetDictionary(string prefix, UiLocale locale, string baseFilename, bool allowMissingCulture = false)
         {
             if (locale == null || locale.File.IsNullOrWhiteSpace())
             {
@@ -194,7 +230,10 @@ namespace NzbDrone.Core.Localization
                 }
             }
 
-            await CopyInto(dictionary, alternativeFilenamePath).ConfigureAwait(false);
+            if (!allowMissingCulture || File.Exists(alternativeFilenamePath))
+            {
+                await CopyInto(dictionary, alternativeFilenamePath).ConfigureAwait(false);
+            }
 
             return dictionary;
         }
@@ -242,7 +281,10 @@ namespace NzbDrone.Core.Localization
 
             if (parts.Length == 2)
             {
-                culture = parts[0].ToLowerInvariant() + "_" + parts[1].ToUpperInvariant();
+                var suffix = parts[1].Length == 4
+                    ? char.ToUpperInvariant(parts[1][0]) + parts[1].Substring(1).ToLowerInvariant()
+                    : parts[1].ToUpperInvariant();
+                culture = parts[0].ToLowerInvariant() + "_" + suffix;
             }
             else
             {

@@ -49,6 +49,9 @@
     <Content Include="Localization\Core\**">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="Localization\BookshelfCompatibility\**">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources/Logo/ChaptarrSVG-New.svg" />

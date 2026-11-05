@@ -568,7 +568,7 @@
       }
     }
 
-    fetch(urlBase + "/api/v1/localization", { credentials: "same-origin" })
+    fetch(urlBase + "/api/v1/localization", { credentials: "same-origin", headers: { "X-ChaptarrNG-Client": "native" } })
       .then(function (response) {
         if (!response.ok) {
           throw new Error("Localization request failed");
