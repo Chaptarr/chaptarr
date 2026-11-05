@@ -55,6 +55,16 @@ python3 "$ROOT/integration/normalize-bookshelfng-api-differential-fixture.py" \
   "$BOOKSHELFNG_SOURCE_CONFIG/readarr.db" \
   | tee "$REPORT_DIR/fixture-normalization.log"
 
+python3 - "$BOOKSHELFNG_SOURCE_CONFIG/config.xml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+if path.exists():
+    raise RuntimeError("Refusing to overwrite an existing source config.xml.")
+path.write_text("<Config><AuthenticationMethod>Basic</AuthenticationMethod><AuthenticationRequired>Enabled</AuthenticationRequired></Config>")
+PY
+
 docker pull "$BOOKSHELFNG_SOURCE_IMAGE"
 source_image_id="$(docker image inspect --format '{{.Id}}' "$BOOKSHELFNG_SOURCE_IMAGE")"
 printf 'BookshelfNG source image: %s (%s)\n' "$BOOKSHELFNG_SOURCE_IMAGE" "$source_image_id"

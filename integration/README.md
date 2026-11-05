@@ -13,7 +13,11 @@ source database with SQLite's online backup API, copies its generated
 BookshelfNG migration profile to the target. Runtime-seeded defaults and saved
 source settings therefore participate in the comparison. This makes ChaptarrNG
 serve the same compatibility mode used by an installed migrated database. It
-compares legacy API lists and detail routes, then exercises focused monitoring
+seeds a valid synthetic legacy password hash and copies the source's required
+Basic authentication configuration. Separate HTTP probes send no API key and
+check the retained login, wrong-password rejection, and missing-credential
+rejection. Credentials and Authorization headers are excluded from the report.
+It compares legacy API lists and detail routes, then exercises focused monitoring
 and deletion writes. The script records
 the source image digest and image ID,
 target commit and image ID, source database hash, per-case response hashes, and

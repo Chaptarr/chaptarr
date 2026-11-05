@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
-"""Normalize the disposable API differential fixture to valid provider IDs."""
+"""Normalize disposable API fixture identities and seed a valid legacy login."""
 
 import argparse
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -23,6 +24,7 @@ expected_counts = {
     "AuthorMetadata": (4, 'SELECT COUNT(*) FROM "AuthorMetadata"'),
     "Books": (6, 'SELECT COUNT(*) FROM "Books"'),
     "Editions": (9, 'SELECT COUNT(*) FROM "Editions"'),
+    "Users": (1, 'SELECT COUNT(*) FROM "Users"'),
 }
 
 for path in args.database:
@@ -73,6 +75,12 @@ for path in args.database:
         connection.execute(
             'UPDATE "VersionInfo" SET "AppliedOn" = ? WHERE "AppliedOn" IS NOT NULL',
             ("2026-01-01 00:00:00",),
+        )
+        # Use a valid legacy SHA-256 credential so HTTP checks can verify that
+        # migration preserves login and the target upgrades the stored hash.
+        connection.execute(
+            'UPDATE "Users" SET "Username" = ?, "Password" = ?',
+            ("fixture-user", hashlib.sha256(b"fixture-password").hexdigest()),
         )
         connection.commit()
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]

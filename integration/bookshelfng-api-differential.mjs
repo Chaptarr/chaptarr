@@ -154,6 +154,39 @@ async function waitForPing(baseUrl, name) {
 
 const results = [];
 
+async function compareBasicAuthentication(caseId, password, expectedStatus) {
+  const path = "/system/status";
+  const headers = password === null ? {} : {
+    Authorization: "Basic " + Buffer.from("fixture-user:" + password).toString("base64"),
+  };
+  async function probe(baseUrl) {
+    try {
+      const response = await fetch(baseUrl + path, {
+        headers,
+        redirect: "manual",
+        signal: AbortSignal.timeout(30_000),
+      });
+      await response.arrayBuffer();
+      return { status: response.status, error: null };
+    } catch (error) {
+      return { status: 0, error: error instanceof Error ? error.name : "request-failed" };
+    }
+  }
+  const [source, target] = await Promise.all([probe(sourceUrl), probe(targetUrl)]);
+  const passed = source.status === expectedStatus && target.status === expectedStatus;
+  results.push({
+    caseId, method: "GET", path, expectedStatus,
+    sourceStatus: source.status, targetStatus: target.status,
+    sourceError: source.error, targetError: target.error,
+    sourceSha256: null, targetSha256: null,
+    mismatchPaths: passed ? [] : ["/httpStatus"],
+    mismatchDetails: passed ? [] : [{ path: "/httpStatus", kind: "authentication-status-difference", expectedStatus, sourceStatus: source.status, targetStatus: target.status }],
+    additivePaths: [], additiveDetails: [],
+    providerPresentationDifferenceCount: 0, providerPresentationDifferencePaths: [],
+    result: passed ? "pass" : "fail",
+  });
+}
+
 async function compare(caseId, path, providerResource = false, expectedTargetStatus = null) {
   const [source, target] = await Promise.all([
     getJson(sourceUrl, sourceKey, path),
@@ -363,6 +396,10 @@ await Promise.all([
   waitForPing(sourceUrl, "BookshelfNG"),
   waitForPing(targetUrl, "ChaptarrNG"),
 ]);
+
+await compareBasicAuthentication("authentication.legacy-password", "fixture-password", 200);
+await compareBasicAuthentication("authentication.wrong-password", "incorrect-fixture-password", 401);
+await compareBasicAuthentication("authentication.missing-credentials", null, 401);
 
 for (const [caseId, path, providerResource = false, expectedTargetStatus = null] of cases) {
   const { source, target } = await compare(caseId, path, providerResource, expectedTargetStatus);
