@@ -13,9 +13,9 @@ acceptance gates.
 
 Application head 0d711ce1a9828675e879b2ba97f36fc3b9544188 passed the public full Build [41955009417](https://github.com/snapetech-org/chaptarrng/actions/runs/41955009417): Linux x64 4,997 passed / 26 skipped, macOS Intel 4,994 / 29, and Windows x64 4,957 / 33. The Linux M4B smoke passed 10/10. PostgreSQL migration and Docker image jobs passed. Windows passed the installer service upgrade/rollback, selected data-directory, and public BookshelfNG 0.4.21.76 Chocolatey No/Yes/rollback acceptance.
 
-The exact-head standalone macOS handoff [41955575531](https://github.com/snapetech-org/chaptarrng/actions/runs/41955575531) passed on x64 and arm64. Exact-head Helm [41955974821](https://github.com/snapetech-org/chaptarrng/actions/runs/41955974821), Fedora 44 RPM [41956031349](https://github.com/snapetech-org/chaptarrng/actions/runs/41956031349), and legacy distribution/runner contracts [41956034314](https://github.com/snapetech-org/chaptarrng/actions/runs/41956034314) passed. Standalone asset run [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789) verified its eight standard runtime archives; Linux x86 and FreeBSD runtime-pack generation was still running when this update was written.
+The exact-head standalone macOS handoff [41955575531](https://github.com/snapetech-org/chaptarrng/actions/runs/41955575531) passed on x64 and arm64. Exact-head Helm [41955974821](https://github.com/snapetech-org/chaptarrng/actions/runs/41955974821), Fedora 44 RPM [41956031349](https://github.com/snapetech-org/chaptarrng/actions/runs/41956031349), and legacy distribution/runner contracts [41956034314](https://github.com/snapetech-org/chaptarrng/actions/runs/41956034314) passed. Standalone asset run [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789) passed for all ten runtime archives, including Linux x86 and FreeBSD. This verifies payload creation and checksums, not installed handoff for every runtime.
 
-The API differential [41955732272](https://github.com/snapetech-org/chaptarrng/actions/runs/41955732272) remains a strict failure: 67/79 matched, 9 strict mismatches, 1 inconclusive source error, and 2 expected policy differences. The three write/readback cases passed. The inconclusive paged-books case returns HTTP 500 in BookshelfNG when the fixture author has no monitored editions and HTTP 200 in ChaptarrNG. Schema, configuration, identity, provider-default, notification, localization, and runtime-status differences remain visible; this test sample does not establish exhaustive route or command parity.
+The API differential [41955732272](https://github.com/snapetech-org/chaptarrng/actions/runs/41955732272) remains a strict failure: 67/79 matched, 9 strict mismatches, 1 inconclusive source error, and 2 expected policy differences. The three write/readback cases passed. The inconclusive paged-books case returns HTTP 500 in BookshelfNG when the fixture author has no monitored editions and HTTP 200 in ChaptarrNG. Review found product identity, build/runtime/OS, localization, help text, schema ordering, metadata endpoint, provider defaults/catalog, and the target's write-only host-password response among the strict differences. The populated fixture's saved MAM indexer reads back as expected. Plex's former global `updateLibrary=false` setting is mapped to disabled per-event triggers; ChaptarrNG also supports delete-event triggers unavailable in the source. These are not comparator passes or blanket parity waivers. The test sample does not establish exhaustive route or command parity.
 
 These hosted runs validate the exact source candidate without publishing packages or changing any installed channel. Representative operator-data conversion/rollback, live provider and media fulfillment, external feed/update delivery, and production acceptance remain open. Older JIT-only routing instructions in the dated entries below are superseded by the runner-policy update above; historical evidence still has the scope and candidate described at its checkpoint.
 
@@ -54,24 +54,29 @@ package channel. An installed handoff for one RID does not establish that the
 other runtime payloads launch or migrate correctly. The Windows migration
 installer is a separate x64 artifact.
 
-Four of the ten release RIDs have installed handoff behavior evidence
-(`linux-x64`, `osx-x64`, `osx-arm64`, and `freebsd-x64`); none has the required
-current private-JIT replay. Six RIDs have no installed BookshelfNG handoff
-record. The Windows migration-installer evidence is tracked separately from
-the `win-x64` archive.
+All ten release RIDs passed exact-head archive build and checksum verification
+in public run [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789).
+Only `osx-x64` and `osx-arm64` have exact-head installed BookshelfNG handoff
+evidence, from run [41955575531](https://github.com/snapetech-org/chaptarrng/actions/runs/41955575531).
+Linux x64 has prompt-contract coverage, and Windows has package/installer
+handoff coverage, but these do not exercise the standalone Linux or Windows
+archive artifacts. FreeBSD has an earlier local installed handoff using a
+0.9.978 candidate, not this exact application head. The Windows migration
+installer is tracked separately from the `win-x64` archive. Public hosted
+runners are authorized; a private-JIT replay is not required by policy.
 
 | Release RID / artifact | Existing handoff evidence | Remaining acceptance |
 | --- | --- | --- |
-| `linux-x64` | Local 0.9.978 archive installed over public BookshelfNG .71 on Debian 12; migration, health, data preservation, and forced rollback passed before the new prompt. | The new `[y/N]` choice regression is added to the Linux JIT Build job; it is not yet run. Replay No/Yes plus installed rollback on approved private JIT. |
-| `linux-arm64` | StartOS aarch64 test-package handoff passed; it wraps a different StartOS package/runtime. | No installed handoff with the standalone `linux-arm64` release archive is recorded. |
-| `linux-musl-x64` | Release payload validation only. | No installed BookshelfNG handoff is recorded. |
-| `linux-musl-arm64` | Release payload validation only. | No installed BookshelfNG handoff is recorded. |
-| `linux-x86` | Release payload validation only. | No installed BookshelfNG handoff is recorded. |
-| `osx-x64` | Historical hosted handoff run built and checksum-verified the exact candidate archive, then passed No, Manual defer, Yes, health, source backup, and rollback. | Replay the exact-archive workflow on approved private JIT. |
-| `osx-arm64` | Historical hosted handoff run built and checksum-verified the exact candidate archive, then passed No, Manual defer, Yes, health, source backup, and rollback. | Replay the exact-archive workflow on approved private JIT. |
-| `win-x64` | Historical hosted migration-installer Yes/No, service handoff, health, and rollback acceptance passed. | Private Windows JIT replay; validate the standalone archive separately from the migration installer. |
-| `win-x86` | Release payload validation only. | No installed BookshelfNG handoff is recorded. |
-| `freebsd-x64` | Local exact 0.9.978 archive installed over public BookshelfNG .71 on FreeBSD 15.1; No, Yes, health, and rollback passed. | Replay on approved private JIT. |
+| `linux-x64` | Local 0.9.978 archive installed over public BookshelfNG .71 on Debian 12; migration, health, data preservation, and forced rollback passed before the new prompt. Exact-head public Build [41955009417](https://github.com/snapetech-org/chaptarrng/actions/runs/41955009417) passed the systemd standalone No/Yes prompt contract. | Run an installed handoff with the exact archive, including service health, data preservation, and rollback. |
+| `linux-arm64` | StartOS aarch64 test-package handoff passed; it wraps a different StartOS package/runtime. Exact-head standalone archive build and checksum passed in [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789). | Install and exercise the standalone `linux-arm64` archive over BookshelfNG. |
+| `linux-musl-x64` | Exact-head archive build and checksum passed in [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789). | No installed BookshelfNG handoff is recorded. |
+| `linux-musl-arm64` | Exact-head archive build and checksum passed in [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789). | No installed BookshelfNG handoff is recorded. |
+| `linux-x86` | Exact-head archive build and checksum passed in [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789). | No installed BookshelfNG handoff is recorded. |
+| `osx-x64` | Exact-head hosted handoff [41955575531](https://github.com/snapetech-org/chaptarrng/actions/runs/41955575531) built and checksum-verified the candidate archive, then passed No, Manual defer, Yes, health, source backup, and rollback. | No exact-head installed handoff gap is recorded; switching the local app/service path remains an operator action. |
+| `osx-arm64` | Exact-head hosted handoff [41955575531](https://github.com/snapetech-org/chaptarrng/actions/runs/41955575531) built and checksum-verified the candidate archive, then passed No, Manual defer, Yes, health, source backup, and rollback. | No exact-head installed handoff gap is recorded; switching the local app/service path remains an operator action. |
+| `win-x64` | Exact-head archive build and checksum passed in [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789). The Windows Chocolatey path passed the 0.4.21.76 handoff in [41955009417](https://github.com/snapetech-org/chaptarrng/actions/runs/41955009417). | Installed BookshelfNG handoff with the standalone `win-x64` archive is separate from Chocolatey and the migration installer; none is recorded. |
+| `win-x86` | Exact-head archive build and checksum passed in [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789). | No installed BookshelfNG handoff is recorded. |
+| `freebsd-x64` | Exact-head archive build and checksum passed in [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789). An earlier local 0.9.978 archive passed No, Yes, health, source backup, and rollback on FreeBSD 15.1. | Install and exercise the exact-head archive over BookshelfNG on FreeBSD. |
 
 The exact-head public results above supersede older JIT-only route caveats. Historical VM and hosted results below retain their recorded candidate and test scope.
 
