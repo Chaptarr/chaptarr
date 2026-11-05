@@ -160,8 +160,8 @@ def main():
             connection.execute('UPDATE Indexers SET EnableRss=0,EnableAutomaticSearch=0,EnableInteractiveSearch=0')
             connection.execute('UPDATE DownloadClients SET Enable=0')
             connection.execute('UPDATE ImportLists SET EnableAutomaticAdd=0,ShouldSearch=0')
-            columns = [row[1] for row in connection.execute('PRAGMA table_info(Notifications)') if row[1].startswith('On')]
-            connection.execute('UPDATE Notifications SET ' + ','.join('"' + column + '"=0' for column in columns))
+            # Disable the startup-triggered notifications in this committed synthetic schema.
+            connection.execute('UPDATE Notifications SET OnApplicationUpdate=0,OnHealthIssue=0,OnAuthorAdded=0')
         (data / 'config.xml').write_text('<Config><BindAddress>127.0.0.1</BindAddress><Port>18787</Port><ApiKey>0123456789abcdef0123456789abcdef</ApiKey><EnableSsl>False</EnableSsl><UrlBase></UrlBase><LaunchBrowser>False</LaunchBrowser><UpdateAutomatically>False</UpdateAutomatically></Config>')
         (data / 'channel-test-canary.txt').write_text('windows-standalone-canary=preserve-me\n')
         process = start(old, data, root / 'predecessor.log')
