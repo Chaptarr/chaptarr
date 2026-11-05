@@ -7,6 +7,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books.Calibre;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Exceptions;
@@ -35,6 +36,7 @@ namespace NzbDrone.Core.Books
         IExecute<BulkRefreshBookCommand>
     {
         private readonly IBookService _bookService;
+        private readonly IConfigService _configService;
         private readonly IAuthorService _authorService;
         private readonly IRootFolderService _rootFolderService;
         private readonly IEditionService _editionService;
@@ -117,10 +119,12 @@ namespace NzbDrone.Core.Books
                                   IEditionSelector editionSelector,
                                   IEditionMetadataProfileFilter editionMetadataProfileFilter,
                                   IMapCoversToLocal mediaCoverService,
-                                  Logger logger)
+                                  Logger logger,
+                                  IConfigService configService = null)
         : base(logger)
         {
             _bookService = bookService;
+            _configService = configService;
             _authorService = authorService;
             _rootFolderService = rootFolderService;
             _editionService = editionService;
@@ -865,9 +869,11 @@ namespace NzbDrone.Core.Books
             var protectedForeignEditionIds = GetProtectedForeignEditionIds(local);
             var filteredRemoteEditions = _editionMetadataProfileFilter?.Apply(remoteEditions, profile, protectedForeignEditionIds) ?? remoteEditions;
 
-            var selection = _editionSelector.SelectRetainedEditions(
-                local.MediaType,
-                filteredRemoteEditions.ToList());
+            // Bookshelf kept every edition allowed by its metadata profile.
+            // Native representative-format pruning must not narrow migrated catalogs.
+            var selection = _configService?.BookshelfMatchCompatibility == true
+                ? new EditionRetentionSelection(filteredRemoteEditions.ToList(), new List<string>())
+                : _editionSelector.SelectRetainedEditions(local.MediaType, filteredRemoteEditions.ToList());
 
             if (protectedForeignEditionIds.Count > 0)
             {
@@ -1012,6 +1018,7 @@ namespace NzbDrone.Core.Books
         private sealed class EditionRefreshMatchingIndex
         {
             private readonly Dictionary<string, List<Edition>> _editionsByForeignId;
+            private readonly Dictionary<string, List<Edition>> _editionsByStableIdentity;
             private readonly Dictionary<int, int> _sourceOrderByEditionId;
             private readonly HashSet<int> _activeEditionIds;
 
@@ -1019,12 +1026,14 @@ namespace NzbDrone.Core.Books
                 List<Edition> source,
                 Dictionary<string, List<Edition>> editionsByForeignId,
                 Dictionary<int, int> sourceOrderByEditionId,
-                HashSet<int> activeEditionIds)
+                HashSet<int> activeEditionIds,
+                Dictionary<string, List<Edition>> editionsByStableIdentity)
             {
                 Source = source;
                 _editionsByForeignId = editionsByForeignId;
                 _sourceOrderByEditionId = sourceOrderByEditionId;
                 _activeEditionIds = activeEditionIds;
+                _editionsByStableIdentity = editionsByStableIdentity;
             }
 
             public List<Edition> Source { get; }
@@ -1035,6 +1044,7 @@ namespace NzbDrone.Core.Books
                 var editionsByForeignId = new Dictionary<string, List<Edition>>(StringComparer.Ordinal);
                 var sourceOrderByEditionId = new Dictionary<int, int>();
                 var activeEditionIds = new HashSet<int>();
+                var editionsByStableIdentity = new Dictionary<string, List<Edition>>(StringComparer.OrdinalIgnoreCase);
 
                 for (var i = 0; i < source.Count; i++)
                 {
@@ -1046,6 +1056,16 @@ namespace NzbDrone.Core.Books
 
                     activeEditionIds.Add(edition.Id);
                     sourceOrderByEditionId[edition.Id] = i;
+                    foreach (var token in BookEditionIdentity.GetStableEditionRehomeTokens(edition))
+                    {
+                        if (!editionsByStableIdentity.TryGetValue(token, out var aliases))
+                        {
+                            aliases = new List<Edition>();
+                            editionsByStableIdentity[token] = aliases;
+                        }
+
+                        aliases.Add(edition);
+                    }
 
                     if (string.IsNullOrEmpty(edition.ForeignEditionId))
                     {
@@ -1065,15 +1085,29 @@ namespace NzbDrone.Core.Books
                     source.Count,
                     editionsByForeignId.Count);
 
-                return new EditionRefreshMatchingIndex(source, editionsByForeignId, sourceOrderByEditionId, activeEditionIds);
+                return new EditionRefreshMatchingIndex(source, editionsByForeignId, sourceOrderByEditionId, activeEditionIds, editionsByStableIdentity);
             }
 
-            public List<Edition> GetCandidates(Edition remote)
+            public List<Edition> GetCandidates(Edition remote, bool compatibility)
             {
                 if (string.IsNullOrEmpty(remote?.ForeignEditionId) ||
                     !_editionsByForeignId.TryGetValue(remote.ForeignEditionId, out var editions))
                 {
-                    return null;
+                    if (!compatibility)
+                    {
+                        return null;
+                    }
+
+                    // ISBN/ASIN can identify multiple provider editions. Only provider-scoped
+                    // identity aliases may reconnect an imported edition to refreshed metadata.
+                    var aliases = BookEditionIdentity.GetStableEditionRehomeTokens(remote)
+                        .Where(token => _editionsByStableIdentity.ContainsKey(token))
+                        .SelectMany(token => _editionsByStableIdentity[token])
+                        .Where(edition => _activeEditionIds.Contains(edition.Id))
+                        .DistinctBy(edition => edition.Id)
+                        .Take(2)
+                        .ToList();
+                    return aliases.Count == 1 ? aliases : new List<Edition>();
                 }
 
                 return editions
@@ -1104,7 +1138,7 @@ namespace NzbDrone.Core.Books
             // ForeignEditionId is expected to be unique, but older DBs (or prior bugs) can contain duplicates.
             // Do not let a duplicate crash an author refresh; pick the best candidate and merge the others into it.
             var matchingIndex = GetEditionRefreshMatchingIndex(existingChildren);
-            var matches = matchingIndex.GetCandidates(remote) ??
+            var matches = matchingIndex.GetCandidates(remote, _configService?.BookshelfMatchCompatibility == true) ??
                           existingChildren
                               .Where(x => x.ForeignEditionId == remote.ForeignEditionId)
                               .ToList();

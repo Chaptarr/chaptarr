@@ -576,7 +576,7 @@ namespace NzbDrone.Core.Books
                         audiobookMetadataProfileIdOverride: null,
                         ebookMetadataProfileIdOverride: null,
                         editionSelector: null,
-                        retainEditions: true,
+                        retainEditions: _configService?.BookshelfMatchCompatibility != true,
                         logContext: "GetRemoteChildren");
                 }
 

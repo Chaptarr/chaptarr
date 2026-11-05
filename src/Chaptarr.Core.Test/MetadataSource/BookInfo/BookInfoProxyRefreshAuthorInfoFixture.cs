@@ -243,6 +243,111 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             Assert.That(result.Author.HardcoverAuthorId, Is.EqualTo("hc:123"));
         }
 
+        [TestCase(true, 602)]
+        [TestCase(false, 0)]
+        public void should_keep_source_catalogs_over_300_works_without_native_date_or_isbn_requirements(bool compatibility, int expectedBooks)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123,
+                Name = "Test Author",
+                Works = Enumerable.Range(1, 301).Select(id => new WorkResource
+                {
+                    ForeignId = id,
+                    Title = "Work " + id,
+                    Books = new List<BookResource> { new() { ForeignId = 1000 + id, Title = "Work " + id } }
+                }).ToList()
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.Books, Has.Count.EqualTo(expectedBooks));
+        }
+
+        [TestCase("A Work (A Series, #1)", "A Work (A Series, #1)")]
+        [TestCase(null, "Fallback Edition (A Series, #1)")]
+        public void should_keep_source_work_titles_and_ignore_unusable_editions(string title, string expected)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123,
+                Name = "Test Author",
+                Works = new List<WorkResource>
+                {
+                    new()
+                    {
+                        ForeignId = 456, Title = title,
+                        Books = new List<BookResource>
+                        {
+                            null,
+                            new() { ForeignId = 0, Title = "Invalid identity" },
+                            new() { ForeignId = 789, Title = "Fallback Edition (A Series, #1)", RatingCount = 10 },
+                            new() { ForeignId = 790, Title = null },
+                            new() { ForeignId = 791, Title = "More popular edition", RatingCount = 20, AverageRating = 4 }
+                        }
+                    }
+                }
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility: true);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.Books.Select(book => book.Title), Is.All.EqualTo(expected));
+            Assert.That(result.Author.Books, Has.Count.EqualTo(2));
+            foreach (var book in result.Author.Books)
+            {
+                Assert.That(book.Editions.Select(edition => edition.HardcoverEditionId), Is.EquivalentTo(new[] { "789", "791" }));
+                Assert.That(book.Editions.Single(edition => edition.Monitored).HardcoverEditionId, Is.EqualTo("791"));
+            }
+        }
+
+        [TestCase(true, "123", "456", "789", "8", "Goodreads", "Book Editions", "Goodreads Book", "_SX50_")]
+        [TestCase(false, "hc:123", "hc:456", "hc:edition:789", "hc:8", "Hardcover", "Hardcover", "Hardcover", "_SX500_")]
+        public void should_preserve_source_metadata_presentation_without_rewriting_native_defaults(bool compatibility,
+            string authorSlug, string bookSlug, string editionSlug, string seriesSlug,
+            string authorLink, string bookLink, string editionLink, string imageSize)
+        {
+            const string image = "https://images.gr-assets.com/books/123._SX50_.jpg";
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123, Name = "Test Author", ImageUrl = image, Url = "https://hardcover.app/authors/test-author",
+                Series = new List<SeriesResource> { new() { ForeignId = 8, Title = "Test Series" } },
+                Works = new List<WorkResource>
+                {
+                    new() { ForeignId = 456, Title = "Test Work", Books = new List<BookResource>
+                    {
+                        new() { ForeignId = 789, Title = "Test Edition", ImageUrl = image }
+                    } }
+                }
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.TitleSlug, Is.EqualTo(authorSlug));
+            Assert.That(result.Author.Links.Single().Name, Is.EqualTo(authorLink));
+            Assert.That(result.Author.Images.Single().Url, Does.Contain(imageSize));
+            Assert.That(result.Author.Series.Select(series => series.TitleSlug), Is.All.EqualTo(seriesSlug));
+            foreach (var book in result.Author.Books)
+            {
+                Assert.That(book.TitleSlug, Is.EqualTo(bookSlug));
+                Assert.That(book.Links.Single().Name, Is.EqualTo(bookLink));
+                Assert.That(book.Editions.Single().TitleSlug, Is.EqualTo(editionSlug));
+                Assert.That(book.Editions.Single().Links.Single().Name, Is.EqualTo(editionLink));
+                Assert.That(book.Editions.Single().Images.Single().Url, Does.Contain(imageSize));
+            }
+        }
+
         private static BookInfoProxy CreateNativeRefreshProxy(IHardcoverMetadataProxy native, out RecordingHttpClient httpClient, bool compatibility = false)
         {
             httpClient = new RecordingHttpClient("{}");

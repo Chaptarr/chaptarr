@@ -12,6 +12,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.Serializer;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
@@ -169,6 +170,7 @@ namespace NzbDrone.Core.Books.Services
         private static readonly SemaphoreSlim SqliteWriteGate = new SemaphoreSlim(1, 1);
 
         private readonly IAuthorService _authorService;
+        private readonly IConfigService _configService;
         private readonly IProvideAuthorInfo _authorInfo;
         private readonly IBookService _bookService;
         private readonly IRefreshSeriesService _refreshSeriesService;
@@ -209,9 +211,11 @@ namespace NzbDrone.Core.Books.Services
             IAuthorSyncMetadataService syncMetadataService,
             Logger logger,
             IEditionSelector editionSelector = null,
-            IRefreshAuthorService refreshAuthorService = null)
+            IRefreshAuthorService refreshAuthorService = null,
+            IConfigService configService = null)
         {
             _authorService = authorService;
+            _configService = configService;
             _authorInfo = authorInfo;
             _bookService = bookService;
             _refreshSeriesService = refreshSeriesService;
@@ -2554,7 +2558,7 @@ namespace NzbDrone.Core.Books.Services
                 audiobookMetadataProfileIdOverride: GetEffectiveMetadataProfileId(author, config, BookMediaType.Audiobook),
                 ebookMetadataProfileIdOverride: GetEffectiveMetadataProfileId(author, config, BookMediaType.Ebook),
                 editionSelector: _editionSelector,
-                retainEditions: true,
+                retainEditions: _configService?.BookshelfMatchCompatibility != true,
                 logContext: "ProcessBooksForAuthor");
 
             if (!books.Any())

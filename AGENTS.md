@@ -122,6 +122,20 @@ patterns without a part disambiguator and absent release groups. Test filenames
 and bytes after actual commands and
 restart; command completion alone is insufficient.
 
+## Bookshelf metadata refresh retention
+
+For migrated libraries, retain every provider edition allowed by the metadata
+profile. Native representative-edition pruning and automatic large-catalog
+quality filtering must not narrow the source catalog. Skip unusable provider
+editions without failing the entire author refresh; preserve source title,
+slug, image URL and link-label semantics at the compatibility boundary.
+Match imported edition aliases through provider-scoped identities, preserving
+local row IDs. ISBN/ASIN overlap alone is insufficient, and ambiguous aliases
+must not silently merge rows. Exercise repeated refreshes against populated
+migrated data; successful commands and unchanged book counts can hide missing
+or duplicated editions. Clearly distinguish synthetic response augmentation
+from actual upstream captures.
+
 ## SQLite-heavy local validation
 
 Some Core fixtures create databases under the test output directory and execute

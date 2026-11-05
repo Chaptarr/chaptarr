@@ -525,3 +525,57 @@ configuration. The full prior count-fix suite passed 5,224 tests with 29 skips;
 the final broader naming fix passes 85 affected tests and the full Core suite
 passes 5,231 tests, with 29 skips and no failures. Localization tests pass.
 Canonical build and installed checks remain separate follow-up validation.
+
+
+## Canonical naming candidate and wider metadata refresh
+
+Canonical `cb16f8102ce504606b93e1852da710ee8558869f` passes Full Build,
+strict API differential, all ten standalone archive builds, all five native
+Linux installed suites, all four Windows/macOS retained-archive consumers and
+the native FreeBSD handoff suite. FreeBSD verifies No/Manual/Yes, healthy
+migration, source backup and forced-failure recovery. The harness accepts Linux
+runtime selectors only; the failed invocation with a FreeBSD selector is
+retained separately from the corrected native pass.
+
+The untouched canonical musl archive also reproduces the seven-format real-data
+rename pass: seven identical source/target paths and IDs, 14 file-integrity
+checks and 14 fresh-process restart checks. Both format-specific nonempty RSS
+replays have zero field differences apart from moving age fields. Both bounded
+actual metadata captures match source-projected author/book fields apart from
+refresh timestamps. Complete Seerr web acquisition/import/scan/restart smoke
+passes for ebook and audiobook with the recorded repaired client test image.
+These results qualify this candidate for those checks, not publication or
+production cutover.
+
+Broader provider fixtures expose remaining metadata gaps in that candidate:
+native automatic filtering drops otherwise usable catalogs over 300 works;
+representative-edition pruning drops source-allowed editions; an unusable
+edition can abort the author refresh; imported `hc:<id>` editions can duplicate
+when provider refresh returns `hc:edition:<id>`. Successful commands and stable
+book counts conceal the edition losses and duplicates.
+
+The repair keeps source-compatible title fallback, slugs, image URLs and link
+labels; skips unusable editions; retains every profile-allowed edition; and
+matches unique provider-scoped aliases while preserving local edition IDs.
+Shared ISBN/ASIN values are insufficient identity, ambiguous alias matches do
+not merge rows, and consumed rows cannot match a second remote edition. Fresh
+native filtering and representative-edition selection remain covered separately.
+
+A bounded actual Hardcover response augmented with two explicitly synthetic
+print editions yields three editions and three provider identities in `.76`.
+Untouched `cb16f810` yields two rows for one identity, losing both synthetic
+additions. The intermediate retention-only repair yields four rows for three
+identities. With alias matching, the local production-Core derivative yields
+three rows for three identities, matching the source. This is controlled
+synthetic augmentation, not a claim about the original upstream catalog.
+Private captures, database copies, command bodies and binary provenance remain
+under `live-provider-readonly-20261105/` in the private operator evidence root.
+
+The expanded focused suite passes 127 tests. Full Core passes 5,242 tests,
+with 29 skips and no failures. A second actual refresh command in each isolated
+application retains exactly three editions and three provider identities, with
+unchanged row IDs; both original imported row IDs survive the first refresh.
+Localization inventory checks pass in existing `--allow-pending` mode; pending
+translations remain pending. The new code requires its own canonical build and
+installed acceptance. Desktop Pool still times out on capacity without
+an owned lease, so no headed GUI pass is claimed.

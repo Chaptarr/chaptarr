@@ -4365,15 +4365,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             var author = MapAuthor(resource, "hardcover");
             var sourceBooks = author.Books;
             var compatibility = _configService.BookshelfMatchCompatibility;
-            if (compatibility)
-            {
-                // Preserve the predecessor's author slug and link label when
-                // refreshing a migrated library, just as import preserves them.
-                author.TitleSlug = resource.ForeignId.ToString();
-                author.Links.ForEach(link => link.Name = "Goodreads");
-                sourceBooks.ForEach(book => book.Links.ForEach(link => link.Name = "Book Editions"));
-            }
-
             author.Books = new List<Book>();
             author.Series = new List<Series>();
             foreach (var mediaType in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
@@ -4408,6 +4399,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         private Author MapAuthor(AuthorResource resource, string provider = "goodreads")
         {
+            var compatibility = string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase) &&
+                _configService.BookshelfMatchCompatibility;
             var mapStopwatch = Stopwatch.StartNew();
             var logger = _logger;
 
@@ -4416,7 +4409,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             // Create Author with metadata fields directly
             var author = new Author
             {
-                TitleSlug = string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase)
+                TitleSlug = !compatibility && string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase)
                     ? ProviderIdHelper.WithPrefix("hc", resource.ForeignId.ToString())
                     : resource.ForeignId.ToString(),
                 Name = resource.Name.CleanSpaces(),
@@ -4433,9 +4426,9 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             if (resource.ImageUrl.IsNotNullOrWhiteSpace())
             {
-                var enhancedImageUrl = EnhanceGoodreadsImageUrl(resource.ImageUrl);
-                if (enhancedImageUrl.IsValidHttpUrl() &&
-                    !MediaCoverRendition.IsKnownPlaceholderImageUrl(enhancedImageUrl))
+                var enhancedImageUrl = compatibility ? resource.ImageUrl : EnhanceGoodreadsImageUrl(resource.ImageUrl);
+                if (compatibility || (enhancedImageUrl.IsValidHttpUrl() &&
+                    !MediaCoverRendition.IsKnownPlaceholderImageUrl(enhancedImageUrl)))
                 {
                     author.Images.Add(new MediaCover.MediaCover
                     {
@@ -4447,7 +4440,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             if (resource.Url.IsNotNullOrWhiteSpace())
             {
-                author.Links.Add(new Links { Url = resource.Url, Name = provider == "hardcover" ? "Hardcover" : "Goodreads" });
+                author.Links.Add(new Links { Url = resource.Url, Name = !compatibility && provider == "hardcover" ? "Hardcover" : "Goodreads" });
             }
 
             // DEBUG: Log full Goodreads response for this author
@@ -4457,7 +4450,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             if (resource.Works != null)
             {
                 logger.Debug("All books from Goodreads for {0}:", resource.Name);
-                foreach (var work in resource.Works.OrderBy(w => w.Title))
+                foreach (var work in resource.Works.Where(work => work != null).OrderBy(w => w.Title))
                 {
                     logger.Debug("  - Work ID: {0}, Title: '{1}', ReleaseDate: {2}",
                         work.ForeignId,
@@ -4466,7 +4459,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                     if (work.Books != null && work.Books.Any())
                     {
-                        foreach (var book in work.Books)
+                        foreach (var book in work.Books.Where(book => book != null))
                         {
                             logger.Debug("    - Edition: '{0}' (ID: {1}, ISBN: {2})",
                                 book.Title ?? "[NO TITLE]",
@@ -4480,7 +4473,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             // Check specifically for "Zealot's Eleventh Crusade" or similar
             var zealotVariations = new[] { "zealot", "eleventh", "crusade", "11th" };
             var potentialMatches = resource.Works?.Where(w =>
-                w.Title != null &&
+                w != null && w.Title != null &&
                 zealotVariations.Any(v => w.Title.ToLowerInvariant().Contains(v)))
                 .ToList();
 
@@ -4511,7 +4504,9 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             foreach (var work in resource.Works ?? new List<WorkResource>())
             {
-                if (work.ForeignId <= 0)
+                if (work == null || work.ForeignId <= 0 ||
+                    (compatibility && work.Title.IsNullOrWhiteSpace() &&
+                     work.Books?.Any(edition => edition != null && edition.ForeignId > 0 && edition.Title.IsNotNullOrWhiteSpace()) != true))
                 {
                     continue;
                 }
@@ -4541,7 +4536,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             logger.Debug("=== END AUTHOR BOOK FILTERING DEBUG ===");
 
             // Apply quality filtering for authors with suspiciously large catalogs
-            if (filteredWorks.Count > 300)
+            if (!compatibility && filteredWorks.Count > 300)
             {
                 logger.Info("Author {0} has {1} works - applying automatic quality filtering", resource.Name, filteredWorks.Count);
 
@@ -4666,10 +4661,12 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         private Series MapSeries(SeriesResource resource, string provider = "goodreads")
         {
+            var compatibility = string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase) &&
+                _configService.BookshelfMatchCompatibility;
             var series = new Series
             {
                 Title = resource.Title,
-                TitleSlug = string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase)
+                TitleSlug = !compatibility && string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase)
                     ? ProviderIdHelper.WithPrefix("hc", resource.ForeignId.ToString())
                     : resource.ForeignId.ToString(),
                 Description = resource.Description
@@ -4682,39 +4679,56 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         private Book MapBook(WorkResource resource, Logger logger, string provider = "goodreads")
         {
+            var compatibility = string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase) &&
+                _configService.BookshelfMatchCompatibility;
+            var editionResources = resource.Books;
+            if (compatibility)
+            {
+                editionResources = resource.Books?.Where(edition => edition != null && edition.ForeignId > 0 &&
+                    edition.Title.IsNotNullOrWhiteSpace()).ToList() ?? new List<BookResource>();
+            }
+
             var title = resource.Title;
+            if (compatibility)
+            {
+                title = title.IsNotNullOrWhiteSpace() ? title.CleanSpaces() : editionResources.FirstOrDefault()?.Title.CleanSpaces();
+            }
 
             // Remove series information from title if present
             // Pattern: "Book Title (Series Name, #N)" or "Book Title (Series Name #N)"
-            var cleanTitle = string.IsNullOrWhiteSpace(title)
+            var cleanTitle = compatibility ? title : string.IsNullOrWhiteSpace(title)
                 ? string.Empty
                 : Regex.Replace(title, @"\s*\([^)]+[,\s]+#\d+\)$", "").Trim();
 
             var book = new Book
             {
                 Title = cleanTitle,  // Use cleaned title
-                TitleSlug = string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase)
+                TitleSlug = !compatibility && string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase)
                     ? ProviderIdHelper.WithPrefix("hc", resource.ForeignId.ToString())
                     : resource.ForeignId.ToString(),
                 CleanTitle = Parser.Parser.CleanAuthorName(cleanTitle),
                 ReleaseDate = resource.ReleaseDate,
-                Genres = resource.Genres,
-                RelatedBooks = resource.RelatedWorks
+                Genres = compatibility ? resource.Genres ?? new List<string>() : resource.Genres,
+                RelatedBooks = compatibility ? resource.RelatedWorks ?? new List<int>() : resource.RelatedWorks
             };
 
-            book.Links.Add(new Links { Url = resource.Url, Name = provider == "hardcover" ? "Hardcover" : "Goodreads Editions" });
+            book.Links.Add(new Links { Url = resource.Url, Name = compatibility ? "Book Editions" : provider == "hardcover" ? "Hardcover" : "Goodreads Editions" });
 
             SetBookProviderId(book, provider, resource.ForeignId.ToString());
 
-            if (resource.Books != null)
+            if (editionResources != null)
             {
-                book.Editions = resource.Books.Select(x => MapEdition(x, provider)).ToList();
+                book.Editions = editionResources.Select(x => MapEdition(x, provider, compatibility)).ToList();
+                if (compatibility && book.Editions.Any())
+                {
+                    book.Editions.MaxBy(edition => edition.Ratings.Popularity).Monitored = true;
+                }
 
                 // Don't select monitored edition here - wait until after metadata profile is applied
                 // This ensures we only monitor editions that pass language/content filters
 
                 // fix work title if missing by using most popular edition
-                if (book.Title.IsNullOrWhiteSpace() && book.Editions.Any())
+                if (!compatibility && book.Title.IsNullOrWhiteSpace() && book.Editions.Any())
                 {
                     var mostPopular = book.Editions.MaxBy(x => x.Ratings.Popularity);
                     if (mostPopular != null)
@@ -4773,7 +4787,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             return book;
         }
 
-        private static Edition MapEdition(BookResource resource, string provider = "goodreads")
+        private static Edition MapEdition(BookResource resource, string provider = "goodreads", bool compatibility = false)
         {
             var isHardcover = string.Equals(provider, "hardcover", StringComparison.OrdinalIgnoreCase);
             var rawId = resource.ForeignId.ToString();
@@ -4787,7 +4801,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 ForeignEditionId = isHardcover ? $"hc:edition:{rawId}" : EnsureCanonicalProviderId(rawId, "gr"),
                 GoodreadsEditionId = isHardcover ? null : resource.ForeignId,
                 HardcoverEditionId = isHardcover ? rawId : null,
-                TitleSlug = isHardcover ? $"hc:edition:{rawId}" : rawId,
+                TitleSlug = isHardcover && !compatibility ? $"hc:edition:{rawId}" : rawId,
                 Isbn13 = resource.Isbn13,
                 Asin = resource.Asin,
                 Title = resource.Title.CleanSpaces(),
@@ -4807,8 +4821,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
             if (resource.ImageUrl.IsNotNullOrWhiteSpace())
             {
-                var enhancedImageUrl = EnhanceGoodreadsImageUrl(resource.ImageUrl);
-                if (enhancedImageUrl.IsValidHttpUrl())
+                var enhancedImageUrl = compatibility ? resource.ImageUrl : EnhanceGoodreadsImageUrl(resource.ImageUrl);
+                if (compatibility || enhancedImageUrl.IsValidHttpUrl())
                 {
                     edition.Images.Add(new MediaCover.MediaCover
                     {
@@ -4818,7 +4832,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 }
             }
 
-            edition.Links.Add(new Links { Url = resource.Url, Name = isHardcover ? "Hardcover" : "Goodreads Book" });
+            edition.Links.Add(new Links { Url = resource.Url, Name = isHardcover && !compatibility ? "Hardcover" : "Goodreads Book" });
 
             return edition;
         }
