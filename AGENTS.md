@@ -129,6 +129,10 @@ profile. Native representative-edition pruning and automatic large-catalog
 quality filtering must not narrow the source catalog. Skip unusable provider
 editions without failing the entire author refresh; preserve source title,
 slug, image URL and link-label semantics at the compatibility boundary.
+Register persistent legacy work identities after refresh/addition as well as
+initial import, so new format counterparts project to one legacy work and all
+legacy mutation routes resolve the same counterparts. Preserve ambiguous pockets
+and conflicting imported identities rather than guessing a merge.
 Match imported edition aliases through provider-scoped identities, preserving
 local row IDs. ISBN/ASIN overlap alone is insufficient, and ambiguous aliases
 must not silently merge rows. Exercise repeated refreshes against populated

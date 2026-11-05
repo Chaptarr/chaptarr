@@ -579,3 +579,70 @@ Localization inventory checks pass in existing `--allow-pending` mode; pending
 translations remain pending. The new code requires its own canonical build and
 installed acceptance. Desktop Pool still times out on capacity without
 an owned lease, so no headed GUI pass is claimed.
+
+
+## New-work legacy identities after refresh
+
+A larger controlled replay expands the captured one-work response with 300
+explicitly synthetic print works lacking dates and ISBNs. The unchanged operator
+profiles correctly exclude those additions in both applications. With shared
+profile flags explicitly made permissive in the disposable copies, `.76` exposes
+301 works while `2a928f57` exposes 602 format rows for 301 provider identities:
+newly discovered counterparts do not receive the legacy identity maps created
+at import. This is a legacy API projection/route gap, separate from retention.
+
+The repair registers persistent work mappings after refresh and book addition,
+before other synchronous event consumers. It pairs only unambiguous provider
+identities within one author, extends an existing legacy identity when a format
+is added, preserves conflicting imported identities and same-format pockets,
+and avoids occupied legacy IDs. Newly discovered IDs are stable target-owned
+legacy API identities; this does not predict which numeric IDs BookshelfNG would
+have allocated in a separate installation. Fresh native installations skip it.
+
+The production-Core derivative returns 301 distinct legacy works while retaining
+602 native format rows. A second HTTP author refresh preserves all 301 legacy
+IDs. Single-work GET resolves a newly assigned ID, and an actual legacy monitor
+mutation unmonitors both target format counterparts. Source and target both
+retain the requested unmonitored state after the second refresh. Raw bodies and
+database evidence are private under `metadata-large-catalog-lifecycle/`.
+
+## Real Debian package transaction
+
+A separate task-owned Debian 13 guest installs the actual public `.76` Debian
+package (SHA-256 `dc5d33b575684e5667111510735ba043572978ad85f1516f6f335566156938e4`)
+under real systemd. The source has schema 158, four authors, six works, nine
+editions and four files. The candidate-only package wraps the untouched canonical
+`2a928f57` Linux x64 archive; package SHA-256 is
+`960ee0a536f3750ab4fe822139e4c40a81f904456612c651fe6edbb8f6a98fdd`.
+
+Answering No preserves the installed predecessor version, live process ID,
+database counts, environment and media canary. Yes installs the same package
+identity, migrates to schema 126 with four authors/nine format rows/nine
+editions/four files, serves health and survives an actual service restart.
+An independent forced-health-failure case restores schema 158, source counts,
+original application/service, environment and canary, with healthy source HTTP.
+The guest checkpoint resets only the test fixture between independent cases;
+the failure case itself exercises application rollback rather than VM recovery.
+
+Automatic application rollback leaves dpkg's candidate half-configured after
+the deliberately failed post-install script. Restoring the package database's
+old version is a separate explicit downgrade, not an automatic package rollback
+claim. Synthetic package transaction checks are narrower evidence: the current
+Fedora RPM CI uses stub executables and a simulated systemctl, so it does not
+establish real Fedora application migration/health/recovery. This Debian runtime
+check does not close Fedora or external feed delivery gates.
+
+Evidence, the checksum-verified Debian 13 base manifest, package build log,
+source fixture/setup failures and corrected runs are retained under
+`/var/tmp/chaptarrng-native-standalone-20261105/debian13-package/`.
+The explicit downgrade then restores package version `0.4.21.76-1` to dpkg's
+installed state. The public predecessor's disabled unit needs an explicit start;
+after that, the restored service is active and source HTTP is healthy. Both
+commands and outcomes are retained rather than claiming automatic package
+metadata rollback.
+
+The final post-refresh mapping repair passes the full Core suite: 5,246 passed,
+29 skipped, no failures. The earlier run's only failure was a new assertion
+expecting insertion order; legacy resolution intentionally orders audio before
+ebook. The corrected assertion preserves that existing contract. The repair
+still needs its own canonical qualification.

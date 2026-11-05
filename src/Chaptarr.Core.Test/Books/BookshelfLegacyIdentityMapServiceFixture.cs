@@ -4,6 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Data.Sqlite;
+using Moq;
+using NLog;
+using NzbDrone.Core.Configuration;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
@@ -124,6 +127,89 @@ INSERT INTO BookshelfLegacyIdentityMap VALUES ('BookshelfNG', 'Book', 8, 103, 0)
             {
                 (8, (int?)null, 102), (8, (int?)0, 103), (8, (int?)1, 101), (9, (int?)1, 101)
             }));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void should_register_refreshed_format_counterparts_only_for_migrated_libraries(bool compatibility)
+        {
+            var database = DispatchProxy.Create<IMainDatabase, MainDatabaseProxy>();
+            ((MainDatabaseProxy)(object)database).ConnectionString = ConnectionString;
+            var identities = new BookshelfLegacyIdentityMapService(database);
+            var config = new Mock<IConfigService>();
+            config.SetupGet(value => value.BookshelfMatchCompatibility).Returns(compatibility);
+            var subject = new BookshelfRefreshIdentityMapService(database, null, config.Object, identities, LogManager.GetCurrentClassLogger());
+            var books = new List<Book>
+            {
+                new Book { Id = 32, AuthorId = 1, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:10" },
+                new Book { Id = 33, AuthorId = 1, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:10" },
+                new Book { Id = 34, AuthorId = 1, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:11" },
+                new Book { Id = 35, AuthorId = 1, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:11" }
+            };
+            subject.RegisterBooks(books);
+            subject.RegisterBooks(books);
+            var added = identities.GetMappingsByTargetIds("Book", new[] { 33, 34, 35 });
+            Assert.That(added.Count, Is.EqualTo(compatibility ? 3 : 0));
+            if (compatibility)
+            {
+                Assert.That(identities.ResolveBookIds(new[] { 32 }), Is.EquivalentTo(new[] { 32, 33 }));
+                var newId = added.Single(mapping => mapping.TargetId == 34).SourceId;
+                Assert.That(newId, Is.EqualTo(34));
+                Assert.That(identities.ResolveBookIds(new[] { newId }), Is.EquivalentTo(new[] { 34, 35 }));
+                Assert.That(identities.ResolveBookIds(new[] { newId }, BookMediaType.Ebook), Is.EqualTo(new[] { 34 }));
+            }
+        }
+
+        [Test]
+        public void should_not_combine_ambiguous_pockets_or_cross_author_work_ids()
+        {
+            var database = DispatchProxy.Create<IMainDatabase, MainDatabaseProxy>();
+            ((MainDatabaseProxy)(object)database).ConnectionString = ConnectionString;
+            var identities = new BookshelfLegacyIdentityMapService(database);
+            var config = new Mock<IConfigService>();
+            config.SetupGet(value => value.BookshelfMatchCompatibility).Returns(true);
+            var subject = new BookshelfRefreshIdentityMapService(database, null, config.Object, identities, LogManager.GetCurrentClassLogger());
+            subject.RegisterBooks(new[]
+            {
+                new Book { Id = 40, AuthorId = 1, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:11" },
+                new Book { Id = 41, AuthorId = 1, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:11" },
+                new Book { Id = 42, AuthorId = 1, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:11" },
+                new Book { Id = 43, AuthorId = 2, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:11" }
+            });
+            Assert.That(identities.GetMappingsByTargetIds("Book", new[] { 40, 41, 42 }), Is.Empty);
+            Assert.That(identities.GetMappingsByTargetIds("Book", new[] { 43 }), Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void should_preserve_conflicting_source_identities_and_avoid_new_legacy_id_collisions()
+        {
+            using (var connection = new SqliteConnection(ConnectionString))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "INSERT INTO BookshelfLegacyIdentityMap VALUES ('BookshelfNG', 'Book', 40, 100, 0)";
+                command.ExecuteNonQuery();
+            }
+
+            var database = DispatchProxy.Create<IMainDatabase, MainDatabaseProxy>();
+            ((MainDatabaseProxy)(object)database).ConnectionString = ConnectionString;
+            var identities = new BookshelfLegacyIdentityMapService(database);
+            var config = new Mock<IConfigService>();
+            config.SetupGet(value => value.BookshelfMatchCompatibility).Returns(true);
+            var subject = new BookshelfRefreshIdentityMapService(database, null, config.Object, identities, LogManager.GetCurrentClassLogger());
+            subject.RegisterBooks(new[]
+            {
+                new Book { Id = 30, AuthorId = 1, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:10" },
+                new Book { Id = 32, AuthorId = 1, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:10" },
+                new Book { Id = 40, AuthorId = 1, MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:11" },
+                new Book { Id = 41, AuthorId = 1, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:11" }
+            });
+            Assert.That(identities.GetMappingsByTargetIds("Book", new[] { 30, 32 }).Select(mapping => mapping.SourceId),
+                Is.EqualTo(new[] { 30, 32 }), "Conflicting imported identities must remain separate");
+            var assigned = identities.GetMappingsByTargetIds("Book", new[] { 40, 41 });
+            Assert.That(assigned.Select(mapping => mapping.SourceId).Distinct(), Is.EqualTo(new[] { 42 }));
+            Assert.That(identities.ResolveBookIds(new[] { 40 }), Is.EqualTo(new[] { 100 }), "Existing legacy ID must remain addressable");
+            Assert.That(identities.ResolveBookIds(new[] { 42 }), Is.EqualTo(new[] { 41, 40 }));
         }
 
         private class MainDatabaseProxy : DispatchProxy
