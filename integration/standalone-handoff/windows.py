@@ -185,7 +185,9 @@ def main():
         utility(new, data, 'migrate', ['-migrate-bookshelf', '-confirm-bookshelf-service-stopped'], root)
         require(database_check(data / 'readarr.db', 126) == files, 'File identity, Unicode paths, 64-bit sizes or parts changed')
         backups = list(data.glob('readarr.db.bookshelfng-backup-*.db'))
-        require(any(database_hash(backup) == before for backup in backups), 'Identical source backup was not retained')
+        matching_backups = [backup for backup in backups if database_hash(backup) == before]
+        require(matching_backups, 'Identical source backup was not retained')
+        source_backup = matching_backups[0]
         process = start(new, data, root / 'candidate.log')
         wait_healthy(process)
         stop(process)
@@ -203,9 +205,9 @@ def main():
         finally:
             blocker.close()
         target_hash = database_hash(data / 'readarr.db')
-        utility(new, data, 'restore-preview', ['-preview-bookshelf-restore'], root)
+        utility(new, data, 'restore-preview', ['-preview-bookshelf-restore', '-bookshelf-backup=' + str(source_backup)], root)
         require(database_hash(data / 'readarr.db') == target_hash, 'Restore preview modified the target')
-        utility(new, data, 'restore', ['-restore-bookshelf', '-confirm-bookshelf-service-stopped'], root)
+        utility(new, data, 'restore', ['-restore-bookshelf', '-bookshelf-backup=' + str(source_backup), '-confirm-bookshelf-service-stopped'], root)
         require(database_check(data / 'readarr.db', 158) == files and database_hash(data / 'readarr.db') == before,
                 'Explicit rollback did not restore the source database exactly')
         targets = list(data.glob('readarr.db.chaptarrng-backup-*.db'))
