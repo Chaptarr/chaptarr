@@ -10,11 +10,14 @@
                         ('$(RuntimeIdentifier)' == 'linux-x86' or '$(RuntimeIdentifier)' == 'freebsd-x64')">
     <ItemGroup>
       <KnownFrameworkReference Update="Microsoft.NETCore.App;Microsoft.AspNetCore.App"
-                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'">
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0' and
+                                          ('%(KnownFrameworkReference.Identity)' == 'Microsoft.NETCore.App' or
+                                           '%(KnownFrameworkReference.Identity)' == 'Microsoft.AspNetCore.App')">
         <RuntimePackRuntimeIdentifiers>%(KnownFrameworkReference.RuntimePackRuntimeIdentifiers);$(RuntimeIdentifier)</RuntimePackRuntimeIdentifiers>
       </KnownFrameworkReference>
       <KnownAppHostPack Update="Microsoft.NETCore.App"
-                        Condition="'%(KnownAppHostPack.TargetFramework)' == 'net10.0'">
+                        Condition="'%(KnownAppHostPack.TargetFramework)' == 'net10.0' and
+                                   '%(KnownAppHostPack.Identity)' == 'Microsoft.NETCore.App'">
         <AppHostRuntimeIdentifiers>%(KnownAppHostPack.AppHostRuntimeIdentifiers);$(RuntimeIdentifier)</AppHostRuntimeIdentifiers>
       </KnownAppHostPack>
     </ItemGroup>
