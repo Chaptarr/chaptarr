@@ -456,7 +456,11 @@ jobs:
         else
           image="chaptarrng-standalone-handoff-${RID}:$GITHUB_RUN_ID"
           docker_platform=()
-          if [[ "$FLAVOR" == x86 ]]; then docker_platform=(--platform linux/386); fi
+          fixture_options=()
+          if [[ "$FLAVOR" == x86 ]]; then
+            docker_platform=(--platform linux/386)
+            fixture_options=(--preinitialized-source-auxiliary-databases)
+          fi
           docker build "${docker_platform[@]}" -t "$image" -f "integration/standalone-handoff/Dockerfile.$FLAVOR" integration/standalone-handoff
           docker run "${docker_platform[@]}" --rm --network none --user "$(id -u):$(id -g)" \
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 512 --memory 6g --cpus 2 \
@@ -465,7 +469,7 @@ jobs:
             -v "$RUNNER_TEMP/standalone-candidate:/candidate:ro" \
             -v "$RUNNER_TEMP/standalone-handoff:/work" \
             "$image" "/predecessor/$predecessor" "/candidate/$candidate" \
-            --output /work/evidence --candidate-revision "$GITHUB_SHA" --runtime-id "$RID" \
+            --output /work/evidence --candidate-revision "$GITHUB_SHA" --runtime-id "$RID" "${fixture_options[@]}" \
             2>&1 | tee "$RUNNER_TEMP/standalone-handoff/acceptance.log"
         fi
     - name: Retain installed handoff evidence

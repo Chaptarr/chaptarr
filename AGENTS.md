@@ -43,6 +43,19 @@ writing. Target runtimes must come from the local NuGet packs; never unpack
 foreign runtime or hostfxr binaries into a shared build SDK. Preserve existing
 SDKs, native runtimes and shared caches.
 
+## Standalone installed acceptance
+
+Archive verification does not prove installed migration or recovery. Exercise the
+retained payload with the native OS/architecture, source health, migration,
+target health and forced-failure rollback. Record exact archive hashes and any
+source fixture prerequisites. Reuse archive artifacts only when application,
+build and bundled launcher/supervisor inputs are unchanged.
+
+Keep supervisor signals compatible with the runtime `/bin/sh`; Debian/Ubuntu
+`dash` rejects `kill -TERM -- -PGID`. Run
+`packaging/scripts/test-desktop-supervisor-signals.py` under the actual shell,
+including its forced-KILL case. Bash syntax checks alone do not verify recovery.
+
 ## Localization compatibility data
 
 `src/NzbDrone.Core/Localization/BookshelfCompatibility/` contains immutable

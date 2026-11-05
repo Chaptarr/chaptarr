@@ -76,7 +76,7 @@ def executable(root: Path, name: str) -> Path:
     return candidates[0]
 
 
-def create_source_data(data_dir: Path) -> None:
+def create_source_data(data_dir: Path, source_auxiliary: bool = False) -> None:
     data_dir.mkdir(parents=True)
     database = data_dir / "readarr.db"
     schema = REPO / "src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.Schema.158.sql"
@@ -91,6 +91,14 @@ def create_source_data(data_dir: Path) -> None:
         connection.execute("UPDATE ImportLists SET EnableAutomaticAdd=0,ShouldSearch=0")
         connection.execute("UPDATE Notifications SET OnApplicationUpdate=0,OnHealthIssue=0,OnAuthorAdded=0")
         connection.commit()
+    if source_auxiliary:
+        fixtures = REPO / "integration/standalone-handoff/fixtures"
+        manifest = json.loads((fixtures / "manifest.json").read_text())
+        for name in ["cache", "logs"]:
+            fixture = fixtures / f"BookshelfNG.{name}.158.sql"
+            require(sha256(fixture) == manifest["files"][fixture.name], "Source auxiliary fixture checksum mismatch")
+            with sqlite3.connect(data_dir / f"{name}.db") as connection:
+                connection.executescript(fixture.read_text())
     (data_dir / "config.xml").write_text(
         "<?xml version='1.0' encoding='utf-8'?>\n"
         "<Config><BindAddress>127.0.0.1</BindAddress><Port>18787</Port>"
@@ -456,9 +464,9 @@ def verify_candidate_backup(data_dir: Path) -> None:
             "forced rollback's retained target database is not a valid migrated database")
 
 
-def run_no_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str]) -> None:
+def run_no_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
     data_dir = work / "no-choice-data"
-    create_source_data(data_dir)
+    create_source_data(data_dir, source_auxiliary)
     old = start_predecessor(predecessor, data_dir, work / "no-predecessor.log")
     stop_process(old, "BookshelfNG before No")
     before = file_snapshot(data_dir)
@@ -483,9 +491,9 @@ def run_no_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[st
     print("No choice: predecessor database, config, and canary were unchanged; old /ping restarted successfully", flush=True)
 
 
-def run_headless_manual_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str]) -> None:
+def run_headless_manual_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
     data_dir = work / "headless-manual-data"
-    create_source_data(data_dir)
+    create_source_data(data_dir, source_auxiliary)
     old = start_predecessor(predecessor, data_dir, work / "headless-manual-predecessor.log")
     stop_process(old, "BookshelfNG before headless Manual")
     before = file_snapshot(data_dir)
@@ -520,9 +528,9 @@ def run_headless_manual_case(predecessor: Path, launcher: Path, work: Path, base
     print("Headless Manual: source files remained unchanged and the old /ping restarted successfully", flush=True)
 
 
-def run_yes_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str]) -> None:
+def run_yes_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
     data_dir = work / "yes-choice-data"
-    create_source_data(data_dir)
+    create_source_data(data_dir, source_auxiliary)
     old = start_predecessor(predecessor, data_dir, work / "yes-predecessor.log")
     stop_process(old, "BookshelfNG before Yes")
     source_hash = logical_database_hash(data_dir / "readarr.db")
@@ -546,9 +554,9 @@ def run_yes_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[s
             f"candidate did not remove its handoff lock after stopping; remaining entries: {lock_entries}")
 
 
-def run_rollback_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str]) -> None:
+def run_rollback_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
     data_dir = work / "rollback-data"
-    create_source_data(data_dir)
+    create_source_data(data_dir, source_auxiliary)
     old = start_predecessor(predecessor, data_dir, work / "rollback-predecessor.log")
     stop_process(old, "BookshelfNG before forced rollback")
     source_hash = logical_database_hash(data_dir / "readarr.db")
@@ -592,7 +600,7 @@ def elf_identity(path: Path) -> tuple[int, int] | None:
 
 
 def save_evidence(work: Path, output: Path, predecessor: Path, candidate: Path,
-                  revision: str | None, runtime_id: str | None, cases: list[str], success: bool) -> None:
+                  revision: str | None, runtime_id: str | None, cases: list[str], success: bool, source_auxiliary: bool = False) -> None:
     output = output.resolve()
     require(not output.exists(), f"Evidence destination already exists: {output}")
     require(not output.is_relative_to(work.resolve()), "Evidence destination must be outside the temporary workspace")
@@ -616,6 +624,8 @@ def save_evidence(work: Path, output: Path, predecessor: Path, candidate: Path,
         "machine": platform.machine(),
         "processPointerBits": struct.calcsize("P") * 8,
         "runtimeId": runtime_id,
+        "sourceHardcoverMode": "false",
+        "preinitializedSourceAuxiliaryDatabases": source_auxiliary,
         "completedCases": cases,
         "success": success,
         "retainedFiles": retained,
@@ -629,6 +639,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="New evidence directory outside the temporary workspace")
     parser.add_argument("--candidate-revision", help="Exact candidate source revision recorded with the evidence")
     parser.add_argument("--runtime-id", help="Validate Linux predecessor and candidate ELF architecture for this RID")
+    parser.add_argument("--preinitialized-source-auxiliary-databases", action="store_true",
+                        help="Use checksum-pinned .76 log/cache schemas for an existing-installation baseline")
     args = parser.parse_args()
     if args.output:
         require(not args.output.exists(), f"Evidence destination already exists: {args.output}")
@@ -660,13 +672,13 @@ def main() -> int:
 
         print(f"BookshelfNG predecessor SHA-256: {sha256(args.predecessor_archive)}", flush=True)
         print(f"ChaptarrNG candidate SHA-256: {sha256(args.candidate_archive)}", flush=True)
-        run_no_case(predecessor, launcher, work, base_env)
+        run_no_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
         cases.append("No")
-        run_headless_manual_case(predecessor, launcher, work, base_env)
+        run_headless_manual_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
         cases.append("headless Manual")
-        run_yes_case(predecessor, launcher, work, base_env)
+        run_yes_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
         cases.append("Yes, health and retained source backup")
-        run_rollback_case(predecessor, launcher, work, base_env)
+        run_rollback_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
         cases.append("failed health rollback and restored predecessor health")
         success = True
         print("Standalone archive No/Manual/Yes/health/backup/rollback acceptance passed.", flush=True)
@@ -682,7 +694,7 @@ def main() -> int:
                 print(f"Could not stop a test process cleanly: {error}", file=sys.stderr, flush=True)
         if args.output:
             save_evidence(work, args.output, args.predecessor_archive, args.candidate_archive,
-                          args.candidate_revision, args.runtime_id, cases, success)
+                          args.candidate_revision, args.runtime_id, cases, success, args.preinitialized_source_auxiliary_databases)
         if success:
             shutil.rmtree(work, ignore_errors=True)
 
