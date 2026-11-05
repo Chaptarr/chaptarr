@@ -10,7 +10,7 @@ namespace Chaptarr.Core.Test.Api
         [Test]
         public void resource_should_expose_legacy_list_order_alias()
         {
-            var resource = new ImportListResource { ListType = (ImportListType)2 };
+            var resource = new ImportListResource { ListType = ImportListType.Hardcover };
 
             Assert.That(resource.ListOrder, Is.EqualTo(2));
         }
