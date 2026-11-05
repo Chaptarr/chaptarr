@@ -543,10 +543,10 @@ namespace NzbDrone.Core.Datastore
                 if (metadata.TryGetValue(field, out var value)) values[field] = value;
             }
 
-            SetIfPresent(values, "Aliases", "[]");
-            SetIfPresent(values, "Images", "[]");
-            SetIfPresent(values, "Links", "[]");
-            SetIfPresent(values, "Genres", "[]");
+            foreach (var field in new[] { "Aliases", "Images", "Links", "Genres" })
+            {
+                SetIfPresent(values, field, PreserveJsonArrayOrEmpty(GetValue(metadata, field)));
+            }
         }
 
         private static Dictionary<int, BookMap> ImportBooks(

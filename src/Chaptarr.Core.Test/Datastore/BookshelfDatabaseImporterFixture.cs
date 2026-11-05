@@ -72,6 +72,33 @@ namespace Chaptarr.Core.Test.Datastore
             Environment.SetEnvironmentVariable("BOOKSHELF_URLBASE", _previousBookshelfUrlBase);
         }
 
+        [TestCase("Aliases", "[\"Another author name\"]")]
+        [TestCase("Images", "[{\"CoverType\":\"Poster\",\"Url\":\"https://catalog.example/author.jpg\"}]")]
+        [TestCase("Links", "[{\"Name\":\"Hardcover\",\"Url\":\"https://hardcover.app/authors/fixture\"}]")]
+        [TestCase("Genres", "[\"Fantasy\"]")]
+        [TestCase("Aliases", "[]")]
+        [TestCase("Images", "[]")]
+        [TestCase("Links", null)]
+        [TestCase("Genres", null)]
+        public void should_preserve_author_metadata_arrays_and_default_only_missing_values(string field, string json)
+        {
+            using (var source = new SqliteConnection(_sourceConnectionString))
+            {
+                source.Open();
+                using var command = source.CreateCommand();
+                command.CommandText = $"UPDATE AuthorMetadata SET {field} = $value WHERE Id = 10;";
+                command.Parameters.AddWithValue("$value", (object)json ?? DBNull.Value);
+                command.ExecuteNonQuery();
+            }
+
+            new MigrationController(LogManager.GetLogger(nameof(BookshelfDatabaseImporterFixture)), null).Migrate(
+                _sourceConnectionString,
+                new MigrationContext(MigrationType.Main),
+                DatabaseType.SQLite);
+
+            Assert.That(QueryScalar<string>(_sourcePath, $"SELECT {field} FROM Authors WHERE Id = 20;"), Is.EqualTo(json ?? "[]"));
+        }
+
         [Test]
         public void should_preserve_bare_numeric_provider_ids_as_hardcover_ids_when_native_mode_is_enabled()
         {
