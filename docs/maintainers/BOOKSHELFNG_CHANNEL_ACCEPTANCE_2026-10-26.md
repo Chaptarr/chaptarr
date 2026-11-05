@@ -9,6 +9,44 @@ Earlier instructions in this report to replay on private JIT are superseded;
 runner choice does not close installed-channel, external-delivery, or operator
 acceptance gates.
 
+## Latest verification — 2026-11-05
+
+Application-code `6f40dbf9`, full-server harness `5a9965ee`, and packaging
+`bba3ae3f` remain unpublished. Full Build
+[42049556701](https://github.com/snapetech-org/chaptarrng/actions/runs/42049556701),
+strict API [42049562786](https://github.com/snapetech-org/chaptarrng/actions/runs/42049562786),
+and all ten archives [42049568015](https://github.com/snapetech-org/chaptarrng/actions/runs/42049568015)
+pass at `5a9965ee`. The strict run retains the documented source-error and verified
+runtime/security dispositions; it does not turn them into exact matches.
+
+Both fresh populated migrations and rollbacks pass again. Every managed author,
+work and file in both real snapshots matches its predecessor API response:
+88,405 records, zero field differences and no missing, extra or duplicate IDs.
+All 23,981 cached image URLs return HTTP 200 with the original source bytes,
+including TIFF originals. These bulk image checks use the explicitly recorded
+test-only rate limit and cooldowns. Both full Seerr web format workflows pass
+request, approval, transfer, import, scan, restart, identity and profile audits
+with the identified repaired client test image. Source/native new-author profile
+inputs and legacy readback also pass. This does not claim the unchanged deployed
+Seerr image repaired or authorize publishing its merged client fix.
+
+The native musl x64 archive test exposed missing generic handoff launchers in
+Linux bundles. `bba3ae3f` adds the guarded launcher/supervisor/journal to all Linux
+RIDs, preserving the glibc systemd bootstrap. Against the checksum-pinned public
+`.76` musl predecessor, No, headless Manual, Yes, schema-126 health, retained source
+backup, injected failure and healthy source rollback now pass. File identities,
+Unicode paths, values above 4 GiB and part values remain intact. Evidence:
+`/var/tmp/chaptarrng-native-standalone-20261105/musl-x64-wide-files-bba3ae3f/`.
+The earlier HDD run timed out while migrations progressed and remains retained;
+the SSD run closes that test without changing the application timeout.
+
+Native Linux glibc/musl x64/ARM64 and x86 CI handoff jobs are being added. They
+consume retained binaries from the same successful archive run, verify public
+predecessor hashes and executable architecture, then export case evidence after
+consumers exit. Hosted ARM uses its native runner; x86 uses a native 32-bit Debian
+container. Publication, external channel acceptance and production cutover remain
+separate. Headed UI still lacks Desktop Pool capacity.
+
 ## Current campaign — 2026-11-05
 
 Application candidate `3651598e` includes the legacy API base-path/flag repairs,

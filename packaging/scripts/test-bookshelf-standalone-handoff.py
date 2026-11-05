@@ -9,10 +9,12 @@ import hashlib
 import http.client
 import json
 import os
+import platform
 import pty
 import shutil
 import signal
 import sqlite3
+import struct
 import subprocess
 import sys
 import tarfile
@@ -82,6 +84,8 @@ def create_source_data(data_dir: Path) -> None:
     with sqlite3.connect(database) as connection:
         connection.executescript(schema.read_text(encoding="utf-8"))
         connection.executescript(fixture.read_text(encoding="utf-8"))
+        connection.execute("UPDATE BookFiles SET Size=?, Path=? WHERE Id=50",
+                           (4294967419, "/library/Fixture Author/Grüße — fixture.m4b"))
         connection.commit()
     (data_dir / "config.xml").write_text(
         "<?xml version='1.0' encoding='utf-8'?>\n"
@@ -387,6 +391,7 @@ def database_details(database: Path) -> dict[str, int | str]:
         authors = connection.execute("SELECT COUNT(*) FROM Authors").fetchone()[0]
         books = connection.execute("SELECT COUNT(*) FROM Books").fetchone()[0]
         editions = connection.execute("SELECT COUNT(*) FROM Editions").fetchone()[0]
+        files = connection.execute("SELECT COUNT(*) FROM BookFiles").fetchone()[0]
         return {
             "integrity": integrity,
             "foreign_key_violations": len(foreign_keys),
@@ -394,6 +399,7 @@ def database_details(database: Path) -> dict[str, int | str]:
             "authors": int(authors),
             "books": int(books),
             "editions": int(editions),
+            "files": int(files),
         }
 
 
@@ -405,6 +411,11 @@ def logical_database_hash(database: Path) -> str:
             digest.update(statement.encode("utf-8"))
             digest.update(b"\n")
     return digest.hexdigest()
+
+
+def file_entries(database: Path) -> list[tuple]:
+    with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=5) as connection:
+        return connection.execute("SELECT Id,Path,Size,Part FROM BookFiles ORDER BY Id").fetchall()
 
 
 def assert_source_database(database: Path, expected_hash: str, label: str) -> None:
@@ -426,6 +437,9 @@ def verify_target_database(data_dir: Path, source_hash: str, label: str) -> None
     backups = list(data_dir.glob("readarr.db.bookshelfng-backup-*.db"))
     require(any(logical_database_hash(backup) == source_hash for backup in backups),
             f"{label}: a schema-158 source backup with identical database contents was not retained")
+    source = next(backup for backup in backups if logical_database_hash(backup) == source_hash)
+    require(file_entries(database) == file_entries(source),
+            f"{label}: source file identities, Unicode paths, 64-bit sizes or part values changed")
     print(f"{label}: migrated database checks passed: {details}", flush=True)
 
 
@@ -564,20 +578,73 @@ def run_rollback_case(predecessor: Path, launcher: Path, work: Path, base_env: d
     print("Forced health failure: source database contents restored, failed target retained, and BookshelfNG /ping recovered", flush=True)
 
 
+def elf_identity(path: Path) -> tuple[int, int] | None:
+    with path.open("rb") as source:
+        header = source.read(20)
+    if header[:4] != b"\x7fELF":
+        return None
+    return (32 if header[4] == 1 else 64, int.from_bytes(header[18:20], "little" if header[5] == 1 else "big"))
+
+
+def save_evidence(work: Path, output: Path, predecessor: Path, candidate: Path,
+                  revision: str | None, runtime_id: str | None, cases: list[str], success: bool) -> None:
+    output = output.resolve()
+    require(not output.exists(), f"Evidence destination already exists: {output}")
+    require(not output.is_relative_to(work.resolve()), "Evidence destination must be outside the temporary workspace")
+    output.mkdir(parents=True)
+    retained = []
+    for path in sorted(work.rglob("*")):
+        relative = path.relative_to(work)
+        if relative.parts[0] in {"candidate", "predecessor"} or path.is_symlink() or not path.is_file():
+            continue
+        if path.suffix not in {".log", ".json"} and not path.name.startswith("readarr.db"):
+            continue
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, destination)
+        retained.append(relative.as_posix())
+    (output / "result.json").write_text(json.dumps({
+        "candidateRevision": revision,
+        "candidateArchiveSha256": sha256(candidate),
+        "predecessorArchiveSha256": sha256(predecessor),
+        "platform": platform.system(),
+        "machine": platform.machine(),
+        "processPointerBits": struct.calcsize("P") * 8,
+        "runtimeId": runtime_id,
+        "completedCases": cases,
+        "success": success,
+        "retainedFiles": retained,
+    }, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("predecessor_archive", type=Path)
     parser.add_argument("candidate_archive", type=Path)
+    parser.add_argument("--output", type=Path, help="New evidence directory outside the temporary workspace")
+    parser.add_argument("--candidate-revision", help="Exact candidate source revision recorded with the evidence")
+    parser.add_argument("--runtime-id", help="Validate Linux predecessor and candidate ELF architecture for this RID")
     args = parser.parse_args()
+    if args.output:
+        require(not args.output.exists(), f"Evidence destination already exists: {args.output}")
 
     temp_root = Path(os.environ.get("TMPDIR", tempfile.gettempdir()))
     temp_root.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="bookshelfng-standalone-handoff-", dir=temp_root))
     success = False
+    cases: list[str] = []
     try:
         predecessor_root = extract_archive(args.predecessor_archive.resolve(), work / "predecessor")
         candidate_root = extract_archive(args.candidate_archive.resolve(), work / "candidate")
         predecessor = executable(predecessor_root, "Readarr")
+        if args.runtime_id:
+            architectures = {"linux-x86": (32, 3), "linux-x64": (64, 62), "linux-musl-x64": (64, 62),
+                             "linux-arm64": (64, 183), "linux-musl-arm64": (64, 183)}
+            require(args.runtime_id in architectures, "ELF architecture validation requires a supported Linux RID")
+            expected = architectures[args.runtime_id]
+            require(elf_identity(predecessor) == expected, "Predecessor executable architecture does not match the requested RID")
+            require(elf_identity(candidate_root / "ChaptarrNG/Chaptarr") == expected,
+                    "Candidate executable architecture does not match the requested RID")
         launcher = candidate_root / "ChaptarrNG/scripts/bookshelfng-standalone-launch.sh"
         require(launcher.is_file() and os.access(launcher, os.X_OK),
                 "Candidate archive does not contain an executable standalone handoff launcher")
@@ -588,9 +655,13 @@ def main() -> int:
         print(f"BookshelfNG predecessor SHA-256: {sha256(args.predecessor_archive)}", flush=True)
         print(f"ChaptarrNG candidate SHA-256: {sha256(args.candidate_archive)}", flush=True)
         run_no_case(predecessor, launcher, work, base_env)
+        cases.append("No")
         run_headless_manual_case(predecessor, launcher, work, base_env)
+        cases.append("headless Manual")
         run_yes_case(predecessor, launcher, work, base_env)
+        cases.append("Yes, health and retained source backup")
         run_rollback_case(predecessor, launcher, work, base_env)
+        cases.append("failed health rollback and restored predecessor health")
         success = True
         print("Standalone archive No/Manual/Yes/health/backup/rollback acceptance passed.", flush=True)
         return 0
@@ -603,6 +674,9 @@ def main() -> int:
                 stop_process(process, "remaining test process")
             except Exception as error:
                 print(f"Could not stop a test process cleanly: {error}", file=sys.stderr, flush=True)
+        if args.output:
+            save_evidence(work, args.output, args.predecessor_archive, args.candidate_archive,
+                          args.candidate_revision, args.runtime_id, cases, success)
         if success:
             shutil.rmtree(work, ignore_errors=True)
 
