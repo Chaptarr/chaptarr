@@ -47,7 +47,13 @@ leaking into legacy author readback. The repair translates only clients acceptin
 legacy IDs, follows the requested format and reverses mapped IDs on compatibility
 readback. Explicit native hints retain native IDs. The synthetic acquisition
 fixture now includes new-author checks using an explicit Hardcover V5 metadata
-proxy; its runtime result is still pending.
+proxy. Packaged `6f40dbf9` passes the full ebook workflow and creates both new
+authors with the expected ebook profile: source client ID `2` and explicit native
+ID `4` both persist target `4`, while compatibility readback returns source `2`.
+Read-only database checks after consumers exit confirm both new authors retain
+quality profile `4` and metadata profile `2`. The harness now records and audits
+these new-author identities after restart; broader new-book metadata fulfillment
+remains a separate check.
 Raw bodies, configurations and source metadata remain private under
 `/var/tmp/chaptarrng-operator-data-20261105/` on `kspld0`.
 

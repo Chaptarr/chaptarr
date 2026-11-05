@@ -25,9 +25,6 @@ for (const [foreignId, profileId, native] of [['99', 2, false], ['100', 4, true]
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
   assert.ok(author?.id > 0, 'New author did not leave the pending state');
-  checks.push({ nativeClient: native, submittedProfileId: profileId, storedEbookProfileId: author.ebookQualityProfileId,
-    storedMetadataProfileId: author.ebookMetadataProfileId, createdAuthorId: author.id });
-  writeFileSync('/fixture/new-author-profile-checks.json', JSON.stringify(checks, null, 2));
   assert.equal(author.ebookQualityProfileId, 4, 'Old source profile must resolve to its ebook target; native target IDs stay unchanged');
   assert.equal(author.ebookMetadataProfileId, 2);
   // Synthetic keys over shared loopback in a network-none test namespace.
@@ -37,5 +34,8 @@ for (const [foreignId, profileId, native] of [['99', 2, false], ['100', 4, true]
   assert.equal(legacyResponse.status, 200);
   const legacy = await legacyResponse.json();
   assert.equal(legacy.ebookQualityProfileId, 2, 'Legacy clients must see the source profile identity for newly created authors');
+  checks.push({ nativeClient: native, submittedProfileId: profileId, storedEbookProfileId: author.ebookQualityProfileId,
+    storedMetadataProfileId: author.ebookMetadataProfileId, legacyEbookProfileId: legacy.ebookQualityProfileId, createdAuthorId: author.id });
+  writeFileSync('/fixture/new-author-profile-checks.json', JSON.stringify(checks, null, 2));
 }
 console.log('New author profile handoff: unchanged source profile ID and explicit native profile ID both persist the correct ebook profile.');

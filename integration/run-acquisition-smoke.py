@@ -168,7 +168,7 @@ try:
             assert connection.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
             assert connection.execute('SELECT MAX(Version) FROM VersionInfo').fetchone()[0] == version
-    (root / 'result.json').write_text(json.dumps({'mediaType': args.media_type, 'requestMode': args.request_mode, 'profileIdSpace': args.profile_id_space, 'seerrWebRequestAndApproval': args.request_mode == 'seerr-web', 'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True}))
+    (root / 'result.json').write_text(json.dumps({'mediaType': args.media_type, 'requestMode': args.request_mode, 'profileIdSpace': args.profile_id_space, 'seerrWebRequestAndApproval': args.request_mode == 'seerr-web', 'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True, 'newAuthorProfileHandoff': True}))
     print('PASS: migration, Seerr', args.request_mode, 'request, real local torrent transfer,', args.media_type, 'import and restart availability. Evidence:', root)
 finally:
     stop_stack('final-run')
