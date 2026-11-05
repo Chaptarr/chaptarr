@@ -52,9 +52,16 @@ namespace Chaptarr.Api.V1.MediaCovers
 
             if (!_diskProvider.FileExists(filePath) || _diskProvider.GetFileSize(filePath) == 0)
             {
-                // Author original images are deleted after resize to save space
-                // No fallback available - return 404 if sized variant is missing
-                return NotFound();
+                // FreeBSD has no native resizer, and a failed resize on any platform
+                // retains the original. Serve that image rather than a broken cover.
+                var originalPath = MediaCoverRendition.GetOriginalPath(filePath);
+                if (originalPath == filePath || !_diskProvider.FileExists(originalPath) ||
+                    _diskProvider.GetFileSize(originalPath) == 0)
+                {
+                    return NotFound();
+                }
+
+                filePath = originalPath;
             }
 
             return PhysicalFile(filePath, GetContentType(filePath));
