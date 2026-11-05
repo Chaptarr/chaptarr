@@ -37,11 +37,16 @@ monitoring, source author image lists and unmapped audio quality weights.
 Unscoped split works prefer the monitored edition retaining the source provider
 identity. Legacy cover URLs retain their extension, URL base and last-write token;
 known extensionless cached image names are supported without accepting arbitrary
-extensionless files. The 267 focused API/importer regressions pass, and packaged `73d992f7` now
+extensionless files. The focused API/importer regressions pass, and packaged `6f40dbf9` now
 matches every managed author, work and file across both snapshots: 88,405 records
 with zero field mismatches, missing, extra or duplicate IDs. Additional new-add
-profile handoff and TIFF image-serving repairs have focused regressions; their
-new packaged runtime checks are pending.
+profile handoff checks pass in both full Seerr format workflows, including
+post-restart database audits. All 23,981 cached image URLs return HTTP 200 and
+match retained source bytes, including the four TIFF originals. Full Build
+[42049556701](https://github.com/snapetech-org/chaptarrng/actions/runs/42049556701),
+strict API [42049562786](https://github.com/snapetech-org/chaptarrng/actions/runs/42049562786)
+and ten archives [42049568015](https://github.com/snapetech-org/chaptarrng/actions/runs/42049568015)
+pass at harness revision `5a9965ee` with application code `6f40dbf9`.
 
 The full SeerrNG user/approval/acquisition/scan/restart rehearsal now audits database
 identity, duplicates and orphaned identifiers. It exposed client defects repaired

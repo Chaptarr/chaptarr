@@ -40,20 +40,34 @@ Unicode paths, values above 4 GiB and part values remain intact. Evidence:
 The earlier HDD run timed out while migrations progressed and remains retained;
 the SSD run closes that test without changing the application timeout.
 
-Native Linux glibc/musl x64/ARM64 and x86 CI handoff jobs are being added. They
+Native Linux glibc/musl x64/ARM64 and x86 CI handoff jobs are implemented. They
 consume retained binaries from the same successful archive run, verify public
 predecessor hashes and executable architecture, then export case evidence after
 consumers exit. Hosted ARM uses its native runner; x86 uses a native 32-bit Debian
 container. Publication, external channel acceptance and production cutover remain
 separate. Headed UI still lacks Desktop Pool capacity.
 
-A separate Windows archive acceptance workflow is being added for x64 and x86.
-It reuses retained archives only after verifying their main-branch producer job,
+A separate retained-archive acceptance workflow covers Windows x64/x86 and
+macOS x64/ARM64. macOS consumes the cross-built release payload without replacing
+or re-signing it. Both platforms reuse retained archives only after verifying their main-branch producer job,
 source ancestry and unchanged application/build sources. PE architecture checks
 precede the documented preview/defer, explicit migration, healthy startup and
 explicit rollback after a forced port conflict. This is separate from the
 existing Chocolatey and migration-installer service tests; no Windows archive
-runtime pass is claimed until that workflow executes.
+runtime pass is claimed yet. Run
+[42065824032](https://github.com/snapetech-org/chaptarrng/actions/runs/42065824032)
+passes Windows migration, healthy target startup, wide/Unicode file preservation
+and source-backup matching on both architectures. Recovery then correctly rejects
+the harness's missing backup selector. `fb2b5749` supplies the exact verified
+source backup to preview and restore; new Windows execution is pending after
+GitHub dispatch returned server errors. Earlier harness failures (unspecified
+provider mode and an unclosed fixture SQLite connection) remain retained.
+The macOS jobs in that run are still queued. Linux producer
+[42060477521](https://github.com/snapetech-org/chaptarrng/actions/runs/42060477521)
+retains all ten archives; its musl acquisition step is still active, so the five
+dependent installed Linux jobs have not started. These are current observations,
+not pass evidence. A new isolated FreeBSD 15.1 VM is being prepared from the
+retained cloud image; the older VM disks were cleaned up previously.
 
 ## Current campaign — 2026-11-05
 

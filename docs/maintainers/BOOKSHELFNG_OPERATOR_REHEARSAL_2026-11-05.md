@@ -33,9 +33,10 @@ format workflows pass with source profile IDs and persisted identity/profile
 audits. Keep earlier comparisons as failure evidence.
 
 A further authenticated HTTP check compares every cached image URL with retained
-source file bytes. It matches 23,977 images and finds four failures: the same two
-large TIFF originals in both libraries. TIFF serving support and regressions are
-added; packaged verification remains pending. The bounded bulk test explicitly
+source file bytes. The first completed check matched 23,977 images and found four
+failures: the same two large TIFF originals in both libraries. Packaged
+`6f40dbf9` repairs those failures: all 23,981 URLs return HTTP 200 and match source
+byte counts and hashes. The bounded bulk test explicitly
 uses a configured limit of 6,000 requests/minute, batches of 5,000 and 61-second
 cooldowns. An earlier source-versus-target HTTP attempt is inconclusive because
 source Forms redirects returned login HTML and the default rate limiter returned
@@ -47,7 +48,7 @@ leaking into legacy author readback. The repair translates only clients acceptin
 legacy IDs, follows the requested format and reverses mapped IDs on compatibility
 readback. Explicit native hints retain native IDs. The synthetic acquisition
 fixture now includes new-author checks using an explicit Hardcover V5 metadata
-proxy. Packaged `6f40dbf9` passes the full ebook workflow and creates both new
+proxy. Packaged `6f40dbf9` passes both full format workflows and creates both new
 authors with the expected ebook profile: source client ID `2` and explicit native
 ID `4` both persist target `4`, while compatibility readback returns source `2`.
 Read-only database checks after consumers exit confirm both new authors retain
