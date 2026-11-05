@@ -463,9 +463,12 @@ namespace Chaptarr.Core.Test.Datastore
                         $"SELECT COUNT(*) FROM Indexers WHERE Id = {900 + index} AND Implementation = '{implementation}' AND ConfigContract = '{contract}';"),
                         Is.EqualTo(1),
                         $"{implementation} implementation and contract should survive migration");
-                    Assert.That(QueryScalar<string>(_sourcePath, $"SELECT Settings FROM Indexers WHERE Id = {900 + index};"),
-                        Is.EqualTo(settings),
-                        $"{implementation} settings fields should survive migration");
+                    var migrated = JObject.Parse(QueryScalar<string>(_sourcePath, $"SELECT Settings FROM Indexers WHERE Id = {900 + index};"));
+                    foreach (var property in JObject.Parse(settings).Properties())
+                    {
+                        Assert.That(JToken.DeepEquals(migrated.GetValue(property.Name, StringComparison.OrdinalIgnoreCase), property.Value),
+                            Is.True, $"{implementation} must retain explicit {property.Name}");
+                    }
                 }
             });
         }
@@ -605,21 +608,7 @@ namespace Chaptarr.Core.Test.Datastore
             {
                 foreach (var provider in downloadClients)
                 {
-                    var expectedSettings = provider.Settings;
-                    if (provider.Implementation == "QBittorrent" && provider.Contract == "QBittorrentSettings")
-                    {
-                        var settings = JObject.Parse(expectedSettings);
-                        if (!settings.Properties().Any(property =>
-                                property.Name.Equals("MusicCategory", StringComparison.OrdinalIgnoreCase)))
-                        {
-                            settings["musicCategory"] = "readarr";
-                            expectedSettings = settings.ToString(Formatting.None);
-                        }
-                    }
-
-                    Assert.That(ReadMigratedProvider(_sourcePath, "DownloadClients", provider.Id),
-                        Is.EqualTo((provider.Implementation, provider.Contract, expectedSettings)),
-                        $"{provider.Implementation} download-client settings should survive migration");
+                    AssertPreservedProviderSettings("DownloadClients", provider.Id, provider.Implementation, provider.Contract, provider.Settings);
                 }
 
                 foreach (var provider in importLists)
@@ -631,11 +620,95 @@ namespace Chaptarr.Core.Test.Datastore
 
                 foreach (var provider in notifications)
                 {
-                    Assert.That(ReadMigratedProvider(_sourcePath, "Notifications", provider.Id),
-                        Is.EqualTo((provider.Implementation, provider.Contract, provider.Settings)),
-                        $"{provider.Implementation} notification settings should survive migration");
+                    AssertPreservedProviderSettings("Notifications", provider.Id, provider.Implementation, provider.Contract, provider.Settings);
                 }
             });
+        }
+
+        private void AssertPreservedProviderSettings(string table, int id, string implementation, string contract, string sourceSettings)
+        {
+            var migrated = ReadMigratedProvider(_sourcePath, table, id);
+            Assert.That((migrated.Implementation, migrated.Contract), Is.EqualTo((implementation, contract)));
+            var settings = JObject.Parse(migrated.Settings);
+            foreach (var property in JObject.Parse(sourceSettings).Properties())
+            {
+                Assert.That(JToken.DeepEquals(settings.GetValue(property.Name, StringComparison.OrdinalIgnoreCase), property.Value),
+                    Is.True, $"{implementation} must preserve explicit {property.Name}, including null and empty values");
+            }
+        }
+
+        [Test]
+        public void should_migrate_effective_omitted_provider_defaults_without_overwriting_explicit_values()
+        {
+            var clients = new[]
+            {
+                ("Deluge", "readarr"), ("QBittorrent", "readarr"), ("RTorrent", "readarr"), ("UTorrent", "readarr"),
+                ("Nzbget", "Readarr"), ("NzbVortex", "Readarr"), ("Sabnzbd", "Readarr"),
+                ("Hadouken", "readarr-music"), ("Flood", "readarr")
+            };
+            using (var source = new SqliteConnection(_sourceConnectionString))
+            {
+                source.Open();
+                for (var index = 0; index < clients.Length; index++)
+                {
+                    using var command = source.CreateCommand();
+                    command.CommandText = "INSERT INTO DownloadClients (Id, Enable, Name, Implementation, Settings, ConfigContract) VALUES ($id, 1, $name, $name, $settings, $contract);";
+                    command.Parameters.AddWithValue("$id", 900 + index);
+                    command.Parameters.AddWithValue("$name", clients[index].Item1);
+                    command.Parameters.AddWithValue("$contract", clients[index].Item1 + "Settings");
+                    command.Parameters.AddWithValue("$settings", "{}");
+                    command.ExecuteNonQuery();
+                }
+
+                using var update = source.CreateCommand();
+                update.CommandText = """
+                    UPDATE Indexers SET Settings = '{"mamId":"fixture-session"}' WHERE Id = 120;
+                    UPDATE Notifications SET Implementation = 'PlexServer', ConfigContract = 'PlexServerSettings',
+                        Settings = '{"host":"plex.example","authToken":"fixture-token","updateLibrary":false}' WHERE Id = 111;
+                    UPDATE DownloadClients SET Settings = '{"MusicCategory":"","password":null,"audiobookCategory":"operator-audio"}' WHERE Id = 109;
+                    """;
+                update.ExecuteNonQuery();
+            }
+
+            new MigrationController(LogManager.GetLogger(nameof(BookshelfDatabaseImporterFixture)), null)
+                .MigrateBookshelf(_sourceConnectionString, new MigrationContext(MigrationType.Main), DatabaseType.SQLite, previewOnly: false);
+
+            for (var index = 0; index < clients.Length; index++)
+            {
+                var migrated = ReadMigratedProvider(_sourcePath, "DownloadClients", 900 + index);
+                var type = typeof(BookshelfDatabaseImporter).Assembly.GetTypes().Single(t => t.Name == migrated.Contract);
+                var settings = NzbDrone.Common.Serializer.STJson.Deserialize(migrated.Settings, type);
+                if (settings is NzbDrone.Core.Download.Clients.IBookDownloadCategorySettings categories)
+                {
+                    Assert.That(categories.AudiobookCategory, Is.EqualTo(clients[index].Item2));
+                    Assert.That(categories.EbookCategory, Is.EqualTo(clients[index].Item2));
+                }
+                else if (settings is NzbDrone.Core.Download.Clients.Hadouken.HadoukenSettings hadouken)
+                {
+                    Assert.That(hadouken.Category, Is.EqualTo("readarr-music"));
+                }
+                else if (settings is NzbDrone.Core.Download.Clients.Flood.FloodSettings flood)
+                {
+                    Assert.That(flood.AudiobookTags, Is.EqualTo(new[] { "readarr" }));
+                    Assert.That(flood.EbookTags, Is.EqualTo(new[] { "readarr" }));
+                }
+            }
+
+            var explicitSettings = NzbDrone.Common.Serializer.STJson.Deserialize<QBittorrentSettings>(
+                ReadMigratedProvider(_sourcePath, "DownloadClients", 109).Settings);
+            Assert.That(explicitSettings.MusicCategory, Is.Empty);
+            Assert.That(explicitSettings.EbookCategory, Is.Empty);
+            Assert.That(explicitSettings.AudiobookCategory, Is.EqualTo("operator-audio"));
+            Assert.That(explicitSettings.Password, Is.Null);
+            var mam = NzbDrone.Common.Serializer.STJson.Deserialize<MyAnonaMouseSettings>(
+                QueryScalar<string>(_sourcePath, "SELECT Settings FROM Indexers WHERE Id = 120;"));
+            Assert.That(mam.SearchType, Is.EqualTo(0));
+            Assert.That(mam.SearchInSeries, Is.False);
+            Assert.That(mam.MamId, Is.EqualTo("fixture-session"));
+            var plex = NzbDrone.Common.Serializer.STJson.Deserialize<NzbDrone.Core.Notifications.Plex.Server.PlexServerSettings>(
+                ReadMigratedProvider(_sourcePath, "Notifications", 111).Settings);
+            Assert.That(plex.UseSsl, Is.False);
+            Assert.That(plex.UpdateLibrary, Is.False);
         }
 
         private static string CreateBuiltInProviderSettings(string implementation, string contract)

@@ -1588,6 +1588,7 @@ namespace NzbDrone.Core.Datastore
                 EnsureAllSourceValuesMapped(row, targetColumns, "Indexers");
                 var values = Intersect(row, targetColumns);
                 CheckProviderSettingsCompatibility(row, values, CompatibleIndexerContracts, unsupported);
+                ApplyBookshelfProviderDefaults("Indexers", row, values);
 
                 // These are implementation capabilities, not user preferences. The runtime
                 // provider factory recalculates them from the installed Chaptarr provider.
@@ -1646,9 +1647,55 @@ namespace NzbDrone.Core.Datastore
             IReadOnlyDictionary<string, object> sourceRow,
             IDictionary<string, object> targetRow)
         {
-            if (!string.Equals(table, "DownloadClients", StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(GetString(sourceRow, "Implementation"), "QBittorrent", StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(GetString(sourceRow, "ConfigContract"), nameof(QBittorrentSettings), StringComparison.OrdinalIgnoreCase))
+            var contract = (GetString(sourceRow, "ConfigContract") ?? string.Empty).ToLowerInvariant();
+            var defaults = new Dictionary<string, JToken>(StringComparer.OrdinalIgnoreCase);
+            if (table.Equals("DownloadClients", StringComparison.OrdinalIgnoreCase))
+            {
+                var category = contract switch
+                {
+                    "delugesettings" or "qbittorrentsettings" or "rtorrentsettings" or "utorrentsettings" => "readarr",
+                    "nzbgetsettings" or "nzbvortexsettings" or "sabnzbdsettings" => "Readarr",
+                    _ => null
+                };
+                if (category != null)
+                {
+                    defaults["musicCategory"] = category;
+                }
+
+                if (contract == "hadoukensettings")
+                {
+                    defaults["category"] = "readarr-music";
+                }
+                else if (contract == "floodsettings")
+                {
+                    defaults["tags"] = new JArray("readarr");
+                }
+
+                // These public predecessor defaults were the effective credentials only
+                // when the source omitted the property. Never replace explicit values,
+                // including null/empty, or apply them to a new native configuration.
+                if (contract == "delugesettings")
+                {
+                    defaults["password"] = "deluge";
+                }
+                else if (contract == "nzbgetsettings")
+                {
+                    defaults["password"] = "tegbzn6789";
+                }
+            }
+            else if (table.Equals("Indexers", StringComparison.OrdinalIgnoreCase) && contract == "myanonamousesettings")
+            {
+                defaults["baseUrl"] = "https://www.myanonamouse.net/";
+                defaults["mamId"] = string.Empty;
+                defaults["searchType"] = 0;
+                defaults["searchInSeries"] = false;
+            }
+            else if (table.Equals("Notifications", StringComparison.OrdinalIgnoreCase) && contract == "plexserversettings")
+            {
+                defaults["useSsl"] = false;
+            }
+
+            if (defaults.Count == 0)
             {
                 return;
             }
@@ -1664,13 +1711,18 @@ namespace NzbDrone.Core.Datastore
                 return;
             }
 
-            // BookshelfNG's QBittorrentSettings constructor defaults its legacy category to "readarr".
-            // The ChaptarrNG-native default is "chaptarr", so persist the source default when the
-            // legacy database omitted the property instead of changing category routing on migration.
-            if (!settings.Properties().Any(property =>
-                    property.Name.Equals(nameof(QBittorrentSettings.MusicCategory), StringComparison.OrdinalIgnoreCase)))
+            var changed = false;
+            foreach (var value in defaults)
             {
-                settings["musicCategory"] = "readarr";
+                if (settings.Property(value.Key, StringComparison.OrdinalIgnoreCase) == null)
+                {
+                    settings[value.Key] = value.Value;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
                 SetIfPresent(targetRow, "Settings", settings.ToString(Formatting.None));
             }
         }
@@ -2663,6 +2715,7 @@ namespace NzbDrone.Core.Datastore
                     NotificationMappedSourceColumns);
                 var values = Intersect(row, targetColumns);
                 CheckProviderSettingsCompatibility(row, values, NotificationContracts, unsupported);
+                ApplyBookshelfProviderDefaults("Notifications", row, values);
                 if (!row.ContainsKey("OnBookRetag"))
                 {
                     SetIfPresent(values, "OnBookRetag", GetValue(row, "OnTrackRetag") ?? false);
