@@ -119,6 +119,29 @@ def add_rid_attributes(content):
     return re.sub(r'<(?:KnownFrameworkReference|KnownAppHostPack)\s+Include="Microsoft\.NETCore\.App"[\s\S]*?/>', update, content)
 
 edit("eng/targetingpacks.targets", add_rid_attributes)
+# Unix x86 uses ECX/EDX for managed this/return-buffer arguments, matching
+# i386/asmhelpers.asm. The upstream .S worker swaps callee-saved EDI/ESI,
+# corrupting closed static delegates that return structs (including nullable
+# doubles in compiled property accessors). Keep this patch scoped to the
+# version-pinned runtime source and qualify the resulting runtime by execution.
+worker = root / "src/coreclr/vm/i386/asmhelpers.S"
+old_worker = """//edi -This pointer
+//esi -ReturnBuffer
+LEAF_ENTRY ThisPtrRetBufPrecodeWorker, _TEXT
+    mov  eax, [eax + ThisPtrRetBufPrecodeData__Target]
+    // Use XOR swap technique to set avoid the need to spill to the stack
+    xor edi, esi
+    xor esi, edi
+    xor edi, esi
+    jmp eax
+LEAF_END ThisPtrRetBufPrecodeWorker, _TEXT"""
+new_worker = old_worker.replace("//edi -This pointer", "//ecx -This pointer").replace(
+    "//esi -ReturnBuffer", "//edx -ReturnBuffer").replace(
+    "xor edi, esi", "xor ecx, edx").replace("xor esi, edi", "xor edx, ecx")
+worker_source = worker.read_text()
+if worker_source.count(old_worker) != 1:
+    raise SystemExit("Unrecognized Unix x86 delegate return-buffer worker; review the runtime patch")
+worker.write_text(worker_source.replace(old_worker, new_worker, 1))
 edit("eng/Subsets.props", lambda s: re.sub(r'^.*crossgen-corelib\.proj.*\n', "", s, flags=re.MULTILINE))
 edit("eng/Subsets.props", lambda s: s.replace(
     "Condition=\"'$(RuntimeFlavor)' != 'Mono' and ('$(TargetsMobile)' != 'true' and '$(TargetsLinuxBionic)' != 'true')\" Include=\"$(InstallerProjectRoot)pkg\\sfx\\Microsoft.NETCore.App\\Microsoft.NETCore.App.Crossgen2.sfxproj\"",

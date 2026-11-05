@@ -173,6 +173,33 @@ jobs:
       if: inputs.runtime_packs_run_id != ''
       run: cp "$RUNNER_TEMP/runtime-pack-provenance.json" "$RUNNER_TEMP/chaptarrng-platform-runtime-packs/reuse-provenance.json"
 
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      if: inputs.runtime_packs_run_id != ''
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      with:
+        dotnet-version: 10.0.403
+
+    - name: Qualify native x86 delegates and nullable validation
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/x86-qualified-runtime"
+        tar -xzf "$RUNNER_TEMP/chaptarrng-platform-runtime-packs/runtimes/linux-x86-runtime.tar.gz" \
+          -C "$RUNNER_TEMP/x86-qualified-runtime"
+        "$RUNNER_TEMP/dotnet/dotnet" build integration/runtime-x86/RuntimeProbe.csproj \
+          --configuration Release --output "$RUNNER_TEMP/x86-runtime-probe" \
+          -p:BaseIntermediateOutputPath="$RUNNER_TEMP/x86-runtime-probe-obj/"
+        docker build --platform linux/386 -t "chaptarrng-runtime-qualification:$GITHUB_RUN_ID" \
+          -f integration/standalone-handoff/Dockerfile.x86 integration/standalone-handoff
+        docker run --rm --platform linux/386 --network none \
+          --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+          --pids-limit 128 --memory 1g --cpus 2 \
+          -e DOTNET_ROOT=/runtime -e DOTNET_MULTILEVEL_LOOKUP=0 \
+          -v "$RUNNER_TEMP/x86-qualified-runtime:/runtime:ro" \
+          -v "$RUNNER_TEMP/x86-runtime-probe:/probe:ro" \
+          --entrypoint /runtime/dotnet "chaptarrng-runtime-qualification:$GITHUB_RUN_ID" \
+          /probe/RuntimeProbe.dll | tee "$RUNNER_TEMP/chaptarrng-platform-runtime-packs/x86-runtime-qualification.log"
+
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: chaptarrng-platform-runtime-packs
