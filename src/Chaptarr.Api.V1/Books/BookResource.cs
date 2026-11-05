@@ -223,11 +223,13 @@ namespace Chaptarr.Api.V1.Books
                 Ratings = selectedEdition != null
                     ? (selectedEdition.Ratings ?? new Ratings())
                     : (model.Ratings ?? new Ratings()),
-                ReleaseDate = selectedEdition?.ReleaseDate ?? model.ReleaseDate,
+                ReleaseDate = options.FacadeContext?.IsBookshelfCompatibility == true
+                    ? model.ReleaseDate
+                    : selectedEdition?.ReleaseDate ?? model.ReleaseDate,
                 Added = model.Added,
                 LastSearchTime = model.LastSearchTime,
                 // Don't show page count for audiobooks
-                PageCount = model.MediaType == BookMediaType.Audiobook
+                PageCount = model.MediaType == BookMediaType.Audiobook && options.FacadeContext?.IsBookshelfCompatibility != true
                     ? 0
                     : (selectedEdition?.PageCount ?? 0),
                 Genres = (model.Genres ?? new List<string>()).ToList(),
@@ -244,7 +246,7 @@ namespace Chaptarr.Api.V1.Books
                     ? (selectedEdition.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList()
                     : (model.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList(),
                 Links = links,
-                Statistics = options.Statistics?.ToResource(),
+                Statistics = options.Statistics?.ToResource(options.FacadeContext?.IsBookshelfCompatibility == true),
                 AddOptions = model.AddOptions,
                 RemoteCover = string.Empty,
                 Grabbed = options.FacadeContext?.IsBookshelfCompatibility == true ? false : null,

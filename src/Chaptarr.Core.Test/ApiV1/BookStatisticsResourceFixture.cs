@@ -7,6 +7,21 @@ namespace Chaptarr.Core.Test.ApiV1
     [TestFixture]
     public class BookStatisticsResourceFixture
     {
+        [TestCase(0, 1, 0)]
+        [TestCase(6, 1, 600)]
+        [TestCase(6, 0, 0)]
+        public void legacy_clients_should_receive_bookshelf_file_based_percentage(int files, int books, decimal expected)
+        {
+            var resource = new BookStatistics
+            {
+                BookFileCount = files,
+                BookCount = books,
+                AvailableBookCount = files > 0 ? 1 : 0
+            }.ToResource(bookshelfCompatibility: true);
+
+            Assert.That(resource.PercentOfBooks, Is.EqualTo(expected));
+        }
+
         [Test]
         public void complete_multi_file_audiobook_should_report_100_percent()
         {

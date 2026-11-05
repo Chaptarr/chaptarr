@@ -13,6 +13,7 @@ namespace Chaptarr.Api.V1.Books
         public long SizeOnDisk { get; set; }
         public long EbookSizeOnDisk { get; set; }
         public long AudiobookSizeOnDisk { get; set; }
+        internal bool BookshelfCompatibility { get; set; }
 
         public decimal PercentOfBooks
         {
@@ -23,14 +24,15 @@ namespace Chaptarr.Api.V1.Books
                     return 0;
                 }
 
-                return AvailableBookCount / (decimal)BookCount * 100;
+                var count = BookshelfCompatibility ? BookFileCount : AvailableBookCount;
+                return count / (decimal)BookCount * 100;
             }
         }
     }
 
     public static class BookStatisticsResourceMapper
     {
-        public static BookStatisticsResource ToResource(this BookStatistics model)
+        public static BookStatisticsResource ToResource(this BookStatistics model, bool bookshelfCompatibility = false)
         {
             if (model == null)
             {
@@ -39,6 +41,7 @@ namespace Chaptarr.Api.V1.Books
 
             return new BookStatisticsResource
             {
+                BookshelfCompatibility = bookshelfCompatibility,
                 BookFileCount = model.BookFileCount,
                 EbookFileCount = model.EbookFileCount,
                 AudiobookFileCount = model.AudiobookFileCount,

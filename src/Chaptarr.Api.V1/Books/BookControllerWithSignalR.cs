@@ -189,7 +189,7 @@ namespace Chaptarr.Api.V1.Books
                     .ToList() ?? new List<BookStatistics>();
                 if (stats.Count > 0)
                 {
-                    resource.Statistics = CombineLegacyBookStatistics(stats).ToResource();
+                    resource.Statistics = CombineLegacyBookStatistics(stats).ToResource(bookshelfCompatibility: true);
                     resource.HasFiles = resource.Statistics.BookFileCount > 0;
                 }
             }
@@ -268,7 +268,7 @@ namespace Chaptarr.Api.V1.Books
                     .ToList();
                 if (stats.Count > 0)
                 {
-                    resource.Statistics = CombineLegacyBookStatistics(stats).ToResource();
+                    resource.Statistics = CombineLegacyBookStatistics(stats).ToResource(bookshelfCompatibility: true);
                     resource.HasFiles = resource.Statistics.BookFileCount > 0;
                 }
 
@@ -429,7 +429,7 @@ namespace Chaptarr.Api.V1.Books
                 // For multi-edition resources, statistics are already set in ToResourceForEdition
                 if (book.Statistics == null && bookStatsDict.TryGetValue(book.Id, out var stats))
                 {
-                    book.Statistics = stats.ToResource();
+                    book.Statistics = stats.ToResource(HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
                 }
 
                 if (book.Statistics != null)
@@ -445,7 +445,7 @@ namespace Chaptarr.Api.V1.Books
             {
                 var dictBookStats = authorStatistics.BookStatistics.ToDictionary(v => v.BookId);
 
-                resource.Statistics = dictBookStats.GetValueOrDefault(resource.Id).ToResource();
+                resource.Statistics = dictBookStats.GetValueOrDefault(resource.Id).ToResource(HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
                 if (resource.Statistics != null)
                 {
                     resource.HasFiles = resource.Statistics.BookFileCount > 0;

@@ -19,6 +19,38 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class BookResourceMapperFixture
     {
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, false)]
+        public void should_preserve_bookshelf_work_date_and_selected_edition_page_count(BookMediaType mediaType, bool legacy)
+        {
+            var workDate = new DateTime(2000, 1, 1);
+            var editionDate = new DateTime(2020, 1, 1);
+            var book = new Book
+            {
+                Title = "Fixture work",
+                MediaType = mediaType,
+                ReleaseDate = workDate,
+                Author = new Author(),
+                Editions = new List<Edition>
+                {
+                    new Edition { Monitored = true, ReleaseDate = editionDate, PageCount = 240 }
+                }
+            };
+
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = legacy ? new ReadarrFacadeContext("hc", null, string.Empty, isBookshelfCompatibility: true) : null
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.ReleaseDate, Is.EqualTo(legacy ? workDate : editionDate));
+                Assert.That(resource.PageCount, Is.EqualTo(legacy || mediaType == BookMediaType.Ebook ? 240 : 0));
+            });
+        }
+
         [TestCase("work:12345")]
         [TestCase("WORK:12345")]
         public void should_not_map_unknown_foreign_book_prefixes(string foreignBookId)
