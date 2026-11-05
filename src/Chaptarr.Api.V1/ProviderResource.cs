@@ -92,6 +92,50 @@ namespace Chaptarr.Api.V1
 
     internal static class ProviderResourceCompatibilityProjection
     {
+        public static TProviderResource ProjectBookshelfLegacyProviderIdentity<TProviderResource>(TProviderResource resource)
+            where TProviderResource : ProviderResource<TProviderResource>
+        {
+            if (resource == null)
+            {
+                return null;
+            }
+
+            if (string.Equals(resource.Implementation, "ChaptarrImport", StringComparison.Ordinal))
+            {
+                resource.Implementation = "ReadarrImport";
+                resource.ImplementationName = "Readarr";
+                resource.ConfigContract = "ReadarrSettings";
+            }
+            else if (string.Equals(resource.Implementation, "LegacyAudiobookshelfMetadata", StringComparison.Ordinal))
+            {
+                resource.Implementation = "AudiobookshelfMetadata";
+            }
+
+            return resource;
+        }
+
+        public static TProviderResource ProjectBookshelfNativeProviderIdentity<TProviderResource>(TProviderResource resource)
+            where TProviderResource : ProviderResource<TProviderResource>
+        {
+            if (resource == null)
+            {
+                return null;
+            }
+
+            if (string.Equals(resource.Implementation, "ReadarrImport", StringComparison.Ordinal))
+            {
+                resource.Implementation = "ChaptarrImport";
+                resource.ImplementationName = "Chaptarr";
+                resource.ConfigContract = "ChaptarrSettings";
+            }
+            else if (string.Equals(resource.Implementation, "AudiobookshelfMetadata", StringComparison.Ordinal))
+            {
+                resource.Implementation = "LegacyAudiobookshelfMetadata";
+            }
+
+            return resource;
+        }
+
         public static TProviderResource ProjectBookshelfLegacyFields<TProviderResource>(TProviderResource resource)
             where TProviderResource : ProviderResource<TProviderResource>
         {

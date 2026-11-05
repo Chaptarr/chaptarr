@@ -55,9 +55,13 @@ namespace Chaptarr.Api.V1
         private TProviderResource ToResource(TProviderDefinition definition)
         {
             var resource = _resourceMapper.ToResource(definition);
-            return HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true
-                ? ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyFields(resource)
-                : resource;
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyProviderIdentity(resource);
+                ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyFields(resource);
+            }
+
+            return resource;
         }
 
         [HttpGet]
@@ -159,6 +163,11 @@ namespace Chaptarr.Api.V1
 
         private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate)
         {
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                ProviderResourceCompatibilityProjection.ProjectBookshelfNativeProviderIdentity(providerResource);
+            }
+
             var definition = _resourceMapper.ToModel(providerResource);
 
             if (providerResource.Id != 0)
