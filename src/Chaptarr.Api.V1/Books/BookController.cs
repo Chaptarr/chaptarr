@@ -1278,6 +1278,12 @@ namespace Chaptarr.Api.V1.Books
                 return NotFound();
             }
 
+            var facadeContext = HttpContext?.GetReadarrFacadeContext();
+            if (facadeContext?.IsBookshelfCompatibility == true && string.IsNullOrWhiteSpace(mediaType))
+            {
+                return GetBookshelfEditionCatalog(ResolveBookIdsForApi(new[] { id }), facadeContext);
+            }
+
             id = book.Id;
 
             var editions = _editionService.GetEditionsByBook(id);
@@ -1286,14 +1292,43 @@ namespace Chaptarr.Api.V1.Books
             var ownedEditionIds = (_mediaFileService.GetFilesByBook(id) ?? new List<NzbDrone.Core.MediaFiles.BookFile>())
                 .Select(file => file.EditionId)
                 .ToHashSet();
-            var facadeContext = HttpContext?.GetReadarrFacadeContext();
-
             var catalog = editions
                 .OrderByDescending(edition => edition.Monitored)
                 .ThenBy(edition => edition.Title)
                 .Select(edition => edition.ToCatalogResource(ownedEditionIds.Contains(edition.Id), facadeContext))
                 .ToList();
             return catalog;
+        }
+
+        private List<EditionCatalogResource> GetBookshelfEditionCatalog(List<int> bookIds, ReadarrFacadeContext facadeContext)
+        {
+            var editions = _editionService.GetEditionsByBook(bookIds);
+            _mediaCoverProxy.ProxyRemoteUrls(editions.SelectMany(edition => edition.Images ?? new List<MediaCover>()));
+            var mappings = _bookshelfLegacyIdentityMapService?.GetMappingsByTargetIds("Edition", editions.Select(edition => edition.Id))
+                .GroupBy(mapping => mapping.TargetId)
+                .ToDictionary(group => group.Key, group => group.First().SourceId)
+                ?? new Dictionary<int, int>();
+            var ownedEditionIds = bookIds
+                .SelectMany(bookId => _mediaFileService.GetFilesByBook(bookId) ?? new List<NzbDrone.Core.MediaFiles.BookFile>())
+                .Select(file => file.EditionId)
+                .ToHashSet();
+
+            // One source edition can gain a synthetic sibling during format separation.
+            // The unscoped legacy work still exposes its original edition exactly once.
+            return editions
+                .GroupBy(edition => mappings.GetValueOrDefault(edition.Id, edition.Id))
+                .Select(group =>
+                {
+                    var original = group.OrderByDescending(edition => edition.Id == group.Key)
+                        .ThenBy(edition => edition.Id)
+                        .First();
+                    var resource = original.ToCatalogResource(group.Any(edition => ownedEditionIds.Contains(edition.Id)), facadeContext);
+                    resource.EditionId = group.Key;
+                    return resource;
+                })
+                .OrderByDescending(edition => edition.Monitored)
+                .ThenBy(edition => edition.Title)
+                .ToList();
         }
 
         [HttpGet("buckets")]
