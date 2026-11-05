@@ -229,3 +229,27 @@ built at the current revision. The strict expanded API comparison at `02071e40`
 has 90 cases: 80 pass, seven strict differences, one source error and two expected
 policy differences. All four new catalog cases pass after `2d86b444`. Full CI at
 `8a9908b1` is running. Each result retains its tested revision and bounded scope.
+
+## Full Seerr request and database-identity rehearsal
+
+The deployed SeerrNG image's full HTTP workflow initially passed user login,
+pending request, denied self-approval, owner approval, real acquisition/import,
+availability and restart. A stricter SQLite audit then found two media records
+for the same imported book. Availability alone was an insufficient acceptance
+check. This is a Seerr integration defect, rather than an established migration
+failure in ChaptarrNG.
+
+[SeerrNG PR #527](https://github.com/snapetech-org/seerrng/pull/527), source
+`389bdafd6`, attaches dispatch identifiers through their actual entity relation
+and matches server-scoped catalog identities during scans. Four catalog
+regressions and a relation-ownership assertion fail before repair. All 73
+scanner/base-scanner/dispatch tests, server compilation and focused lint pass.
+
+Both full-server formats pass with a local test-only image containing those
+compiled repairs and ChaptarrNG archive `f060374a`. Each retains exactly one
+media record, zero orphaned identifiers, original request/media/requester IDs,
+completed status, correct format links, content and source backup across
+restart. No source service or production Seerr data is changed. These candidate
+results do not imply the Seerr repair has been published or deployed. Source,
+image/module provenance and synthetic evidence remain under
+`/var/tmp/chaptarrng-seerr-web-acquisition-20261105/` on `kspld0`.

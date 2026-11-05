@@ -36,8 +36,8 @@ separate from behavior. The harness records its Git revision, dirty status and
 candidate executable hash. Keep the standalone archive's manifest alongside the
 results to identify the complete application payload.
 
-This tests the actual SeerrNG adapter, not its web request approval/fulfillment
-database. It does not establish live third-party tracker, provider, Usenet,
+The default mode tests the actual SeerrNG adapter. Full-server mode additionally
+exercises its request approval/fulfillment database as described below. It does not establish live third-party tracker, provider, Usenet,
 other audio formats, production migration or publication acceptance.
 
 `integration/run-cover-proxy-smoke.py` is a separate synthetic case. It uses
@@ -50,3 +50,33 @@ Unlike the torrent cases, this case permits external networking to fetch the
 digest-selected fixture from GitHub HTTPS. It creates only disposable synthetic
 configuration, removes provider/client connections, and publishes no host ports.
 Never substitute operator data or configuration into this networked case.
+
+## Full Seerr server request and fulfillment
+
+Use `--request-mode seerr-web` with a tested Seerr image and repeat for each
+format. The harness initializes only synthetic accounts/configuration, signs in
+as a non-admin, submits a pending catalog request, verifies self-approval is
+denied, and approves as the owner. It then transfers/imports the media, invokes
+the real library scanner and restarts both servers. Persisted checks require a
+completed request, the original media/request/requester IDs, exactly one media
+record for the imported book, zero orphaned identifiers and format-only links.
+All service traffic stays within the network-none namespace.
+
+The deployed pinned Seerr image can show availability while creating a duplicate
+media record. [SeerrNG PR #527](https://github.com/snapetech-org/seerrng/pull/527)
+fixes the identifier relation and catalog scan matching. Do not treat a passing
+adapter/availability check as evidence that this older client preserves database
+identity. Testing the repair requires a local image built from that source:
+
+```sh
+python3 integration/run-acquisition-smoke.py --request-mode seerr-web \
+  --seerr-image LOCAL_TEST_IMAGE \
+  --seerr-source-revision FULL_SEERR_COMMIT \
+  --media-type ebook --candidate /absolute/path/ChaptarrNG \
+  --output /var/tmp/chaptarrng-seerr-web-UNIQUE
+```
+
+The declared client revision, actual image IDs, candidate assembly hashes and
+all harness source hashes are recorded. Keep the image build's source/module
+provenance with the evidence. A derived test image establishes candidate
+behavior; it does not establish deployment or publication of the Seerr repair.

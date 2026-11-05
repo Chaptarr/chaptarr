@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -20,8 +21,13 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--candidate', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--qbittorrent-image', default='chaptarrng-acquisition-qbittorrent:20261105')
+parser.add_argument('--seerr-source-revision', help='Declared source commit for a derived Seerr test image')
+parser.add_argument('--seerr-image', default='ghcr.io/snapetech-org/seerrng@sha256:e433d13a2c50fdc96948361f3c090ed9bb12e8788fc6741337737c973e956aff')
+parser.add_argument('--request-mode', choices=['adapter', 'seerr-web'], default='adapter')
 parser.add_argument('--media-type', choices=['ebook', 'audiobook'], default='ebook')
 args = parser.parse_args()
+if args.seerr_source_revision and not re.fullmatch(r"[0-9a-f]{40}", args.seerr_source_revision):
+    parser.error("--seerr-source-revision must be a full lowercase Git commit")
 candidate = args.candidate.resolve()
 assert (candidate / 'Chaptarr').is_file()
 root = args.output.resolve()
@@ -33,7 +39,7 @@ app = prefix + '-app'
 names = []
 images = {
     'app': 'docker.io/snapetech/bookshelfng@sha256:40a53ac528b6789ca78686b4303bb6c436cd191cd813f915ea171d72b47a8c38',
-    'seerr': 'ghcr.io/snapetech-org/seerrng@sha256:e433d13a2c50fdc96948361f3c090ed9bb12e8788fc6741337737c973e956aff',
+    'seerr': args.seerr_image,
     'node': 'node:22-alpine',
     'qbittorrent': args.qbittorrent_image,
 }
@@ -94,6 +100,13 @@ def seerr(script, log, *arguments):
         subprocess.run(['docker', 'stop', '-t', '5', probe], capture_output=True)
         subprocess.run(['docker', 'rm', probe], capture_output=True)
 
+def start_seerr_server():
+    if not (root / 'seerr-config/db/db.sqlite3').exists():
+        seerr('seerr-server-seed.cjs', 'seerr-server-seed.log')
+    start(prefix + '-seerr-server', ['--network', 'container:' + app, *security,
+          '-e', 'NODE_ENV=production', '-e', 'CONFIG_DIRECTORY=/fixture/seerr-config', '-e', 'PORT=5055',
+          '-v', f'{root}:/fixture', '--entrypoint', 'node', images['seerr'], 'dist/index.js'])
+
 def logical_database_hash(database):
     with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as connection:
         # SQLite quotes identifiers/values itself. Sorting preserves duplicate
@@ -112,19 +125,35 @@ for key, image in images.items():
     'candidate': str(candidate), 'candidateExecutableSha256': hashlib.sha256((candidate / 'Chaptarr').read_bytes()).hexdigest(),
     'candidateAssemblySha256': {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted(candidate.glob('*.dll'))},
     'harnessDirty': bool(command(['git', '-C', repo, 'status', '--porcelain', '--', 'integration/acquisition', 'integration/run-acquisition-smoke.py']).strip()),
+    'requestMode': args.request_mode,
+    'declaredSeerrSourceRevision': args.seerr_source_revision,
+    'harnessSourceSha256': {str(file.relative_to(repo)): hashlib.sha256(file.read_bytes()).hexdigest()
+                            for file in [Path(__file__).resolve(), *sorted(fixtures.glob('*'))] if file.is_file()},
     'images': images,
     'imageIds': {key: command(['docker', 'image', 'inspect', '--format', '{{.Id}}', value]).strip() for key, value in images.items()},
 }, indent=2))
 try:
     start_stack()
-    seerr('request.mjs', 'request.log')
+    if args.request_mode == 'seerr-web':
+        start_seerr_server()
+    seerr('web-request.mjs' if args.request_mode == 'seerr-web' else 'request.mjs', 'request.log')
     seerr('verify.mjs', 'acquisition.log', '--transfer')
     command(['python3', fixtures / 'verify-content.py', root], 'content.log')
+    if args.request_mode == 'seerr-web':
+        seerr('web-verify.mjs', 'seerr-web-import.log')
     stop_stack('first-run')
+    if args.request_mode == 'seerr-web':
+        command(['python3', fixtures / 'verify-seerr-state.py', root, 'import'], 'seerr-web-database.log')
     start_stack()
+    if args.request_mode == 'seerr-web':
+        start_seerr_server()
     seerr('verify.mjs', 'restart.log')
+    if args.request_mode == 'seerr-web':
+        seerr('web-verify.mjs', 'seerr-web-restart.log', '--restart')
     command(['python3', fixtures / 'verify-content.py', root], 'restart-content.log')
     stop_stack('restarted')
+    if args.request_mode == 'seerr-web':
+        command(['python3', fixtures / 'verify-seerr-state.py', root, 'restart'], 'seerr-web-restart-database.log')
     backups = list((root / 'config').glob('readarr.db.bookshelfng-backup-*.db'))
     assert len(backups) == 1
     # SQLite's backup API can change page headers; compare schema and every row,
@@ -135,7 +164,7 @@ try:
             assert connection.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
             assert connection.execute('SELECT MAX(Version) FROM VersionInfo').fetchone()[0] == version
-    (root / 'result.json').write_text(json.dumps({'mediaType': args.media_type, 'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True}))
-    print('PASS: migration, Seerr adapter request, real local torrent transfer,', args.media_type, 'import and restart availability. Evidence:', root)
+    (root / 'result.json').write_text(json.dumps({'mediaType': args.media_type, 'requestMode': args.request_mode, 'seerrWebRequestAndApproval': args.request_mode == 'seerr-web', 'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True}))
+    print('PASS: migration, Seerr', args.request_mode, 'request, real local torrent transfer,', args.media_type, 'import and restart availability. Evidence:', root)
 finally:
     stop_stack('final-run')

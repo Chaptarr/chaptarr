@@ -60,3 +60,11 @@ a private metadata environment file; preview/apply accepts `--metadata-env-file`
 Treat that file as secret because a custom URL can contain credentials. Never
 print its values or commit it. Preserve precedence: saved setting, current
 environment, captured migrated fallback. Fresh installations keep native defaults.
+
+## Seerr request acceptance
+
+An adapter request or an available status alone does not prove full SeerrNG
+fulfillment. Exercise user submission, approval, acquisition, library scan and
+restart through the server HTTP API. Audit persisted media/request/requester
+identities, duplicate media counts and orphaned identifiers after consumers exit.
+Record exact client/candidate revisions and derived test-image provenance.
