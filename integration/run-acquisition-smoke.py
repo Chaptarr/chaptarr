@@ -103,9 +103,14 @@ def logical_database_hash(database):
 command(['python3', fixtures / 'prepare.py', root, args.media_type])
 source_hash = logical_database_hash(root / 'config/readarr.db')
 shutil.copyfile(fixtures / 'provider.mjs', root / 'provider/server.mjs')
+for key, image in images.items():
+    available = subprocess.run(['docker', 'image', 'inspect', image], capture_output=True)
+    if available.returncode:
+        command(['docker', 'pull', image], f'pull-{key}.log', 300)
 (root / 'provenance.json').write_text(json.dumps({
     'commit': command(['git', '-C', repo, 'rev-parse', 'HEAD']).strip(),
     'candidate': str(candidate), 'candidateExecutableSha256': hashlib.sha256((candidate / 'Chaptarr').read_bytes()).hexdigest(),
+    'candidateAssemblySha256': {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted(candidate.glob('*.dll'))},
     'harnessDirty': bool(command(['git', '-C', repo, 'status', '--porcelain', '--', 'integration/acquisition', 'integration/run-acquisition-smoke.py']).strip()),
     'images': images,
     'imageIds': {key: command(['docker', 'image', 'inspect', '--format', '{{.Id}}', value]).strip() for key, value in images.items()},
