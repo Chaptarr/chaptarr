@@ -154,14 +154,13 @@ async function waitForPing(baseUrl, name) {
 
 const results = [];
 
-async function compareBasicAuthentication(caseId, password, expectedStatus) {
-  const path = "/system/status";
+async function compareBasicAuthentication(caseId, password, expectedStatus, path = "/") {
   const headers = password === null ? {} : {
     Authorization: "Basic " + Buffer.from("fixture-user:" + password).toString("base64"),
   };
   async function probe(baseUrl) {
     try {
-      const response = await fetch(baseUrl + path, {
+      const response = await fetch(path === "/" ? new URL("/", baseUrl) : baseUrl + path, {
         headers,
         redirect: "manual",
         signal: AbortSignal.timeout(30_000),
@@ -400,6 +399,7 @@ await Promise.all([
 await compareBasicAuthentication("authentication.legacy-password", "fixture-password", 200);
 await compareBasicAuthentication("authentication.wrong-password", "incorrect-fixture-password", 401);
 await compareBasicAuthentication("authentication.missing-credentials", null, 401);
+await compareBasicAuthentication("authentication.api-requires-key", "fixture-password", 401, "/system/status");
 
 for (const [caseId, path, providerResource = false, expectedTargetStatus = null] of cases) {
   const { source, target } = await compare(caseId, path, providerResource, expectedTargetStatus);
