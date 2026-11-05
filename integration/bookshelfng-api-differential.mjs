@@ -313,6 +313,9 @@ const cases = [
   // and provider-backed searches in separately controlled acceptance tests.
   ["blocklist.page", "/blocklist?page=1&pageSize=25"],
   ["books.paged", "/book/paged?offset=0&pageSize=25"],
+  ["books.paged.first", "/book/paged?offset=0&pageSize=1"],
+  ["books.paged.second", "/book/paged?offset=1&pageSize=1"],
+  ["books.paged.unaligned", "/book/paged?offset=1&pageSize=2"],
   ["calendar.list", "/calendar"],
   ["custom-filters.list", "/customfilter"],
   ["custom-formats.list", "/customformat"],
