@@ -422,6 +422,32 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
+        private static string GetUnschemedEpubIsbn(string identifier)
+        {
+            var candidate = identifier?.Trim();
+            if (string.IsNullOrEmpty(candidate))
+            {
+                return null;
+            }
+
+            if (candidate.StartsWith("urn:isbn:", StringComparison.OrdinalIgnoreCase))
+            {
+                candidate = candidate.Substring("urn:isbn:".Length);
+            }
+
+            // Recognize ISBN URNs and bare ISBNs without interpreting another
+            // identifier namespace (for example a UUID or DOI) as ISBN digits.
+            if (candidate.Any(character => !char.IsDigit(character) && character != 'X' &&
+                character != 'x' && character != '-' && !char.IsWhiteSpace(character)))
+            {
+                return null;
+            }
+
+            var isbn = StripIsbn(candidate.ToUpperInvariant());
+            return isbn?.Length == 13 && !isbn.StartsWith("978", StringComparison.Ordinal) &&
+                !isbn.StartsWith("979", StringComparison.Ordinal) ? null : isbn;
+        }
+
         private static string GetIsbnChars(string input)
         {
             if (input == null)
@@ -581,6 +607,14 @@ namespace NzbDrone.Core.MediaFiles
                                     if (scheme.Contains("isbn"))
                                     {
                                         var isbn = StripIsbn(id.Identifier);
+                                        if (isbn != null)
+                                        {
+                                            isbnCandidates.Add(isbn);
+                                        }
+                                    }
+                                    else if (string.IsNullOrWhiteSpace(id.Scheme))
+                                    {
+                                        var isbn = GetUnschemedEpubIsbn(id.Identifier);
                                         if (isbn != null)
                                         {
                                             isbnCandidates.Add(isbn);
