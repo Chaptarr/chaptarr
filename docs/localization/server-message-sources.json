@@ -1132,7 +1132,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1444,
+          "line": 1421,
           "sourceLine": "return BadRequest(\"Page size must be between 1 and 1000\");",
           "sourceLineSha256": "fda3f798b3239125c89796ce9820fcf7a294a995b4fe8719bf49bfe158c4f3b7",
           "category": "direct-api-result",
@@ -3052,7 +3052,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1691,
+          "line": 1729,
           "sourceLine": "return StatusCode(502, \"Failed to download selected photo\");",
           "sourceLineSha256": "b1c630af29c0af3348d48cfef6130f44063d816b3aed32b6f143696b6aeca059",
           "category": "direct-api-result",
@@ -3207,7 +3207,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1654,
+          "line": 1631,
           "sourceLine": "return BadRequest(\"No media type is configured (audiobook/ebook). Configure at least one root folder + quality profile for this instance.\");",
           "sourceLineSha256": "af7f003aaf2576b377f5ccfaa5a3e5f266a1a477b2f9b90f8899b126208a6bb5",
           "category": "direct-api-result",
@@ -3253,7 +3253,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Books/Services/AuthorService.cs",
-          "line": 1154,
+          "line": 1155,
           "sourceLine": "new ValidationFailure(nameof(Author.SyncMonitoredAcrossFormats), \"Sync monitored across formats requires both audiobook and ebook root folders to be configured for this author.\")",
           "sourceLineSha256": "5285a88c4ed406e94ec0172438c963f29c7b1474ac2d6b5d9422e0cf6b18d67b",
           "category": "validation-failure",
@@ -5206,7 +5206,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1755,
+          "line": 1793,
           "sourceLine": "Message = \"Image downloaded successfully\"",
           "sourceLineSha256": "61e06447da181ff32740b8a82919d35b0f37210840d78fcdf9eef2f9aba06ae3",
           "category": "api-message-resource",
@@ -5252,7 +5252,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1742,
+          "line": 1780,
           "sourceLine": "return BadRequest(new ApiErrorResource { Error = \"Image not found in author metadata\" });",
           "sourceLineSha256": "a37149445a94bfa703059f21d2af6d552d3de8c1915169a468d64cb261d430d3",
           "category": "api-response-resource",
@@ -5306,7 +5306,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1763,
+          "line": 1801,
           "sourceLine": "Message = \"Image download in progress\"",
           "sourceLineSha256": "9806dcd8e96e83074b7cc8486f8cc2682d8a2384ce1c54b21076ff4454f32427",
           "category": "api-message-resource",
@@ -5562,7 +5562,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1777,
+          "line": 1815,
           "sourceLine": "Message = \"Failed to download image\"",
           "sourceLineSha256": "fb3b4b234e59ac41c0efcb72df554380373c8c992dc0621bd0cb6d0dc58ccee4",
           "category": "api-message-resource",
@@ -8309,7 +8309,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1688,
+          "line": 1726,
           "sourceLine": "return BadRequest(\"Selected photo is a provider placeholder\");",
           "sourceLineSha256": "abc652ae20b036a9223089d52ef8e53c79b2040aa6a96291fa5dcbd0b95ad8e5",
           "category": "direct-api-result",
@@ -9345,7 +9345,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1508,
+          "line": 1485,
           "sourceLine": "return BadRequest($\"authorIds must contain between 1 and {MaxBookshelfAuthorIds} author IDs\");",
           "sourceLineSha256": "741bddd36af9722ec52ea7d4ea8b2d18803fe1d3fd5a933529a40a744d0658ad",
           "category": "direct-api-result",
@@ -9590,7 +9590,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Books/Services/AuthorService.cs",
-          "line": 1004,
+          "line": 1005,
           "sourceLine": "failures.Add(new ValidationFailure(propertyName, \"Selected root folder is not configured. Add it in Settings → Media Management.\"));",
           "sourceLineSha256": "48ba1c5dc74062acef0edd5424675b70bc9b02f3b4071ff67ea33fa40f7fb995",
           "category": "validation-failure",
@@ -9669,7 +9669,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1680,
+          "line": 1657,
           "sourceLine": "return BadRequest(\"Cannot add book: missing upstream provider book/work ID (Hardcover/Goodreads/OpenLibrary/GoogleBooks).\");",
           "sourceLineSha256": "eb925b55d7c6a0d1ed15073aa52fc48f0d1383bcfeb62799c2966431cc574f37",
           "category": "direct-api-result",
@@ -9677,7 +9677,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1715,
+          "line": 1692,
           "sourceLine": "return BadRequest(\"Cannot add book: missing upstream provider book/work ID (Hardcover/Goodreads/OpenLibrary/GoogleBooks).\");",
           "sourceLineSha256": "eb925b55d7c6a0d1ed15073aa52fc48f0d1383bcfeb62799c2966431cc574f37",
           "category": "direct-api-result",
@@ -9685,7 +9685,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1781,
+          "line": 1758,
           "sourceLine": "return BadRequest(\"Cannot add book: missing upstream provider book/work ID (Hardcover/Goodreads/OpenLibrary/GoogleBooks).\");",
           "sourceLineSha256": "eb925b55d7c6a0d1ed15073aa52fc48f0d1383bcfeb62799c2966431cc574f37",
           "category": "direct-api-result",
@@ -11156,7 +11156,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1677,
+          "line": 1715,
           "sourceLine": "return BadRequest(\"Photo not found\");",
           "sourceLineSha256": "ecf868e51ef7995870ecc504d204187c5c15793e7a237dae4c88720372863fe8",
           "category": "direct-api-result",
@@ -11493,7 +11493,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 2617,
+          "line": 2594,
           "sourceLine": "return BadRequest(\"EditionId is required\");",
           "sourceLineSha256": "cb0d38e687b93edd458d5bbeed5b1db975752b921d97ccfd20041303a41f0b7a",
           "category": "direct-api-result",
@@ -11562,7 +11562,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1730,
+          "line": 1768,
           "sourceLine": "return BadRequest(new ApiErrorResource { Error = \"ImageUrl is required\" });",
           "sourceLineSha256": "de040de6050ac69e574e24c85684f5429f61f691feaa21a3397ae6ef35c584f6",
           "category": "api-response-resource",
@@ -11730,7 +11730,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1978,
+          "line": 1955,
           "sourceLine": "new ValidationFailure(",
           "sourceLineSha256": "9a7b6bcc91b8133e7cc8bc770fd340ba9f08c6f7ea0a7df417d95247c98c50b1",
           "category": "validation-failure",
@@ -13952,7 +13952,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Books/Services/AuthorService.cs",
-          "line": 1011,
+          "line": 1012,
           "sourceLine": "failures.Add(new ValidationFailure(propertyName, $\"Selected root folder is not configured for {expected}.\"));",
           "sourceLineSha256": "69dad0df103fa962450f78754663f82778793be358fe306672805fc1a4219e42",
           "category": "validation-failure",
@@ -14012,7 +14012,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1750,
+          "line": 1727,
           "sourceLine": "return BadRequest($\"Invalid mediaType parameter: '{requestedMediaType}'. Valid values are: audiobook, ebook\");",
           "sourceLineSha256": "a3b01c7b29542048ac87e21608a39c9547eaa0a45a01db4f4ee9608abbeb459c",
           "category": "direct-api-result",
@@ -14371,7 +14371,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 1449,
+          "line": 1426,
           "sourceLine": "return BadRequest(\"Offset must be non-negative\");",
           "sourceLineSha256": "f62ab8c603fcffbb253b3685801ed755527fc2e7b30df1ffd6204576e5f5b711",
           "category": "direct-api-result",
@@ -15049,7 +15049,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1725,
+          "line": 1763,
           "sourceLine": "return NotFound(new ApiErrorResource { Error = \"Author not found\" });",
           "sourceLineSha256": "1a230685230b43c0d660066c8376bc47a33a659f02188a88ee65f26e98dd8d52",
           "category": "api-response-resource",
@@ -15257,7 +15257,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1784,
+          "line": 1822,
           "sourceLine": "return StatusCode(500, new ApiErrorResource { Error = \"Internal server error\" });",
           "sourceLineSha256": "5d741de959df79116c013133d9306170f7a9d82d95f8de837095fa10694bf815",
           "category": "api-response-resource",
@@ -15265,7 +15265,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1710,
+          "line": 1748,
           "sourceLine": "return StatusCode(500, \"Internal server error\");",
           "sourceLineSha256": "9d51f0b0bbebda442c680a04c178d58f77b5670debc2239fa152badc680bec5f",
           "category": "direct-api-result",
