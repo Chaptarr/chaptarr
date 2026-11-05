@@ -71,6 +71,18 @@ additive differences in the report. Additive API output still needs an
 old-client compatibility review even when it does not fail the source-contract
 comparison.
 
+Two narrowly verified differences remain distinct from matching responses.
+Stored host password hashes stay private: this difference is accepted only when
+the target's unchanged GET/PUT settings flow succeeds and the original password
+still authenticates while an incorrect password is rejected afterward. Actual
+status facts (application/version, schema, build/start time, runtime, OS, startup
+path and optional source-package provenance) must pass explicit type/value rules
+and match a separate native API request. Instance names, authentication, URL
+bases and all unlisted fields remain strict. Every original mismatch path/value
+and its reason stays in the report as `expected-policy-difference`; these cases
+are not counted as matching responses. Unknown, malformed or unconfirmed
+changes fail. A source HTTP 500 remains inconclusive rather than a parity pass.
+
 The differential also sends two legacy writes to both isolated copies: it
 disables monitoring for a seeded work and deletes a mixed-format work without
 deleting files. It compares the write responses and readback state, including

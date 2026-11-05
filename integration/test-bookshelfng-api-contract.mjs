@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   annotateProviderMismatchDetails,
   compareResponses,
+  classifySystemDeploymentDifferences,
+  hasVerifiedHostSettingsAuthentication,
   normalizeProviderApiResponse,
   sanitizeApiResponse,
 } from "./bookshelfng-api-contract.mjs";
@@ -208,3 +210,48 @@ customFormatTarget[0].fields[0].value = 4;
 customFormatTarget[0].fields[0].selectOptions[0].value = 8;
 assert.ok(customComparison().mismatchPaths.length > 0);
 console.log("BookshelfNG API contract comparator: 18 checks passed");
+
+const sourceStatusFacts = {
+  appName: "Readarr", version: "0.4.21.76", migrationVersion: 158,
+  buildTime: "2026-10-26T01:13:37Z", startTime: "2026-11-05T11:00:00Z",
+  startupPath: "/app/readarr/bin", osName: "alpine", osVersion: "3.24.2", runtimeVersion: "10.0.13",
+  packageAuthor: "pennydreadful", packageVersion: "f512a17f866d1fa8e5d92ae792d044de1fb45535",
+  instanceName: "Readarr", authentication: "basic", urlBase: "",
+};
+const targetStatusFacts = {
+  appName: "Chaptarr", version: "0.9.978.0", migrationVersion: 125,
+  buildTime: "2026-11-05T11:13:36Z", startTime: "2026-11-05T11:14:00Z",
+  startupPath: "/app", osName: "ubuntu", osVersion: "24.04", runtimeVersion: "10.0.14",
+  instanceName: "Readarr", authentication: "basic", urlBase: "",
+};
+const nativeStatusFacts = { ...targetStatusFacts, instanceName: "Chaptarr" };
+const classifiedFacts = classifySystemDeploymentDifferences(sourceStatusFacts, targetStatusFacts, nativeStatusFacts);
+assert.equal(classifiedFacts.length, 11);
+assert.deepEqual(new Set(classifiedFacts.map((item) => item.path)), new Set(compareResponses(sourceStatusFacts, targetStatusFacts).mismatchPaths));
+for (const [key, value] of [["instanceName", "Changed"], ["authentication", "none"], ["urlBase", "/different"]]) {
+  const changed = { ...targetStatusFacts, [key]: value };
+  assert.ok(compareResponses(sourceStatusFacts, changed).mismatchPaths.includes("/" + key));
+  assert.ok(!classifySystemDeploymentDifferences(sourceStatusFacts, changed, nativeStatusFacts).some((item) => item.path === "/" + key));
+}
+assert.deepEqual(classifySystemDeploymentDifferences(sourceStatusFacts, targetStatusFacts, { ...nativeStatusFacts, appName: "Unexpected" }), []);
+assert.deepEqual(classifySystemDeploymentDifferences(sourceStatusFacts, { ...targetStatusFacts, migrationVersion: 0 }, nativeStatusFacts), []);
+for (const [key, value] of [["version", "unknown"], ["runtimeVersion", ""], ["buildTime", "not-a-date"], ["startupPath", "relative"], ["osName", ""], ["osVersion", "unavailable"]]) {
+  const malformed = { ...targetStatusFacts, [key]: value };
+  assert.ok(!classifySystemDeploymentDifferences(sourceStatusFacts, malformed, malformed).some((item) => item.path === "/" + key));
+}
+assert.ok(!classifySystemDeploymentDifferences(sourceStatusFacts, targetStatusFacts, { ...nativeStatusFacts, runtimeVersion: "10.0.15" }).some((item) => item.path === "/runtimeVersion"));
+console.log("Deployment fact classifications preserve strict business fields and reject malformed or unconfirmed facts.");
+
+const settingsProofs = [
+  { caseId: "host-config.target-readback", result: "pass", sourceStatus: null, targetStatus: 202, passwordWriteOnly: true },
+  { caseId: "authentication.legacy-password-after-settings-save", result: "pass", sourceStatus: 200, targetStatus: 200 },
+  { caseId: "authentication.wrong-password-after-settings-save", result: "pass", sourceStatus: 401, targetStatus: 401 },
+];
+assert.equal(hasVerifiedHostSettingsAuthentication(settingsProofs), true);
+for (let index = 0; index < settingsProofs.length; index++) {
+  assert.equal(hasVerifiedHostSettingsAuthentication(settingsProofs.filter((_, i) => i !== index)), false);
+  assert.equal(hasVerifiedHostSettingsAuthentication(settingsProofs.map((proof, i) => i === index ? { ...proof, result: "fail" } : proof)), false);
+  assert.equal(hasVerifiedHostSettingsAuthentication(settingsProofs.map((proof, i) => i === index ? { ...proof, targetStatus: 400 } : proof)), false);
+}
+assert.equal(hasVerifiedHostSettingsAuthentication(settingsProofs.map((proof, index) => index === 0 ? { ...proof, passwordWriteOnly: false } : proof)), false);
+console.log("Host password concealment requires successful settings save and both authentication proofs.");

@@ -56,6 +56,22 @@ works before and after the attempted save; a successful save remains to be
 verified. Stored password hashes remain private and actual runtime diagnostics
 remain truthful, so those two strict differences are still explicit.
 
+Follow-up [42022250332](https://github.com/snapetech-org/chaptarrng/actions/runs/42022250332)
+at `3651598e` verifies the repaired settings flow: GET/PUT returns HTTP 202,
+readback matches, the original password authenticates and a wrong password is
+rejected. Of 94 cases, 89 pass, two strict differences remain, one source error
+is inconclusive and two route-policy differences are recorded. The two strict
+differences are password-hash concealment and actual runtime facts. Policy
+classification now requires these authentication proofs or typed facts matching
+a separate native status request, retaining all original mismatch details.
+
+An isolated `f3ab4cb2` real-data runtime additionally clears the image's inherited
+`METADATA_URL`: native and legacy HTTP configuration still resolves the captured
+source fallback; legacy host/status instance names match and password hashes
+remain hidden. The probe runtime has exited; private results and logs remain
+with the rehearsal evidence. No original password login is claimed for real
+operator accounts.
+
 ## Source and conversion
 
 Both sources run BookshelfNG `0.4.21.76`, immutable image

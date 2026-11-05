@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-05 UTC
 
-Application candidate `8a9908b1` is unpublished. Public hosted runners are
+Application candidate `3651598e` is unpublished. Public hosted runners are
 authorized for trusted validation; CodeQL remains disabled.
 
 Fresh, consistent snapshots of both running BookshelfNG `.76` instances have now
@@ -21,11 +21,12 @@ M4A; authenticated range downloads match original bytes. This establishes bounde
 read acceptance, not acquisition, write/import or failure-recovery acceptance.
 The two installations retain separate ports, API keys and accounts.
 
-Full public CI passed at `69ec4a3d` and `c15d5ac9`; newer full CI
-[42005003606](https://github.com/snapetech-org/chaptarrng/actions/runs/42005003606)
-is running at `8a9908b1`. All ten standalone archives and both synthetic
+Full public CI passed at `13d490b6`; newer full CI
+[42021064161](https://github.com/snapetech-org/chaptarrng/actions/runs/42021064161)
+is running at `f3ab4cb2`. All ten standalone archives and both synthetic
 ebook/audiobook acquisition/restart rehearsals pass in
-[42005003595](https://github.com/snapetech-org/chaptarrng/actions/runs/42005003595).
+[42021069122](https://github.com/snapetech-org/chaptarrng/actions/runs/42021069122)
+at `f3ab4cb2`.
 These use the deployed SeerrNG adapter and actual local qBittorrent transfers;
 reading content/audio bytes and source backups are preserved. The packaged
 registered-cover proxy additionally passes actual SeerrNG author/book image
@@ -33,8 +34,9 @@ fetches and authentication boundaries with an original public fixture image. Ins
 rollback passed at `8dcd4900`; later changes retain separate focused evidence.
 Revision-specific results are recorded in the [channel acceptance matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
 
-The strict differential remains red; recorded presentation, identity, security
-and capability differences require explicit disposition. Live-provider and
+The latest strict run retains two differences: write-only password hashes and
+actual runtime facts. Narrow verification for those dispositions is implemented
+and awaits execution; all original mismatch details remain visible. Live-provider and
 complete SeerrNG fulfillment, headed UI, external distribution delivery and
 production acceptance remain open. The Desktop Pool v2 acquisition still times
 out; no headed UI pass is claimed. Publication, bridge activation, cutover and

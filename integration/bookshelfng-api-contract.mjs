@@ -309,3 +309,49 @@ export function compareResponses(expected, actual, { includeDebugValues = false 
     additiveDetails,
   };
 }
+
+// Deployment facts change when replacing a process. Keep their differences in
+// the report, and accept only typed facts independently confirmed by native API.
+// Instance names, API paths, authentication and every other field stay strict.
+export function classifySystemDeploymentDifferences(source, target, native) {
+  if (!source || !target || !native || source.appName !== "Readarr" ||
+      target.appName !== "Chaptarr" || native.appName !== "Chaptarr" ||
+      source.migrationVersion !== 158 || target.migrationVersion !== 125 ||
+      native.migrationVersion !== 125 || source.version !== "0.4.21.76") return [];
+  const version = (value) => typeof value === "string" && /^\d+\.\d+\.\d+(?:\.\d+)?$/.test(value);
+  const timestamp = (value) => typeof value === "string" && /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value));
+  const absolutePath = (value) => typeof value === "string" && value.startsWith("/") && !value.includes("\0");
+  const osName = (value) => typeof value === "string" && /^[a-z][a-z0-9_-]*$/i.test(value);
+  const osVersion = (value) => typeof value === "string" && /^\d+(?:\.\d+)*$/.test(value);
+  const rules = {
+    appName: (a, b) => a === "Readarr" && b === "Chaptarr",
+    migrationVersion: (a, b) => a === 158 && b === 125,
+    version: (a, b) => version(a) && version(b),
+    runtimeVersion: (a, b) => version(a) && version(b),
+    buildTime: (a, b) => timestamp(a) && timestamp(b),
+    startTime: (a, b) => timestamp(a) && timestamp(b),
+    startupPath: (a, b) => absolutePath(a) && absolutePath(b),
+    osName: (a, b) => osName(a) && osName(b),
+    osVersion: (a, b) => osVersion(a) && osVersion(b),
+    packageAuthor: (a, b) => a === "pennydreadful" && b === undefined,
+    packageVersion: (a, b) => a === "f512a17f866d1fa8e5d92ae792d044de1fb45535" && b === undefined,
+  };
+  return Object.entries(rules).flatMap(([key, valid]) =>
+    !isDeepStrictEqual(source[key], target[key]) &&
+    isDeepStrictEqual(target[key], native[key]) && valid(source[key], target[key])
+      ? [{ path: "/" + key, reason: "Replacement deployment fact independently confirmed by the native status endpoint." }]
+      : []);
+}
+
+export function hasVerifiedHostSettingsAuthentication(results) {
+  return [
+    ["host-config.target-readback", null, 202],
+    ["authentication.legacy-password-after-settings-save", 200, 200],
+    ["authentication.wrong-password-after-settings-save", 401, 401],
+  ].every(([caseId, sourceStatus, targetStatus]) => {
+    const proof = results.find((item) => item.caseId === caseId);
+    return proof?.result === "pass" && proof.sourceStatus === sourceStatus &&
+      proof.targetStatus === targetStatus &&
+      (caseId !== "host-config.target-readback" || proof.passwordWriteOnly === true);
+  });
+}

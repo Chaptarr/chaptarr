@@ -28,7 +28,7 @@ For local MCP access, see the [SnapeTech MCP integration guide](docs/integration
 
 ### BookshelfNG migration status
 
-**Status checked: 2026-11-05 UTC.** Application candidate `8a9908b1` is
+**Status checked: 2026-11-05 UTC.** Application candidate `3651598e` is
 unpublished. BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest
 public releases. Trusted validation may use compatible public GitHub-hosted
 runners or private ephemeral JIT; see [`AGENTS.md`](AGENTS.md).
@@ -43,7 +43,9 @@ Both current operator SQLite snapshots pass isolated migration and rollback;
 eight real-media formats pass bounded reads. Hosted validation passes all ten
 archives and synthetic ebook/audiobook acquisition through the deployed SeerrNG
 adapter and real qBittorrent, including restart and content preservation. The
-strict API comparison still has seven recorded differences. Live-provider and
+strict API follow-up has two recorded differences: concealed stored password
+hashes and actual replacement runtime facts. Settings save and authentication
+checks now pass. Live-provider and
 complete SeerrNG web fulfillment, broader media/write recovery, headed UI,
 external channel delivery, and production acceptance remain open. Keep BookshelfNG operational and backed up. These candidate tests
 do not authorize publication, a compatibility bridge, cutover, or retirement.

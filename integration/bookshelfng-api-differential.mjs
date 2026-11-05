@@ -7,6 +7,8 @@ import { dirname } from "node:path";
 import {
   annotateProviderMismatchDetails,
   compareResponses,
+  classifySystemDeploymentDifferences,
+  hasVerifiedHostSettingsAuthentication,
   normalizeProviderApiResponse,
   sanitizeApiResponse,
 } from "./bookshelfng-api-contract.mjs";
@@ -71,10 +73,10 @@ function providerSchemaOrderDifferencePaths(source, target) {
     : ["/provider-schema-order"];
 }
 
-async function getJson(baseUrl, apiKey, path) {
+async function getJson(baseUrl, apiKey, path, native = false) {
   try {
     const response = await fetch(baseUrl + path, {
-      headers: { "X-Api-Key": apiKey },
+      headers: { "X-Api-Key": apiKey, ...(native ? { "X-ChaptarrNG-Client": "native" } : {}) },
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) {
@@ -312,6 +314,20 @@ async function compare(caseId, path, providerResource = false, expectedTargetSta
             ? "pass"
             : "fail",
   };
+  if (caseId === "system.status" && source.status === 200 && target.status === 200) {
+    const native = await getJson(targetUrl, targetKey, path, true);
+    result.deploymentFactDifferences = native.status === 200
+      ? classifySystemDeploymentDifferences(source.value, target.value, native.value) : [];
+    const confirmed = new Set(result.deploymentFactDifferences.map((item) => item.path));
+    if (result.result === "fail" && mismatchPaths.length > 0 && mismatchPaths.every((item) => confirmed.has(item))) {
+      result.result = "expected-policy-difference";
+      result.expectedPolicyDifference = "Only replacement deployment facts differ; each is confirmed by the native API. Original strict differences remain recorded.";
+    }
+  }
+  if (caseId === "host-config.list" && source.value?.password === "<redacted-present>" &&
+      target.value?.password === "" && mismatchPaths.length === 1 && mismatchPaths[0] === "/password") {
+    result.pendingPasswordSecurityDifference = true;
+  }
   results.push(result);
   return { source, target };
 }
@@ -462,6 +478,14 @@ for (const [caseId, path, providerResource = false, expectedTargetStatus = null]
 }
 
 await verifyHostConfigReadback();
+const passwordFlowVerified = hasVerifiedHostSettingsAuthentication(results);
+for (const result of results) {
+  if (result.pendingPasswordSecurityDifference && passwordFlowVerified) {
+    result.result = "expected-policy-difference";
+    result.expectedPolicyDifference = "Stored password hashes are write-only. The unchanged GET/PUT flow and original-password/wrong-password authentication are verified after saving.";
+  }
+  delete result.pendingPasswordSecurityDifference;
+}
 
 const authorsResult = results.find((result) => result.caseId === "authors.list");
 const booksResult = results.find((result) => result.caseId === "books.list");
@@ -587,7 +611,8 @@ const report = {
     providerFields: "matched by name; select options matched by value",
     providerPresentation: "labels, hints, help, links, control type, and display order are reported separately; persisted field values and option values remain strict",
     directDownloadUrls: "ordered legacy tag arrays remain strict; the target compatibility API must project the same array shape",
-    secretFields: "compared as empty or present, never recorded",
+    secretFields: "compared as empty or present, never recorded; host hash concealment requires successful settings readback and authentication proofs",
+    deploymentFacts: "explicit typed status facts independently confirmed through the native API; all strict differences remain recorded",
   },
   debugValues: includeDebugValues,
   caseCount: results.length,
