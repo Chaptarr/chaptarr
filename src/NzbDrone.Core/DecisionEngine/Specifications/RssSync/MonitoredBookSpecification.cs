@@ -38,7 +38,9 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                     return Decision.Reject("Author is not monitored");
                 }
 
-                var legacyMonitoredCount = subject.Books.Count(book => book.Monitored);
+                // Monitored is an obsolete in-memory property with no native database
+                // column. Migrated rows persist the source intent in their format flag.
+                var legacyMonitoredCount = subject.Books.Count(book => book.IsMonitored());
                 if (legacyMonitoredCount == subject.Books.Count)
                 {
                     return Decision.Accept();
