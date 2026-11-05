@@ -244,6 +244,18 @@ namespace NzbDrone.Core.MediaFiles
             tags = DeserializeTags(tagsJson);
             CleanupTags(tags);
 
+            if ((string.Equals(file.Extension, ".epub", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(file.Extension, ".kepub", StringComparison.OrdinalIgnoreCase)) &&
+                !tags.ContainsKey("isbn") &&
+                tags.TryGetValue("identifier_unknown", out var identifiers) &&
+                identifiers?.Exists(identifier => EBookTagService.GetUnschemedEpubIsbn(identifier) != null) == true)
+            {
+                // Old EPUB rows retained the raw ISBN identifier but omitted its
+                // standard tag. Refresh lazily once so a failed import can recover
+                // after the reader repair without changing the downloaded file.
+                return false;
+            }
+
             if (MediaFileExtensions.AudioExtensions.Contains(file.Extension) &&
                 !BookshelfAudioTagFields.HasProjection(tags))
             {

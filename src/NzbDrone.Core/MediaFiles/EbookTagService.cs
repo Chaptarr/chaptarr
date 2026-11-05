@@ -422,7 +422,7 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private static string GetUnschemedEpubIsbn(string identifier)
+        internal static string GetUnschemedEpubIsbn(string identifier)
         {
             var candidate = identifier?.Trim();
             if (string.IsNullOrEmpty(candidate))

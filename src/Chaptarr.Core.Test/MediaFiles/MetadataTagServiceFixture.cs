@@ -92,11 +92,12 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class CountingEBookTagService : IEBookTagService
         {
             public int ReadAllTagsCalls { get; private set; }
+            public Dictionary<string, List<string>> ResultTags { get; init; }
 
             public Dictionary<string, List<string>> ReadAllTags(IFileInfo file)
             {
                 ReadAllTagsCalls++;
-                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                return ResultTags ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
                 {
                     { "title", new List<string> { "Test Ebook" } }
                 };
@@ -340,6 +341,50 @@ namespace Chaptarr.Core.Test.MediaFiles
                 catch
                 {
                 }
+            }
+        }
+
+        [TestCase(".epub", "urn:isbn:9780306406157", true)]
+        [TestCase(".kepub", "9780306406157", true)]
+        [TestCase(".EPUB", "urn:isbn:9780306406157", true)]
+        [TestCase(".epub", "urn:uuid:9780306406157", false)]
+        public void should_refresh_stale_epub_identifier_projection_once(string extension, string identifier, bool refresh)
+        {
+            const long unixEpochTicks = 621355968000000000L;
+            var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"metatag_legacy_epub_isbn_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(root);
+            var path = Path.Combine(root, "legacy" + extension);
+            File.WriteAllText(path, "ebook");
+            try
+            {
+                var file = new FileSystem().FileInfo.New(path);
+                var cache = new RecordingFileTagCacheRepository();
+                var mtimeNs = Math.Max(0, file.LastWriteTimeUtc.Ticks - unixEpochTicks) * 100;
+                cache.SeedLegacy(path, mtimeNs, file.Length,
+                    "{\"title\":[\"Legacy Ebook\"],\"identifier_unknown\":[\"" + identifier + "\"]}", null);
+                var reader = new CountingEBookTagService
+                {
+                    ResultTags = new Dictionary<string, List<string>>
+                    {
+                        ["title"] = new() { "Current Ebook" },
+                        ["isbn"] = new() { "9780306406157" }
+                    }
+                };
+                var service = new MetadataTagService(new CountingAudioTagService(), reader, LogManager.GetLogger("test"), cache);
+
+                var result = service.ReadAllTagsAndDuration(file);
+                var nextReader = new CountingEBookTagService();
+                new MetadataTagService(new CountingAudioTagService(), nextReader, LogManager.GetLogger("test"), cache)
+                    .ReadAllTagsAndDuration(file);
+
+                Assert.That(reader.ReadAllTagsCalls, Is.EqualTo(refresh ? 1 : 0));
+                Assert.That(result.Tags.ContainsKey("isbn"), Is.EqualTo(refresh));
+                Assert.That(cache.UpsertCalls, Is.EqualTo(refresh ? 1 : 0));
+                Assert.That(nextReader.ReadAllTagsCalls, Is.Zero, "The repaired row must be reused across restarts.");
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
             }
         }
 
