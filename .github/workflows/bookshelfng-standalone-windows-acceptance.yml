@@ -102,6 +102,8 @@ jobs:
       shell: bash
       env:
         RID: ${{ matrix.rid }}
+        HARDCOVER: 'false'
+        HARDCOVER_NATIVE: 'false'
       run: |
         set -euo pipefail
         python integration/standalone-handoff/windows.py \

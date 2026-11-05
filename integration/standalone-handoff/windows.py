@@ -137,10 +137,12 @@ def main():
     parser.add_argument('--candidate-revision', required=True)
     args = parser.parse_args()
     require(os.name == 'nt', 'Windows native acceptance must run on Windows')
+    require(os.environ.get('HARDCOVER', '').lower() in {'true', 'false'}, 'Choose an explicit source provider mode before the rehearsal')
     root = args.output.resolve()
     require(not root.exists(), 'Refuse to reuse an earlier acceptance directory')
     root.mkdir(parents=True)
     result = {'runtimeId': args.runtime_id, 'candidateRevision': args.candidate_revision,
+              'sourceHardcoverMode': os.environ['HARDCOVER'],
               'predecessorArchiveSha256': digest(args.predecessor), 'candidateArchiveSha256': digest(args.candidate),
               'cases': [], 'success': False}
     try:
