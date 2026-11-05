@@ -6,6 +6,8 @@ using Chaptarr.Http.REST;
 using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Http;
 using Moq;
+using FluentValidation;
+using System.Linq;
 using Microsoft.AspNetCore.Mvc;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
@@ -36,6 +38,24 @@ namespace Chaptarr.Core.Test.Configuration
                 WasCalled = true;
                 return Task.FromResult(new ProxyTestResult { IsValid = true, Message = "OK" });
             }
+        }
+
+        [TestCase(true, "Readarr", true)]
+        [TestCase(true, "Readarr Audiobooks", true)]
+        [TestCase(false, "Readarr", false)]
+        [TestCase(false, "Chaptarr Audiobooks", true)]
+        [TestCase(true, "Unrelated", false)]
+        public void should_validate_source_names_in_legacy_settings_roundtrip(bool legacy, string name, bool expected)
+        {
+            var controller = CreateController();
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: legacy);
+            var validator = (IValidator<HostConfigResource>)typeof(RestController<HostConfigResource>)
+                .GetProperty("SharedValidator", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(controller);
+            var resource = CreateResource();
+            resource.InstanceName = name;
+            var nameErrors = validator.Validate(resource).Errors.Where(error => error.PropertyName == nameof(HostConfigResource.InstanceName)).ToList();
+            Assert.That(nameErrors.Count == 0, Is.EqualTo(expected));
         }
 
         [TestCase(true, "Readarr Audiobooks")]

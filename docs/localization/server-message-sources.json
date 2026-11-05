@@ -4641,7 +4641,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 90,
+          "line": 93,
           "sourceLine": ".WithMessage(\"Must be a valid absolute URL\")",
           "sourceLineSha256": "d97668288d8535d101f51a0f901d3f916ed18526f52ff1ac93cde2305ae758cd",
           "category": "validation-message",
@@ -6846,7 +6846,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 105,
+          "line": 108,
           "sourceLine": ".WithMessage(\"Must match Password\");",
           "sourceLineSha256": "e8019bebf36f35df782dfd8e0651629ee7dbc5d7651251a2980ef0da974e944c",
           "category": "validation-message",
@@ -7439,7 +7439,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 573,
+          "line": 576,
           "sourceLine": "throw new BadRequestException(\"Proxy mode must be Disabled, IndexerOnly, or ProxyEverything\");",
           "sourceLineSha256": "8ccc39c6148f7b10c9864cd1e37a4ee08aa922b82a978ea9b620da75c9b1b468",
           "category": "api-error",
@@ -7447,7 +7447,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 122,
+          "line": 125,
           "sourceLine": ".WithMessage(\"Proxy mode must be Disabled, IndexerOnly, or ProxyEverything\");",
           "sourceLineSha256": "29421e573deaf2adfedfa8b5b6533ed78858586739f3e3fc7b92ebf75cc0c7de",
           "category": "validation-message",
@@ -8430,7 +8430,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 578,
+          "line": 581,
           "sourceLine": "throw new BadRequestException(\"Proxy type must be Http, Socks4, or Socks5\");",
           "sourceLineSha256": "8a28ee18191365998c585838362d731c502968ad1fbe42952033246f506740e7",
           "category": "api-error",
@@ -8446,7 +8446,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 125,
+          "line": 128,
           "sourceLine": ".WithMessage(\"Proxy type must be Http, Socks4, or Socks5\");",
           "sourceLineSha256": "dc08283609d821af87810521e711226930ad53dff512c571527cb4cdc218a8a8",
           "category": "validation-message",
@@ -8570,7 +8570,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 94,
+          "line": 97,
           "sourceLine": ".WithMessage(\"Must use https:// unless the provider is running on localhost\")",
           "sourceLineSha256": "9b32eab177f52c7b3e877c0284b0bef4da3d03a335960455f1395065791a27a8",
           "category": "validation-message",
@@ -8747,7 +8747,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 115,
+          "line": 118,
           "sourceLine": ".Must((resource, path) => IsValidSslCertificate(resource)).WithMessage(\"Invalid SSL certificate file or password\")",
           "sourceLineSha256": "ab1ba2ef6037bb9c6d0216cc5f2c310f6f76717282055a674a8709bf7bba9c71",
           "category": "validation-message",
@@ -14595,7 +14595,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 564,
+          "line": 567,
           "sourceLine": "Message = $\"Test failed: {ex.Message}\"",
           "sourceLineSha256": "d87ea56b980957186de90e4ff2d390cd8e4ef92546d95438942c8e49bb0596c6",
           "category": "api-message-resource",
@@ -15336,7 +15336,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Config/HostConfigController.cs",
-          "line": 118,
+          "line": 121,
           "sourceLine": "SharedValidator.RuleFor(c => c.Branch).NotEmpty().WithMessage(\"Branch name is required, 'main' is the default\");",
           "sourceLineSha256": "249e9bb1954287e06efd85b2717d15385a3ef0f987ef62554d6344389ff968cf",
           "category": "validation-message",

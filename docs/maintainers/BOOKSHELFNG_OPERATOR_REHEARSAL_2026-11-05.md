@@ -35,6 +35,27 @@ Archive run [42016737332](https://github.com/snapetech-org/chaptarrng/actions/ru
 passes all ten platforms, synthetic ebook/audiobook acquisition and authenticated
 cover fetching. These results do not constitute a global parity claim.
 
+Fresh packaged `f3ab4cb2` repeats preview, apply, migration checks, restore
+preview and rollback on both frozen operator snapshots. Preview leaves each
+source unchanged. All original user columns, provider settings and author
+metadata arrays match; all 56,058 files remain represented. Captured source
+metadata fallback values match privately. Both converted targets pass integrity
+and foreign-key checks; rollback matches every source table including SQLite
+identity counters and matches each retained backup byte for byte. Production
+source PIDs and start times remain unchanged. Private evidence is retained at
+`/var/tmp/chaptarrng-operator-data-20261105/rehearsal-f3ab4cb2/` on `kspld0`.
+
+Strict follow-up [42021059988](https://github.com/snapetech-org/chaptarrng/actions/runs/42021059988)
+at `f3ab4cb2` has 94 cases: 88 pass, three fail, one source error and two expected
+route-policy differences. All provider schemas, localization, metadata defaults
+and legacy instance names match. A new unchanged-client host-settings GET/PUT
+check catches rejection of valid `Readarr` instance names by the native brand
+validator. Two regression cases reproduce that rejection before repair; the
+follow-up repair passes all 32 configuration checks. The original password still
+works before and after the attempted save; a successful save remains to be
+verified. Stored password hashes remain private and actual runtime diagnostics
+remain truthful, so those two strict differences are still explicit.
+
 ## Source and conversion
 
 Both sources run BookshelfNG `0.4.21.76`, immutable image
