@@ -40,6 +40,8 @@ def command(argv, log=None, timeout=180):
     return result.stdout
 
 command(['python3', fixtures / 'prepare.py', root])
+config = root / 'config/config.xml'
+config.write_text(config.read_text().replace('<AuthenticationMethod>External</AuthenticationMethod>', '<AuthenticationMethod>Forms</AuthenticationMethod>'))
 url = f'https://raw.githubusercontent.com/snapetech-org/chaptarrng/{args.source_commit}/integration/acquisition/fixture-cover.png'
 with sqlite3.connect(root / 'config/readarr.db') as connection:
     connection.executescript('DELETE FROM Indexers; DELETE FROM DownloadClients;')
@@ -64,7 +66,7 @@ try:
     start(prefix + '-provider', ['--network', 'container:' + prefix + '-app', '-v', f'{root}:/fixture', 'node:22-alpine', 'node', '/fixture/provider/server.mjs'])
     owned.append(prefix + '-seerr')
     command(['docker', 'run', '--rm', '--name', prefix + '-seerr', '--network', 'container:' + prefix + '-app', *security,
-        '-v', f'{fixtures}:/checks:ro', '--entrypoint', 'node', seerr, '/checks/verify-cover.mjs'], 'cover-results.log', 300)
+        '-v', f'{fixtures}:/checks:ro', '-v', f'{root}:/fixture:ro', '--entrypoint', 'node', seerr, '/checks/verify-cover.mjs'], 'cover-results.log', 300)
     (root / 'provenance.json').write_text(json.dumps({'sourceCommit': args.source_commit, 'fixtureUrl': url,
         'candidateAssemblySha256': {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted(candidate.glob('*.dll'))}}, indent=2))
     print('PASS: actual Seerr author/book cover methods, source PNG hashes and authentication boundaries. Evidence:', root)

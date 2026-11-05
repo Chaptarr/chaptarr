@@ -39,3 +39,14 @@ results to identify the complete application payload.
 This tests the actual SeerrNG adapter, not its web request approval/fulfillment
 database. It does not establish live third-party tracker, provider, Usenet,
 other audio formats, production migration or publication acceptance.
+
+`integration/run-cover-proxy-smoke.py` is a separate synthetic case. It uses
+Forms authentication and the deployed SeerrNG client to fetch the original PNG
+in this directory through a registered book-cover proxy and the author-cover
+route. Pass `--candidate`, a new `--output`, and the full public `--source-commit`
+containing this fixture. It verifies original book bytes, author original/cached
+rendition bytes, and denied unauthenticated, wrong-key, UI and nonimage requests.
+Unlike the torrent cases, this case permits external networking to fetch the
+digest-selected fixture from GitHub HTTPS. It creates only disposable synthetic
+configuration, removes provider/client connections, and publishes no host ports.
+Never substitute operator data or configuration into this networked case.

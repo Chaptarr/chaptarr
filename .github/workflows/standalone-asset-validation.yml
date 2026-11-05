@@ -331,6 +331,10 @@ jobs:
         python3 integration/run-acquisition-smoke.py --media-type audiobook \
           --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
           --output "$RUNNER_TEMP/acquisition-audio-evidence"
+        python3 integration/run-cover-proxy-smoke.py \
+          --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
+          --output "$RUNNER_TEMP/cover-proxy-evidence" \
+          --source-commit "$GITHUB_SHA"
 
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: always() && matrix.rid == 'linux-musl-x64'
@@ -341,6 +345,8 @@ jobs:
           ${{ runner.temp }}/acquisition-evidence/*.log
           ${{ runner.temp }}/acquisition-audio-evidence/*.json
           ${{ runner.temp }}/acquisition-audio-evidence/*.log
+          ${{ runner.temp }}/cover-proxy-evidence/*.json
+          ${{ runner.temp }}/cover-proxy-evidence/*.log
           ${{ runner.temp }}/release-assets/ChaptarrNG-0.0.0-linux-musl-x64.tar.gz.sha256
         retention-days: 7
         if-no-files-found: error
