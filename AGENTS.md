@@ -42,3 +42,21 @@ builds, with the pinned SDK already installed. Verify the selected root before
 writing. Target runtimes must come from the local NuGet packs; never unpack
 foreign runtime or hostfxr binaries into a shared build SDK. Preserve existing
 SDKs, native runtimes and shared caches.
+
+## Localization compatibility data
+
+`src/NzbDrone.Core/Localization/BookshelfCompatibility/` contains immutable
+BookshelfNG `.76` response catalogs and their source-byte manifest. Keep native
+translation generation/rebranding scoped to `Localization/Core`; do not rewrite
+the predecessor catalogs. Their `-text` Git attribute preserves the recorded
+hashes on Windows. Native UI/bootstrap/login requests must retain the explicit
+`X-ChaptarrNG-Client: native` hint when reading localization.
+
+## Metadata endpoint handoff
+
+Capture source-container metadata defaults before removing the old container.
+The host helper's `--source-container` validates its `/config` mount and writes
+a private metadata environment file; preview/apply accepts `--metadata-env-file`.
+Treat that file as secret because a custom URL can contain credentials. Never
+print its values or commit it. Preserve precedence: saved setting, current
+environment, captured migrated fallback. Fresh installations keep native defaults.
