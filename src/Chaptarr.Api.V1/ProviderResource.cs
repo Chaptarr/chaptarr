@@ -7,6 +7,8 @@ using Chaptarr.Http.ClientSchema;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Indexers.DirectDownload;
 using NzbDrone.Core.ThingiProvider;
+using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Notifications.Plex.Server;
 
 namespace Chaptarr.Api.V1
 {
@@ -94,6 +96,23 @@ namespace Chaptarr.Api.V1
 
     internal static class ProviderResourceCompatibilityProjection
     {
+        public sealed class BookshelfPlexFields
+        {
+            [FieldDefinition(10, Label = "NotificationsSettingsUpdateLibrary", Type = FieldType.Checkbox)]
+            public bool UpdateLibrary { get; set; }
+        }
+
+        public static void ApplyBookshelfLegacySettings<TProviderResource>(TProviderResource resource, IProviderConfig settings)
+            where TProviderResource : ProviderResource<TProviderResource>
+        {
+            if (settings is PlexServerSettings plex)
+            {
+                var legacy = new BookshelfPlexFields { UpdateLibrary = plex.UpdateLibrary };
+                SchemaBuilder.ReadFromSchema(resource.Fields ?? new List<Field>(), legacy);
+                plex.UpdateLibrary = legacy.UpdateLibrary;
+            }
+        }
+
         public static TProviderResource ProjectBookshelfLegacyTemplateDefaults<TProviderResource>(TProviderResource resource)
             where TProviderResource : ProviderResource<TProviderResource>
         {
@@ -225,9 +244,16 @@ namespace Chaptarr.Api.V1
             return resource;
         }
 
-        public static TProviderResource ProjectBookshelfLegacyFields<TProviderResource>(TProviderResource resource)
+        public static TProviderResource ProjectBookshelfLegacyFields<TProviderResource>(TProviderResource resource, IProviderConfig settings = null)
             where TProviderResource : ProviderResource<TProviderResource>
         {
+            if (settings is PlexServerSettings plex)
+            {
+                resource.Fields ??= new List<Field>();
+                resource.Fields.RemoveAll(field => field.Name == "updateLibrary");
+                resource.Fields.AddRange(SchemaBuilder.ToSchema(new BookshelfPlexFields { UpdateLibrary = plex.UpdateLibrary }));
+            }
+
             if (resource?.ConfigContract != nameof(DirectDownloadSettings))
             {
                 return resource;

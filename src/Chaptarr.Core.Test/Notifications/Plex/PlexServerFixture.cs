@@ -3,9 +3,11 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
+using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Notifications;
 using NzbDrone.Core.Notifications.Plex.PlexTv;
@@ -236,12 +238,17 @@ namespace Chaptarr.Core.Test.Notifications.Plex
         private static NzbDrone.Core.Notifications.Plex.Server.PlexServer CreateSubject(
             FakePlexTvService plexTvService,
             FakePlexServerService plexServerService,
-            PlexServerSettings settings)
+            PlexServerSettings settings,
+            bool migrated = false)
         {
+            var config = new Mock<IConfigService>();
+            config.SetupGet(c => c.BookshelfNGDatabaseMigrated).Returns(migrated);
+            config.SetupGet(c => c.BookshelfNGMigrationProfile).Returns(new BookshelfNGCompatibilityProfile { ProviderDialect = "hc" });
             return new NzbDrone.Core.Notifications.Plex.Server.PlexServer(
                 plexServerService,
                 plexTvService,
                 new PendingProviderSecretService(new CacheManager()),
+                config.Object,
                 new CacheManager(),
                 LogManager.GetLogger("PlexServerFixture"))
             {
@@ -250,6 +257,25 @@ namespace Chaptarr.Core.Test.Notifications.Plex
                     Settings = settings
                 }
             };
+        }
+
+        [TestCase(false, 0)]
+        [TestCase(true, 1)]
+        public void should_respect_bookshelf_global_switch_for_import_rename_retag_and_delete(bool enabled, int expectedUpdates)
+        {
+            var service = new FakePlexServerService();
+            var subject = CreateSubject(new FakePlexTvService(), service,
+                new PlexServerSettings { Host = "plex.example.com", AuthToken = "token", UpdateLibrary = enabled }, migrated: true);
+            var author = new Author { Id = 7, Name = "Migrated author" };
+
+            subject.OnReleaseImport(new BookDownloadMessage { Author = author });
+            subject.OnRename(author, new List<RenamedBookFile>());
+            subject.OnBookRetag(new BookRetagMessage { Author = author });
+            subject.OnAuthorDelete(new AuthorDeleteMessage(author, true));
+            subject.ProcessQueue();
+
+            Assert.That(service.UpdatedAuthorIds, Has.Count.EqualTo(expectedUpdates));
+            Assert.That(subject.HasPendingQueue, Is.False);
         }
 
         private static T GetProperty<T>(object target, string name)

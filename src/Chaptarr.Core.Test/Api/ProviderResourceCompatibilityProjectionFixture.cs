@@ -8,6 +8,8 @@ using Chaptarr.Api.V1.Metadata;
 using Chaptarr.Http.ClientSchema;
 using NzbDrone.Core.Indexers.DirectDownload;
 using NzbDrone.Core.Download.Clients.QBittorrent;
+using NzbDrone.Core.Notifications.Plex.Server;
+using System.Text.Json;
 using NUnit.Framework;
 
 namespace Chaptarr.Core.Test.Api
@@ -15,6 +17,24 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class ProviderResourceCompatibilityProjectionFixture
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_apply_legacy_plex_global_switch_and_preserve_it_when_omitted(bool enabled)
+        {
+            var settings = new PlexServerSettings { UpdateLibrary = !enabled, AuthToken = "retained-token" };
+            var resource = new Chaptarr.Api.V1.Notifications.NotificationResource
+            {
+                Fields = new List<Field> { new() { Name = "updateLibrary", Value = JsonSerializer.SerializeToElement(enabled) } }
+            };
+
+            ProviderResourceCompatibilityProjection.ApplyBookshelfLegacySettings(resource, settings);
+            Assert.That(settings.UpdateLibrary, Is.EqualTo(enabled));
+            resource.Fields.Clear();
+            ProviderResourceCompatibilityProjection.ApplyBookshelfLegacySettings(resource, settings);
+            Assert.That(settings.UpdateLibrary, Is.EqualTo(enabled));
+            Assert.That(settings.AuthToken, Is.EqualTo("retained-token"));
+        }
+
         [Test]
         public void should_preserve_legacy_hadouken_category_and_flood_tags_in_templates()
         {

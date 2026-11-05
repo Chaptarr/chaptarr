@@ -58,7 +58,7 @@ namespace Chaptarr.Api.V1
             if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
             {
                 ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyProviderIdentity(resource);
-                ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyFields(resource);
+                ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyFields(resource, definition.Settings);
             }
 
             return resource;
@@ -189,6 +189,11 @@ namespace Chaptarr.Api.V1
                     SchemaBuilder.ReadFromSchema(providerResource.Fields ?? new List<Field>(), settingsTarget);
                     definition.Settings = settingsTarget;
                 }
+            }
+
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                ProviderResourceCompatibilityProjection.ApplyBookshelfLegacySettings(providerResource, definition.Settings);
             }
 
             if (validate && (definition.Enable || forceValidate))
