@@ -79,7 +79,9 @@ namespace Chaptarr.Api.V1.Blocklist
 
             if (author != null)
             {
-                resource.AuthorId = legacyAuthorId ?? author.Id;
+                resource.AuthorId = facadeContext?.IsBookshelfCompatibility == true
+                    ? legacyAuthorId ?? author.Id
+                    : author.Id;
                 resource.Author = AuthorResourceMapper.ToResource(author, facadeContext);
                 if (facadeContext?.IsBookshelfCompatibility == true && legacyAuthorMetadataId.HasValue)
                 {
