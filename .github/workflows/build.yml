@@ -47,6 +47,11 @@ on:
         required: false
         type: boolean
         default: false
+      docker_only:
+        description: Run only the standard multi-architecture image validation
+        required: false
+        type: boolean
+        default: false
       rpm_bridge_only:
         description: Run only the Fedora 44 RPM BookshelfNG migration acceptance
         required: false
@@ -158,7 +163,8 @@ jobs:
         inputs.pr_number == '' &&
         inputs.runner_policy_only != true &&
         inputs.rpm_bridge_only != true &&
-        inputs.channel_contracts_only != true
+        inputs.channel_contracts_only != true &&
+        inputs.docker_only != true
       ) || (
         github.ref == 'refs/heads/main' &&
         inputs.action == 'publish' &&
@@ -767,7 +773,8 @@ jobs:
         inputs.windows_chocolatey_only != true &&
         inputs.rpm_bridge_only != true &&
         inputs.channel_contracts_only != true &&
-        inputs.runner_policy_only != true
+        inputs.runner_policy_only != true &&
+        inputs.docker_only != true
       ) || (
         github.ref == 'refs/heads/main' &&
         inputs.action == 'publish' &&
@@ -941,6 +948,12 @@ jobs:
       with:
         # The isolated BuildKit daemon needs the runner's trust roots too.
         buildkitd-config-inline: |
+          [worker.oci]
+            max-parallelism = 1
+            gc = true
+            reservedSpace = "512MB"
+            maxUsedSpace = "4GB"
+            minFreeSpace = "4GB"
           [registry."docker.io"]
             ca = ["/etc/ssl/certs/ca-certificates.crt"]
         driver-opts: |
