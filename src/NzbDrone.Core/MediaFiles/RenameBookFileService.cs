@@ -8,6 +8,7 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
@@ -37,6 +38,8 @@ namespace NzbDrone.Core.MediaFiles
     public class RenameBookFileService : IRenameBookFileService, IExecute<RenameFilesCommand>, IExecute<RenameAuthorCommand>
     {
         private readonly IAuthorService _authorService;
+        private readonly IConfigService _configService;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IMoveBookFiles _bookFileMover;
         private readonly IEventAggregator _eventAggregator;
@@ -52,9 +55,13 @@ namespace NzbDrone.Core.MediaFiles
                                         IDiskProvider diskProvider,
                                         IRootFolderWatchingService rootFolderWatchingService,
                                         Logger logger,
-                                        IRootFolderService rootFolderService = null)
+                                        IRootFolderService rootFolderService = null,
+                                        IConfigService configService = null,
+                                        IBookshelfLegacyIdentityMapService legacyIdentityMapService = null)
         {
             _authorService = authorService;
+            _configService = configService;
+            _legacyIdentityMapService = legacyIdentityMapService;
             _mediaFileService = mediaFileService;
             _bookFileMover = bookFileMover;
             _eventAggregator = eventAggregator;
@@ -110,7 +117,9 @@ namespace NzbDrone.Core.MediaFiles
         {
             var rootFolders = _rootFolderService?.All() ?? new List<RootFolder>();
             var renameFiles = files.Where(x => x.CalibreId == 0 && !IsCalibreManaged(rootFolders, x.Path)).ToList();
-            EnsurePartNumbers(renameFiles);
+            EnsurePartNumbers(renameFiles, _configService?.BookshelfMatchCompatibility == true
+                ? _mediaFileService.GetFilesByAuthor(author.Id)
+                : null);
             // Pass 1: compute target directories for audiobook files that are part of this rename batch.
             var batchContext = new RenameBatchContext();
 
@@ -180,9 +189,31 @@ namespace NzbDrone.Core.MediaFiles
                 .Where(f => string.Equals(GetEffectiveMediaType(f), mediaType, StringComparison.OrdinalIgnoreCase));
         }
 
-        private static void EnsurePartNumbers(List<BookFile> files)
+        private void EnsurePartNumbers(List<BookFile> files, List<BookFile> countFiles = null)
         {
-            PartAssignmentHelper.NormalizeBookFilesByEdition(files);
+            if (_configService?.BookshelfMatchCompatibility != true)
+            {
+                PartAssignmentHelper.NormalizeBookFilesByEdition(files);
+                return;
+            }
+
+            // Source naming counted every file in the source edition and used
+            // its persisted Part. Migration can split one edition across media
+            // instances; reconstruct that group without renumbering its files.
+            countFiles ??= files;
+            var mappings = _legacyIdentityMapService?.GetMappingsByTargetIds("Edition", countFiles.Select(file => file.EditionId))
+                ?? new List<BookshelfLegacyIdentityMapEntry>();
+            var sourceByTarget = mappings.GroupBy(mapping => mapping.TargetId)
+                .Where(group => group.Select(mapping => mapping.SourceId).Distinct().Count() == 1)
+                .ToDictionary(group => group.Key, group => group.First().SourceId);
+            string Key(BookFile file) => sourceByTarget.TryGetValue(file.EditionId, out var sourceId)
+                ? "source:" + sourceId
+                : "target:" + file.EditionId;
+            var counts = countFiles.GroupBy(Key).ToDictionary(group => group.Key, group => group.Count());
+            foreach (var file in files)
+            {
+                file.PartCount = counts[Key(file)];
+            }
         }
 
         internal static string FormatRenameResultMessage(RenameFilesResult result, string authorName)

@@ -9,6 +9,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser;
@@ -29,6 +30,7 @@ namespace NzbDrone.Core.Organizer
     public class FileNameBuilder : IBuildFileNames
     {
         private readonly INamingConfigService _namingConfigService;
+        private readonly IConfigService _configService;
         private readonly IQualityDefinitionService _qualityDefinitionService;
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
@@ -66,9 +68,11 @@ namespace NzbDrone.Core.Organizer
                                ICacheManager cacheManager,
                                ICustomFormatCalculationService formatCalculator,
                                Logger logger,
-                               IMediaInfoExtractor mediaInfoExtractor)
+                               IMediaInfoExtractor mediaInfoExtractor,
+                               IConfigService configService = null)
         {
             _namingConfigService = namingConfigService;
+            _configService = configService;
             _qualityDefinitionService = qualityDefinitionService;
             _formatCalculator = formatCalculator;
             _mediaInfoExtractor = mediaInfoExtractor;
@@ -93,6 +97,11 @@ namespace NzbDrone.Core.Organizer
 
             var renameBooks = namingConfig.RenameBooks;
             var originalFileName = GetOriginalFileName(bookFile);
+            var compatibility = _configService?.BookshelfMatchCompatibility == true;
+            if (compatibility && !renameBooks)
+            {
+                return originalFileName;
+            }
 
             if (namingConfig.StandardBookFormat.IsNullOrWhiteSpace())
             {
@@ -158,7 +167,7 @@ namespace NzbDrone.Core.Organizer
             // If the naming pattern doesn't include any per-file disambiguator (PartNumber / Original Filename),
             // all tracks would be renamed to the same destination and only the first one would import.
             // Default to preserving the original filename for the final path component in that case.
-            if (bookFile.PartCount > 1 &&
+            if (!compatibility && bookFile.PartCount > 1 &&
                 !pattern.Contains("PartNumber", StringComparison.InvariantCultureIgnoreCase) &&
                 !pattern.Contains("Original Filename", StringComparison.InvariantCultureIgnoreCase) &&
                 !pattern.Contains("Original Title", StringComparison.InvariantCultureIgnoreCase) &&
@@ -683,7 +692,8 @@ namespace NzbDrone.Core.Organizer
         {
             tokenHandlers["{Original Title}"] = m => GetOriginalTitle(bookFile);
             tokenHandlers["{Original Filename}"] = m => GetOriginalFileName(bookFile);
-            tokenHandlers["{Release Group}"] = m => bookFile.ReleaseGroup ?? m.DefaultValue("Chaptarr");
+            tokenHandlers["{Release Group}"] = m => bookFile.ReleaseGroup ??
+                m.DefaultValue(_configService?.BookshelfMatchCompatibility == true ? "Readarr" : "Chaptarr");
 
             if (bookFile.ReleasePart > 0)
             {

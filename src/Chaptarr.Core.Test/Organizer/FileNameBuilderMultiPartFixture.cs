@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using NLog;
+using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
@@ -41,6 +43,30 @@ namespace Chaptarr.Core.Test.Organizer
             public List<CustomFormat> ParseCustomFormat(Blocklist blocklist, Author artist) => new();
             public List<CustomFormat> ParseCustomFormat(EntityHistory history, Author artist) => new();
             public List<CustomFormat> ParseCustomFormat(LocalBook localBook) => new();
+        }
+
+        [TestCase(false, true, "{Book Title}/{Book Title}", "The Edition/input")]
+        [TestCase(true, true, "{Book Title}/{Book Title}", "The Edition/The Edition")]
+        [TestCase(false, false, "{Book Title}/{Book Title}", "The Edition/input")]
+        [TestCase(true, false, "{Book Title}/{Book Title}", "input")]
+        [TestCase(false, true, "{Release Group}{ (PartNumber)}", "Chaptarr (7)")]
+        [TestCase(true, true, "{Release Group}{ (PartNumber)}", "Readarr (7)")]
+        public void should_preserve_source_naming_choices_for_migrated_libraries(bool compatibility, bool rename, string pattern, string expected)
+        {
+            var config = new Mock<IConfigService>();
+            config.SetupGet(x => x.BookshelfMatchCompatibility).Returns(compatibility);
+            var builder = new FileNameBuilder(new StubNamingConfigService(), new StubQualityDefinitionService(),
+                new CacheManager(), new StubCustomFormatCalculationService(), LogManager.GetCurrentClassLogger(), null, config.Object);
+            var author = new Author { Name = "Test Author" };
+            var edition = new Edition { Title = "The Edition", Book = new Book { Author = author } };
+            var file = new BookFile { Path = "/downloads/input.mp3", Part = 7, PartCount = 22, Quality = new QualityModel(Quality.MP3) };
+            var naming = NamingConfig.Default;
+            naming.RenameBooks = rename;
+            naming.StandardBookFormat = pattern;
+
+            var actual = builder.BuildBookFileName(author, edition, file, naming, new List<CustomFormat>());
+
+            Assert.That(actual, Is.EqualTo(expected.Replace('/', Path.DirectorySeparatorChar)));
         }
 
         [Test]

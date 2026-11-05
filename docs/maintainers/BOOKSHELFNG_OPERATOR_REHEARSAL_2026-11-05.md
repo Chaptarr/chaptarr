@@ -450,3 +450,78 @@ settings match its own retained snapshot; an earlier comparison that deduplicate
 the connection and compared the audiobook settings to the primary settings was
 invalid and superseded. The HTTP 410 indexer and HTTP 502 client failures remain
 pre-existing source availability issues, not migration acceptance passes.
+
+
+## Real-media mutation on disposable copies
+
+The current local Release production services (`fdc59ea7` Core assembly) operate
+on private copies of all eight sampled formats; originals remain on read-only
+mounts and retain their full SHA-256 hashes. EPUB and KEPUB series metadata
+writes read back correctly, with every non-OPF archive entry retaining its hash.
+MP3, M4B and M4A synthetic title tags read back through production extraction;
+FFmpeg compressed-audio payload hashes and FFprobe chapter records are unchanged.
+AZW3, MOBI and PDF follow the existing non-Calibre no-op path and retain every
+byte. Both actual source installations have zero Calibre-library root folders;
+this check does not claim Calibre-server writes or native Kindle/PDF tagging.
+
+The first audio verifier incorrectly required an unprefixed `TITLE` field;
+production extraction exposes container/compatibility keys. The corrected
+verifier checks the unique synthetic title value. Both attempts are retained;
+this harness correction required no application change. Results, copies, build
+and runtime logs and exact Core hash remain private under
+`/var/tmp/chaptarrng-operator-data-20261105/real-media-write-fdc59ea7/`.
+This is a production-service copy test, not canonical installed import, rename,
+process-crash recovery or production-library mutation acceptance.
+
+
+## Real-data rename differential and restart
+
+Actual `RenameFiles` commands against `.76` and the local current target rename
+private copies of five mapped ebook formats and two mapped audio formats. The
+first comparison finds different destination basenames for all five ebooks:
+source naming counts all files in an edition, while native part assignment
+normalizes ebook alternatives to one part. The saved pattern includes the part
+number, so a successful command alone hid the changed filenames.
+
+The compatibility repair preserves persisted source `Part` values and counts
+all author files sharing the source edition, including managed and unselected
+files. It resolves media-specific edition copies through the legacy identity
+map and keeps unmapped target IDs in a separate namespace. Fresh native part
+assignment remains unchanged. Scoped previews use the same complete counts as
+execution. Focused regressions cover preview/execution agreement, media splits,
+managed files, existing zero/nonsequential parts and ID namespace collisions.
+
+The corrected comparison has identical destination paths and file IDs for EPUB,
+KEPUB, AZW3, MOBI, PDF, MP3 and M4B. All 14 source/target cases preserve complete
+file hashes and every original. Fresh application processes read back the same
+renamed paths, IDs and bytes in another 14 checks after restart. The initial
+audio samples were unassociated files, so that attempt is inconclusive; mapped
+MP3 and M4B samples replace them. There are no mapped M4A source records, and
+M4A is not claimed as a mapped-rename pass. Its unassociated record/content and
+separate tag-copy checks remain distinct evidence.
+
+All four disposable instances use network-none namespaces, private config copies
+and only the bounded sample directory as a writable library. Logs, database
+copies, API bodies and source filenames stay private under
+`/var/tmp/chaptarrng-operator-data-20261105/real-media-rename-source-count-fix/`.
+The first filename-difference and unmapped-audio attempts are retained under
+`real-media-rename-fdc59ea7/`. Canonical installed validation remains a follow-up
+for this new application change; no production library was renamed.
+
+
+The same naming review finds three additional predecessor choices that native
+naming changes: disabled renaming returned the original filename immediately;
+a pattern without a part token used its rendered filename even for multiple
+files; and an absent release group defaulted to `Readarr`. The migrated mode now
+preserves each choice. Fresh native defaults retain their existing organization,
+filename fallback and branding. Six focused cases cover both modes.
+
+Actual source/target HTTP command replays apply all three controlled naming
+settings to the same seven mapped real-media formats. All 21 path/ID comparisons
+match, with 42 source/target file-integrity checks passing. The disabled case
+correctly leaves each file in place. Metadata and file bodies remain private
+under `real-media-rename-patterns/`; these variants change only disposable copied
+configuration. The full prior count-fix suite passed 5,224 tests with 29 skips;
+the final broader naming fix passes 85 affected tests and the full Core suite
+passes 5,231 tests, with 29 skips and no failures. Localization tests pass.
+Canonical build and installed checks remain separate follow-up validation.

@@ -5,12 +5,14 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Reflection;
 using NLog;
+using Moq;
 using NUnit.Framework;
 using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
@@ -306,7 +308,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             StubMediaFileService mediaFileService,
             RecordingMoveBookFiles mover,
             RecordingEventAggregator eventAggregator,
-            IDiskProvider diskProvider = null)
+            IDiskProvider diskProvider = null,
+            IConfigService configService = null,
+            IBookshelfLegacyIdentityMapService legacyIdentityMapService = null)
         {
             return new RenameBookFileService(
                 new StubAuthorService { Author = author },
@@ -315,7 +319,51 @@ namespace Chaptarr.Core.Test.MediaFiles
                 eventAggregator,
                 diskProvider ?? DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
                 new NullRootFolderWatchingService(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(),
+                configService: configService,
+                legacyIdentityMapService: legacyIdentityMapService);
+        }
+
+        [TestCase(false, 7, 1, 1)]
+        [TestCase(true, 7, 3, 7)]
+        [TestCase(true, 0, 3, 0)]
+        public void should_preserve_source_edition_part_count_and_persisted_part_for_migrated_renames(bool compatibility, int storedPart, int expectedCount, int expectedPart)
+        {
+            var author = new Author { Id = 1, Name = "Test Author" };
+            var ebook = BookFile(1, "/books/Joe/input.epub", Quality.EPUB, "ebook");
+            ebook.Part = storedPart;
+            var alternate = BookFile(2, "/books/Joe/alternate.pdf", Quality.PDF, "ebook");
+            alternate.Part = storedPart;
+            alternate.CalibreId = 1; // The source counted managed files, even though it did not rename them.
+            var audio = BookFile(3, "/books/Joe/audio.mp3", Quality.MP3, "audiobook");
+            audio.EditionId = 11; // A media-specific copy of the same source edition.
+            audio.Part = 3;
+            var nativeOnly = BookFile(4, "/books/Joe/native.pdf", Quality.PDF, "ebook");
+            nativeOnly.EditionId = 4; // A target ID equal to the source edition ID must stay a separate group.
+            nativeOnly.CalibreId = 1;
+            var mediaFiles = new StubMediaFileService { Files = new List<BookFile> { ebook, alternate, audio, nativeOnly } };
+            var config = new Mock<IConfigService>();
+            config.SetupGet(x => x.BookshelfMatchCompatibility).Returns(compatibility);
+            var identities = new Mock<IBookshelfLegacyIdentityMapService>();
+            identities.Setup(x => x.GetMappingsByTargetIds("Edition", It.IsAny<IEnumerable<int>>())).Returns(new List<BookshelfLegacyIdentityMapEntry>
+            {
+                new() { SourceId = 4, TargetId = 10 },
+                new() { SourceId = 4, TargetId = 11 }
+            });
+            var mover = new RecordingMoveBookFiles
+            {
+                DestinationFactory = file => $"/books/Joe/part-{file.Part}-of-{file.PartCount}{Path.GetExtension(file.Path)}"
+            };
+            var service = CreateService(author, mediaFiles, mover, new RecordingEventAggregator(),
+                configService: config.Object, legacyIdentityMapService: identities.Object);
+
+            var preview = service.GetRenamePreviews(author.Id, "ebook").Single();
+            Assert.That(preview.NewPath, Is.EqualTo($"/books/Joe/part-{expectedPart}-of-{expectedCount}.epub"));
+            service.Execute(new RenameFilesCommand(author.Id, new List<int> { ebook.Id }));
+            Assert.That(ebook.Path, Is.EqualTo(preview.NewPath));
+            Assert.That(ebook.Part, Is.EqualTo(expectedPart));
+            Assert.That(ebook.PartCount, Is.EqualTo(expectedCount));
+            Assert.That(nativeOnly.PartCount, Is.EqualTo(1));
         }
 
         [Test]

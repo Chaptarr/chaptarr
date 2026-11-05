@@ -111,6 +111,17 @@ Keep captured provider responses and query metadata private. For read-only repla
 disable clients/RSS/notifications, record any reset of transient backoff state,
 and restore task-owned clone databases afterward.
 
+## Bookshelf rename numbering
+
+Migrated rename previews and commands retain source `Part` values and count all
+files belonging to the source edition, including files not selected for rename.
+Media-specific edition copies must be grouped through the legacy identity map;
+keep unmapped target IDs in a separate namespace. Native installs retain their
+normal part assignment. Preserve the source choices for disabled renaming,
+patterns without a part disambiguator and absent release groups. Test filenames
+and bytes after actual commands and
+restart; command completion alone is insufficient.
+
 ## SQLite-heavy local validation
 
 Some Core fixtures create databases under the test output directory and execute
