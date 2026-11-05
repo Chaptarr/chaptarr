@@ -5714,7 +5714,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Indexers/ReleaseController.cs",
-          "line": 188,
+          "line": 189,
           "sourceLine": "throw new NzbDroneClientException(HttpStatusCode.Conflict, $\"Download client rejected release: {message}\");",
           "sourceLineSha256": "89a495280175b1229f04f8631c0679a12bff40b8731f0178d3ce09b37130a789",
           "category": "release-grab-error",
@@ -12074,7 +12074,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Indexers/ReleaseController.cs",
-          "line": 193,
+          "line": 194,
           "sourceLine": "throw new NzbDroneClientException(HttpStatusCode.Conflict, $\"Getting release from indexer failed: {ex.Message}\");",
           "sourceLineSha256": "2c5850ea517242364ee3faf365cd77ea8bd7540e8f5e2e33b3c2807153608165",
           "category": "release-grab-error",
