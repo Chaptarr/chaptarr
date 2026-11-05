@@ -79,6 +79,19 @@ authenticated API cover routes also match source bytes. Original Forms account
 hash retention does not establish browser login; the source-image harness needs
 a writable temporary directory for cookie key storage before that test.
 
+Calling the deployed SeerrNG cover methods exposed a second authentication gap:
+registered `/MediaCoverProxy/{sha256}/{image}` paths returned 401. `1b8865ee`
+adds API authentication only for safe registered raster-image paths. All 104
+focused policy/controller/proxy checks pass. Packaged `8a9908b1` changes the
+offline clones' registered paths to 404 because remote images cannot be fetched;
+it also retains all 40 cached-cover hash matches. A separate synthetic Forms
+installation with no operator data permits HTTPS fetches of an original fixture
+PNG from this public repository. The deployed SeerrNG client returns the exact
+original book PNG and the author's matching original/cached resized rendition.
+Missing/wrong keys, UI access and nonimage requests remain denied. This proves
+the positive proxy/authentication path without enabling egress on real-data
+clones; it does not assert live operator-provider image acceptance.
+
 Synthetic acquisition exposed a persisted-monitoring defect: the release
 specification read an ignored legacy property instead of the stored format flag.
 `5c6ef346` repairs it with eight regressions. `310eae07` retains valid schemeless
@@ -139,4 +152,12 @@ Linux no longer requests a Windows Desktop runtime. A complete Linux x86 archive
 built with clean SDK metadata starts on Debian 12 i386, migrates an empty database
 to 125 and returns `/ping` 200. The same runtime crashes during initialization on
 the desktop's Arch Linux installation; that distribution issue remains open.
-Each result retains its tested revision and bounded scope.
+All ten hosted archive jobs subsequently pass at `8a9908b1` in
+[42005003595](https://github.com/snapetech-org/chaptarrng/actions/runs/42005003595),
+including both ebook and audiobook acquisition/restart rehearsals. Runtime packs
+were reused from the successful producer in `41998364417` after checking trusted
+main provenance and matching producer input Git blobs; application archives were
+built at the current revision. The strict expanded API comparison at `02071e40`
+has 90 cases: 80 pass, seven strict differences, one source error and two expected
+policy differences. All four new catalog cases pass after `2d86b444`. Full CI at
+`8a9908b1` is running. Each result retains its tested revision and bounded scope.

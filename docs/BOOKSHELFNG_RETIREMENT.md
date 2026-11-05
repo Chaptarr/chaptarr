@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-05 UTC
 
-Application candidate `bd23e039` is unpublished. Public hosted runners are
+Application candidate `8a9908b1` is unpublished. Public hosted runners are
 authorized for trusted validation; CodeQL remains disabled.
 
 Fresh, consistent snapshots of both running BookshelfNG `.76` instances have now
@@ -12,16 +12,24 @@ author-metadata reset; `53d76bcc` repairs it, and repeat conversions preserve
 images, links, aliases and genres for all 1,379 and 1,400 managed authors. All
 101 importer fixtures pass. `bd23e039` additionally preserves legacy work release
 dates, selected-edition page counts and file-based percentage responses; 64
-focused book/API checks pass. These response changes still need packaged runtime
-confirmation. See the [operator rehearsal](maintainers/BOOKSHELFNG_OPERATOR_REHEARSAL_2026-11-05.md).
+focused book/API checks pass. Packaged runtime comparisons confirm those response repairs. The legacy
+edition catalog also retains all source editions, original cover URLs and the
+predecessor ownership-loading semantics. See the [operator rehearsal](maintainers/BOOKSHELFNG_OPERATOR_REHEARSAL_2026-11-05.md).
 
 Read-only real-media checks pass for EPUB, KEPUB, AZW3, MOBI, PDF, MP3, M4B and
 M4A; authenticated range downloads match original bytes. This establishes bounded
 read acceptance, not acquisition, write/import or failure-recovery acceptance.
 The two installations retain separate ports, API keys and accounts.
 
-Full public CI and all ten standalone archives passed at `2badb8c2`. Full public
-CI at `69ec4a3d` is running. Installed Linux systemd No/Yes and post-conversion
+Full public CI passed at `69ec4a3d` and `c15d5ac9`; newer full CI
+[42005003606](https://github.com/snapetech-org/chaptarrng/actions/runs/42005003606)
+is running at `8a9908b1`. All ten standalone archives and both synthetic
+ebook/audiobook acquisition/restart rehearsals pass in
+[42005003595](https://github.com/snapetech-org/chaptarrng/actions/runs/42005003595).
+These use the deployed SeerrNG adapter and actual local qBittorrent transfers;
+reading content/audio bytes and source backups are preserved. The packaged
+registered-cover proxy additionally passes actual SeerrNG author/book image
+fetches and authentication boundaries with an original public fixture image. Installed Linux systemd No/Yes and post-conversion
 rollback passed at `8dcd4900`; later changes retain separate focused evidence.
 Revision-specific results are recorded in the [channel acceptance matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
 
