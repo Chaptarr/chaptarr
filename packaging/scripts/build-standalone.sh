@@ -62,6 +62,7 @@ if [[ "$rid" == linux-x86 || "$rid" == freebsd-x64 ]]; then
   restore_sources=(
     "-p:RestoreConfigFile=$custom_nuget_config"
     "-p:RuntimeFrameworkVersion=10.0.12"
+    "-p:ChaptarrExtraPlatformRuntimePacks=true"
   )
 fi
 
