@@ -17,6 +17,7 @@ for rid in linux-x86 freebsd-x64; do
     "$artifact_root/sdk/sdk/10.0.403" \
     "$artifact_root/sdk/packs/Microsoft.NETCore.App.Ref" \
     "$dotnet_root/packs/Microsoft.NETCore.App.Ref" \
+    "$dotnet_root/sdk/10.0.403" \
     "$runtime_source/host/fxr/10.0.12" \
     "$runtime_source/shared/Microsoft.NETCore.App/10.0.12" \
     "$aspnet_source/shared/Microsoft.AspNetCore.App/10.0.12" \
@@ -30,6 +31,11 @@ for rid in linux-x86 freebsd-x64; do
 DOTNET
   chmod 0755 "$dotnet_root/dotnet"
   cp "$dotnet_root/dotnet" "$work/$rid-sdk-dotnet"
+  touch "$dotnet_root/sdk/10.0.403/dotnet.dll"
+  printf 'existing SDK\n' > "$dotnet_root/sdk/10.0.403/sdk.marker"
+  printf 'existing hostfxr\n' > "$dotnet_root/host/fxr/10.0.12/hostfxr.marker"
+  printf 'existing framework\n' > "$dotnet_root/shared/Microsoft.NETCore.App/10.0.12/framework.marker"
+  printf 'existing aspnet\n' > "$dotnet_root/shared/Microsoft.AspNetCore.App/10.0.12/aspnet.marker"
 
   cat > "$runtime_source/dotnet" <<'TARGET_DOTNET'
 #!/usr/bin/env bash
@@ -86,14 +92,14 @@ TARGET_DOTNET
     local expected="$1"
     local path="$2"
     if ! grep -Fxq "$expected" "$path"; then
-      echo "Runtime-pack installation did not add expected content to $path." >&2
+      echo "Runtime-pack installation changed protected content or failed to add the reference pack: $path." >&2
       exit 1
     fi
   }
-  assert_marker "runtime $rid" "$dotnet_root/host/fxr/10.0.12/hostfxr.marker"
-  assert_marker "framework $rid" "$dotnet_root/shared/Microsoft.NETCore.App/10.0.12/framework.marker"
-  assert_marker "aspnet $rid" "$dotnet_root/shared/Microsoft.AspNetCore.App/10.0.12/aspnet.marker"
-  assert_marker "sdk $rid" "$dotnet_root/sdk/10.0.403/sdk.marker"
+  assert_marker "existing hostfxr" "$dotnet_root/host/fxr/10.0.12/hostfxr.marker"
+  assert_marker "existing framework" "$dotnet_root/shared/Microsoft.NETCore.App/10.0.12/framework.marker"
+  assert_marker "existing aspnet" "$dotnet_root/shared/Microsoft.AspNetCore.App/10.0.12/aspnet.marker"
+  assert_marker "existing SDK" "$dotnet_root/sdk/10.0.403/sdk.marker"
   assert_marker "pack $rid" "$dotnet_root/packs/Microsoft.NETCore.App.Ref/pack.marker"
   pack_mtime="$(stat -c '%Y' "$dotnet_root/packs/Microsoft.NETCore.App.Ref/pack.marker")"
   if (( pack_mtime <= 1577836800 )); then
@@ -102,4 +108,17 @@ TARGET_DOTNET
   fi
 done
 
-echo 'Extra-platform runtime packs install without changing existing directory permissions or preserving stale package timestamps.'
+# A wrong ambient DOTNET_ROOT must fail before it can install an SDK into the host.
+missing_root="$work/missing-sdk"
+mkdir -p "$missing_root"
+cp "$work/linux-x86-sdk-dotnet" "$missing_root/dotnet"
+if DOTNETVERSION=10.0.403 bash "$install_script" linux-x86 "$work/linux-x86-artifacts" "$missing_root" >"$work/missing-sdk.log" 2>&1; then
+  echo 'Runtime-pack installation accepted a root without the configured SDK.' >&2
+  exit 1
+fi
+if [[ -d "$missing_root/sdk" || -d "$missing_root/packs" || -d "$missing_root/shared" ]]; then
+  echo 'Rejected SDK root was modified before validation.' >&2
+  exit 1
+fi
+
+echo 'Extra-platform reference packs preserve host runtimes, hostfxr, SDK contents, permissions and current cache timestamps; invalid SDK roots fail before mutation.'

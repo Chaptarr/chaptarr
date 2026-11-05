@@ -34,3 +34,11 @@ Before diagnosing, retrying, or asking Keith about a ChaptarrNG build that needs
 - For local builds, pass `-p:SixLaborsLicenseFile=/home/keith/Documents/code/chaptarrng/sixlabors.lic`; use the Downloads copy if the repository copy is unavailable.
 
 Do not print or expose the key, add `.env.sixlabors` or either `.lic` file to Git, or ask Keith to locate these files unless both license-file paths have been checked and are actually unavailable.
+
+## Extra-platform local builds
+
+Use an explicit task-owned `DOTNET_ROOT` for Linux x86 or FreeBSD archive
+builds, with the pinned SDK already installed. Verify the selected root before
+writing. Target runtimes must come from the local NuGet packs; never unpack
+foreign runtime or hostfxr binaries into a shared build SDK. Preserve existing
+SDKs, native runtimes and shared caches.
