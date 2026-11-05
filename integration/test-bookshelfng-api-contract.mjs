@@ -65,6 +65,24 @@ const changedLegacyField = compareResponses(
 );
 assert.deepEqual(changedLegacyField.mismatchPaths, ["/fields/0/value"]);
 
+const preset = (name, url) => ({
+  name,
+  implementation: "Newznab",
+  fields: [{ name: "baseUrl", value: url }],
+});
+const legacyPresets = { presets: [preset("A", "https://a.example"), preset("B", "https://b.example")] };
+const extendedPresets = { presets: [preset("New", "https://new.example"), ...legacyPresets.presets] };
+assert.deepEqual(compareResponses(legacyPresets, extendedPresets).mismatchPaths, []);
+assert.deepEqual(compareResponses(legacyPresets, extendedPresets).additivePaths, ["/presets/0"]);
+assert.deepEqual(
+  compareResponses(legacyPresets, { presets: [preset("A", "https://changed.example"), legacyPresets.presets[1]] }).mismatchPaths,
+  ["/presets/0/fields/0/value"],
+);
+assert.deepEqual(
+  compareResponses(legacyPresets, { presets: [legacyPresets.presets[1]] }).mismatchPaths,
+  ["/presets/name:A"],
+);
+
 const targetCollectionExtension = compareResponses(
   [{ id: 1 }, { id: 2 }],
   [{ id: 1 }, { id: 2 }, { id: 3 }],
@@ -175,4 +193,4 @@ assert.deepEqual(
   ["/0/fields/0/value/1"],
 );
 
-console.log("BookshelfNG API contract comparator: 12 checks passed");
+console.log("BookshelfNG API contract comparator: 15 checks passed");

@@ -124,7 +124,8 @@ export function annotateProviderMismatchDetails(mismatchDetails, targetProviders
 function identityKey(value, path) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
-  if (path.endsWith("/fields") && typeof value.name === "string") {
+  if ((path.endsWith("/fields") || path.endsWith("/presets")) &&
+      typeof value.name === "string") {
     return `name:${value.name}`;
   }
 

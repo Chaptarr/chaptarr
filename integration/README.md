@@ -19,7 +19,9 @@ the source image digest and image ID,
 target commit and image ID, source database hash, per-case response hashes, and
 JSON mismatch paths. Legacy fields, saved values, selector values, and collection
 identity must remain equivalent; ChaptarrNG-only fields and records are reported
-as additive. Objects with IDs are matched by ID and provider fields by name.
+as additive. Objects with IDs are matched by ID, provider fields by name, and
+provider presets by name. Adding a preset does not shift comparisons for old
+presets; removing an old preset or changing its saved field values still fails.
 Provider schema entries are matched by stable implementation name, with missing
 implementations kept visible and schema ordering reported as presentation
 evidence instead of comparing shifted entries by array position.
