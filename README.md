@@ -28,47 +28,22 @@ For local MCP access, see the [SnapeTech MCP integration guide](docs/integration
 
 ### BookshelfNG migration status
 
-**Status checked: 2026-11-04 UTC.** BookshelfNG `0.4.21.76` and ChaptarrNG
-`v0.9.977` remain the latest published releases; the local `0.9.978` candidate
-is unpublished. The current code head is `d3a67c58`. Trusted build and
-validation jobs may use compatible public GitHub-hosted runners again; private
-ephemeral JIT remains available for jobs that need it. See
-[`AGENTS.md`](AGENTS.md) for runner and release policy.
+**Status checked: 2026-11-05 UTC.** Application candidate `2badb8c2` is
+unpublished. BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest
+public releases. Trusted validation may use compatible public GitHub-hosted
+runners or private ephemeral JIT; see [`AGENTS.md`](AGENTS.md).
 
-The focused public Windows handoff run
-[#41785474409](https://github.com/snapetech-org/chaptarrng/actions/runs/41785474409)
-passed on `d12798d1`: full .NET tests, installer build and SQLite fingerprint,
-service upgrade/rollback, selected data-directory preservation, and the
-installed BookshelfNG `.76` to exact-candidate Chocolatey handoff, including
-manual defer, injected rollback, and automatic migration.
+Current fixes preserve the legacy API base path and indexer flags, creation
+defaults, omitted provider settings during conversion, retained login
+credentials, and Plex's migrated global library-update switch. Focused checks
+and an installed Linux service recovery rehearsal pass. The full current-source
+campaign is tracked in the [channel acceptance record](docs/maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
 
-Full public Build run
-[#41789426720](https://github.com/snapetech-org/chaptarrng/actions/runs/41789426720)
-at `d12798d1` passed Linux and macOS build/test/artifact jobs, PostgreSQL
-migration smoke, and the standard Docker build. Windows exposed a test-only
-line-ending mismatch while hashing the JSON source registry on a CRLF checkout.
-Commit `d3a67c58` normalizes text line endings before hashing and adds an
-LF/CRLF regression test. The full public rerun
-[#41792679639](https://github.com/snapetech-org/chaptarrng/actions/runs/41792679639)
-passed on `d3a67c58`: Linux, Windows, macOS, PostgreSQL migration smoke, and
-the standard Docker build all succeeded. The Windows job also passed the
-installer fingerprint, service upgrade/rollback, selected data-directory,
-and installed Chocolatey `.76` automatic migration checks.
-
-The current Helm installed handoff
-[#41756992768](https://github.com/snapetech-org/chaptarrng/actions/runs/41756992768)
-passed on `0583bc8c`: populated automatic migration, Hardcover edition ID and
-narrator preservation, health and database checks, retained source backup,
-chart rollback Job, and BookshelfNG recovery with matching database, config,
-and canary fingerprints. The separate Intel/ARM64 installed macOS acceptance
-run [#41761249985](https://github.com/snapetech-org/chaptarrng/actions/runs/41761249985)
-passed on `8b26fa3e`, covering No, headless Manual, Yes, health, source backup,
-and failed-start rollback.
-
-BookshelfNG remains in service. Representative operator-data conversion and
-rollback, live provider and real-media behavior, every installed channel,
-external delivery, and operator acceptance remain open. No release, package
-feed, image alias, compatibility bridge, or production cutover is authorized.
+The strict API comparison still reports differences. Representative operator
+data, real media and live provider fulfillment, complete SeerrNG acquisition,
+headed UI acceptance, external channel delivery, and production acceptance
+remain open. Keep BookshelfNG operational and backed up. These candidate tests
+do not authorize publication, a compatibility bridge, cutover, or retirement.
 
 Migration uses the normal ChaptarrNG application and one standard image for
 fresh and migrated installations. The container detects legacy SQLite and

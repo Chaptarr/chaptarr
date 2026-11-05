@@ -9,13 +9,57 @@ Earlier instructions in this report to replay on private JIT are superseded;
 runner choice does not close installed-channel, external-delivery, or operator
 acceptance gates.
 
-## Exact-head campaign update — 2026-11-05
+## Current campaign — 2026-11-05
+
+Application candidate `2badb8c2` includes the legacy API base-path/flag repairs,
+provider creation defaults, source-omitted provider defaults, retained Plex
+master-switch behavior and native settings, and original-author-cover fallback.
+It is unpublished. CodeQL remains disabled; trusted public runners are authorized.
+
+| Evidence | Revision and result |
+| --- | --- |
+| Provider conversion | `842ff7c9`: 93/93 importer fixtures pass, including sparse settings, effective categories/tags, MAM defaults and Plex protocol. Explicit values remain intact. |
+| Plex API and notifications | `8dcd4900`: 34/34 focused checks pass. Actual packaged HTTP tests preserve the disabled master switch and source HTTP protocol, save both switch states through native requests, read them through both APIs, and retain the masked token. |
+| Authentication | Source `.76` and migrated target pass valid Basic UI login (200), wrong/missing credentials (401), and API requests without API keys (401). The existing password is retained and upgraded to a salted target hash at login. Synthetic credentials only. |
+| Linux x64 systemd installed handoff | Archive `8dcd4900`, SHA-256 `d18968542acf0c4474bd6acfee667a92c36cca343b4605c3e07e2c8ad54df45c`: No retains the active source; Yes converts and serves health; injected failure after schema-125 conversion and HTTP 200 restores healthy schema-158 BookshelfNG and retains the failed target. Both databases pass integrity/FK checks; source counts 4/6/4 become target 4/9/4. |
+| Alpine/musl x64 runtime | Pinned `.76` Alpine 3.24.2 container runs the self-contained `8dcd4900` archive: conversion, retained source, account login, API key/port/auth settings, media canary, integrity and FKs pass. Updating this disposable installation to `2badb8c2` passes authentication and cover HTTP checks. This is runtime acceptance, not an Alpine service/package handoff. |
+| Cover behavior | `2badb8c2`: 60/60 focused cover checks pass after two missing/empty-rendition regressions reproduced the old 404. Packaged HTTP now serves the original JPEG for the missing author rendition. Production ImageResizer decodes/resizes 80×120 to 40×60 in the Alpine runtime. FreeBSD still serves originals without native resizing. |
+| Strict API differential | [41972960044](https://github.com/snapetech-org/chaptarrng/actions/runs/41972960044), `2badb8c2`: 86 cases, 76 pass, 7 strict failures, 1 inconclusive source error, 2 expected policy differences. Three write/readback cases and three valid pages pass. Custom-format labels/help/order are separately reported presentation differences; persisted values and option IDs remain strict. |
+| macOS standalone | [41971294040](https://github.com/snapetech-org/chaptarrng/actions/runs/41971294040), `8dcd4900`: x64 and arm64 No/Manual/Yes, health, source backup and failed-start rollback pass. |
+| Helm installed handoff | [41971352113](https://github.com/snapetech-org/chaptarrng/actions/runs/41971352113), `8dcd4900`: pass. |
+| Fedora 44 RPM installed handoff | [41971349047](https://github.com/snapetech-org/chaptarrng/actions/runs/41971349047), `8dcd4900`: pass. |
+| Full current-source CI | [41972954789](https://github.com/snapetech-org/chaptarrng/actions/runs/41972954789), `2badb8c2`: in progress; no completed-head claim. |
+| All ten standalone archives | [41973070848](https://github.com/snapetech-org/chaptarrng/actions/runs/41973070848), `2badb8c2`: queued/running; building payloads does not establish installed handoff for every RID. |
+
+The seven strict API failures concern development/host configuration,
+download-client/indexer/notification schemas, localization and system status.
+They include identity/runtime values, metadata endpoint, absent public default
+passwords, write-only host passwords, updated provider URLs and added capabilities.
+They remain visible and require disposition; no blanket parity waiver is applied.
+One source paged request fails with HTTP 500 when an author has no monitored
+editions; its valid-page counterparts are tested independently.
+
+Evidence is retained on `kspld0` under
+`/mnt/disks/scratch/task-worktrees/chaptarrng-parity-handoffs-20261104/`, including
+`linux-systemd-a8f5af1b/guest-evidence-8dcd4900`, API JSON, TRX files, runtime logs,
+archive checksums and `skia-musl-probe-2badb8c2`. The systemd VM is powered off;
+task HTTP containers and networks have been removed. Its retained overlay is
+`/var/tmp/chaptarrng-systemd-a8f5af1b/system.qcow2`.
+
+Representative operator appdata/media and live-provider/SeerrNG fulfillment are
+not supplied by these synthetic tests. Headed UI acceptance is blocked because
+all three Desktop Pool v2 slots are quarantined for other tasks' artifact-export
+recovery; no session was taken over or reset. External feeds/platform delivery
+and production acceptance remain open. No publication, bridge activation,
+cutover or retirement follows from these results.
+
+## Earlier campaign — application `0d711ce1`, 2026-11-05
 
 Application head 0d711ce1a9828675e879b2ba97f36fc3b9544188 passed the public full Build [41955009417](https://github.com/snapetech-org/chaptarrng/actions/runs/41955009417): Linux x64 4,997 passed / 26 skipped, macOS Intel 4,994 / 29, and Windows x64 4,957 / 33. The Linux M4B smoke passed 10/10. PostgreSQL migration and Docker image jobs passed. Windows passed the installer service upgrade/rollback, selected data-directory, and public BookshelfNG 0.4.21.76 Chocolatey No/Yes/rollback acceptance.
 
 The exact-head standalone macOS handoff [41955575531](https://github.com/snapetech-org/chaptarrng/actions/runs/41955575531) passed on x64 and arm64. Exact-head Helm [41955974821](https://github.com/snapetech-org/chaptarrng/actions/runs/41955974821), Fedora 44 RPM [41956031349](https://github.com/snapetech-org/chaptarrng/actions/runs/41956031349), and legacy distribution/runner contracts [41956034314](https://github.com/snapetech-org/chaptarrng/actions/runs/41956034314) passed. Standalone asset run [41956084789](https://github.com/snapetech-org/chaptarrng/actions/runs/41956084789) passed for all ten runtime archives, including Linux x86 and FreeBSD. This verifies payload creation and checksums, not installed handoff for every runtime.
 
-The API differential [41955732272](https://github.com/snapetech-org/chaptarrng/actions/runs/41955732272) remains a strict failure: 67/79 matched, 9 strict mismatches, 1 inconclusive source error, and 2 expected policy differences. The three write/readback cases passed. The inconclusive paged-books case returns HTTP 500 in BookshelfNG when the fixture author has no monitored editions and HTTP 200 in ChaptarrNG. Review found product identity, build/runtime/OS, localization, help text, schema ordering, metadata endpoint, provider defaults/catalog, and the target's write-only host-password response among the strict differences. The populated fixture's saved MAM indexer reads back as expected. Plex's former global `updateLibrary=false` setting is mapped to disabled per-event triggers; ChaptarrNG also supports delete-event triggers unavailable in the source. These are not comparator passes or blanket parity waivers. The test sample does not establish exhaustive route or command parity.
+The API differential [41955732272](https://github.com/snapetech-org/chaptarrng/actions/runs/41955732272) remains a strict failure: 67/79 matched, 9 strict mismatches, 1 inconclusive source error, and 2 expected policy differences. The three write/readback cases passed. The inconclusive paged-books case returns HTTP 500 in BookshelfNG when the fixture author has no monitored editions and HTTP 200 in ChaptarrNG. Review found product identity, build/runtime/OS, localization, help text, schema ordering, metadata endpoint, provider defaults/catalog, and the target's write-only host-password response among the strict differences. The populated fixture's saved MAM indexer reads back as expected. The initial review assumed migration 087 covered Plex's global switch; later investigation found that BookshelfNG rows are imported after that migration. The current-source correction is recorded above. ChaptarrNG also supports delete-event triggers unavailable in the source. These are not comparator passes or blanket parity waivers. The test sample does not establish exhaustive route or command parity.
 
 These hosted runs validate the exact source candidate without publishing packages or changing any installed channel. Representative operator-data conversion/rollback, live provider and media fulfillment, external feed/update delivery, and production acceptance remain open. Older JIT-only routing instructions in the dated entries below are superseded by the runner-policy update above; historical evidence still has the scope and candidate described at its checkpoint.
 

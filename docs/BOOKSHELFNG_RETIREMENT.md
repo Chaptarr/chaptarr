@@ -1,6 +1,29 @@
 # BookshelfNG retirement status
 
-## Current status — 2026-11-04 UTC
+## Current status — 2026-11-05 UTC
+
+Application candidate `2badb8c2` is unpublished. Public release tags were checked
+through GitHub: BookshelfNG `v0.4.21.76` and ChaptarrNG `v0.9.977`. Public hosted
+runners are authorized for trusted validation; CodeQL remains disabled.
+
+The current source repairs legacy API base-path and flag responses, provider
+creation defaults, omitted source provider defaults during migration, and Plex's
+retained global update switch in both API and migrated native settings. All 93
+importer fixtures and 34 focused Plex/API checks pass. The retained account passes
+actual HTTP authentication before and after migration. Installed Linux systemd
+No/Yes and post-conversion rollback passed at `8dcd4900`; the later cover repair has separate packaged HTTP and focused regression evidence.
+
+Current-source full CI and channel results are recorded in the
+[channel acceptance matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
+The strict differential is still red; known presentation, identity, security and
+capability differences remain visible rather than being treated as blanket
+waivers. Representative operator data/media, live provider and complete SeerrNG
+fulfillment, headed UI, external distribution delivery and production acceptance
+remain open. The desktop pool's three slots are quarantined for other tasks'
+artifact-export recovery, so no headed UI pass is claimed. Publication, bridge
+activation, cutover and retirement remain unauthorized.
+
+## Historical checkpoint — 2026-11-04 UTC
 
 At application-code head `d3a67c58`; later main commits are runner policy,
 acceptance-workflow, test, and documentation updates. BookshelfNG `0.4.21.76`
