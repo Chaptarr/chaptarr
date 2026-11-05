@@ -47,6 +47,14 @@ consumers exit. Hosted ARM uses its native runner; x86 uses a native 32-bit Debi
 container. Publication, external channel acceptance and production cutover remain
 separate. Headed UI still lacks Desktop Pool capacity.
 
+A separate Windows archive acceptance workflow is being added for x64 and x86.
+It reuses retained archives only after verifying their main-branch producer job,
+source ancestry and unchanged application/build sources. PE architecture checks
+precede the documented preview/defer, explicit migration, healthy startup and
+explicit rollback after a forced port conflict. This is separate from the
+existing Chocolatey and migration-installer service tests; no Windows archive
+runtime pass is claimed until that workflow executes.
+
 ## Current campaign — 2026-11-05
 
 Application candidate `3651598e` includes the legacy API base-path/flag repairs,
