@@ -170,6 +170,14 @@ namespace Chaptarr.Core.Test.Datastore
             Assert.That(ReadConfigValue(sourceConnectionString, "BookshelfNGMigrationOutcome"), Is.EqualTo("converted"));
             Assert.That(ReadConfigValue(sourceConnectionString, "BookImportMinimumMatchPercent"), Is.EqualTo("70"));
             Assert.That(ReadConfigValue(sourceConnectionString, "ExperienceMode"), Is.EqualTo("simple"));
+            Assert.That(ReadScalarInt(sourceConnectionString, "SELECT COUNT(*) FROM \"NamingConfig\";"), Is.EqualTo(1));
+            Assert.That(ReadScalarInt(sourceConnectionString, "SELECT \"Id\" FROM \"NamingConfig\";"), Is.EqualTo(1));
+            Assert.That(ReadScalarInt(sourceConnectionString, "SELECT \"ColonReplacementFormat\" FROM \"NamingConfig\";"), Is.EqualTo(4));
+            Assert.That(ReadScalarString(sourceConnectionString, "SELECT \"AuthorFolderFormat\" FROM \"NamingConfig\";"), Is.EqualTo("{Author Name}"));
+            Assert.That(ReadScalarString(sourceConnectionString, "SELECT \"StandardBookFormat\" FROM \"NamingConfig\";"), Is.EqualTo("{Book Title}/{Author Name} - {Book Title}{ (PartNumber)}"));
+            Assert.That(ReadScalarInt(sourceConnectionString, "SELECT \"EbookColonReplacementFormat\" FROM \"NamingConfig\";"), Is.EqualTo(4));
+            Assert.That(ReadScalarString(sourceConnectionString, "SELECT \"EbookAuthorFolderFormat\" FROM \"NamingConfig\";"), Is.EqualTo("{Author Name}"));
+            Assert.That(ReadScalarString(sourceConnectionString, "SELECT \"EbookStandardBookFormat\" FROM \"NamingConfig\";"), Is.EqualTo("{Book Title}/{Author Name} - {Book Title}{ (PartNumber)}"));
             Assert.That(ReadConfigValue(sourceConnectionString, "HardcoverApiToken"), Is.EqualTo("pg-fixture-token"));
             Assert.That(ReadConfigValue(sourceConnectionString, "HardcoverAuth"), Is.EqualTo("Bearer pg-fixture-token"));
             Assert.That(ReadConfigValue(sourceConnectionString, "MetadataServerUrl"), Is.EqualTo("https://bookshelf-metadata.example/catalog"));
@@ -573,6 +581,15 @@ namespace Chaptarr.Core.Test.Datastore
             using var command = connection.CreateCommand();
             command.CommandText = sql; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- callers pass fixed test queries; any dynamic values use parameters.
             return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static string ReadScalarString(string connectionString, string sql)
+        {
+            using var connection = new NpgsqlConnection(connectionString);
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = sql; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- callers pass fixed test queries; any dynamic values use parameters.
+            return command.ExecuteScalar()?.ToString();
         }
 
         private static long ReadScalarLong(string connectionString, string sql)

@@ -3214,10 +3214,17 @@ namespace NzbDrone.Core.Datastore
 
         private static object NormalizeTargetValue(DbConnection target, ColumnInfo targetColumn, object value)
         {
-            if (value == null || value == DBNull.Value || target is not NpgsqlConnection)
+            if (value == null || value == DBNull.Value)
             {
-                return value ?? DBNull.Value;
+                return DBNull.Value;
             }
+
+            if (value.GetType().IsEnum)
+            {
+                value = Convert.ChangeType(value, Enum.GetUnderlyingType(value.GetType()), CultureInfo.InvariantCulture);
+            }
+
+            if (target is not NpgsqlConnection) return value;
 
             switch (targetColumn.DataType)
             {
