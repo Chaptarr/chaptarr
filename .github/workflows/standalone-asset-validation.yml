@@ -292,6 +292,13 @@ jobs:
         python3 integration/run-acquisition-smoke.py \
           --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
           --output "$RUNNER_TEMP/acquisition-evidence"
+        if ! command -v ffmpeg >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+        fi
+        python3 integration/run-acquisition-smoke.py --media-type audiobook \
+          --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
+          --output "$RUNNER_TEMP/acquisition-audio-evidence"
 
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: always() && matrix.rid == 'linux-musl-x64'
@@ -300,6 +307,8 @@ jobs:
         path: |
           ${{ runner.temp }}/acquisition-evidence/*.json
           ${{ runner.temp }}/acquisition-evidence/*.log
+          ${{ runner.temp }}/acquisition-audio-evidence/*.json
+          ${{ runner.temp }}/acquisition-audio-evidence/*.log
           ${{ runner.temp }}/release-assets/ChaptarrNG-0.0.0-linux-musl-x64.tar.gz.sha256
         retention-days: 7
         if-no-files-found: error

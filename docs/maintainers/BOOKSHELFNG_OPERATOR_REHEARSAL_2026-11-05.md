@@ -92,9 +92,13 @@ application: source-158 conversion, actual deployed SeerrNG adapter request,
 Torznab search/grab, real local qBittorrent transfer, normal completed-download
 import, ebook-only availability and history, unchanged reading content with
 configured series tags, restart availability, and retained source schema/row
-equality. Both databases pass integrity/FK checks. This uses original synthetic
-EPUB content and isolated loopback peers; it does not establish audiobook,
-live-tracker, Usenet or SeerrNG web-request database fulfillment.
+equality. Both databases pass integrity/FK checks. A second format-specific run
+also passes with an original synthesized MP3: scoped audiobook request, native
+profile/edition identity, search/grab, real transfer, audiobook-only availability,
+grab/import history, restart, exact imported audio bytes, and source-backup
+schema/row integrity. The generalized ebook path passes again afterward. These
+use isolated loopback peers; they do not establish live trackers, Usenet, other
+audio formats or SeerrNG web-request database fulfillment.
 
 ## Real-media reads
 

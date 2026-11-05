@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Isolated migration -> Seerr adapter -> Torznab -> real qBittorrent -> EPUB import.
+"""Isolated migration -> Seerr adapter -> Torznab -> real qBittorrent -> media import.
 
 Requires an extracted Linux musl x64 candidate and a NEW task output directory.
+Audiobook fixtures also require ffmpeg to synthesize the original MP3 tone.
 No host ports, live services, production credentials, or external torrent traffic.
 Evidence and synthetic state remain in the output directory on success/failure.
 """
@@ -19,6 +20,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--candidate', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--qbittorrent-image', default='chaptarrng-acquisition-qbittorrent:20261105')
+parser.add_argument('--media-type', choices=['ebook', 'audiobook'], default='ebook')
 args = parser.parse_args()
 candidate = args.candidate.resolve()
 assert (candidate / 'Chaptarr').is_file()
@@ -98,7 +100,7 @@ def logical_database_hash(database):
         # rows while making the comparison independent of physical row order.
         return hashlib.sha256('\n'.join(sorted(connection.iterdump())).encode()).hexdigest()
 
-command(['python3', fixtures / 'prepare.py', root])
+command(['python3', fixtures / 'prepare.py', root, args.media_type])
 source_hash = logical_database_hash(root / 'config/readarr.db')
 shutil.copyfile(fixtures / 'provider.mjs', root / 'provider/server.mjs')
 (root / 'provenance.json').write_text(json.dumps({
@@ -128,7 +130,7 @@ try:
             assert connection.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
             assert connection.execute('SELECT MAX(Version) FROM VersionInfo').fetchone()[0] == version
-    (root / 'result.json').write_text(json.dumps({'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True}))
-    print('PASS: migration, Seerr adapter request, real local torrent transfer, EPUB import and restart availability. Evidence:', root)
+    (root / 'result.json').write_text(json.dumps({'mediaType': args.media_type, 'migration': True, 'seerrAdapterRequest': True, 'qBittorrentTransfer': True, 'import': True, 'restartAvailability': True, 'contentPreserved': True}))
+    print('PASS: migration, Seerr adapter request, real local torrent transfer,', args.media_type, 'import and restart availability. Evidence:', root)
 finally:
     stop_stack('final-run')
