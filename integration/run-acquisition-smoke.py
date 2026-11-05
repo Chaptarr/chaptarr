@@ -94,13 +94,9 @@ def seerr(script, log, *arguments):
 
 def logical_database_hash(database):
     with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as connection:
-        tables = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-        contents = []
-        for name, schema in tables:
-            quoted = '"' + name.replace('"', '""') + '"'
-            rows = sorted(connection.execute('SELECT * FROM ' + quoted).fetchall(), key=repr)
-            contents.append((name, schema, rows))
-        return hashlib.sha256(repr(contents).encode()).hexdigest()
+        # SQLite quotes identifiers/values itself. Sorting preserves duplicate
+        # rows while making the comparison independent of physical row order.
+        return hashlib.sha256('\n'.join(sorted(connection.iterdump())).encode()).hexdigest()
 
 command(['python3', fixtures / 'prepare.py', root])
 source_hash = logical_database_hash(root / 'config/readarr.db')

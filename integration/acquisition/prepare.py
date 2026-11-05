@@ -31,9 +31,12 @@ def bencode(x):
  if isinstance(x,list):return b'l'+b''.join(map(bencode,x))+b'e'
  return b'd'+b''.join(bencode(k)+bencode(v) for k,v in sorted(x.items()))+b'e'
 content=payload.read_bytes();piece=16384
-info={'name':name,'length':len(content),'piece length':piece,'pieces':b''.join(hashlib.sha1(content[n:n+piece]).digest() for n in range(0,len(content),piece)),'private':1}
+# BitTorrent v1 wire-format piece/info hashes require SHA-1; never used as signatures.
+# nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+info={'name':name,'length':len(content),'piece length':piece,'pieces':b''.join(hashlib.sha1(content[n:n+piece], usedforsecurity=False).digest() for n in range(0,len(content),piece)),'private':1}
 torrent=bencode({'info':info,'created by':'ChaptarrNG isolated acceptance'});(p/'provider/fixture.torrent').write_bytes(torrent)
-(p/'manifest.json').write_text(json.dumps({'filename':name,'size':len(content),'sha256':hashlib.sha256(content).hexdigest(),'infoHash':hashlib.sha1(bencode(info)).hexdigest()},indent=2))
+# nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+(p/'manifest.json').write_text(json.dumps({'filename':name,'size':len(content),'sha256':hashlib.sha256(content).hexdigest(),'infoHash':hashlib.sha1(bencode(info), usedforsecurity=False).hexdigest()},indent=2))
 for kind,web,peer,path in [('seed',8081,6881,'/seed'),('download',8080,6882,'/downloads')]:
  (p/('qbit-'+kind)/'qBittorrent/config/qBittorrent.conf').write_text('[LegalNotice]\nAccepted=true\n[BitTorrent]\nSession\\DefaultSavePath='+path+'\nSession\\Port='+str(peer)+'\nSession\\DHTEnabled=false\nSession\\LSDEnabled=false\nSession\\PeXEnabled=false\n[Preferences]\nWebUI\\LocalHostAuth=false\nWebUI\\Address=127.0.0.1\nWebUI\\Port='+str(web)+'\n')
 print('Isolated schema-158 source, provider/client settings, original EPUB and valid torrent prepared.')
