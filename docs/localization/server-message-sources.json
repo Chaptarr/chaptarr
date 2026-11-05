@@ -1379,7 +1379,7 @@
       "callsites": [
         {
           "file": "src/NzbDrone.Core/Notifications/Plex/Server/PlexServer.cs",
-          "line": 228,
+          "line": 240,
           "sourceLine": "throw new BadRequestException(\"QueryParam pinId invalid.\");",
           "sourceLineSha256": "2ead9f0be70da6694d7043127b4fd53e89e8ce4fb087b685e851e38a80d43801",
           "category": "api-error",
@@ -9185,7 +9185,7 @@
         },
         {
           "file": "src/NzbDrone.Core/Notifications/Plex/Server/PlexServer.cs",
-          "line": 215,
+          "line": 227,
           "sourceLine": "throw new BadRequestException(\"QueryParam callbackUrl invalid.\");",
           "sourceLineSha256": "56c521eeba8919bae70369b6da72bae2ddd39cb13fbfe7d493b135f4525bc28c",
           "category": "api-error",

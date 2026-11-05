@@ -524,6 +524,13 @@
           "kind": "Label",
           "sourceLine": "[FieldDefinition(0, Label = \"NotificationsSettingsUpdateLibrary\", Type = FieldType.Checkbox, HelpText = \"provider.field.fb554e296f219\")]",
           "sourceLineSha256": "8de541f7e1ede7ba7f61b88dd7ff3f3b33f093877b4acc173989c3ddf9140c67"
+        },
+        {
+          "file": "src/Chaptarr.Api.V1/ProviderResource.cs",
+          "line": 101,
+          "kind": "Label",
+          "sourceLine": "[FieldDefinition(10, Label = \"NotificationsSettingsUpdateLibrary\", Type = FieldType.Checkbox)]",
+          "sourceLineSha256": "2f29ff616cab007a27469c6334638e21f6d1603bce2b2ea8c3a1a161465ffc16"
         }
       ],
       "protectedLiterals": []
@@ -8157,11 +8164,11 @@
     }
   ],
   "counts": {
-    "total": 813,
+    "total": 814,
     "existingId": 168,
-    "changedFiles": 68,
+    "changedFiles": 69,
     "mappedDistinctSources": 409,
     "newSourceKeys": 393,
-    "mappedCallsites": 645
+    "mappedCallsites": 646
   }
 }
