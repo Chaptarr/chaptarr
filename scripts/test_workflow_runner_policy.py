@@ -143,7 +143,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         job_environment = differential.split("    steps:", 1)[0]
         self.assertNotIn("runner.temp", job_environment)
         run_start = source.index(
-            "      - name: Run read/write API differential against identical disposable fixtures"
+            "      - name: Run read/write API differential"
         )
         upload_start = source.index(
             "      - name: Upload sanitized differential results and startup logs",
