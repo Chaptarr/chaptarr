@@ -19,6 +19,40 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class EditionCatalogResourceFixture
     {
+        [TestCase(true)]
+        [TestCase(false)]
+        public void missing_work_catalog_should_preserve_the_legacy_empty_response(bool legacy)
+        {
+            var identities = new Mock<IBookshelfLegacyIdentityMapService>();
+            identities.Setup(service => service.ResolveBookIds(It.IsAny<IEnumerable<int>>(), null))
+                .Returns(new List<int> { 999 });
+            identities.Setup(service => service.GetMappingsByTargetIds("Edition", It.IsAny<IEnumerable<int>>()))
+                .Returns(new List<BookshelfLegacyIdentityMapEntry>());
+            var editions = new Mock<IEditionService>();
+            editions.Setup(service => service.GetEditionsByBook(It.IsAny<IEnumerable<int>>()))
+                .Returns(new List<Edition>());
+            var controller = new BookController(
+                null, new Mock<IBookService>().Object, null, editions.Object, null, null, null, null, null,
+                new Mock<IMediaCoverProxy>().Object, null, null, null, null, null, null, null, null, null, null,
+                bookshelfLegacyIdentityMapService: identities.Object)
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
+            controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("hc", null, string.Empty, isBookshelfCompatibility: legacy);
+
+            var result = controller.GetEditionCatalog(999);
+
+            if (legacy)
+            {
+                Assert.That(result.Value, Is.Empty);
+            }
+            else
+            {
+                Assert.That(result.Result, Is.TypeOf<NotFoundResult>());
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void legacy_catalog_should_include_both_formats_and_project_split_edition_ids_once(bool filesAlreadyLoaded)

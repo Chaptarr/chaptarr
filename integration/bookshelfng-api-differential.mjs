@@ -335,6 +335,7 @@ const cases = [
   ["books.editions.audiobook", "/book/31/editions/catalog"],
   ["books.editions.ebook", "/book/32/editions/catalog"],
   ["books.editions.empty", "/book/33/editions/catalog"],
+  ["books.editions.missing", "/book/999999/editions/catalog"],
   ["series.list", "/series"],
   ["history.list", "/history"],
   ["root-folders.list", "/rootFolder"],

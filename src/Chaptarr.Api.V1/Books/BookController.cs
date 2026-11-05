@@ -1273,16 +1273,16 @@ namespace Chaptarr.Api.V1.Books
         [HttpGet("{id:int}/editions/catalog")]
         public ActionResult<List<EditionCatalogResource>> GetEditionCatalog(int id, [FromQuery] string mediaType = null)
         {
-            var book = ResolveBookForApi(id, mediaType);
-            if (book == null)
-            {
-                return NotFound();
-            }
-
             var facadeContext = HttpContext?.GetReadarrFacadeContext();
             if (facadeContext?.IsBookshelfCompatibility == true && string.IsNullOrWhiteSpace(mediaType))
             {
                 return GetBookshelfEditionCatalog(ResolveBookIdsForApi(new[] { id }), facadeContext);
+            }
+
+            var book = ResolveBookForApi(id, mediaType);
+            if (book == null)
+            {
+                return NotFound();
             }
 
             id = book.Id;
