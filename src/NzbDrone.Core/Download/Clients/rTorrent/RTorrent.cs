@@ -28,7 +28,9 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
         private readonly IRTorrentProxy _proxy;
         private readonly IRTorrentDirectoryValidator _rTorrentDirectoryValidator;
         private readonly IDownloadSeedConfigProvider _downloadSeedConfigProvider;
-        private readonly string _imported_view = string.Concat(BuildInfo.AppName.ToLower(), "_imported");
+        private string ImportedView => _configService.BookshelfNGDatabaseMigrated
+            ? "readarr_imported"
+            : string.Concat(BuildInfo.AppName.ToLowerInvariant(), "_imported");
 
         public RTorrent(IRTorrentProxy proxy,
                         ITorrentFileInfoReader torrentFileInfoReader,
@@ -81,13 +83,13 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
             // Set post-import view
             try
             {
-                _proxy.PushTorrentUniqueView(downloadClientItem.DownloadId.ToLower(), _imported_view, Settings);
+                _proxy.PushTorrentUniqueView(downloadClientItem.DownloadId.ToLower(), ImportedView, Settings);
             }
             catch (Exception ex)
             {
                 _logger.Warn(ex,
                     "Failed to set torrent post-import view \"{0}\" for {1} in rTorrent.",
-                    _imported_view,
+                    ImportedView,
                     downloadClientItem.Title);
             }
         }
@@ -143,7 +145,7 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
 
         public override string Name => "rTorrent";
 
-        public override ProviderMessage Message => new ProviderMessage($"rTorrent will not pause torrents when they meet the seed criteria. Chaptarr can remove torrents after seeding is done only when Remove Completed is enabled and the torrent is not protected by Preserve torrents in client or Post-Import Category. After importing it will also set \"{_imported_view}\" as an rTorrent view, which can be used in rTorrent scripts to customize behavior.", ProviderMessageType.Info);
+        public override ProviderMessage Message => new ProviderMessage($"rTorrent will not pause torrents when they meet the seed criteria. Chaptarr can remove torrents after seeding is done only when Remove Completed is enabled and the torrent is not protected by Preserve torrents in client or Post-Import Category. After importing it will also set \"{ImportedView}\" as an rTorrent view, which can be used in rTorrent scripts to customize behavior.", ProviderMessageType.Info);
 
         public override IEnumerable<DownloadClientItem> GetItems()
         {
