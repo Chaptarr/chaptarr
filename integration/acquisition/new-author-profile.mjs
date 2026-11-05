@@ -5,6 +5,8 @@ const checks = [];
 for (const [foreignId, profileId, native] of [['99', 2, false], ['100', 4, true]]) {
   const headers = { 'X-Api-Key': 'synthetic-e2e-admin-key-20261105', 'Content-Type': 'application/json',
     ...(native ? { 'X-ChaptarrNG-Client': 'native' } : {}) };
+  // Synthetic keys over shared loopback in a network-none test namespace.
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
   const posted = await fetch(base + '/author', { method: 'POST', headers, body: JSON.stringify({
     authorName: 'Fixture New Author ' + foreignId, foreignAuthorId: 'hc:' + foreignId,
     qualityProfileId: profileId, metadataProfileId: 2, rootFolderPath: '/library', monitored: true,
@@ -14,6 +16,8 @@ for (const [foreignId, profileId, native] of [['99', 2, false], ['100', 4, true]
   assert.ok([201, 202].includes(posted.status), JSON.stringify({ status: posted.status, response }));
   let author;
   for (let attempt = 0; attempt < 90; attempt++) {
+    // Synthetic keys over shared loopback in a network-none test namespace.
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
     const listed = await fetch(base + '/author', { headers });
     assert.equal(listed.status, 200);
     author = (await listed.json()).find(row => row.foreignAuthorId === foreignId || row.foreignAuthorId === 'hc:' + foreignId);
@@ -26,6 +30,8 @@ for (const [foreignId, profileId, native] of [['99', 2, false], ['100', 4, true]
   writeFileSync('/fixture/new-author-profile-checks.json', JSON.stringify(checks, null, 2));
   assert.equal(author.ebookQualityProfileId, 4, 'Old source profile must resolve to its ebook target; native target IDs stay unchanged');
   assert.equal(author.ebookMetadataProfileId, 2);
+  // Synthetic keys over shared loopback in a network-none test namespace.
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
   const legacyResponse = await fetch('http://127.0.0.1:8789/api/v1/author/' + author.id,
     { headers: { 'X-Api-Key': 'synthetic-e2e-admin-key-20261105' } });
   assert.equal(legacyResponse.status, 200);
