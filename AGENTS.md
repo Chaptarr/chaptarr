@@ -56,6 +56,16 @@ Keep supervisor signals compatible with the runtime `/bin/sh`; Debian/Ubuntu
 `packaging/scripts/test-desktop-supervisor-signals.py` under the actual shell,
 including its forced-KILL case. Bash syntax checks alone do not verify recovery.
 
+## Linux x86 runtime qualification
+
+Keep the guarded Unix delegate return-buffer source correction and native runtime
+qualification together. A runtime probe or archive build alone does not prove
+installed startup and rollback. Record kernel, archive hash, source auxiliary
+fixture prerequisites and actual executable architecture. The harness manifest's
+`processPointerBits` describes Python, so use ELF/application architecture for the
+target. Preserve failing desktop-host evidence alongside passing VM/CI results;
+do not infer that rebuilding a package fixes an environment discrepancy.
+
 ## Localization compatibility data
 
 `src/NzbDrone.Core/Localization/BookshelfCompatibility/` contains immutable
