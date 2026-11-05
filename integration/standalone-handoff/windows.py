@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the documented Windows archive migration and explicit rollback tools."""
 from pathlib import Path, PurePosixPath
+from contextlib import closing
 import argparse
 import hashlib
 import http.client
@@ -65,12 +66,12 @@ def pe_machine(path):
 
 
 def database_hash(path):
-    with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as connection, connection:
         return hashlib.sha256('\n'.join(sorted(connection.iterdump())).encode()).hexdigest()
 
 
 def database_check(path, version):
-    with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as connection, connection:
         require(connection.execute('PRAGMA integrity_check').fetchall() == [('ok',)], 'Database integrity failure')
         require(not connection.execute('PRAGMA foreign_key_check').fetchall(), 'Foreign-key violations')
         require(connection.execute('SELECT MAX(Version) FROM VersionInfo').fetchone()[0] == version, 'Unexpected schema version')
@@ -155,7 +156,7 @@ def main():
         require(not healthy(), 'Acceptance port is already occupied')
         data = root / 'data'
         data.mkdir()
-        with sqlite3.connect(data / 'readarr.db') as connection:
+        with closing(sqlite3.connect(data / 'readarr.db')) as connection, connection:
             for name in ['BookshelfNG.Schema.158.sql', 'BookshelfNG.PopulatedMigration158.sql']:
                 connection.executescript((REPO / 'src/Chaptarr.Core.Test/Datastore/Fixtures' / name).read_text())
             connection.execute('UPDATE BookFiles SET Size=?,Path=? WHERE Id=50', (4294967419, 'C:\\library\\Grüße — fixture.m4b'))
