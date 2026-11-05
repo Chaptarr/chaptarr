@@ -299,8 +299,26 @@ The deployed SeerrNG image's full HTTP workflow initially passed user login,
 pending request, denied self-approval, owner approval, real acquisition/import,
 availability and restart. A stricter SQLite audit then found two media records
 for the same imported book. Availability alone was an insufficient acceptance
-check. This is a Seerr integration defect, rather than an established migration
-failure in ChaptarrNG.
+check.
+
+A subsequent baseline runs the unchanged deployed client against the unmodified
+public BookshelfNG `.76` musl executable. User request/approval, local torrent
+transfer, EPUB import and grab/import history pass. After a real library scan,
+the stopped Seerr database has two media records for the same source book while
+the original request/requester remain completed. This establishes that duplicate
+scan records precede ChaptarrNG migration. Separate source audiobook dispatch
+leaves two unowned identifiers; its transfer completes but source import does
+not complete within the bounded test, so it is not a full audiobook baseline pass.
+The EPUB reading-content checks pass before a missing series-tag assertion caused
+by the fixture metadata refresh; no complete source tagging pass is claimed.
+
+The source baseline uses a normal shared work with one selected-format edition,
+an existing author directory, source-compatible Readarr metadata resources and
+the single synthetic source API key. It does not use real accounts or providers.
+Preparatory fixture failures and the final aggregate are retained under
+`/var/tmp/chaptarrng-seerr-web-acquisition-20261105/source-76-baseline/`.
+The duplicate and identifier defects belong to the existing client; they are
+not established migration regressions.
 
 [SeerrNG PR #527](https://github.com/snapetech-org/seerrng/pull/527), source
 `389bdafd6`, attaches dispatch identifiers through their actual entity relation
