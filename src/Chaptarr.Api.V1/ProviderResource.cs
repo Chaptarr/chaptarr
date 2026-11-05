@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Chaptarr.Api.V1.DownloadClient;
 using Chaptarr.Api.V1.Indexers;
 using Chaptarr.Http.ClientSchema;
 using Chaptarr.Http.REST;
@@ -96,7 +97,54 @@ namespace Chaptarr.Api.V1
         public static TProviderResource ProjectBookshelfLegacyTemplateDefaults<TProviderResource>(TProviderResource resource)
             where TProviderResource : ProviderResource<TProviderResource>
         {
-            if (resource is not IndexerResource indexer || resource.Id != 0 ||
+            if (resource == null || resource.Id != 0)
+            {
+                return resource;
+            }
+
+            if (resource is DownloadClientResource)
+            {
+                var category = resource.ConfigContract switch
+                {
+                    "DelugeSettings" or "QBittorrentSettings" or "RTorrentSettings" or "UTorrentSettings" => "readarr",
+                    "NzbgetSettings" or "NzbVortexSettings" or "SabnzbdSettings" => "Readarr",
+                    _ => null
+                };
+                foreach (var field in resource.Fields ?? new List<Field>())
+                {
+                    if (category != null)
+                    {
+                        if (string.Equals(field.Name, "musicCategory", StringComparison.OrdinalIgnoreCase))
+                        {
+                            field.Value = category;
+                        }
+                        else if (string.Equals(field.Name, "audiobookCategory", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(field.Name, "ebookCategory", StringComparison.OrdinalIgnoreCase))
+                        {
+                            field.Value = null;
+                        }
+                    }
+                    else if (resource.ConfigContract == "HadoukenSettings" && field.Name == "category")
+                    {
+                        field.Value = "readarr-music";
+                    }
+                    else if (resource.ConfigContract == "FloodSettings")
+                    {
+                        if (field.Name == "tags")
+                        {
+                            field.Value = new[] { "readarr" };
+                        }
+                        else if (field.Name is "audiobookTags" or "ebookTags")
+                        {
+                            field.Value = null;
+                        }
+                    }
+                }
+
+                return resource;
+            }
+
+            if (resource is not IndexerResource indexer ||
                 resource.ConfigContract != "MyAnonaMouseSettings")
             {
                 return resource;

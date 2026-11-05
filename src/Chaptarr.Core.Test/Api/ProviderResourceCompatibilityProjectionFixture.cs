@@ -1,11 +1,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Api.V1.Indexers;
+using Chaptarr.Api.V1.DownloadClient;
 using Chaptarr.Api.V1.ImportLists;
 using Chaptarr.Api.V1;
 using Chaptarr.Api.V1.Metadata;
 using Chaptarr.Http.ClientSchema;
 using NzbDrone.Core.Indexers.DirectDownload;
+using NzbDrone.Core.Download.Clients.QBittorrent;
 using NUnit.Framework;
 
 namespace Chaptarr.Core.Test.Api
@@ -13,6 +15,93 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class ProviderResourceCompatibilityProjectionFixture
     {
+        [Test]
+        public void should_preserve_legacy_hadouken_category_and_flood_tags_in_templates()
+        {
+            var hadouken = new DownloadClientResource
+            {
+                ConfigContract = "HadoukenSettings",
+                Fields = new List<Field> { new() { Name = "category", Value = "chaptarr-music" } }
+            };
+            var flood = new DownloadClientResource
+            {
+                ConfigContract = "FloodSettings",
+                Fields = new List<Field>
+                {
+                    new() { Name = "tags", Value = new[] { "chaptarr" } },
+                    new() { Name = "audiobookTags", Value = new[] { "chaptarr" } },
+                    new() { Name = "ebookTags", Value = new[] { "chaptarr" } }
+                }
+            };
+
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(hadouken);
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(flood);
+
+            Assert.That(hadouken.Fields[0].Value, Is.EqualTo("readarr-music"));
+            Assert.That(flood.Fields[0].Value, Is.EqualTo(new[] { "readarr" }));
+            Assert.That(flood.Fields[1].Value, Is.Null);
+            Assert.That(flood.Fields[2].Value, Is.Null);
+        }
+
+        [TestCase("DelugeSettings", "readarr")]
+        [TestCase("QBittorrentSettings", "readarr")]
+        [TestCase("RTorrentSettings", "readarr")]
+        [TestCase("UTorrentSettings", "readarr")]
+        [TestCase("NzbgetSettings", "Readarr")]
+        [TestCase("NzbVortexSettings", "Readarr")]
+        [TestCase("SabnzbdSettings", "Readarr")]
+        public void should_preserve_legacy_download_template_categories(string contract, string expected)
+        {
+            var resource = new DownloadClientResource
+            {
+                ConfigContract = contract,
+                Fields = new List<Field>
+                {
+                    new() { Name = "musicCategory", Value = "chaptarr" },
+                    new() { Name = "audiobookCategory", Value = "chaptarr" },
+                    new() { Name = "ebookCategory", Value = "chaptarr" }
+                }
+            };
+
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+
+            Assert.That(resource.Fields[0].Value, Is.EqualTo(expected));
+            Assert.That(resource.Fields[1].Value, Is.Null);
+            Assert.That(resource.Fields[2].Value, Is.Null);
+        }
+
+        [TestCase(0, "readarr", "readarr")]
+        [TestCase(109, "operator", "audio-only")]
+        public void should_roundtrip_legacy_category_defaults_and_preserve_saved_format_categories(
+            int id, string expectedCategory, string expectedAudioCategory)
+        {
+            var settings = new QBittorrentSettings
+            {
+                MusicCategory = "operator",
+                AudiobookCategory = "audio-only",
+                EbookCategory = "ebook-only"
+            };
+            var resource = new DownloadClientResource
+            {
+                Id = id,
+                ConfigContract = nameof(QBittorrentSettings),
+                Fields = new List<Field>
+                {
+                    new() { Name = "musicCategory", Value = settings.MusicCategory },
+                    new() { Name = "audiobookCategory", Value = settings.AudiobookCategory },
+                    new() { Name = "ebookCategory", Value = settings.EbookCategory }
+                }
+            };
+
+            ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(resource);
+            var roundtrip = (QBittorrentSettings)SchemaBuilder.ReadFromSchema(resource.Fields, typeof(QBittorrentSettings));
+
+            Assert.That(roundtrip.MusicCategory, Is.EqualTo(expectedCategory));
+            Assert.That(roundtrip.AudiobookCategory, Is.EqualTo(expectedAudioCategory));
+            Assert.That(roundtrip.EbookCategory, Is.EqualTo(id == 0 ? "readarr" : "ebook-only"));
+            Assert.That(new QBittorrentSettings().MusicCategory, Is.EqualTo("chaptarr"));
+        }
+
         [TestCase(0, false, 0, false)]
         [TestCase(120, true, 2, true)]
         public void should_preserve_bookshelf_mam_template_defaults_without_overwriting_saved_settings(
