@@ -3052,7 +3052,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1729,
+          "line": 1755,
           "sourceLine": "return StatusCode(502, \"Failed to download selected photo\");",
           "sourceLineSha256": "b1c630af29c0af3348d48cfef6130f44063d816b3aed32b6f143696b6aeca059",
           "category": "direct-api-result",
@@ -5206,7 +5206,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1793,
+          "line": 1819,
           "sourceLine": "Message = \"Image downloaded successfully\"",
           "sourceLineSha256": "61e06447da181ff32740b8a82919d35b0f37210840d78fcdf9eef2f9aba06ae3",
           "category": "api-message-resource",
@@ -5252,7 +5252,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1780,
+          "line": 1806,
           "sourceLine": "return BadRequest(new ApiErrorResource { Error = \"Image not found in author metadata\" });",
           "sourceLineSha256": "a37149445a94bfa703059f21d2af6d552d3de8c1915169a468d64cb261d430d3",
           "category": "api-response-resource",
@@ -5306,7 +5306,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1801,
+          "line": 1827,
           "sourceLine": "Message = \"Image download in progress\"",
           "sourceLineSha256": "9806dcd8e96e83074b7cc8486f8cc2682d8a2384ce1c54b21076ff4454f32427",
           "category": "api-message-resource",
@@ -5562,7 +5562,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1815,
+          "line": 1841,
           "sourceLine": "Message = \"Failed to download image\"",
           "sourceLineSha256": "fb3b4b234e59ac41c0efcb72df554380373c8c992dc0621bd0cb6d0dc58ccee4",
           "category": "api-message-resource",
@@ -8309,7 +8309,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1726,
+          "line": 1752,
           "sourceLine": "return BadRequest(\"Selected photo is a provider placeholder\");",
           "sourceLineSha256": "abc652ae20b036a9223089d52ef8e53c79b2040aa6a96291fa5dcbd0b95ad8e5",
           "category": "direct-api-result",
@@ -11156,7 +11156,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1715,
+          "line": 1741,
           "sourceLine": "return BadRequest(\"Photo not found\");",
           "sourceLineSha256": "ecf868e51ef7995870ecc504d204187c5c15793e7a237dae4c88720372863fe8",
           "category": "direct-api-result",
@@ -11493,7 +11493,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Books/BookController.cs",
-          "line": 2594,
+          "line": 2606,
           "sourceLine": "return BadRequest(\"EditionId is required\");",
           "sourceLineSha256": "cb0d38e687b93edd458d5bbeed5b1db975752b921d97ccfd20041303a41f0b7a",
           "category": "direct-api-result",
@@ -11562,7 +11562,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1768,
+          "line": 1794,
           "sourceLine": "return BadRequest(new ApiErrorResource { Error = \"ImageUrl is required\" });",
           "sourceLineSha256": "de040de6050ac69e574e24c85684f5429f61f691feaa21a3397ae6ef35c584f6",
           "category": "api-response-resource",
@@ -15049,7 +15049,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1763,
+          "line": 1789,
           "sourceLine": "return NotFound(new ApiErrorResource { Error = \"Author not found\" });",
           "sourceLineSha256": "1a230685230b43c0d660066c8376bc47a33a659f02188a88ee65f26e98dd8d52",
           "category": "api-response-resource",
@@ -15257,7 +15257,7 @@
       "callsites": [
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1822,
+          "line": 1848,
           "sourceLine": "return StatusCode(500, new ApiErrorResource { Error = \"Internal server error\" });",
           "sourceLineSha256": "5d741de959df79116c013133d9306170f7a9d82d95f8de837095fa10694bf815",
           "category": "api-response-resource",
@@ -15265,7 +15265,7 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Author/AuthorController.cs",
-          "line": 1748,
+          "line": 1774,
           "sourceLine": "return StatusCode(500, \"Internal server error\");",
           "sourceLineSha256": "9d51f0b0bbebda442c680a04c178d58f77b5670debc2239fa152badc680bec5f",
           "category": "direct-api-result",

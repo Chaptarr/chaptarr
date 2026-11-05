@@ -248,7 +248,7 @@ namespace Chaptarr.Api.V1.Author
 
                 foreach (var resource in resources)
                 {
-                    if (facadeContext?.IsBookshelfCompatibility == true)
+                    if (facadeContext?.AcceptsBookshelfLegacyBookIds == true)
                     {
                         var profileIds = new[]
                         {
@@ -257,7 +257,7 @@ namespace Chaptarr.Api.V1.Author
                             resource.EbookQualityProfileId
                         }.Where(id => id.HasValue).Select(id => id.Value);
                         var profileMappings = _bookshelfLegacyIdentityMapService?.GetMappings("QualityProfile", profileIds);
-                        AuthorResourceMapper.MapBookshelfQualityProfileIds(resource, profileMappings);
+                        AuthorResourceMapper.MapBookshelfQualityProfileIds(resource, profileMappings, MediaTypeParameterParser.ParseOptional(facadeContext.MediaType));
                     }
 
                     RootFolder legacyRootFolder = null;
@@ -364,7 +364,7 @@ namespace Chaptarr.Api.V1.Author
             }
 
             var resource = author.ToResource(HttpContext.GetReadarrFacadeContext());
-            ApplyBookshelfAuthorMetadataIds(new[] { resource });
+            ApplyBookshelfAuthorIdentities(new[] { resource });
             MapCoversToLocal(resource);
             FetchAndLinkAuthorStatistics(resource, HttpContext.GetReadarrFacadeContext()?.MediaType);
             LinkNextPreviousBooks(resource);
@@ -392,7 +392,7 @@ namespace Chaptarr.Api.V1.Author
             var authorResources = authors.ToResource(HttpContext.GetReadarrFacadeContext());
             var authorResourceArray = authorResources.ToArray();
 
-            ApplyBookshelfAuthorMetadataIds(authorResourceArray);
+            ApplyBookshelfAuthorIdentities(authorResourceArray);
             MapCoversToLocal(authorResourceArray);
             LinkNextPreviousBooks(authorResourceArray);
 
@@ -853,7 +853,7 @@ namespace Chaptarr.Api.V1.Author
                     }
 
                     var authorResource = existingAuthor.ToResource(HttpContext.GetReadarrFacadeContext());
-                    ApplyBookshelfAuthorMetadataIds(new[] { authorResource });
+                    ApplyBookshelfAuthorIdentities(new[] { authorResource });
                     if (!string.IsNullOrWhiteSpace(hydrationWarning))
                     {
                         authorResource.HydrationWarning = hydrationWarning;
@@ -1483,7 +1483,7 @@ namespace Chaptarr.Api.V1.Author
                 .ToDictionary(group => group.Key, group => group.Any(row => row.Monitored));
         }
 
-        private void ApplyBookshelfAuthorMetadataIds(IEnumerable<AuthorResource> resources)
+        private void ApplyBookshelfAuthorIdentities(IEnumerable<AuthorResource> resources)
         {
             var authorResources = resources?.Where(resource => resource != null).ToList();
             if (authorResources == null || authorResources.Count == 0)
@@ -1498,6 +1498,32 @@ namespace Chaptarr.Api.V1.Author
                 resource.AuthorMetadataId = metadataIdByAuthorId.TryGetValue(resource.Id, out var metadataId)
                     ? metadataId
                     : resource.Id;
+            }
+
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                var profileIds = authorResources.SelectMany(resource => new[]
+                    { resource.QualityProfileId, resource.AudiobookQualityProfileId, resource.EbookQualityProfileId })
+                    .Where(id => id.HasValue).Select(id => id.Value).Distinct();
+                var mappings = _bookshelfLegacyIdentityMapService?.GetMappingsByTargetIds("QualityProfile", profileIds)
+                    ?? new List<BookshelfLegacyIdentityMapEntry>();
+                ProjectBookshelfQualityProfileIds(authorResources, mappings);
+            }
+        }
+
+        internal static void ProjectBookshelfQualityProfileIds(
+            IEnumerable<AuthorResource> resources, IEnumerable<BookshelfLegacyIdentityMapEntry> mappings)
+        {
+            var sourceByTarget = mappings.GroupBy(mapping => mapping.TargetId)
+                .Where(group => group.Select(mapping => mapping.SourceId).Distinct().Count() == 1)
+                .ToDictionary(group => group.Key, group => group.First().SourceId);
+            int? SourceId(int? id) => id.HasValue && sourceByTarget.TryGetValue(id.Value, out var sourceId) ? sourceId : id;
+
+            foreach (var resource in resources)
+            {
+                resource.QualityProfileId = SourceId(resource.QualityProfileId);
+                resource.AudiobookQualityProfileId = SourceId(resource.AudiobookQualityProfileId);
+                resource.EbookQualityProfileId = SourceId(resource.EbookQualityProfileId);
             }
         }
 
@@ -2023,7 +2049,7 @@ namespace Chaptarr.Api.V1.Author
         public void Handle(AuthorDeletedEvent message)
         {
             var resource = message.Author.ToResource();
-            ApplyBookshelfAuthorMetadataIds(new[] { resource });
+            ApplyBookshelfAuthorIdentities(new[] { resource });
             BroadcastResourceChange(ModelAction.Deleted, resource);
         }
 

@@ -24,10 +24,30 @@ and rollback rehearsals pass again, including source user rows, provider setting
 author arrays, captured metadata defaults and all file counts; rollback matches
 all source tables and retained backup bytes.
 
-The follow-up identifies additional importer-discarded narrator text, series ties,
-author cover identity, embedded monitor aggregation and mapped audio default weights.
-The next source repair has 267 passing focused checks; its packaged exhaustive
-comparison remains pending. Keep earlier comparisons as failure evidence.
+Application-code candidate `73d992f7` closes the remaining narrator, series tie,
+author-cover identity, embedded-monitor and mapped-quality differences. Its
+packaged comparison has **zero mismatching rows or fields across all 88,405
+managed records**, with zero duplicate, missing or extra IDs. Both fresh
+populated migration/rollback rehearsals pass again, and both full Seerr web
+format workflows pass with source profile IDs and persisted identity/profile
+audits. Keep earlier comparisons as failure evidence.
+
+A further authenticated HTTP check compares every cached image URL with retained
+source file bytes. It matches 23,977 images and finds four failures: the same two
+large TIFF originals in both libraries. TIFF serving support and regressions are
+added; packaged verification remains pending. The bounded bulk test explicitly
+uses a configured limit of 6,000 requests/minute, batches of 5,000 and 61-second
+cooldowns. An earlier source-versus-target HTTP attempt is inconclusive because
+source Forms redirects returned login HTML and the default rate limiter returned
+429s; it is not counted as image parity.
+
+New-add regressions also identify source ebook profile IDs being interpreted as
+native audiobook IDs on migrated format-specific routes, plus native profile IDs
+leaking into legacy author readback. The repair translates only clients accepting
+legacy IDs, follows the requested format and reverses mapped IDs on compatibility
+readback. Explicit native hints retain native IDs. The synthetic acquisition
+fixture now includes new-author checks using an explicit Hardcover V5 metadata
+proxy; its runtime result is still pending.
 Raw bodies, configurations and source metadata remain private under
 `/var/tmp/chaptarrng-operator-data-20261105/` on `kspld0`.
 

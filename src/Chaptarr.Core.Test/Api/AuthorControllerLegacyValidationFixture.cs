@@ -114,7 +114,31 @@ namespace Chaptarr.Core.Test.Api
             covers.Verify(mapper => mapper.ConvertToBookshelfLocalUrls(20, MediaCoverEntity.Author, resource.Images), Times.Once);
         }
 
-        private static AuthorController BuildController(out AuthorLibraryServiceProxy authorLibraryProxy, IMapCoversToLocal coverMapper = null)
+        [TestCase(false, 2)]
+        [TestCase(true, 4)]
+        public async Task migrated_facade_should_translate_source_ebook_profile_for_new_author_only_for_legacy_clients(bool acceptsLegacyIds, int expectedProfile)
+        {
+            var maps = new Mock<IBookshelfLegacyIdentityMapService>();
+            maps.Setup(service => service.GetMappings("QualityProfile", It.IsAny<IEnumerable<int>>()))
+                .Returns(new List<BookshelfLegacyIdentityMapEntry>
+                {
+                    new() { SourceId = 2, TargetId = 2, MediaType = 0 },
+                    new() { SourceId = 2, TargetId = 4, MediaType = 1 }
+                });
+            var controller = BuildController(out var library, identityMap: maps.Object);
+            var resource = new AuthorResource
+            {
+                AuthorName = "Fixture New Author", ForeignAuthorId = "99", RootFolderPath = EbookRootPath,
+                QualityProfileId = 2, MetadataProfileId = 2, Monitored = true
+            };
+            var context = new ReadarrFacadeContext("hc", "ebook", "/readarr/hc/ebook", acceptsBookshelfLegacyBookIds: acceptsLegacyIds);
+            controller.OnActionExecuting(BuildExecutingContext(controller, resource, context));
+            await controller.AddAuthor(resource, queueIfUnavailable: false);
+
+            Assert.That(library.LastConfig.EbookQualityProfileId, Is.EqualTo(expectedProfile));
+        }
+
+        private static AuthorController BuildController(out AuthorLibraryServiceProxy authorLibraryProxy, IMapCoversToLocal coverMapper = null, IBookshelfLegacyIdentityMapService identityMap = null)
         {
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>();
@@ -151,7 +175,8 @@ namespace Chaptarr.Core.Test.Api
                 systemFolderValidator: new SystemFolderValidator(),
                 qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
-                authorFolderAsRootFolderValidator: new AuthorFolderAsRootFolderValidator(fileNameBuilder));
+                authorFolderAsRootFolderValidator: new AuthorFolderAsRootFolderValidator(fileNameBuilder),
+                bookshelfLegacyIdentityMapService: identityMap);
         }
 
         private static ActionExecutingContext BuildExecutingContext(

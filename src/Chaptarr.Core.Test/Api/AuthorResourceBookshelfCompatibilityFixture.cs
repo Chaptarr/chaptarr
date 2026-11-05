@@ -10,6 +10,23 @@ namespace Chaptarr.Core.Test.Api
     public class AuthorResourceBookshelfCompatibilityFixture
     {
         [Test]
+        public void legacy_readback_should_reverse_native_profile_ids_for_new_authors()
+        {
+            var resource = new AuthorResource { QualityProfileId = 4, AudiobookQualityProfileId = 1, EbookQualityProfileId = 4 };
+            var mappings = new List<BookshelfLegacyIdentityMapEntry>
+            {
+                new() { SourceId = 1, TargetId = 1, MediaType = 0 },
+                new() { SourceId = 2, TargetId = 4, MediaType = 1 }
+            };
+
+            AuthorController.ProjectBookshelfQualityProfileIds(new[] { resource }, mappings);
+
+            Assert.That(resource.QualityProfileId, Is.EqualTo(2));
+            Assert.That(resource.AudiobookQualityProfileId, Is.EqualTo(1));
+            Assert.That(resource.EbookQualityProfileId, Is.EqualTo(2));
+        }
+
+        [Test]
         public void native_resource_should_project_legacy_single_format_fields()
         {
             var author = new Author

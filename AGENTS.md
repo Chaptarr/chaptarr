@@ -68,6 +68,8 @@ fulfillment. Exercise user submission, approval, acquisition, library scan and
 restart through the server HTTP API. Audit persisted media/request/requester
 identities, duplicate media counts and orphaned identifiers after consumers exit.
 Record exact client/candidate revisions and derived test-image provenance.
+Exercise unchanged source profile IDs and new author/book additions as well as
+existing-book monitoring; verify native and compatibility profile readback.
 
 ## Full-library compatibility acceptance
 

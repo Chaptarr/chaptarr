@@ -63,7 +63,7 @@ security = ['--user', f'{os.getuid()}:{os.getgid()}', '--cap-drop', 'ALL', '--se
 
 def start_stack():
     options = ['--network', 'none', '--tmpfs', '/run/readarr-temp:rw,nosuid,nodev,size=256m,mode=1777', *security,
-               '-e', 'HARDCOVER=true', '-e', 'HARDCOVER_NATIVE=', '-e', 'METADATA_URL=http://127.0.0.1:8980',
+               '-e', 'HARDCOVER=true', '-e', 'HARDCOVER_NATIVE=false', '-e', 'METADATA_URL=http://127.0.0.1:8980',
                '-e', 'CHAPTARR__AUTH__SEERRAPIKEY=synthetic-e2e-restricted-key-20261105']
     for source, target, readonly in [(root / 'config', '/config', False), (root / 'library', '/library', False),
                                      (root / 'downloads', '/downloads', False), (candidate, '/candidate', True)]:
@@ -126,7 +126,7 @@ for key, image in images.items():
     'candidate': str(candidate), 'candidateExecutableSha256': hashlib.sha256((candidate / 'Chaptarr').read_bytes()).hexdigest(),
     'candidateAssemblySha256': {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in sorted(candidate.glob('*.dll'))},
     'harnessDirty': bool(command(['git', '-C', repo, 'status', '--porcelain', '--', 'integration/acquisition', 'integration/run-acquisition-smoke.py']).strip()),
-    'requestMode': args.request_mode, 'profileIdSpace': args.profile_id_space,
+    'requestMode': args.request_mode, 'profileIdSpace': args.profile_id_space, 'fixtureMetadataMode': 'hardcover-v5-proxy',
     'declaredSeerrSourceRevision': args.seerr_source_revision,
     'harnessSourceSha256': {str(file.relative_to(repo)): hashlib.sha256(file.read_bytes()).hexdigest()
                             for file in [Path(__file__).resolve(), *sorted(fixtures.glob('*'))] if file.is_file()},
@@ -153,6 +153,7 @@ try:
     if args.request_mode == 'seerr-web':
         seerr('web-verify.mjs', 'seerr-web-restart.log', '--restart')
     command(['python3', fixtures / 'verify-content.py', root], 'restart-content.log')
+    seerr('new-author-profile.mjs', 'new-author-profile.log')
     stop_stack('restarted')
     command(['python3', fixtures / 'verify-profile-settings.py', root, 'restart'], 'restart-profile-settings.log')
     if args.request_mode == 'seerr-web':

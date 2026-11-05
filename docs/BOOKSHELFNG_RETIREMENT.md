@@ -37,8 +37,11 @@ monitoring, source author image lists and unmapped audio quality weights.
 Unscoped split works prefer the monitored edition retaining the source provider
 identity. Legacy cover URLs retain their extension, URL base and last-write token;
 known extensionless cached image names are supported without accepting arbitrary
-extensionless files. The 267 focused API/importer regressions pass; a new packaged full-library
-comparison is still required before claiming these gaps closed.
+extensionless files. The 267 focused API/importer regressions pass, and packaged `73d992f7` now
+matches every managed author, work and file across both snapshots: 88,405 records
+with zero field mismatches, missing, extra or duplicate IDs. Additional new-add
+profile handoff and TIFF image-serving repairs have focused regressions; their
+new packaged runtime checks are pending.
 
 The full SeerrNG user/approval/acquisition/scan/restart rehearsal now audits database
 identity, duplicates and orphaned identifiers. It exposed client defects repaired

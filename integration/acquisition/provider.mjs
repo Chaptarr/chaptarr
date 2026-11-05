@@ -5,5 +5,7 @@ const rss=()=>`<?xml version="1.0"?><rss version="2.0" xmlns:torznab="http://tor
 http.createServer((request,response)=>{const url=new URL(request.url,'http://127.0.0.1:8980');appendFileSync('/fixture/provider/requests.jsonl',JSON.stringify({time:new Date().toISOString(),path:url.pathname,operation:url.searchParams.get('t')})+'\n');
  if(url.pathname==='/fixture.torrent'){response.writeHead(200,{'Content-Type':'application/x-bittorrent'});response.end(torrent);return;}
  if(url.pathname==='/api'){response.writeHead(200,{'Content-Type':'application/xml'});response.end(url.searchParams.get('t')==='caps'?caps:rss());return;}
+ const newAuthorId=url.searchParams.get('id')?.split(':').at(-1)??decodeURIComponent(url.pathname).split('/').at(-1);
+ if(url.pathname.startsWith('/api/v5/author')&&['99','100'].includes(newAuthorId)){response.writeHead(200,{'Content-Type':'application/json'});const id=newAuthorId;response.end(JSON.stringify({author:{id:'hc:'+id,name:'Fixture New Author '+id,sortName:'Author, Fixture '+id,slug:'fixture-new-author-'+id,ratingAverage:0,ratingCount:0},books:[],series:[]}));return;}
  response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify(url.pathname.startsWith('/api/v5/author')?{Author:null,Summary:null,Pagination:null,Books:[],Series:[]} : {}));
 }).listen(8980,'127.0.0.1',()=>console.log('Isolated provider listening on shared loopback; no external network.'));

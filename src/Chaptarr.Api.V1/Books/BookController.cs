@@ -2059,7 +2059,19 @@ namespace Chaptarr.Api.V1.Books
 		                return;
 		            }
 
-		            var rootFolders = _rootFolderService.All() ?? new List<RootFolder>();
+            var facadeContext = HttpContext?.GetReadarrFacadeContext();
+            if (facadeContext?.AcceptsBookshelfLegacyBookIds == true)
+            {
+                var profileIds = new[] { author.QualityProfileId, author.AudiobookQualityProfileId, author.EbookQualityProfileId }
+                    .Where(id => id.HasValue).Select(id => id.Value);
+                var mappings = _bookshelfLegacyIdentityMapService?.GetMappings("QualityProfile", profileIds);
+                BookMediaType? profileMediaType = wantAudiobook == wantEbook
+                    ? null
+                    : wantAudiobook ? BookMediaType.Audiobook : BookMediaType.Ebook;
+                AuthorResourceMapper.MapBookshelfQualityProfileIds(author, mappings, profileMediaType);
+            }
+
+            var rootFolders = _rootFolderService.All() ?? new List<RootFolder>();
 
 		            RootFolder rootFolderByPath = null;
 		            if (!string.IsNullOrWhiteSpace(author.RootFolderPath))

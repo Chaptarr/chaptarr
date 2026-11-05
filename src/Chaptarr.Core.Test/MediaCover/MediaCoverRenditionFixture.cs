@@ -1044,6 +1044,8 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(MediaCoverRendition.GetOriginalPath(Path.Combine(folder, rendition)), Is.EqualTo(Path.Combine(folder, original)));
         }
 
+        [TestCase("/MediaCover/Books/12/cover.tiff")]
+        [TestCase("/MediaCover/Books/12/cover.tif")]
         [TestCase("/MediaCover/Books/12/cover")]
         [TestCase("/MediaCover/12/poster?lastWrite=1234")]
         [TestCase("cover")]

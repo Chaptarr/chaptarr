@@ -1,3 +1,8 @@
+using Moq;
+using Chaptarr.Http.Middleware;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using NzbDrone.Core.Profiles.Qualities;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -60,7 +65,7 @@ namespace Chaptarr.Core.Test.Api
                 "NormalizeReadarrSingleFields",
                 BindingFlags.Instance | BindingFlags.NonPublic);
 
-            public TestableBookController(IRootFolderService rootFolderService)
+            public TestableBookController(IRootFolderService rootFolderService, IBookshelfLegacyIdentityMapService identityMap = null, IQualityProfileService qualityProfiles = null)
                 : base(
                     authorService: DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
                     bookService: null,
@@ -77,11 +82,12 @@ namespace Chaptarr.Core.Test.Api
                     commandQueueManager: null,
                     eventAggregator: null,
                     metadataProfileService: null,
-                    qualityProfileService: null,
+                    qualityProfileService: qualityProfiles,
                     rootFolderService: rootFolderService,
                     qualityProfileExistsValidator: new QualityProfileExistsValidator(new TestQualityProfileService()),
                     metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
-                    logger: LogManager.GetCurrentClassLogger())
+                    logger: LogManager.GetCurrentClassLogger(),
+                    bookshelfLegacyIdentityMapService: identityMap)
             {
             }
 
@@ -205,6 +211,44 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(model.EbookQualityProfileId, Is.EqualTo(1));
                 Assert.That(model.EbookMetadataProfileId, Is.EqualTo(2));
             });
+        }
+
+        [TestCase(false, 2)]
+        [TestCase(true, 2)]
+        [TestCase(false, 4)]
+        [TestCase(true, 4)]
+        public void migrated_book_add_should_map_source_profile_to_the_requested_ebook_format(bool explicitFormatField, int suppliedProfile)
+        {
+            var root = new RootFolder { Path = "/ebooks", FolderType = FolderType.Ebook };
+            root.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 4, MetadataProfileId = 2 });
+            var maps = new Mock<IBookshelfLegacyIdentityMapService>();
+            maps.Setup(service => service.GetMappings("QualityProfile", It.IsAny<IEnumerable<int>>()))
+                .Returns(new List<BookshelfLegacyIdentityMapEntry>
+                {
+                    new() { SourceId = 2, TargetId = 2, MediaType = 0 },
+                    new() { SourceId = 2, TargetId = 4, MediaType = 1 }
+                });
+            var profiles = new Mock<IQualityProfileService>();
+            profiles.Setup(service => service.Get(2)).Returns(new QualityProfile { Id = 2, ProfileType = ProfileType.Audiobook });
+            profiles.Setup(service => service.Get(4)).Returns(new QualityProfile { Id = 4, ProfileType = ProfileType.Ebook });
+            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder> { root }), maps.Object, profiles.Object);
+            var context = new DefaultHttpContext();
+            context.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", "ebook", "/readarr/hc/ebook", acceptsBookshelfLegacyBookIds: true);
+            controller.ControllerContext = new ControllerContext { HttpContext = context };
+            var resource = new BookResource
+            {
+                Author = new AuthorResource
+                {
+                    RootFolderPath = "/ebooks", MetadataProfileId = 2,
+                    QualityProfileId = explicitFormatField ? null : suppliedProfile,
+                    EbookQualityProfileId = explicitFormatField ? suppliedProfile : null
+                }
+            };
+
+            controller.Normalize(resource, wantAudiobook: false, wantEbook: true);
+
+            Assert.That(resource.Author.EbookQualityProfileId, Is.EqualTo(4));
+            Assert.That(resource.Author.AudiobookQualityProfileId, Is.Null);
         }
 
         private static RootFolder BuildMixedRoot(bool defaultSync)

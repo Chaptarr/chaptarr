@@ -15,7 +15,7 @@ namespace NzbDrone.Core.MediaCover
     {
         private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".jpg", ".jpeg", ".jfif", ".png", ".gif", ".webp", ".avif"
+            ".jpg", ".jpeg", ".jfif", ".png", ".gif", ".webp", ".avif", ".tif", ".tiff"
         };
 
         // Some providers publish one shared placeholder URL, while Hardcover assigns its

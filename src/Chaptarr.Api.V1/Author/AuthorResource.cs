@@ -982,7 +982,8 @@ namespace Chaptarr.Api.V1.Author
 
         internal static void MapBookshelfQualityProfileIds(
             AuthorResource resource,
-            IEnumerable<BookshelfLegacyIdentityMapEntry> mappings)
+            IEnumerable<BookshelfLegacyIdentityMapEntry> mappings,
+            BookMediaType? mediaType = null)
         {
             if (resource == null)
             {
@@ -1028,7 +1029,7 @@ namespace Chaptarr.Api.V1.Author
                 });
             }
 
-            resource.QualityProfileId = Map(resource.QualityProfileId, (int)BookMediaType.Audiobook, "QualityProfileId");
+            resource.QualityProfileId = Map(resource.QualityProfileId, (int)(mediaType ?? BookMediaType.Audiobook), "QualityProfileId");
             resource.AudiobookQualityProfileId = Map(
                 resource.AudiobookQualityProfileId,
                 (int)BookMediaType.Audiobook,
