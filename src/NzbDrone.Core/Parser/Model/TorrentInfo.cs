@@ -6,6 +6,15 @@ namespace NzbDrone.Core.Parser.Model
     {
         public string MagnetUrl { get; set; }
         public string InfoHash { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public bool HasOriginalInfoHash { get; set; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public string OriginalInfoHash { get; set; }
+
         public int? Seeders { get; set; }
         public int? Peers { get; set; }
 

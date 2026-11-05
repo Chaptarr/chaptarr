@@ -94,6 +94,25 @@ Record exact client/candidate revisions and derived test-image provenance.
 Exercise unchanged source profile IDs and new author/book additions as well as
 existing-book monitoring; verify native and compatibility profile readback.
 
+## Bookshelf release decisions
+
+`BookshelfMatchCompatibility` preserves source parsing and identification as well
+as quality ordering. Do not apply the native title scorer after source-compatible
+identification. Validate nonempty provider responses and accepted/rejected results;
+empty search arrays cannot establish release parity. Legacy wire checks include
+empty torrent hashes, quality fields and optional grab request identities.
+Keep captured provider responses and query metadata private. For read-only replay,
+disable clients/RSS/notifications, record any reset of transient backoff state,
+and restore task-owned clone databases afterward.
+
+## SQLite-heavy local validation
+
+Some Core fixtures create databases under the test output directory and execute
+many durable schema statements. Use a task-owned SSD checkout/output for the full
+suite; preserve shared package caches. Record an interrupted storage-bound run
+and stop its consumers before moving or cleaning its outputs. Do not relax test
+or application timeouts to hide slow scratch storage.
+
 ## Full-library compatibility acceptance
 
 Synthetic API samples do not establish response parity. Compare every managed

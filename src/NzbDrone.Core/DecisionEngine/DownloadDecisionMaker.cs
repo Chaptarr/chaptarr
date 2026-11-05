@@ -103,6 +103,30 @@ namespace NzbDrone.Core.DecisionEngine
                 _logger.ProgressInfo("No results found");
             }
 
+            if (_configService?.BookshelfMatchCompatibility == true)
+            {
+                foreach (var report in reports)
+                {
+                    DownloadDecision decision;
+                    try
+                    {
+                        decision = GetBookshelfDecision(report, searchCriteria, pushedRelease);
+                    }
+                    catch (Exception exception)
+                    {
+                        _logger.Error(exception, "Couldn't process a BookshelfNG release.");
+                        decision = new DownloadDecision(new RemoteBook { Release = report }, new Rejection("Unexpected error processing release"));
+                    }
+
+                    if (decision != null)
+                    {
+                        yield return decision;
+                    }
+                }
+
+                yield break;
+            }
+
             EnrichReleaseNarratorMetadata(reports, searchCriteria);
             var orderedReports = reports;
 
@@ -383,6 +407,73 @@ namespace NzbDrone.Core.DecisionEngine
                     yield return decision;
                 }
             }
+        }
+
+        private DownloadDecision GetBookshelfDecision(ReleaseInfo report, SearchCriteriaBase criteria, bool pushedRelease)
+        {
+            var parsed = Parser.Parser.ParseBookTitle(report.Title);
+            parsed ??= criteria != null
+                ? Parser.Parser.ParseBookshelfBookTitleWithSearchCriteria(report.Title, criteria.Author, criteria.Books)
+                : _parsingService.ParseBookTitleFuzzy(report.Title);
+            if (parsed == null || parsed.AuthorName.IsNullOrWhiteSpace())
+            {
+                return criteria == null ? null : new DownloadDecision(new RemoteBook
+                {
+                    Release = report,
+                    ParsedBookInfo = parsed ?? new ParsedBookInfo { Quality = QualityParser.ParseQuality(report.Title, null, report.Categories) }
+                }, new Rejection("Unable to parse release"));
+            }
+
+            var remote = _parsingService.Map(parsed, criteria);
+            remote.Release = report;
+            _aggregationService.Augment(remote);
+            if ((remote.Author == null || remote.Books.Empty()) && criteria != null)
+            {
+                var reparsed = Parser.Parser.ParseBookshelfBookTitleWithSearchCriteria(report.Title, criteria.Author, criteria.Books);
+                if (reparsed?.AuthorName.IsNotNullOrWhiteSpace() == true)
+                {
+                    remote = _parsingService.Map(reparsed, criteria);
+                }
+            }
+
+            remote.Release = report;
+            remote.ReleaseSource = criteria == null
+                ? pushedRelease ? ReleaseSourceType.ReleasePush : ReleaseSourceType.Rss
+                : criteria.InteractiveSearch ? ReleaseSourceType.InteractiveSearch
+                : criteria.UserInvokedSearch ? ReleaseSourceType.UserInvokedSearch : ReleaseSourceType.Search;
+            if (remote.ParsedBookInfo.Quality.Quality == Quality.Unknown)
+            {
+                remote.ParsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories);
+            }
+
+            if (remote.Author == null)
+            {
+                var decision = new DownloadDecision(remote, new Rejection("Unknown Author"));
+                if (criteria != null)
+                {
+                    remote.Author = criteria.Author;
+                    remote.Books = criteria.Books;
+                }
+
+                return decision;
+            }
+
+            if (remote.Books.Empty())
+            {
+                var decision = new DownloadDecision(remote, new Rejection("Unable to parse books from release name"));
+                if (criteria != null)
+                {
+                    remote.Books = criteria.Books;
+                }
+
+                return decision;
+            }
+
+            _aggregationService.Augment(remote);
+            remote.CustomFormats = _formatCalculator.ParseCustomFormat(remote, report.Size);
+            remote.CustomFormatScore = remote.Author.GetQualityProfileForQuality(remote.ParsedBookInfo.Quality.Quality)?.CalculateCustomFormatScore(remote.CustomFormats) ?? 0;
+            remote.DownloadAllowed = remote.Books.Any();
+            return GetDecisionForReport(remote, criteria);
         }
 
         private DownloadDecision TryBuildSearchCriteriaDecision(ReleaseInfo report, SearchCriteriaBase searchCriteria, ReleaseSourceType releaseSource)

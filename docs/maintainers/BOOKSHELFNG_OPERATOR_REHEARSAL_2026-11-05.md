@@ -358,3 +358,40 @@ hashes and row counts. This measures SQL lookup cost, not complete HTTP latency.
 New schema-126 packaged migration/rollback and all-record HTTP comparison remain
 to be run. Original snapshots and production services are unchanged; stopped
 probe logs and benchmark evidence remain private with the operator rehearsal.
+
+## Nonempty live-provider response replay
+
+Read-only checks of the three distinct enabled Torznab endpoints in the saved
+operator configurations return two valid capability documents and one HTTP 410.
+Four bounded book searches against the two responding endpoints return HTTP 200:
+one provider returns two releases for each library; the other returns empty RSS.
+No release is grabbed, no notification is sent and production services remain
+running. The unavailable endpoint is already present in the source configuration;
+this check does not repair or enable it.
+
+The captured responses are replayed through the exact `.76` source image and the
+`6f40dbf9` target on their full real-data offline copies. The old target has 43
+response differences per library, including an added title/author rejection for
+a release the source accepts. The migration compatibility flag had left the
+native matcher active. The repair restores source parser order, selected-edition
+fuzzy fallback and identification, then avoids applying the native title filter
+to that result. A legacy response projection preserves the source field set,
+empty torrent info-hash representation and optional grab request identities.
+
+A local diagnostic derivative with the rebuilt Core/API assemblies repeats both
+library searches: two source and two target releases, **zero differences** after
+excluding only the time-derived age fields. This is provisional local evidence;
+rebuilt canonical artifacts and full CI must validate the committed repair.
+The first full Core pass reports 5,206 passed, 29 skipped and no failures. The
+subsequent original-hash refinement passes 238 affected tests; final committed
+cross-platform CI remains pending.
+
+Replay prerequisites are explicit: download clients, import lists, RSS and
+notifications are disabled; queued commands and saved provider retry cooldowns
+are cleared only in the disposable copies. The earlier cooldown-blocked source
+runs are inconclusive setup attempts. Captured network responses are served by
+loopback proxies in network-none namespaces, so replay does not repeat tracker
+searches. All four clones' original database files are restored with matching
+hashes afterward. Raw responses, API keys, query/book metadata, source copies,
+patch/assembly hashes and restoration receipts remain private under
+`/var/tmp/chaptarrng-operator-data-20261105/live-provider-readonly-20261105/`.

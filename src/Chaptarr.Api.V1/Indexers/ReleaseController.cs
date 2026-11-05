@@ -27,6 +27,7 @@ using HttpStatusCode = System.Net.HttpStatusCode;
 namespace Chaptarr.Api.V1.Indexers
 {
     [V1ApiController]
+    [BookshelfReleaseCompatibility]
     public class ReleaseController : ReleaseControllerBase
     {
         private readonly IFetchAndParseRss _rssFetcherAndParser;

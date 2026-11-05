@@ -271,6 +271,63 @@ namespace NzbDrone.Core.Parser
 
         private static readonly Regex AfterDashRegex = new Regex(@"[-:].*", RegexOptions.Compiled);
 
+#pragma warning disable CS0618 // Exact BookshelfNG selected-edition fuzzy matching is retained for migrated libraries.
+        public static ParsedBookInfo ParseBookshelfBookTitleWithSearchCriteria(string title, Author author, List<Book> books)
+        {
+            try
+            {
+                if (!ValidateBeforeParsing(title) || author == null || books?.Any() != true)
+                {
+                    return null;
+                }
+
+                var authorName = author.Name == "Various Authors" ? "VA" : author.Name.RemoveAccent();
+                var releaseTitle = RemoveFileExtension(title);
+                var simpleTitle = CleanTorrentSuffixRegex.Replace(
+                    WebsitePostfixRegex.Replace(WebsitePrefixRegex.Replace(SimpleTitleRegex.Replace(releaseTitle))));
+                var edition = books
+                    .OrderByDescending(book => simpleTitle.FuzzyMatch(book.Editions.Single(value => value.Monitored).Title, wordDelimiters: WordDelimiters))
+                    .First().Editions.Single(value => value.Monitored);
+                var foundAuthor = GetBookshelfTitleFuzzy(simpleTitle, authorName, out var remainder)
+                    ?? GetBookshelfTitleFuzzy(simpleTitle, authorName.ToLastFirst(), out remainder);
+                var foundBook = GetBookshelfTitleFuzzy(remainder, edition.Title, out _)
+                    ?? GetBookshelfTitleFuzzy(remainder, edition.Title.SplitBookTitle(authorName).Item1, out _);
+                if (foundAuthor == null || foundBook == null)
+                {
+                    return null;
+                }
+
+                return new ParsedBookInfo
+                {
+                    AuthorName = foundAuthor,
+                    AuthorTitleInfo = GetAuthorTitleInfo(foundAuthor),
+                    BookTitle = foundBook,
+                    Quality = QualityParser.ParseQuality(title),
+                    ReleaseGroup = ParseReleaseGroup(releaseTitle)
+                };
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug(exception, "Unable to parse a BookshelfNG release using its selected edition.");
+                return null;
+            }
+        }
+
+        private static string GetBookshelfTitleFuzzy(string report, string name, out string remainder)
+        {
+            remainder = report;
+            var (start, length, score) = report.ToLowerInvariant().FuzzyMatch(name.ToLowerInvariant(), 0.6, WordDelimiters);
+            if (start < 0 || score < 0.8)
+            {
+                return null;
+            }
+
+            remainder = report.Remove(start, length);
+            return report.Substring(start, length).Replace('.', ' ').Replace('_', ' ');
+        }
+
+#pragma warning restore CS0618
+
         public static ParsedBookInfo ParseBookTitleWithSearchCriteria(string title, Author author, List<Book> books)
         {
             try

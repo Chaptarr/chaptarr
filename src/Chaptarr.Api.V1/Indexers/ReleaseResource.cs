@@ -163,6 +163,13 @@ namespace Chaptarr.Api.V1.Indexers
 
         public string MagnetUrl { get; set; }
         public string InfoHash { get; set; }
+
+        [JsonIgnore]
+        public bool HasOriginalInfoHash { get; set; }
+
+        [JsonIgnore]
+        public string OriginalInfoHash { get; set; }
+
         public int? Seeders { get; set; }
         public int? Leechers { get; set; }
         public DownloadProtocol Protocol { get; set; }
@@ -184,6 +191,9 @@ namespace Chaptarr.Api.V1.Indexers
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? BookId { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? SeriesId { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? DownloadClientId { get; set; }
@@ -300,6 +310,8 @@ namespace Chaptarr.Api.V1.Indexers
 
                 MagnetUrl = torrentInfo.MagnetUrl,
                 InfoHash = torrentInfo.InfoHash,
+                HasOriginalInfoHash = torrentInfo.HasOriginalInfoHash,
+                OriginalInfoHash = torrentInfo.OriginalInfoHash,
                 Seeders = torrentInfo.Seeders,
                 Leechers = (torrentInfo.Peers.HasValue && torrentInfo.Seeders.HasValue) ? (torrentInfo.Peers.Value - torrentInfo.Seeders.Value) : (int?)null,
                 Protocol = releaseInfo.DownloadProtocol,

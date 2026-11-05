@@ -92,9 +92,14 @@ manifest's `processPointerBits` describes Python and is 64 in that guest.
 
 On the desktop's Arch kernel `7.2.11`, the same target still fails first startup
 with missing DryIoc registrations. A container diagnostic without seccomp filtering
-also fails. Single-CPU container and native-host diagnostics crash the original
-BookshelfNG binary before target acceptance. This is an unresolved environment
-discrepancy, not proof of a kernel defect or a passing target. The source-built
+also fails. Single-CPU and unrestricted-resource container diagnostics crash the
+original BookshelfNG binary before target acceptance; a 1-GiB container still
+fails target startup. The first native-host diagnostic mixed Arch's loader with
+Debian libraries and its SIGFPE is excluded. A corrected task-owned diagnostic
+changes only the extracted apphosts' ELF interpreter to the matching Debian
+loader and passes the full suite. This modified diagnostic is not canonical
+archive acceptance. The container discrepancy remains unresolved; it does not
+establish a kernel defect or a passing target in that environment. The source-built
 runtime differs from the earlier instruction-corrected diagnostic only in build
 metadata, so a source rebuild alone did not eliminate this host failure.
 Evidence is retained under

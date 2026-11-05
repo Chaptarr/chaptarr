@@ -39,7 +39,9 @@ namespace NzbDrone.Core.Indexers
             var result = base.ProcessItem(item, releaseInfo) as TorrentInfo;
 
             result.MagnetUrl = GetMagnetUrl(item);
-            result.InfoHash = TorrentHashResolver.NormalizeKnownHash(GetInfoHash(item));
+            result.OriginalInfoHash = GetInfoHash(item);
+            result.HasOriginalInfoHash = true;
+            result.InfoHash = TorrentHashResolver.NormalizeKnownHash(result.OriginalInfoHash);
 
             if (result.InfoHash.IsNullOrWhiteSpace() && result.MagnetUrl.IsNotNullOrWhiteSpace())
             {
