@@ -23,6 +23,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile.build
+    env_file:
+      - ${CHAPTARRNG_SOURCE_METADATA_ENV:?Set the captured source metadata environment file}
     environment:
       CHAPTARR__AUTH__APIKEY: ${CHAPTARRNG_API_KEY:?Set a disposable ChaptarrNG API key}
       CHAPTARR__SERVER__PORT: "8787"

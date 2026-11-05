@@ -33,5 +33,21 @@ namespace NzbDrone.Core.Test.Configuration
 
             Assert.That(url, Is.EqualTo("https://api2.chaptarr.com"));
         }
+
+        [Test]
+        public void captured_source_fallback_should_apply_after_source_environment_is_removed()
+        {
+            Assert.That(ConfigService.ResolveMetadataServerUrl("", null, "https://source-default.example"),
+                Is.EqualTo("https://source-default.example"));
+        }
+
+        [Test]
+        public void saved_and_current_environment_values_should_override_captured_source_fallback()
+        {
+            Assert.That(ConfigService.ResolveMetadataServerUrl("https://saved.example", "https://environment.example", "https://source.example"),
+                Is.EqualTo("https://saved.example"));
+            Assert.That(ConfigService.ResolveMetadataServerUrl("", "https://environment.example", "https://source.example"),
+                Is.EqualTo("https://environment.example"));
+        }
     }
 }

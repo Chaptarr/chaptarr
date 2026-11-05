@@ -308,6 +308,8 @@ jobs:
           if [[ "$RID" == linux-* || "$RID" == osx-* ]]; then
             tar -tzf "$RUNNER_TEMP/release-assets/$asset" \
               | grep -Fx 'ChaptarrNG/scripts/bookshelfng-to-chaptarrng.sh' >/dev/null
+            tar -tzf "$RUNNER_TEMP/release-assets/$asset" \
+              | grep -Fx 'ChaptarrNG/scripts/capture-bookshelf-metadata-env.py' >/dev/null
           fi
         fi
         (cd "$RUNNER_TEMP/release-assets" && sha256sum --check "$asset.sha256")

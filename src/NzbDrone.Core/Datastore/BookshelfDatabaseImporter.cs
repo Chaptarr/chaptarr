@@ -2182,6 +2182,7 @@ namespace NzbDrone.Core.Datastore
             const string bookshelfMigrationOutcomeKey = "bookshelfngmigrationoutcome";
             const string legacyMetadataSourceKey = "metadatasource";
             const string chaptarrMetadataServerUrlKey = "metadataserverurl";
+            const string bookshelfMetadataFallbackKey = "bookshelfngmetadataserverurlfallback";
             const string chaptarrGitHubUpdatesKey = "usegithubupdates";
 
             var configRows = ReadRows(source, "Config").ToList();
@@ -2209,6 +2210,7 @@ namespace NzbDrone.Core.Datastore
             var bookshelfMigrationOutcomeRows = configRows.Where(row => string.Equals(GetString(row, "Key"), bookshelfMigrationOutcomeKey, StringComparison.OrdinalIgnoreCase)).ToList();
             var legacyMetadataSourceRows = configRows.Where(row => string.Equals(GetString(row, "Key"), legacyMetadataSourceKey, StringComparison.OrdinalIgnoreCase)).ToList();
             var chaptarrMetadataServerUrlRows = configRows.Where(row => string.Equals(GetString(row, "Key"), chaptarrMetadataServerUrlKey, StringComparison.OrdinalIgnoreCase)).ToList();
+            var bookshelfMetadataFallbackRows = configRows.Where(row => string.Equals(GetString(row, "Key"), bookshelfMetadataFallbackKey, StringComparison.OrdinalIgnoreCase)).ToList();
             var chaptarrGitHubUpdatesRows = configRows.Where(row => string.Equals(GetString(row, "Key"), chaptarrGitHubUpdatesKey, StringComparison.OrdinalIgnoreCase)).ToList();
             var autoInitializeAuthorPathsRows = configRows
                 .Where(row => string.Equals(GetString(row, "Key"), "AutoInitializeFormatSpecificAuthorPaths", StringComparison.OrdinalIgnoreCase))
@@ -2242,7 +2244,7 @@ namespace NzbDrone.Core.Datastore
                 throw new InvalidDataException("BookshelfNG config contains duplicate compatibility profile settings; conversion stopped before promotion.");
             }
 
-            if (legacyMetadataSourceRows.Count > 1 || chaptarrMetadataServerUrlRows.Count > 1)
+            if (legacyMetadataSourceRows.Count > 1 || chaptarrMetadataServerUrlRows.Count > 1 || bookshelfMetadataFallbackRows.Count > 1)
             {
                 throw new InvalidDataException("BookshelfNG config contains duplicate metadata-server settings; conversion stopped before promotion.");
             }
@@ -2526,7 +2528,25 @@ namespace NzbDrone.Core.Datastore
                 hardcoverModeDisposition = $"BookshelfNG's effective {sourceProviderDialect} runtime mode was copied to ChaptarrNG HardcoverEnabled";
             }
 
-            var metadataServerUrlDisposition = "no saved metadata-server URL was present; ChaptarrNG's configured environment or default URL applies";
+            if (bookshelfMetadataFallbackRows.Count == 0)
+            {
+                var inheritedMetadataUrl = Environment.GetEnvironmentVariable("METADATA_URL");
+                var fallback = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["Key"] = "BookshelfNGMetadataServerUrlFallback",
+                    ["Value"] = string.IsNullOrWhiteSpace(inheritedMetadataUrl)
+                        ? ConfigService.BookshelfMetadataServerDefault
+                        : inheritedMetadataUrl
+                };
+                if (target is NpgsqlConnection && targetColumns.ContainsKey("Id"))
+                {
+                    fallback["Id"] = checked(++nextGeneratedConfigId);
+                }
+
+                configRows.Add(fallback);
+            }
+
+            var metadataServerUrlDisposition = "no saved metadata-server URL was present; the inherited source environment or verified BookshelfNG binary default was retained as a separate fallback";
             var legacyMetadataSource = legacyMetadataSourceRows.SingleOrDefault();
             var chaptarrMetadataServerUrl = chaptarrMetadataServerUrlRows.SingleOrDefault();
             if (chaptarrMetadataServerUrl != null && !string.IsNullOrWhiteSpace(GetString(chaptarrMetadataServerUrl, "Value")))

@@ -24,6 +24,8 @@ namespace NzbDrone.Core.Configuration
 
     public class ConfigService : IConfigService
     {
+        // Verified default of the supported BookshelfNG .76 source binary.
+        internal const string BookshelfMetadataServerDefault = "https://api.bookinfo.pro";
         private readonly IConfigRepository _repository;
         private readonly IEventAggregator _eventAggregator;
         private readonly IRootFolderService _rootFolderService;
@@ -561,23 +563,32 @@ namespace NzbDrone.Core.Configuration
         {
             get
             {
+                var sourceFallback = BookshelfNGDatabaseMigrated
+                    ? GetValue("BookshelfNGMetadataServerUrlFallback", BookshelfMetadataServerDefault)
+                    : string.Empty;
                 return ResolveMetadataServerUrl(
                     GetValue("MetadataServerUrl", string.Empty),
-                    Environment.GetEnvironmentVariable("METADATA_URL"));
+                    Environment.GetEnvironmentVariable("METADATA_URL"),
+                    sourceFallback);
             }
 
             set { SetValue("MetadataServerUrl", value); }
         }
 
-        internal static string ResolveMetadataServerUrl(string configuredValue, string legacyEnvironmentValue)
+        internal static string ResolveMetadataServerUrl(string configuredValue, string legacyEnvironmentValue, string capturedSourceFallback = null)
         {
             if (!string.IsNullOrWhiteSpace(configuredValue))
             {
                 return configuredValue;
             }
 
-            return !string.IsNullOrWhiteSpace(legacyEnvironmentValue)
-                ? legacyEnvironmentValue
+            if (!string.IsNullOrWhiteSpace(legacyEnvironmentValue))
+            {
+                return legacyEnvironmentValue;
+            }
+
+            return !string.IsNullOrWhiteSpace(capturedSourceFallback)
+                ? capturedSourceFallback
                 : "https://api2.chaptarr.com";
         }
 

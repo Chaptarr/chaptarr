@@ -279,6 +279,7 @@ jobs:
       run: |
         bash -n scripts/bookshelfng-to-chaptarrng.sh scripts/test-bookshelfng-to-chaptarrng.sh
         bash scripts/test-bookshelfng-to-chaptarrng.sh
+        python3 -m unittest discover -s scripts -p test_capture_bookshelf_metadata_env.py
 
     - name: Test Linux systemd standalone Yes/No handoff prompt
       if: matrix.platform == 'linux-x64'

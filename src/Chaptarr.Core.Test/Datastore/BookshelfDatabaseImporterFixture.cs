@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Collections.Generic;
 using FluentMigrator.Runner.Generators;
 using FluentMigrator.Runner;
 using FluentMigrator.Runner.Initialization;
@@ -15,6 +16,8 @@ using NLog.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using Moq;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Migration.Framework;
 using NzbDrone.Core.Download.Clients.QBittorrent;
@@ -36,6 +39,7 @@ namespace Chaptarr.Core.Test.Datastore
         private string _previousBookshelfUrlBase;
         private string _previousHardcoverMode;
         private string _previousHardcoverNativeMode;
+        private string _previousMetadataUrl;
 
         [SetUp]
         public void SetUp()
@@ -43,6 +47,8 @@ namespace Chaptarr.Core.Test.Datastore
             _previousHardcoverMode = Environment.GetEnvironmentVariable("HARDCOVER");
             _previousHardcoverNativeMode = Environment.GetEnvironmentVariable("HARDCOVER_NATIVE");
             _previousBookshelfUrlBase = Environment.GetEnvironmentVariable("BOOKSHELF_URLBASE");
+            _previousMetadataUrl = Environment.GetEnvironmentVariable("METADATA_URL");
+            Environment.SetEnvironmentVariable("METADATA_URL", null);
             // Most migration fixtures use the legacy Goodreads default
             // explicitly. Tests for ambiguous provider mode clear this value.
             Environment.SetEnvironmentVariable("HARDCOVER", "false");
@@ -70,6 +76,7 @@ namespace Chaptarr.Core.Test.Datastore
             Environment.SetEnvironmentVariable("HARDCOVER", _previousHardcoverMode);
             Environment.SetEnvironmentVariable("HARDCOVER_NATIVE", _previousHardcoverNativeMode);
             Environment.SetEnvironmentVariable("BOOKSHELF_URLBASE", _previousBookshelfUrlBase);
+            Environment.SetEnvironmentVariable("METADATA_URL", _previousMetadataUrl);
         }
 
         [TestCase("Aliases", "[\"Another author name\"]")]
@@ -171,6 +178,38 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(QueryScalar<string>(backupPath, "SELECT Value FROM Config WHERE Key = 'MetadataSource';"), Is.EqualTo(metadataUrl),
                     "the immutable source backup should retain the original legacy setting");
             });
+        }
+
+        [TestCase(null, "https://api.bookinfo.pro")]
+        [TestCase("", "https://api.bookinfo.pro")]
+        [TestCase("https://inherited-metadata.example/catalog", "https://inherited-metadata.example/catalog")]
+        public void should_retain_effective_source_metadata_fallback_after_environment_is_removed(string environmentValue, string expected)
+        {
+            Environment.SetEnvironmentVariable("METADATA_URL", environmentValue);
+            new MigrationController(LogManager.GetLogger(nameof(BookshelfDatabaseImporterFixture)), null).Migrate(
+                _sourceConnectionString, new MigrationContext(MigrationType.Main), DatabaseType.SQLite);
+            var backupPath = Directory.GetFiles(_directory, "readarr.db.bookshelfng-backup-*.db").Single();
+            Assert.That(QueryScalar<string>(_sourcePath, "SELECT Value FROM Config WHERE Key = 'BookshelfNGMetadataServerUrlFallback';"), Is.EqualTo(expected));
+            Assert.That(QueryScalar<int>(backupPath, "SELECT COUNT(*) FROM Config WHERE Key = 'BookshelfNGMetadataServerUrlFallback';"), Is.Zero);
+
+            var values = new List<Config>();
+            using (var connection = new SqliteConnection(_sourceConnectionString))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT Key,Value FROM Config";
+                using var rows = command.ExecuteReader();
+                while (rows.Read())
+                {
+                    values.Add(new Config { Key = rows.GetString(0), Value = rows.IsDBNull(1) ? null : rows.GetString(1) });
+                }
+            }
+
+            Environment.SetEnvironmentVariable("METADATA_URL", null);
+            var repository = new Mock<IConfigRepository>();
+            repository.Setup(repo => repo.All()).Returns(values);
+            var service = new ConfigService(repository.Object, null, null, LogManager.GetCurrentClassLogger());
+            Assert.That(service.MetadataServerUrl, Is.EqualTo(expected));
         }
 
         [Test]

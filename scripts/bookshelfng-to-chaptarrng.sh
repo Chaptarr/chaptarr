@@ -4,7 +4,7 @@ set -Eeuo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  bookshelfng-to-chaptarrng.sh snapshot --data-dir PATH --backup-dir PATH
+  bookshelfng-to-chaptarrng.sh snapshot --data-dir PATH --backup-dir PATH [--source-container NAME]
   bookshelfng-to-chaptarrng.sh preview  --data-dir PATH --backup-dir PATH --image IMAGE --provider-mode goodreads|native-hardcover [--merge-bookshelf-databases]
   bookshelfng-to-chaptarrng.sh apply   --data-dir PATH --backup-dir PATH --image IMAGE --confirm-stopped --provider-mode goodreads|native-hardcover [--merge-bookshelf-databases]
   bookshelfng-to-chaptarrng.sh rollback-preview --data-dir PATH --backup-dir PATH --image IMAGE --bookshelf-backup FILE
@@ -23,6 +23,11 @@ stop the conversion before either original database is changed.
 Rollback actions use the current chaptarr.db and its retained source receipt;
 they do not need the merge option. Dual-database rollback requires both
 original BookshelfNG files to remain present and unchanged.
+For container handoffs, --source-container NAME captures its inherited
+METADATA_URL after verifying the /config mount. Preview/apply can use that
+option or --metadata-env-file PATH; conversion retains it as a fallback.
+Keep the file with the backup. Other runtime environment settings must still
+be preserved in the permanent replacement; appdata cannot recover image defaults.
 USAGE
 }
 
@@ -102,6 +107,8 @@ confirm_stopped=false
 provider_mode=""
 provider_mode_set=false
 merge_bookshelf_databases=false
+source_container=""
+metadata_env_file=""
 
 while (($#)); do
   case "$1" in
@@ -139,6 +146,16 @@ while (($#)); do
       merge_bookshelf_databases=true
       shift
       ;;
+    --source-container)
+      (($# >= 2)) || fail '--source-container needs a container name'
+      source_container="$2"
+      shift 2
+      ;;
+    --metadata-env-file)
+      (($# >= 2)) || fail '--metadata-env-file needs a path'
+      metadata_env_file="$2"
+      shift 2
+      ;;
     -h|--help|help)
       usage
       exit 0
@@ -146,6 +163,19 @@ while (($#)); do
     *) fail "unknown option: $1" ;;
   esac
 done
+
+if [[ -n "$source_container" && -n "$metadata_env_file" ]]; then
+  fail 'choose --source-container or --metadata-env-file, not both'
+fi
+if [[ -n "$source_container" || -n "$metadata_env_file" ]]; then
+  [[ "$action" == snapshot || "$action" == preview || "$action" == apply ]] ||
+    fail 'metadata environment capture applies only to snapshot, preview and apply'
+fi
+if [[ -n "$metadata_env_file" ]]; then
+  [[ "$action" != snapshot ]] || fail '--metadata-env-file applies only to preview and apply'
+  [[ -f "$metadata_env_file" && ! -L "$metadata_env_file" ]] || fail '--metadata-env-file must be a regular file'
+  metadata_env_file="$(cd -- "$(dirname -- "$metadata_env_file")" && pwd -P)/$(basename -- "$metadata_env_file")"
+fi
 
 [[ -n "$data_dir" ]] || fail '--data-dir is required'
 [[ "$data_dir" == /* ]] || fail '--data-dir must be an absolute path'
@@ -295,9 +325,18 @@ chmod 600 "$archive"
 printf 'Appdata archive: %s\n' "$archive"
 printf 'Database selected for the ChaptarrNG handoff: %s\n' "$(basename -- "$source_database")"
 
+if [[ -n "$source_container" ]]; then
+  metadata_env_file="${archive%.tar.gz}.metadata.env"
+  capture_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/capture-bookshelf-metadata-env.py"
+  python3 "$capture_script" --source-container "$source_container" --data-dir "$data_dir" --output "$metadata_env_file"
+fi
+
 [[ "$action" != snapshot ]] || exit 0
 
 container_args=(run --rm --pull=always)
+if [[ -n "$metadata_env_file" ]]; then
+  container_args+=(--env-file "$metadata_env_file")
+fi
 if [[ "$action" == preview || "$action" == apply ]]; then
   if [[ "$provider_mode" == native-hardcover ]]; then
     container_args+=(-e HARDCOVER=true -e HARDCOVER_NATIVE=true)

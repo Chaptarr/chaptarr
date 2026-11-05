@@ -29,6 +29,9 @@ export TEST_PGID="$(id -g)"
 export BOOKSHELFNG_API_KEY="$(openssl rand -hex 32)"
 export CHAPTARRNG_API_KEY="$BOOKSHELFNG_API_KEY"
 export CHAPTARRNG_TARGET_COMMIT="$TARGET_COMMIT"
+export CHAPTARRNG_SOURCE_METADATA_ENV="$WORK_DIR/source-metadata.env"
+: > "$CHAPTARRNG_SOURCE_METADATA_ENV"
+chmod 600 "$CHAPTARRNG_SOURCE_METADATA_ENV"
 export CHAPTARRNG_TARGET_IMAGE_ID="target-image-id-not-built"
 export BOOKSHELFNG_FIXTURE_SHA256="runtime-seed-pending"
 export BOOKSHELFNG_API_DIFFERENTIAL_SCRIPT="$ROOT/integration/bookshelfng-api-differential.mjs"
@@ -96,6 +99,16 @@ python3 "$ROOT/integration/snapshot-bookshelfng-api-differential.py" \
   --source-library "$BOOKSHELFNG_SOURCE_LIBRARY" \
   --target-library "$CHAPTARRNG_TARGET_LIBRARY" \
   | tee "$REPORT_DIR/source-runtime-snapshot.log"
+
+# Container defaults are runtime configuration too. Capture the actual source
+# image's value instead of silently replacing it with the new image's default.
+source_container_id="$("${COMPOSE[@]}" ps --quiet bookshelfng)"
+python3 "$ROOT/scripts/capture-bookshelf-metadata-env.py" \
+  --source-container "$source_container_id" \
+  --data-dir "$BOOKSHELFNG_SOURCE_CONFIG" \
+  --output "$WORK_DIR/captured-source-metadata.env"
+mv -- "$WORK_DIR/captured-source-metadata.env" "$CHAPTARRNG_SOURCE_METADATA_ENV"
+cp -- "$WORK_DIR/captured-source-metadata.env.source.json" "$REPORT_DIR/source-metadata-provenance.json"
 
 source_database_sha="$(sha256sum "$CHAPTARRNG_TARGET_CONFIG/readarr.db" | cut -d ' ' -f 1)"
 printf 'BookshelfNG runtime-seeded snapshot SHA-256: %s\n' "$source_database_sha"

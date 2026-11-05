@@ -386,6 +386,24 @@ source packaging workflow includes the helper in Linux x64 and arm64
 standalone archives. The published `.977` archives do not contain this newer
 bootstrap. No new release or cutover is authorized by this source change.
 
+Container metadata defaults need a separate capture before removing the old
+container. `snapshot --source-container NAME` verifies that container's `/config`
+mount, then writes a private `.metadata.env` beside the appdata archive, plus
+source image/container hashes. It captures only `METADATA_URL`, including values
+inherited from the source image, and does not print the URL. The optional capture
+requires Python 3. Pass the resulting file to preview/apply with
+`--metadata-env-file /absolute/path/to/captured.metadata.env`; a working copy can
+use the original capture without pretending it is the live container mount.
+Preview/apply can also capture directly with `--source-container` when using the
+original appdata directory. Keep these files private with the backups.
+
+Conversion retains this runtime fallback independently of saved metadata URL
+settings. Saved Chaptarr values still take precedence, followed by the current
+`METADATA_URL`, then the captured source fallback. With no source environment,
+the verified BookshelfNG `.76` binary default is retained for migrated data;
+fresh Chaptarr installations retain their own default. Preserve the other source
+runtime environment settings separately, as described in the channel runbooks.
+
 The Add New page carries over the BookshelfNG “search as you type” choice when
 you open ChaptarrNG from the same browser origin. If you move to a different
 host, scheme, or port, browser storage is separate; set the option on the

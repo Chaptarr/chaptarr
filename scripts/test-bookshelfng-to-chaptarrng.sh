@@ -16,6 +16,10 @@ printf 'fixture log\n' > "$data_dir/logs/Readarr.debug.txt"
 
 cat > "$fakebin/docker" <<'DOCKER'
 #!/usr/bin/env bash
+if [[ "$1" == inspect ]]; then
+  cat "$DOCKER_INSPECT_FILE"
+  exit 0
+fi
 printf '%s\n' "$@" > "$DOCKER_ARGS_FILE"
 DOCKER
 chmod +x "$fakebin/docker"
@@ -163,5 +167,34 @@ fi
   --bookshelf-backup 'readarr.db.bookshelfng-backup-test.db' --confirm-stopped
 grep -Fxq -- '-restore-bookshelf' "$DOCKER_ARGS_FILE"
 grep -Fxq -- '-confirm-bookshelf-service-stopped' "$DOCKER_ARGS_FILE"
+
+export DOCKER_INSPECT_FILE="$workdir/source-inspect.json"
+python3 - "$data_dir" "$DOCKER_INSPECT_FILE" <<'PY'
+import json,sys
+from pathlib import Path
+Path(sys.argv[2]).write_text(json.dumps([{
+    'Id':'fixture-source','Image':'sha256:fixture-image',
+    'Mounts':[{'Destination':'/config','Source':sys.argv[1]}],
+    'Config':{'Env':['METADATA_URL=https://captured-metadata.example','OTHER_SECRET=fixture-only']}
+}]))
+PY
+"$tool" snapshot --data-dir "$data_dir" --backup-dir "$backup_dir" \
+  --source-container fixture-source > "$workdir/metadata-capture.log"
+captured_env="$(find "$backup_dir" -maxdepth 1 -name '*.metadata.env' -print -quit)"
+[[ -n "$captured_env" ]]
+grep -Fxq 'METADATA_URL=https://captured-metadata.example' "$captured_env"
+[[ "$(stat -c '%a' "$captured_env")" == 600 ]]
+! grep -Fq 'OTHER_SECRET' "$captured_env"
+! grep -Fq 'https://captured-metadata.example' "$workdir/metadata-capture.log"
+"$tool" preview --data-dir "$data_dir" --backup-dir "$backup_dir" --image "$image" \
+  --provider-mode goodreads --metadata-env-file "$captured_env"
+grep -Fxq -- '--env-file' "$DOCKER_ARGS_FILE"
+grep -Fxq -- "$captured_env" "$DOCKER_ARGS_FILE"
+! grep -Fq 'https://captured-metadata.example' "$DOCKER_ARGS_FILE"
+if "$tool" snapshot --data-dir "$data_dir" --backup-dir "$backup_dir" \
+  --source-container fixture-source --metadata-env-file "$captured_env" 2>/dev/null; then
+  echo 'ambiguous source environment inputs should have been rejected' >&2
+  exit 1
+fi
 
 echo 'BookshelfNG to ChaptarrNG handoff helper checks passed.'
