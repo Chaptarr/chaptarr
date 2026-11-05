@@ -39,8 +39,12 @@ with zero mismatches, integrity errors or foreign-key violations.
 `bd23e039` subsequently repairs legacy work release dates, selected-edition page
 counts and the predecessor's file-based percentage response. Native responses
 retain edition dates, audiobook page-count suppression and availability-based
-percentages. The 64 focused mapper/paging/identity checks pass. Packaged HTTP
-confirmation of these later response repairs remains pending.
+percentages. The 64 focused mapper/paging/identity checks pass. Packaged primary
+HTTP comparison confirms the repaired values in three details and 25 paged
+records. `42d174af` also restores editions omitted from the unscoped legacy work
+catalog after format splitting. Six sampled works across both libraries now
+return the source's 7, 15 and 4 editions, with matching edition/provider IDs,
+publishers and release dates. These are bounded samples, not all-record proofs.
 
 ## Rollback and runtime
 
@@ -60,8 +64,37 @@ same snapshots for comparison, with no production service stop or data write.
 Runtime copies use no external network, no published host ports, dropped
 capabilities and read-only media mounts. Notification/client configurations
 remain present for fidelity without reaching live services. SeerrNG library
-reads using the exact deployed `v3.72.3` image are running separately; full
-request-to-availability fulfillment remains open.
+reads using the exact deployed `v3.72.3` image pass for both libraries: primary
+14,377 ebooks/7,999 audiobooks; audio 14,790 ebooks/8,192 audiobooks. Paging returns
+each record once, sampled file classifications agree and restricted-key admin
+boundaries hold. Sampled primary history includes both formats; the sampled audio
+library audiobook history is empty and is not claimed positive coverage. Full
+web request-to-availability fulfillment remains open.
+
+Cached source cover images were copied into private runtime caches. At
+`f9f209ee`, 40 root cover requests across both libraries and full/restricted keys
+return HTTP 200 with source-byte hashes. Fourteen boundary checks retain denials
+for absent/wrong keys, UI-root API-key access and unsafe/nonimage paths. The
+authenticated API cover routes also match source bytes. Original Forms account
+hash retention does not establish browser login; the source-image harness needs
+a writable temporary directory for cookie key storage before that test.
+
+Synthetic acquisition exposed a persisted-monitoring defect: the release
+specification read an ignored legacy property instead of the stored format flag.
+`5c6ef346` repairs it with eight regressions. `310eae07` retains valid schemeless
+EPUB ISBN URNs and legacy scheme attributes; `4772c317` refreshes stale persisted
+tag records when they contain recoverable ISBN evidence. Focused metadata/cache
+checks pass. The failed download subsequently imports on retry without changing
+its downloaded bytes. Import writes the configured series tags while preserving
+all reading content. The clean repeatable rehearsal in
+`integration/run-acquisition-smoke.py` passes with the `4772c317` packaged
+application: source-158 conversion, actual deployed SeerrNG adapter request,
+Torznab search/grab, real local qBittorrent transfer, normal completed-download
+import, ebook-only availability and history, unchanged reading content with
+configured series tags, restart availability, and retained source schema/row
+equality. Both databases pass integrity/FK checks. This uses original synthetic
+EPUB content and isolated loopback peers; it does not establish audiobook,
+live-tracker, Usenet or SeerrNG web-request database fulfillment.
 
 ## Real-media reads
 
@@ -93,5 +126,13 @@ Live providers, complete SeerrNG acquisition, media import/write/recovery,
 representative PostgreSQL operator data, headed UI, external distribution and
 production acceptance remain open. Desktop Pool v2 still has no available lease;
 other tasks' quarantined artifacts/profiles have not been taken over or reset.
-Full CI and all ten archive builds passed at `2badb8c2`; the `69ec4a3d` full CI
-follow-up is running. Each result retains its tested revision and bounded scope.
+Full CI passed at `69ec4a3d` and `c15d5ac9`. Later `4772c317` CI stopped on stale
+localization callsite line references; `1ff8feb6` updates those references and all
+67 localization tests pass locally. Archive validation at `c15d5ac9` passed nine
+platforms but exposed missing Linux x86 SDK metadata. `317c5b43` supplies project
+metadata without replacing SDK files; `1ff8feb6` confines it to Core/ASP.NET so
+Linux no longer requests a Windows Desktop runtime. A complete Linux x86 archive
+built with clean SDK metadata starts on Debian 12 i386, migrates an empty database
+to 125 and returns `/ping` 200. The same runtime crashes during initialization on
+the desktop's Arch Linux installation; that distribution issue remains open.
+Each result retains its tested revision and bounded scope.

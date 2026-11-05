@@ -216,6 +216,7 @@ jobs:
         tar -tzf "$RUNNER_TEMP/release-assets/$asset" >/dev/null
         (cd "$RUNNER_TEMP/release-assets" && sha256sum --check "$asset.sha256")
 
+
   standalone:
     if: >-
       (
@@ -278,4 +279,28 @@ jobs:
           fi
         fi
         (cd "$RUNNER_TEMP/release-assets" && sha256sum --check "$asset.sha256")
+
+    - name: Exercise migrated SeerrNG acquisition with real qBittorrent
+      if: matrix.rid == 'linux-musl-x64'
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/acquisition-candidate"
+        tar -xzf "$RUNNER_TEMP/release-assets/ChaptarrNG-0.0.0-linux-musl-x64.tar.gz" \
+          -C "$RUNNER_TEMP/acquisition-candidate"
+        docker build -t chaptarrng-acquisition-qbittorrent:20261105 \
+          -f integration/acquisition/Dockerfile.qbittorrent integration/acquisition
+        python3 integration/run-acquisition-smoke.py \
+          --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
+          --output "$RUNNER_TEMP/acquisition-evidence"
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: always() && matrix.rid == 'linux-musl-x64'
+      with:
+        name: migrated-acquisition-evidence
+        path: |
+          ${{ runner.temp }}/acquisition-evidence/*.json
+          ${{ runner.temp }}/acquisition-evidence/*.log
+          ${{ runner.temp }}/release-assets/ChaptarrNG-0.0.0-linux-musl-x64.tar.gz.sha256
+        retention-days: 7
+        if-no-files-found: error
 

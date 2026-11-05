@@ -331,6 +331,10 @@ async function compareMutation(caseId, method, path, body) {
 const cases = [
   ["authors.list", "/author"],
   ["books.list", "/book"],
+  ["books.editions.mixed", "/book/30/editions/catalog"],
+  ["books.editions.audiobook", "/book/31/editions/catalog"],
+  ["books.editions.ebook", "/book/32/editions/catalog"],
+  ["books.editions.empty", "/book/33/editions/catalog"],
   ["series.list", "/series"],
   ["history.list", "/history"],
   ["root-folders.list", "/rootFolder"],
