@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-required-v1
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
 name: Trivy filesystem scan
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' &&
@@ -8,16 +8,18 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: Admit this workflow to the private JIT broker
+        description: Run trusted source security scanning
         required: true
         type: choice
         options:
           - scan
       runner_pool:
-        description: Select the private ephemeral JIT pool
+        description: Select compatible GitHub-hosted or private JIT runners
         required: true
         type: choice
+        default: public
         options:
+          - public
           - private
 permissions:
   contents: read
@@ -32,8 +34,8 @@ jobs:
       TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
     name: Trivy source, dependency, and configuration scan
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && inputs.runner_pool == 'private' && github.ref == 'refs/heads/main'
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trivy"]}}', github.run_id)) }}
+      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && (inputs.runner_pool == 'public' || inputs.runner_pool == 'private') && github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trivy"]}}', github.run_id)) }}
     timeout-minutes: 30
     steps:
       - name: Checkout

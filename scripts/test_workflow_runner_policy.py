@@ -103,6 +103,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "bookshelfng-standalone-macos-acceptance.yml",
             "standalone-asset-validation.yml",
             "bookshelfng-api-differential.yml",
+            "security.yml",
+            "semgrep-community.yml",
+            "trivy-filesystem.yml",
         }
         for workflow_path in sorted(workflow_dir.glob("*.yml")):
             source = workflow_path.read_text(encoding="utf-8")
@@ -485,6 +488,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 "helm-handoff.yml",
                 "standalone-asset-validation.yml",
                 "bookshelfng-api-differential.yml",
+                "security.yml",
+                "semgrep-community.yml",
+                "trivy-filesystem.yml",
             }
             pool_options = ("public", "private") if path.name in public_routes else ("private",)
             for field, options in (("action", (action,)), ("runner_pool", pool_options)):
@@ -571,13 +577,22 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("inputs.channel_contracts_only != true", job_block(source, "postgres-migrations"))
         self.assertIn("inputs.channel_contracts_only != true", job_block(source, "docker-image-build"))
 
-    def test_security_scans_use_private_jit_without_hosted_fallback(self) -> None:
+    def test_security_scans_use_explicit_trusted_hosted_or_private_routes(self) -> None:
         workflow_dir = WORKFLOW.parent
         self.assertFalse((workflow_dir / "codeql.yml").exists())
         self.assertFalse((workflow_dir / "codeql.yml.disabled").exists())
         self.assertFalse((workflow_dir.parent / "codeql").exists())
         for path in workflow_dir.glob("*.yml"):
             self.assertNotIn("github/codeql-action/", path.read_text(encoding="utf-8"), path.name)
+        for workflow_name, job_name in (("security.yml", "trivy"), ("trivy-filesystem.yml", "trivy"), ("semgrep-community.yml", "semgrep")):
+            source = (workflow_dir / workflow_name).read_text(encoding="utf-8")
+            scan = job_block(source, job_name)
+            self.assertIn("github.event_name == 'workflow_dispatch'", scan)
+            self.assertIn("inputs.action == 'scan'", scan)
+            self.assertIn("github.ref == 'refs/heads/main'", scan)
+            self.assertIn("(inputs.runner_pool == 'public' || inputs.runner_pool == 'private')", scan)
+            self.assertIn("inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON", scan)
+            self.assertNotIn("pull_request_target:", source)
         workflow_name = "semgrep-community.yml"
         source = (workflow_dir / workflow_name).read_text(encoding="utf-8")
         job = job_block(source, "semgrep")
