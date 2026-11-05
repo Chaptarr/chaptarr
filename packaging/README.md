@@ -22,6 +22,15 @@ can convert a supported BookshelfNG database automatically.
 For current BookshelfNG migration and legacy-channel acceptance status, see
 [BookshelfNG retirement status](../docs/BOOKSHELFNG_RETIREMENT.md).
 
+The standalone validation workflow accepts optional `runtime_packs_run_id` to
+reuse an unexpired runtime-pack artifact. The source must be this repository's
+trusted main archive workflow, its runtime producer must have succeeded, and
+all producer/helper Git blob hashes must still match. The artifact's original
+run, commit, digest and input hashes are retained with the current run's packs.
+Omit the input to build packs again. Reuse applies only to the pinned runtime
+packs; application archives and acquisition tests still build/run at the current
+workflow revision. This validation does not publish anything.
+
 ## Package identities
 
 | Channel | New ChaptarrNG install | Existing BookshelfNG identity | Data path during upgrade |
