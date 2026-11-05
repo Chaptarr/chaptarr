@@ -1,9 +1,32 @@
 import assert from "node:assert/strict";
 import {
+  annotateProviderMismatchDetails,
   compareResponses,
   normalizeProviderApiResponse,
   sanitizeApiResponse,
 } from "./bookshelfng-api-contract.mjs";
+
+const providers = Array.from({ length: 20 }, (_, index) => ({
+  implementation: `Provider${index}`,
+}));
+providers[19].implementation = "LegacyNotification";
+assert.deepEqual(
+  annotateProviderMismatchDetails(
+    [
+      { path: "/19/supportsOnBookFileDelete", kind: "value-difference" },
+      { path: "/appName", kind: "value-difference" },
+    ],
+    providers,
+  ),
+  [
+    {
+      path: "/19/supportsOnBookFileDelete",
+      kind: "value-difference",
+      providerImplementation: "LegacyNotification",
+    },
+    { path: "/appName", kind: "value-difference" },
+  ],
+);
 
 const additiveFields = compareResponses(
   { id: 1, title: "The Book" },

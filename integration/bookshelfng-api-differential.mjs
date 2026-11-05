@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
+  annotateProviderMismatchDetails,
   compareResponses,
   normalizeProviderApiResponse,
   sanitizeApiResponse,
@@ -201,7 +202,9 @@ async function compare(caseId, path, providerResource = false, expectedTargetSta
       additiveDetails: [],
     };
   }
-  const mismatchDetails = comparison.mismatchDetails;
+  const mismatchDetails = providerResource
+    ? annotateProviderMismatchDetails(comparison.mismatchDetails, target.value)
+    : comparison.mismatchDetails;
   const mismatchPaths = comparison.mismatchPaths;
   const additiveDetails = comparison.additiveDetails;
   const additivePaths = comparison.additivePaths;

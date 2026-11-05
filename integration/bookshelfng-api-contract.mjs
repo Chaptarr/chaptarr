@@ -102,6 +102,25 @@ export function normalizeProviderApiResponse(value) {
   return normalized;
 }
 
+export function annotateProviderMismatchDetails(mismatchDetails, targetProviders) {
+  if (!Array.isArray(mismatchDetails) || !Array.isArray(targetProviders)) {
+    return mismatchDetails;
+  }
+
+  return mismatchDetails.map((detail) => {
+    const providerIndex = /^\/(\d+)(?:\/|$)/.exec(detail?.path ?? "");
+    const provider = providerIndex ? targetProviders[Number(providerIndex[1])] : null;
+    if (typeof provider?.implementation !== "string") {
+      return detail;
+    }
+
+    return {
+      ...detail,
+      providerImplementation: provider.implementation,
+    };
+  });
+}
+
 function identityKey(value, path) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
