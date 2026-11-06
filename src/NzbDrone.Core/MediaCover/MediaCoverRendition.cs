@@ -13,6 +13,8 @@ namespace NzbDrone.Core.MediaCover
 {
     public static class MediaCoverRendition
     {
+        public const string OriginalImageVerificationPrefix = "original-sha256-v1\n";
+
         public static void ValidateImageResponse(byte[] data, string contentType)
         {
             if (data == null || data.Length == 0)
@@ -20,10 +22,21 @@ namespace NzbDrone.Core.MediaCover
                 throw new InvalidDataException("Cover response was empty");
             }
 
-            if (contentType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true ||
-                contentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+            // ImageSharp cannot decode these ISO-BMFF formats. Retain the originals;
+            // the cover route serves AVIF; HEIC-family originals are retained but not served.
+            if (data.Length >= 16 && data.AsSpan(4, 4).SequenceEqual("ftyp"u8) &&
+                Encoding.ASCII.GetString(data, 8, 4) is "avif" or "avis" or "heic" or "heix" or "mif1" or "msf1")
             {
-                throw new InvalidDataException($"Cover response had non-image content type '{contentType}'");
+                return;
+            }
+
+            try
+            {
+                SixLabors.ImageSharp.Image.DetectFormat(data);
+            }
+            catch (SixLabors.ImageSharp.UnknownImageFormatException ex)
+            {
+                throw new InvalidDataException($"Cover response is not a supported image (content type '{contentType}')", ex);
             }
         }
 
@@ -235,7 +248,9 @@ namespace NzbDrone.Core.MediaCover
 
             try
             {
-                return IsVerifiedNonPlaceholderImageHash(diskProvider.ReadAllText(verificationPath));
+                var verification = diskProvider.ReadAllText(verificationPath);
+                return verification?.StartsWith(OriginalImageVerificationPrefix, StringComparison.Ordinal) == true &&
+                       IsVerifiedNonPlaceholderImageHash(verification.Substring(OriginalImageVerificationPrefix.Length));
             }
             catch
             {
@@ -246,6 +261,17 @@ namespace NzbDrone.Core.MediaCover
         public static string GetAuthorCoverIdentityFileName(MediaCoverTypes coverType)
         {
             return $"{coverType.ToString().ToLowerInvariant()}.url";
+        }
+
+        public static bool RemoteUrlsMatch(string left, string right)
+        {
+            return Uri.TryCreate(left?.Trim(), UriKind.Absolute, out var first) &&
+                   Uri.TryCreate(right?.Trim(), UriKind.Absolute, out var second) &&
+                   first.Scheme.Equals(second.Scheme, StringComparison.OrdinalIgnoreCase) &&
+                   first.IdnHost.Equals(second.IdnHost, StringComparison.OrdinalIgnoreCase) &&
+                   first.Port == second.Port &&
+                   first.UserInfo.Equals(second.UserInfo, StringComparison.Ordinal) &&
+                   first.PathAndQuery.Equals(second.PathAndQuery, StringComparison.Ordinal);
         }
 
         public static bool StoredRemoteUrlMatches(string identityPath, string remoteUrl, IDiskProvider diskProvider)
@@ -261,7 +287,7 @@ namespace NzbDrone.Core.MediaCover
             try
             {
                 return TryParseAuthorCoverIdentity(diskProvider.ReadAllText(identityPath), out var storedUrl, out _) &&
-                       storedUrl.Equals(remoteUrl.Trim(), StringComparison.OrdinalIgnoreCase);
+                       RemoteUrlsMatch(storedUrl, remoteUrl);
             }
             catch
             {

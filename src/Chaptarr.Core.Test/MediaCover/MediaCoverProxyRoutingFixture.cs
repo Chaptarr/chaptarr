@@ -89,6 +89,7 @@ namespace Chaptarr.Core.Test.MediaCover
                     else
                     {
                         var block = new byte[1024 * 1024];
+                        MediaCoverRenditionFixture.BuildPngBytes(2, 2, new SixLabors.ImageSharp.PixelFormats.Rgba32(30, 120, 210)).CopyTo(block, 0);
                         var blocks = WriteOversizedResponse || OversizedUrls.Contains(request.Url.ToString()) ? 21 : 1;
                         for (var i = 0; i < blocks; i++)
                         {
@@ -229,7 +230,7 @@ namespace Chaptarr.Core.Test.MediaCover
                     break;
             }
 
-            var expectedImage = new byte[] { 1, 2, 3 };
+            var expectedImage = MediaCoverRenditionFixture.BuildPngBytes(2, 2, new SixLabors.ImageSharp.PixelFormats.Rgba32(30, 120, 210));
             client.Responses[secondUrl] = expectedImage;
             var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
             var mapper = new MediaCoverProxyMapper(proxy, books, Logger);

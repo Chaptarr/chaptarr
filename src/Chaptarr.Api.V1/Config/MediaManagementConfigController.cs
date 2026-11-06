@@ -35,7 +35,7 @@ namespace Chaptarr.Api.V1.Config
                 authorPathValidator, startupFolderValidator, systemFolderValidator, rootFolderAncestorValidator, rootFolderValidator);
             SharedValidator.RuleFor(value => value).Custom((value, context) =>
             {
-                foreach (var error in paths.Validate(new MediaManagementPathSettings { Id = value.Id, RecycleBin = value.RecycleBin, ChmodFolder = value.ChmodFolder }).Errors)
+                foreach (var error in paths.Validate(new MediaManagementPathSettings { Id = value.Id, RecycleBin = ConfigValueValidation.HasChanged(value.RecycleBin, _configService.RecycleBin) ? value.RecycleBin : null, ChmodFolder = ConfigValueValidation.HasChanged(value.ChmodFolder, _configService.ChmodFolder) ? value.ChmodFolder : null }).Errors)
                 {
                     context.AddFailure(error);
                 }

@@ -58,7 +58,8 @@ namespace Chaptarr.Core.Test.Housekeeping
 
                 if (targetMethod?.Name == nameof(IBookService.GetExistingBooks))
                 {
-                    return ((IEnumerable<int>)args[0]).Select(id => new Book { Id = id }).ToList();
+                    var ids = ((IEnumerable<int>)args[0]).ToArray();
+                    return ids.Where(BookIds.Contains).Select(id => new Book { Id = id }).ToList();
                 }
 
                 throw new NotImplementedException(targetMethod?.Name);
@@ -72,6 +73,7 @@ namespace Chaptarr.Core.Test.Housekeeping
             public List<string> DeletedDirectories { get; } = new();
             public List<string> SizedDirectories { get; } = new();
             public Action<string> OnDelete { get; set; }
+            public Action<int> OnEnumerate { get; set; }
             public Action<string> OnFolderSized { get; set; }
             public Func<string, long> FolderSize { get; set; } = _ => 4096L;
 
@@ -80,11 +82,20 @@ namespace Chaptarr.Core.Test.Housekeeping
                 return targetMethod?.Name switch
                 {
                     nameof(IDiskProvider.FolderExists) => RootExists,
-                    nameof(IDiskProvider.GetDirectories) => Directories,
+                    nameof(IDiskProvider.GetDirectories) => EnumerateDirectories(),
                     nameof(IDiskProvider.GetFolderSize) => GetFolderSize((string)args[0]),
                     nameof(IDiskProvider.DeleteFolder) => Delete((string)args[0]),
                     _ => throw new NotImplementedException(targetMethod?.Name)
                 };
+            }
+
+            private IEnumerable<string> EnumerateDirectories()
+            {
+                for (var i = 0; i < Directories.Count; i++)
+                {
+                    OnEnumerate?.Invoke(i);
+                    yield return Directories[i];
+                }
             }
 
             private long GetFolderSize(string path)
@@ -211,6 +222,46 @@ namespace Chaptarr.Core.Test.Housekeeping
             Assert.That(books.IncludeUnmonitoredArguments, Is.EqualTo(new[] { true }));
         }
 
+        [TestCase(CoverDownloadScope.AllBooks, true)]
+        [TestCase(CoverDownloadScope.LibraryBooks, true)]
+        [TestCase(CoverDownloadScope.AllBooks, false)]
+        [TestCase(CoverDownloadScope.LibraryBooks, false)]
+        public void cover_added_after_snapshot_is_rechecked_without_reloading_the_catalog(CoverDownloadScope scope, bool eligible)
+        {
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = @"C:\config".AsOsAgnostic();
+            var coverRoot = Path.Combine(appFolder.AppDataFolder, "MediaCover", "Books");
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            disk.Directories.AddRange(new[] { 101, 102 }.Select(id => Path.Combine(coverRoot, id.ToString())));
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var books = (BookServiceProxy)(object)bookService;
+            books.BookIds.Add(101);
+            books.LibraryIds.Add(101);
+            disk.OnEnumerate = index =>
+            {
+                if (index == 1 && eligible)
+                {
+                    Assert.That(books.IncludeUnmonitoredArguments, Has.Count.EqualTo(1));
+                    books.BookIds.Add(102);
+                    books.LibraryIds.Add(102);
+                }
+            };
+            var covers = NewCovers(diskProvider, appFolder);
+            var subject = new CleanupOrphanedBookCovers(bookService, diskProvider, appFolder,
+                LogManager.GetCurrentClassLogger(), NewConfig(scope), covers);
+
+            subject.Clean();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(disk.DeletedDirectories, Is.EqualTo(new[] { Path.Combine(coverRoot, "102") }));
+                Assert.That(((CoversProxy)(object)covers).Restored, Is.EqualTo(eligible ? new[] { 102 } : Array.Empty<int>()));
+                Assert.That(books.IncludeUnmonitoredArguments, Is.EqualTo(new[] { true }), "No second full catalog read");
+                Assert.That(disk.SizedDirectories, Is.Empty);
+            });
+        }
+
         [Test]
         public void cleanup_should_delete_without_sizing_directories_for_logging()
         {
@@ -269,6 +320,16 @@ namespace Chaptarr.Core.Test.Housekeeping
             Assert.That(disk.SizedDirectories, Is.EqualTo(new[] { Path.Combine(coverRoot, "102") }));
             Assert.That(disk.DeletedDirectories, Is.Empty);
             Assert.That(((CoversProxy)(object)covers).Restored, Is.Empty);
+        }
+
+        [Test]
+        public void cleanup_processes_each_folder_before_enumerating_the_rest()
+        {
+            var (subject, disk, _) = CreateEstimateSubject(new[] { 101, 102, 103 });
+            disk.OnEnumerate = index => Assert.That(disk.DeletedDirectories.Count, Is.EqualTo(index),
+                "Cleanup must stream the disk listing, not retain every path before deleting the first folder");
+            subject.Clean();
+            Assert.That(disk.DeletedDirectories, Is.EqualTo(disk.Directories));
         }
 
         [Test]

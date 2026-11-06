@@ -1,14 +1,22 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using NLog;
 using NzbDrone.Core.Configuration;
 
 namespace NzbDrone.Core.MediaCover
 {
     internal static class MediaCoverUrlSafetyPolicy
     {
-        internal static bool TryGetSafeImageUrl(string url, IConfigService configService, out string safeUrl, out string reason)
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
+        internal static bool TryGetSafeImageUrl(string url, IConfigService configService, out string safeUrl, out string reason,
+            CancellationToken cancellationToken = default, Func<string, CancellationToken, Task<IPAddress[]>> resolve = null)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             safeUrl = null;
             reason = null;
 
@@ -43,7 +51,7 @@ namespace NzbDrone.Core.MediaCover
                 return false;
             }
 
-            if (!IsTrustedCoverHost(uri.Host, configService) && HostResolvesToPrivateOrLocalAddress(uri.Host, out var privateReason))
+            if (!IsTrustedCoverHost(uri.Host, configService) && HostResolvesToPrivateOrLocalAddress(uri.Host, out var privateReason, cancellationToken, resolve))
             {
                 reason = privateReason;
                 return false;
@@ -105,7 +113,8 @@ namespace NzbDrone.Core.MediaCover
             return IPAddress.TryParse(host, out var ip) && IPAddress.IsLoopback(ip);
         }
 
-        private static bool HostResolvesToPrivateOrLocalAddress(string host, out string reason)
+        private static bool HostResolvesToPrivateOrLocalAddress(string host, out string reason,
+            CancellationToken cancellationToken, Func<string, CancellationToken, Task<IPAddress[]>> resolve)
         {
             reason = null;
 
@@ -131,13 +140,26 @@ namespace NzbDrone.Core.MediaCover
             }
             else
             {
+                var elapsed = Stopwatch.StartNew();
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                deadline.CancelAfter(TimeSpan.FromSeconds(3));
                 try
                 {
-                    addresses = Dns.GetHostAddresses(host);
+                    var pending = resolve == null
+                        ? Dns.GetHostAddressesAsync(host, deadline.Token)
+                        : resolve(host, deadline.Token);
+                    addresses = pending.WaitAsync(deadline.Token).GetAwaiter().GetResult();
                 }
-                catch
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    reason = "dns_lookup_timed_out";
+                    Logger.Debug("Cover DNS lookup for {0} timed out after {1} ms", host, elapsed.ElapsedMilliseconds);
+                    return true;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     reason = "dns_lookup_failed";
+                    Logger.Debug(ex, "Cover DNS lookup for {0} failed after {1} ms", host, elapsed.ElapsedMilliseconds);
                     return true;
                 }
             }

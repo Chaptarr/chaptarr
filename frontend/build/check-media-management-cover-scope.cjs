@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const webpack = require('webpack');
 const { chromium } = require('playwright');
+const createRouteCapture = require('./capture-browser-route.cjs');
 
 const root = path.resolve(__dirname, '../..');
 const appRootStyle = fs.readFileSync(path.join(root, 'frontend/src/index.ejs'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
@@ -56,12 +57,15 @@ function compileFixture() {
   }));
 }
 
-function routeFixture(page, strings, cssPath) {
+async function routeFixture(page, strings, cssPath) {
   const estimates = [];
+  const estimateCapture = createRouteCapture('cover savings estimate');
   const settingsWrites = [];
   const rootWrites = [];
   const generalWrites = [];
   const proxyWrites = [];
+  let resetReplyStatus = 'queued';
+  let resetEarlyStatus = null;
   const heldConfigSaves = [];
   const heldRootSaves = [];
   const heldConfigFetches = [];
@@ -69,16 +73,21 @@ function routeFixture(page, strings, cssPath) {
   let holdRootSaves = false;
   let holdProfiles = false;
   const heldProfiles = [];
+  const catalogs = {
+    quality: [
+      { id: 11, name: 'Audio first', profileType: 'audiobook' }, { id: 12, name: 'Audio second', profileType: 'audiobook' },
+      { id: 21, name: 'Ebook first', profileType: 'ebook' }, { id: 22, name: 'Ebook second', profileType: 'ebook' }
+    ],
+    metadata: [
+      { id: 31, name: 'Audio metadata first', profileType: 1 }, { id: 32, name: 'Audio metadata second', profileType: 1 },
+      { id: 39, name: 'None', profileType: 1 },
+      { id: 41, name: 'Ebook metadata first', profileType: 2 }, { id: 42, name: 'Ebook metadata second', profileType: 2 },
+      { id: 49, name: 'None', profileType: 2 }, { id: 50, name: 'Shared metadata', profileType: 0 }
+    ]
+  };
   const profiles = (pathname, media) => {
-    if (pathname.endsWith('/qualityprofile')) {
-      return media === 'ebook' ?
-        [{ id: 21, name: 'Ebook first' }, { id: 22, name: 'Ebook second' }] :
-        [{ id: 11, name: 'Audio first' }, { id: 12, name: 'Audio second' }];
-    }
-
-    return media === 'ebook' ?
-      [{ id: 41, name: 'Ebook metadata first' }, { id: 42, name: 'Ebook metadata second' }, { id: 49, name: 'None' }] :
-      [{ id: 31, name: 'Audio metadata first' }, { id: 32, name: 'Audio metadata second' }, { id: 39, name: 'None' }];
+    const items = catalogs[pathname.endsWith('/qualityprofile') ? 'quality' : 'metadata'];
+    return !media ? items : items.filter((p) => p.profileType === 0 || p.profileType === media || p.profileType === (media === 'ebook' ? 2 : 1));
   };
   const savedRoots = [
     { id: 1, name: 'Books', path: '/data/audiobooks', folderType: 'audiobook' },
@@ -91,10 +100,23 @@ function routeFixture(page, strings, cssPath) {
     coverDownloadScope: 'allBooks', defaultAudiobookRootFolderPath: '/data/other',
     defaultEbookRootFolderPath: ''
   };
-  page.route('**/*', async(route) => {
+  await page.route('**/*', async(route) => {
     const requestUrl = new URL(route.request().url());
     const pathname = requestUrl.pathname;
+    if (pathname.endsWith('/command') && route.request().method() === 'POST') {
+      const body = route.request().postDataJSON();
+      const command = { id: 803, name: body.name, status: resetReplyStatus, body };
+      if (resetEarlyStatus) {
+        await page.evaluate((value) => window.receiveSettingsCommand(value), { ...command, status: resetEarlyStatus });
+      }
+      return route.fulfill({ json: command });
+    }
     if (pathname.endsWith('/qualityprofile') || pathname.endsWith('/metadataprofile')) {
+      if (route.request().method() === 'POST') {
+        const item = { ...route.request().postDataJSON(), id: 80 + catalogs.metadata.length };
+        catalogs.metadata.push(item);
+        return route.fulfill({ json: item });
+      }
       const data = profiles(pathname, requestUrl.searchParams.get('mediaType'));
       if (holdProfiles) {
         heldProfiles.push({ route, data });
@@ -111,16 +133,18 @@ function routeFixture(page, strings, cssPath) {
     if (pathname.endsWith('/config/mediamanagement/covercleanup')) {
       assert.equal(route.request().method(), 'GET', 'Estimating savings must be read-only');
       estimates.push(route);
+      estimateCapture.capture(route);
+      return;
+    }
+    if (route.request().method() === 'GET' && holdConfigFetches &&
+        ['/config/mediamanagement', '/config/host'].some((suffix) => pathname.endsWith(suffix))) {
+      heldConfigFetches.push({ route, general: pathname.endsWith('/config/host') });
+      await page.evaluate((count) => {
+        window.fixtureConfigFetchCount = count;
+      }, heldConfigFetches.length);
       return;
     }
     if (pathname.endsWith('/config/mediamanagement')) {
-      if (route.request().method() === 'GET' && holdConfigFetches) {
-        heldConfigFetches.push(route);
-        await page.evaluate((count) => {
-          window.fixtureConfigFetchCount = count;
-        }, heldConfigFetches.length);
-        return;
-      }
       if (route.request().method() === 'PUT') {
         const data = route.request().postDataJSON();
         settingsWrites.push(data);
@@ -234,6 +258,7 @@ function routeFixture(page, strings, cssPath) {
     },
     heldProfiles,
     estimates,
+    nextEstimate: () => estimateCapture.next(),
     settingsWrites,
     rootWrites,
     generalWrites,
@@ -245,12 +270,14 @@ function routeFixture(page, strings, cssPath) {
     },
     async completeConfigFetch(index, status = 200) {
       await page.waitForFunction((count) => window.fixtureConfigFetchCount > count, index);
-      await heldConfigFetches[index].fulfill({ status, json: status < 400 ? savedSettings : { message: 'Settings load failed' } });
+      const held = heldConfigFetches[index];
+      const settings = held.general ? savedGeneral : savedSettings;
+      await held.route.fulfill({ status, json: status < 400 ? settings : { message: 'Settings load failed' } });
     },
     holdRootSaves: () => {
       holdRootSaves = true;
     },
-    async completeRootSave(index, status = 200) {
+    async completeRootSave(index, status = 200, message = 'Root save failed') {
       await page.waitForFunction((count) => window.fixtureRootSaveCount > count, index);
       const held = heldRootSaves[index];
       if (status < 400) {
@@ -261,7 +288,12 @@ function routeFixture(page, strings, cssPath) {
           savedRoots[savedIndex] = held.data;
         }
       }
-      await held.route.fulfill({ status, json: status < 400 ? held.data : [{ message: 'Root save failed' }] });
+      const failure = Array.isArray(message) ? message : [{ message }];
+      await held.route.fulfill({ status, json: status < 400 ? held.data : failure });
+    },
+    setResetReply: (status, earlyStatus = null) => {
+      resetReplyStatus = status;
+      resetEarlyStatus = earlyStatus;
     },
     holdConfigSaves: () => {
       holdConfigSaves = true;
@@ -292,7 +324,7 @@ async function openFixture(browser, strings, cssPath, options = {}) {
       errors.push(message.text());
     }
   });
-  const requests = routeFixture(page, strings, cssPath);
+  const requests = await routeFixture(page, strings, cssPath);
   await page.goto('http://media-management.test/');
   await page.waitForFunction(() => window.fixtureReady && window.renderMediaManagementFixture);
   await page.waitForTimeout(100);
@@ -503,6 +535,9 @@ async function verifySaveFailures(browser, strings, cssPath) {
 async function verifyProfilePayloads(browser, strings, cssPath) {
   const results = [];
   const run = async(name, check) => {
+    if (process.env.CHAPTARR_PROFILE_CASE && !new RegExp(process.env.CHAPTARR_PROFILE_CASE).test(name)) {
+      return;
+    }
     const fixture = await openFixture(browser, strings, cssPath, { viewport: { width: 1280, height: 1000 } });
     fixture.page.setDefaultTimeout(10000);
     try {
@@ -530,6 +565,55 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
       assert.equal(changes.at(-1).type, 'number');
       assert.equal(changes.at(-1).value, name === 'quality' ? 12 : 32);
       return changes;
+    });
+  }
+  for (const value of [999, 42]) {
+    await run(`missing or other-format saved profile ${value} is never replaced`, async({ page }) => {
+      await render(page, { quality: value, metadata: value });
+      assert.deepEqual(await page.evaluate(() => window.profileChanges), []);
+      assert.equal(await page.locator('select[name="metadata"]').inputValue(), String(value));
+    });
+  }
+  await run('a saved clone appears in an already open dropdown', async({ page }) => {
+    await render(page, { quality: 11, metadata: 31 });
+    await page.evaluate(() => window.cloneMetadataProfile(31));
+    await page.locator('select[name="metadata"] option[value="87"]').waitFor({ state: 'attached' });
+    await page.locator('select[name="metadata"]').selectOption('87');
+    assert.equal(await page.locator('select[name="metadata"]').inputValue(), '87');
+    assert.equal((await page.evaluate(() => window.profileChanges)).at(-1).value, 87);
+  });
+  await run('persisted null tags do not crash the tag control', async({ page, errors }) => {
+    await render(page, { quality: 11, metadata: 31 });
+    await page.evaluate(() => window.renderNullTags());
+    assert.equal(errors.length, 0, errors.join('\n'));
+  });
+  await run('Add Book sends selected profiles without invented IDs', async({ page }) => {
+    await render(page, { quality: 11, metadata: 31 });
+    const absent = await page.evaluate(() => window.getAddBookPayload({}));
+    assert.equal(absent.audiobookMetadataProfileId, undefined);
+    assert.equal(absent.ebookMetadataProfileId, undefined);
+    const chosen = await page.evaluate(() => window.getAddBookPayload({ audiobookMetadataProfileId: { value: 31 }, ebookMetadataProfileId: { value: 42 } }));
+    assert.equal(chosen.audiobookMetadataProfileId, 31);
+    assert.equal(chosen.ebookMetadataProfileId, 42);
+  });
+  for (const create of [false, true]) {
+    await run(`${create ? 'new' : 'cloned'} metadata profile saves from the root dialog without reload`, async({ page, rootWrites }) => {
+      await page.evaluate(() => window.renderSettingsIsolationFixture());
+      await page.waitForFunction(() => window.getMetadataProfiles().isPopulated);
+      await page.evaluate((isNew) => (isNew ? window.createMetadataProfile(1) : window.cloneMetadataProfile(31)), create);
+      await page.waitForFunction(() => window.getMetadataProfiles().items.some((p) => p.id === 87));
+      await page.getByRole('button', { name: 'Edit root folder', exact: true }).click();
+      const dialog = page.locator('[class*="ModalContent-modalContent"]');
+      await dialog.locator('select[name="audiobookMetadataProfileId"]').selectOption('87');
+      if (process.env.CHAPTARR_PROFILE_SCREENSHOTS) {
+        await page.setViewportSize({ width: create ? 1280 : 375, height: 1000 });
+        await dialog.locator('select[name="audiobookMetadataProfileId"]').scrollIntoViewIfNeeded();
+        fs.mkdirSync(process.env.CHAPTARR_PROFILE_SCREENSHOTS, { recursive: true });
+        await page.screenshot({ path: path.join(process.env.CHAPTARR_PROFILE_SCREENSHOTS, create ? 'root-desktop.png' : 'root-mobile.png') });
+      }
+      await dialog.getByRole('button', { name: 'Update Audiobook Folder', exact: true }).click();
+      await page.waitForFunction(() => window.rootCompletions === 1);
+      assert.equal(rootWrites[0].audiobookMetadataProfileId, 87);
     });
   }
   await run('automatic initial defaults remain numeric', async({ page }) => {
@@ -639,6 +723,69 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
   assert.equal(results.filter(({ passed }) => !passed).length, 0, 'Profile payload controls must pass');
 }
 
+async function verifyUiGrabbag(browser, strings, cssPath) {
+  for (const width of [1280, 375]) {
+    for (const surface of ['interactive', 'logs']) {
+      const fixture = await openFixture(browser, strings, cssPath, { viewport: { width, height: 900 } });
+      const { page } = fixture;
+      try {
+        fixture.holdConfigFetches();
+        await page.evaluate((name) => window.renderSettingsIsolationFixture(name), surface);
+        const control = surface === 'interactive' ? page.locator('input[name="usePathAsTagsFallback"]') :
+          page.getByRole('button', { name: 'Info', exact: true });
+        await control.waitFor();
+        assert.equal(await control.isDisabled(), true, 'No field-only save before GET succeeds');
+        await fixture.completeConfigFetch(0, 500);
+        await page.waitForFunction((name) => !(name === 'interactive' ? window.getSettingsState() : window.getGeneralSettingsState()).isFetching, surface);
+        assert.equal(await control.isDisabled(), true, 'Failed loads stay disabled');
+        assert.equal(fixture.settingsWrites.length + fixture.generalWrites.length, 0);
+        await page.getByRole('button', { name: surface === 'interactive' ? strings.Retry : strings.Refresh, exact: true }).click();
+        await fixture.completeConfigFetch(1);
+        await page.waitForFunction((name) => (name === 'interactive' ? window.getSettingsState() : window.getGeneralSettingsState()).isPopulated, surface);
+        assert.equal(await control.isEnabled(), true, 'Retry restores editing');
+        if (surface === 'interactive') {
+          await control.focus();
+          await page.keyboard.press('Space');
+          await page.waitForFunction(() => !window.getSettingsState().isSaving && window.getSettingsState().item.usePathAsTagsFallback === false);
+          assert.equal(fixture.settingsWrites.length, 1);
+          assert.equal(fixture.settingsWrites[0].coverDownloadScope, 'allBooks');
+        } else {
+          await control.click();
+          await page.getByText('Debug', { exact: true }).click();
+          await page.waitForFunction(() => window.getGeneralSettingsState().item.logLevel === 'debug');
+          assert.equal(fixture.generalWrites.length, 1);
+          assert.equal(fixture.generalWrites[0].port, 8789);
+        }
+        assert.equal(fixture.errors.filter((error) => !error.startsWith('Failed to load resource:')).length, 0, fixture.errors.join('\n'));
+      } finally {
+        await fixture.context.close();
+      }
+    }
+    const fixture = await openFixture(browser, strings, cssPath, { viewport: { width, height: 900 } });
+    try {
+      const { page } = fixture;
+      await page.evaluate(() => window.renderSettingsIsolationFixture());
+      await page.waitForFunction(() => window.getSettingsState().isPopulated);
+      await page.getByRole('button', { name: 'Edit root folder', exact: true }).click();
+      const modal = page.locator('[class*="ModalContent-modalContent"]');
+      const save = modal.getByRole('button', { name: 'Update Audiobook Folder', exact: true });
+      await page.locator('input[name="name"]').fill('Changed root name');
+      fixture.holdRootSaves();
+      await save.click();
+      await fixture.completeRootSave(0, 400, [{ propertyName: 'Path', errorMessage: 'Zugriff verweigert', errorCode: 'RootFolderNotWritable' }]);
+      await page.getByText(strings.RootFolderDockerPermissionHelp, { exact: true }).waitFor();
+      assert.equal(await save.isEnabled(), true);
+      await save.click();
+      await fixture.completeRootSave(1, 400, 'Unrelated permission policy validation failure');
+      await page.getByText('Unrelated permission policy validation failure', { exact: true }).waitFor();
+      assert.equal(await page.getByText(strings.RootFolderDockerPermissionHelp, { exact: true }).count(), 0);
+    } finally {
+      await fixture.context.close();
+    }
+  }
+  console.log('PASS: Step75 field-only load/failure/retry/save guards and permission-only Docker help, desktop/mobile');
+}
+
 (async() => {
   await compileFixture();
   const cssName = fs.readdirSync(path.join(output, 'Content')).find((name) => name.endsWith('.css'));
@@ -646,13 +793,17 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
   const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
   const browser = await chromium.launch();
   try {
+    if (process.env.CHAPTARR_UI_GRABBAG_ONLY) {
+      await verifyUiGrabbag(browser, strings, cssPath);
+      return;
+    }
     await verifyProfilePayloads(browser, strings, cssPath);
     if (process.env.CHAPTARR_PROFILE_PAYLOAD_ONLY) {
       return;
     }
     await verifySaveFailures(browser, strings, cssPath);
     const desktop = await openFixture(browser, strings, cssPath, { viewport: { width: 1280, height: 900 } });
-    const { page, estimates } = desktop;
+    const { page, estimates, nextEstimate } = desktop;
     const calculate = page.getByRole('button', { name: strings.CalculateCoverSavings, exact: true });
     const summary = strings.CoverCleanupEstimate.replace('{size}', '2 GiB');
     const dialog = page.locator('[class*="ModalContent-modalContent"]');
@@ -665,16 +816,16 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
     await page.getByText(strings.CoverDownloadScopeLibraryBooks, { exact: true }).click();
     await page.getByText(strings.CoverDownloadScopeLibraryBooksHelpText, { exact: true }).waitFor();
     assert.equal(estimates.length, 0, 'Browsing options must not scan the cache');
-    const firstEstimate = page.waitForRequest('**/config/mediamanagement/covercleanup');
+    const firstEstimate = nextEstimate();
     firstEstimate.catch(() => {});
     await calculate.press('Enter');
-    await firstEstimate;
+    const firstEstimateRoute = await firstEstimate;
     assert.deepEqual(await page.evaluate(() => window.savedCalls), [], 'Calculate must never save settings');
     assert.equal(await dialog.count(), 0, 'Calculate must not open the cleanup confirmation');
     assert.equal(await calculate.isEnabled(), false, 'A pending estimate must disable duplicate calculations');
     await page.getByText(strings.CoverCleanupEstimateLoading, { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Save Changes', exact: true }).isEnabled(), true);
-    await estimates[0].fulfill({ json: { bytes: 2397483648, bookCount: 100 } });
+    await firstEstimateRoute.fulfill({ json: { bytes: 2397483648, bookCount: 100 } });
     await page.getByText(summary, { exact: true }).waitFor();
     await page.screenshot({ path: path.join(os.tmpdir(), 'chaptarr-cover-scope-calculate-desktop.png'), fullPage: true });
 
@@ -704,13 +855,12 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
     assert.equal(estimates.length, requestCount, 'Saving without Calculate must never request an estimate');
 
     await page.evaluate(() => window.renderMediaManagementFixture({ selectedScope: 'libraryBooks' }));
-    const failedEstimate = page.waitForRequest('**/config/mediamanagement/covercleanup');
+    const failedEstimate = nextEstimate();
     await calculate.click();
-    await failedEstimate;
-    await estimates.at(-1).fulfill({ contentType: 'application/json', body: '{' });
+    await (await failedEstimate).fulfill({ contentType: 'application/json', body: '{' });
     await page.getByText(strings.CoverCleanupEstimateError, { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Save Changes', exact: true }).isEnabled(), true);
-    const retryEstimate = page.waitForRequest('**/config/mediamanagement/covercleanup');
+    const retryEstimate = nextEstimate();
     await calculate.click();
     await retryEstimate;
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
@@ -725,7 +875,7 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
     assert.equal(await calculate.isEnabled(), true, 'Saving must reset the inline spinner after cancelling the scan');
 
     await page.evaluate(() => window.renderMediaManagementFixture());
-    const unmountEstimate = page.waitForRequest('**/config/mediamanagement/covercleanup');
+    const unmountEstimate = nextEstimate();
     await calculate.click();
     await unmountEstimate;
     const unmountedRequest = page.waitForEvent('requestfailed', (request) => request.url().endsWith('/config/mediamanagement/covercleanup'));
@@ -749,10 +899,9 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
     await mobileCalculate.scrollIntoViewIfNeeded();
     assert.equal(await mobileCalculate.isVisible(), true, 'Mobile users must find Calculate before Save too');
     assert.equal(await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Settings must fit the mobile viewport');
-    const mobileEstimate = mobile.page.waitForRequest('**/config/mediamanagement/covercleanup');
+    const mobileEstimate = mobile.nextEstimate();
     await mobileCalculate.click();
-    await mobileEstimate;
-    await mobile.estimates[0].fulfill({ json: { bytes: 0, bookCount: 0 } });
+    await (await mobileEstimate).fulfill({ json: { bytes: 0, bookCount: 0 } });
     await mobile.page.getByText(strings.CoverCleanupEstimate.replace('{size}', '0 B'), { exact: true }).scrollIntoViewIfNeeded();
     await mobile.page.screenshot({ path: path.join(os.tmpdir(), 'chaptarr-cover-scope-calculate-mobile.png'), fullPage: true });
     await mobile.page.getByRole('button', { name: 'Save Changes', exact: true }).click();
@@ -1372,6 +1521,66 @@ async function verifyProfilePayloads(browser, strings, cssPath) {
     await scopedPage.waitForFunction(() => window.settingsSaveResults.includes('next:done'));
     assert.deepEqual(await scopedPage.evaluate(() => window.settingsSaveResults), ['construction:fail', 'next:done'], 'Request construction failure settles and permits the next save');
     await scopedFailure.context.close();
+
+    const reset = await openFixture(browser, strings, cssPath, { viewport: { width: 1280, height: 900 } });
+    const resetPage = reset.page;
+    await resetPage.evaluate(() => window.renderSettingsIsolationFixture('general-settings'));
+    await resetPage.waitForFunction(() => window.getGeneralSettingsState()?.isPopulated);
+    let reloads = 0;
+    resetPage.on('framenavigated', (frame) => {
+      if (frame === resetPage.mainFrame()) {
+        reloads++;
+      }
+    });
+    const command = { id: 801, name: 'ResetApiKey', trigger: 'manual', body: { name: 'ResetApiKey', sendUpdatesToClient: true } };
+    await resetPage.evaluate((value) => window.receiveSettingsCommand(value), { ...command, status: 'started' });
+    const pinnedFailure = 'API key is set by an environment variable. Change it in your container configuration.';
+    await resetPage.evaluate((value) => window.receiveSettingsCommand(value), { ...command, status: 'failed', message: pinnedFailure });
+    await resetPage.getByText(pinnedFailure, { exact: true }).waitFor();
+    await resetPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(reloads, 0, 'A failed reset must retain its error instead of reloading');
+    await resetPage.evaluate((value) => window.receiveSettingsCommand(value), { ...command, id: 802, status: 'completed' });
+    await resetPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(reloads, 0, 'A reset completed by another page must not reload this page');
+    await Promise.all([
+      resetPage.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/command')),
+      resetPage.evaluate(() => window.confirmGeneralReset())
+    ]);
+    await resetPage.waitForFunction(() => window.getSettingsCommands().some((value) => value.id === 803));
+    await resetPage.evaluate((value) => window.receiveSettingsCommand(value), { ...command, id: 804, status: 'completed' });
+    await resetPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(reloads, 0, 'An unrelated completion during the local reset must not reload');
+    await Promise.all([
+      resetPage.waitForEvent('load'),
+      resetPage.evaluate((value) => window.receiveSettingsCommand(value), { ...command, id: 803, status: 'completed' })
+    ]);
+    assert.equal(reloads, 1, 'The page which sent a successful reset reloads without a started notification');
+    await reset.context.close();
+
+    for (const early of [false, true]) {
+      for (const status of ['completed', 'failed']) {
+        const fast = await openFixture(browser, strings, cssPath, { viewport: { width: 1280, height: 900 } });
+        try {
+          await fast.page.evaluate(() => window.renderSettingsIsolationFixture('general-settings'));
+          await fast.page.waitForFunction(() => window.getGeneralSettingsState()?.isPopulated);
+          fast.setResetReply(early ? 'queued' : status, early ? status : null);
+          const returned = await fast.page.evaluate(() => window.executeSettingsCommand({ name: 'ResetApiKey' }));
+          assert.equal(returned.id, 803, 'executeCommand returns the command identity expected by Calendar callers');
+          const observed = await fast.page.evaluate(() => ({
+            callbacks: window.finishedSettingsCommands,
+            command: window.getSettingsCommands().find((value) => value.id === 803)
+          }));
+          assert.equal(observed.callbacks.length, 1, `${status}, early=${early}: callback settles once`);
+          assert.equal(observed.callbacks[0].status, status);
+          assert.equal(observed.command.status, status, 'A late queued POST cannot undo terminal state');
+          await fast.page.evaluate((value) => window.receiveSettingsCommand(value), { id: 803, name: 'ResetApiKey', status });
+          assert.equal(await fast.page.evaluate(() => window.finishedSettingsCommands.length), 1, 'A repeated terminal event cannot invoke the callback twice');
+        } finally {
+          await fast.context.close();
+        }
+      }
+    }
+    console.log('Reset origin, exact command ID, fast terminal POST, early SignalR and returned command identity passed');
 
     const restart = await openFixture(browser, strings, cssPath, { viewport: { width: 1280, height: 900 } });
     const restartPage = restart.page;

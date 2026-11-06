@@ -214,7 +214,6 @@ class AuthorIndexOverview extends Component {
                 images={images}
                 authorId={id}
                 selectedPosterHash={selectedPosterHash}
-                placeholder="/Content/Images/author-placeholder-muted.png"
                 size={250}
                 lazy={false}
                 overflow={true}

@@ -8,7 +8,7 @@ import getPathWithUrlBase from 'Utilities/getPathWithUrlBase';
 import AuthorImage, { findImage } from './AuthorImage';
 import styles from './AuthorPoster.css';
 
-const defaultPosterPlaceholder = '/Content/Images/chaptarr-logo.svg';
+const defaultPosterPlaceholder = '/Content/Images/author-placeholder-muted.png';
 const sandersonEasterEggImage = `${window.Chaptarr?.urlBase ?? ''}/Content/Images/sanderson-easter-egg.jpg`;
 const brandonSandersonProviderIds = new Set(['hc:204214', 'gr:38550']);
 
@@ -439,7 +439,7 @@ class AuthorPoster extends Component {
           <AuthorImage
             {...imageProps}
             images={displayImages}
-            placeholder={placeholder}
+            placeholder={placeholder.startsWith('/Content/') ? getPathWithUrlBase(placeholder) : placeholder}
             size={size}
           />
           

@@ -58,6 +58,7 @@ namespace NzbDrone.Core.MediaCover
         private readonly string _coverRootFolder;
 
         private const int MaxImageRedirects = 5;
+        private const string CachedRenditionVerification = "cached-rendition";
         private static readonly TimeSpan ImageRequestTimeout = TimeSpan.FromSeconds(30);
 
         // ImageSharp is slow on ARM (no hardware acceleration on mono yet)
@@ -251,7 +252,7 @@ namespace NzbDrone.Core.MediaCover
                     if (!selectedCoverOwnsType &&
                         TryReadAuthorCoverIdentity(entityId, mediaCover.CoverType, out var storedUrl, out var contentHash) &&
                         !string.IsNullOrWhiteSpace(remoteUrl) &&
-                        storedUrl.Equals(remoteUrl, StringComparison.OrdinalIgnoreCase))
+                        MediaCoverRendition.RemoteUrlsMatch(storedUrl, remoteUrl))
                     {
                         filePath = GetDeterministicLocalCoverPath(entityId, coverEntity, mediaCover);
                         cacheToken = contentHash;
@@ -367,7 +368,7 @@ namespace NzbDrone.Core.MediaCover
         {
             return TryReadAuthorCoverIdentity(authorId, coverType, out var storedUrl, out _) &&
                    !string.IsNullOrWhiteSpace(remoteUrl) &&
-                   storedUrl.Equals(remoteUrl, StringComparison.OrdinalIgnoreCase);
+                   MediaCoverRendition.RemoteUrlsMatch(storedUrl, remoteUrl);
         }
 
         private void StoreAuthorCoverIdentity(int authorId, MediaCover cover, string contentHash)
@@ -655,58 +656,44 @@ namespace NzbDrone.Core.MediaCover
                         return new EnsureImageResult { State = "downloaded", Path = variantPath };
                     }
 
-                    if (TryVerifyExistingAuthorVariant(variantPath, verificationPath, cover.Url, out var existingIsPlaceholder))
-                    {
-                        return new EnsureImageResult { State = "downloaded", Path = variantPath };
-                    }
-
-                    if (existingIsPlaceholder)
+                    if (ExistingAuthorVariantIsPlaceholder(variantPath, verificationPath, cover.Url))
                     {
                         RejectPlaceholderAuthorImage(author, cover.Url);
                         return new EnsureImageResult { State = "error", ErrorCode = "placeholder_image" };
                     }
                 }
 
-                byte[] imageData = null;
+                byte[] imageData;
+                var usedCachedRendition = false;
 
-                // The canonical identity associates its existing renditions with this exact URL.
-                if (AuthorCoverMatchesRemoteUrl(author.Id, cover.CoverType, cover.Url))
+                try
                 {
-                    var cachedCoverPath = MediaCoverRendition.FindExistingPath(
-                        height => GetCoverPath(author.Id, MediaCoverEntity.Author, cover.CoverType, cover.Extension, height),
-                        _diskProvider,
-                        cover.CoverType);
-
-                    if (cachedCoverPath != null)
-                    {
-                        try
-                        {
-                            using var cachedStream = _diskProvider.OpenReadStream(cachedCoverPath);
-                            using var buffer = new MemoryStream();
-                            cachedStream.CopyTo(buffer);
-                            if (buffer.Length > 0)
-                            {
-                                imageData = buffer.ToArray();
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Debug(ex, "Unable to read verified canonical author image for {0}; trying the remote URL", author.Name);
-                        }
-                    }
+                    imageData = GetImageResponse(cover.Url, rangeRequest: false)?.ResponseData;
                 }
-
-                if (imageData == null)
+                catch (Exception ex) when (ex is HttpException || ex is WebException)
                 {
-                    try
+                    _logger.Warn(ex, "On-demand author image download failed for {0} from URL: {1}", author.Name, cover.Url);
+                    // Keep a URL-keyed fallback even if the canonical photo has since changed.
+                    var cachedCoverPath = MediaCoverRendition.IsUsable(variantPath, _diskProvider) ? variantPath : null;
+                    if (cachedCoverPath == null && AuthorCoverMatchesRemoteUrl(author.Id, cover.CoverType, cover.Url))
                     {
-                        imageData = GetImageResponse(cover.Url, rangeRequest: false)?.ResponseData;
+                        cachedCoverPath = MediaCoverRendition.FindExistingPath(
+                            height => GetCoverPath(author.Id, MediaCoverEntity.Author, cover.CoverType, cover.Extension, height),
+                            _diskProvider, cover.CoverType) ?? MediaCoverRendition.FindExistingPath(
+                            height => GetCoverPath(author.Id, MediaCoverEntity.Author, cover.CoverType, ".jpg", height),
+                            _diskProvider, cover.CoverType);
                     }
-                    catch (HttpException e) when (e.Response?.StatusCode == HttpStatusCode.Forbidden || e.Response?.StatusCode == HttpStatusCode.NotFound)
+
+                    if (cachedCoverPath == null)
                     {
-                        _logger.Warn("On-demand author image download failed ({0}) for {1} from URL: {2}", e.Response?.StatusCode, author.Name, cover.Url);
                         return new EnsureImageResult { State = "error", ErrorCode = "download_failed" };
                     }
+
+                    using var cachedStream = _diskProvider.OpenReadStream(cachedCoverPath);
+                    using var buffer = new MemoryStream();
+                    cachedStream.CopyTo(buffer);
+                    imageData = buffer.ToArray();
+                    usedCachedRendition = true;
                 }
 
                 if (imageData == null || imageData.Length == 0)
@@ -728,7 +715,8 @@ namespace NzbDrone.Core.MediaCover
                     _diskProvider.SaveStream(stream, variantPath);
                 }
 
-                _diskProvider.WriteAllText(verificationPath, contentHash);
+                // Reuse the existing sidecar, but never certify a thumbnail as the original.
+                _diskProvider.WriteAllText(verificationPath, usedCachedRendition ? CachedRenditionVerification : MediaCoverRendition.OriginalImageVerificationPrefix + contentHash);
 
                 try
                 {
@@ -752,25 +740,28 @@ namespace NzbDrone.Core.MediaCover
             }
         }
 
-        private bool TryVerifyExistingAuthorVariant(string variantPath, string verificationPath, string remoteUrl, out bool isPlaceholder)
+        private bool ExistingAuthorVariantIsPlaceholder(string variantPath, string verificationPath, string remoteUrl)
         {
-            isPlaceholder = false;
 
             try
             {
-                using var stream = _diskProvider.OpenReadStream(variantPath);
-                using var sha256 = SHA256.Create();
-                var contentHash = Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
-                isPlaceholder = MediaCoverRendition.RegisterKnownPlaceholderImage(remoteUrl, contentHash);
-
-                if (isPlaceholder)
+                if (_diskProvider.FileExists(verificationPath) &&
+                    _diskProvider.ReadAllText(verificationPath) == CachedRenditionVerification)
                 {
-                    DeleteAuthorVariant(variantPath, verificationPath);
                     return false;
                 }
 
-                _diskProvider.WriteAllText(verificationPath, contentHash);
-                return true;
+                using var stream = _diskProvider.OpenReadStream(variantPath);
+                using var sha256 = SHA256.Create();
+                var contentHash = Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
+                if (MediaCoverRendition.RegisterKnownPlaceholderImage(remoteUrl, contentHash))
+                {
+                    DeleteAuthorVariant(variantPath, verificationPath);
+                    return true;
+                }
+
+                // Legacy hashes certify bytes, not whether those bytes were a resized copy.
+                return false;
             }
             catch (Exception ex)
             {
@@ -1439,22 +1430,6 @@ namespace NzbDrone.Core.MediaCover
             DeleteBookCovers(message.Book.Id);
         }
 
-	        private static bool IsAudiobookEdition(Edition edition)
-	        {
-	            if (edition == null) return false;
-
-	            if (edition.ReadingFormatId == 2) return true;
-
-	            if (edition.DurationSeconds.HasValue && edition.DurationSeconds.Value > 0) return true;
-
-	            var format = edition.EditionFormat ?? edition.Format;
-	            if (string.IsNullOrWhiteSpace(format)) return false;
-
-	            return format.Contains("audiobook", StringComparison.OrdinalIgnoreCase) ||
-	                   format.Contains("audible", StringComparison.OrdinalIgnoreCase) ||
-	                   format.Contains("audio", StringComparison.OrdinalIgnoreCase);
-	        }
-
         private void StoreEditionCoverMetadata(Book book, BookCoverSelection coverChoice)
         {
             try
@@ -1474,7 +1449,6 @@ namespace NzbDrone.Core.MediaCover
 	                        Title = coverChoice.Edition.Title,
 	                        LocalEditionId = coverChoice.Edition.Id,
 	                        EditionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(coverChoice.Edition),
-	                        IsAudiobook = IsAudiobookEdition(coverChoice.Edition),
 	                        CoverUrl = coverChoice.Cover.Url,
 	                        DownloadedAt = downloadedAt
 	                    }

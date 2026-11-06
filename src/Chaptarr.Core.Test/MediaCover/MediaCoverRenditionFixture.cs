@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -31,6 +32,25 @@ namespace Chaptarr.Core.Test.MediaCover
     [TestFixture]
     public class MediaCoverRenditionFixture
     {
+        [TestCase("image/png")]
+        [TestCase("text/plain")]
+        [TestCase("application/octet-stream")]
+        [TestCase(null)]
+        public void cover_format_is_detected_from_bytes_not_the_cdn_content_type(string contentType)
+        {
+            var image = BuildPngBytes(2, 2, new Rgba32(30, 120, 210));
+            Assert.DoesNotThrow(() => MediaCoverRendition.ValidateImageResponse(image, contentType));
+        }
+
+        [TestCase("text/html")]
+        [TestCase("image/jpeg")]
+        [TestCase(null)]
+        public void an_error_page_is_rejected_even_when_it_claims_to_be_an_image(string contentType)
+        {
+            Assert.Throws<InvalidDataException>(() => MediaCoverRendition.ValidateImageResponse(
+                Encoding.UTF8.GetBytes("<html>CDN unavailable</html>"), contentType));
+        }
+
         private const string KnownPlaceholderJpegHash = "47736d50a054c80f646c094ecd9c00c3fb12f5c585817fa5a581140c364da30e";
         private const string KnownPlaceholderWebpHash = "db25714c302dcc8ccca766d734947df2931fcc74cbed1656ad2eb470613db981";
         private const string VerifiedRealImageHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -176,6 +196,7 @@ namespace Chaptarr.Core.Test.MediaCover
         private class ImageHttpClientProxy : DispatchProxy
         {
             public byte[] ResponseData { get; set; } = Array.Empty<byte>();
+            public HttpStatusCode? FailureStatus { get; set; }
             public Queue<byte[]> ResponseQueue { get; } = new();
             public List<string> RequestedUrls { get; } = new();
             public int Calls { get; private set; }
@@ -186,6 +207,10 @@ namespace Chaptarr.Core.Test.MediaCover
                 {
                     Calls++;
                     RequestedUrls.Add(request.Url.FullUri);
+                    if (FailureStatus.HasValue)
+                    {
+                        throw new HttpException(new HttpResponse(request, new HttpHeader(), Array.Empty<byte>(), FailureStatus.Value));
+                    }
                     var responseData = ResponseQueue.Count > 0 ? ResponseQueue.Dequeue() : ResponseData;
                     return new HttpResponse(request, new HttpHeader(), responseData);
                 }
@@ -1197,12 +1222,18 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(((ImageHttpClientProxy)(object)httpClient).Calls, Is.Zero);
         }
 
-        [TestCase(false, true)]
-        [TestCase(false, false)]
-        [TestCase(true, true)]
-        public async Task on_demand_author_image_should_restore_missing_url_variant_from_verified_canonical_rendition(
-            bool hasOriginal,
-            bool has500)
+        [TestCase(false, true, ".jpg", ".jpg", true, false)]
+        [TestCase(false, false, ".jpg", ".jpg", true, false)]
+        [TestCase(true, true, ".jpg", ".jpg", true, false)]
+        [TestCase(false, true, ".jfif", ".jpg", true, false)]
+        [TestCase(false, true, ".png", ".jpg", true, false)]
+        [TestCase(false, true, ".png", ".png", true, false)]
+        [TestCase(false, true, ".jpg", ".jpg", false, false)]
+        [TestCase(true, true, ".jpg", ".jpg", false, false)]
+        [TestCase(false, true, ".jpg", ".jpg", true, true)]
+        [TestCase(false, true, ".jpg", ".jpg", false, true)]
+        public async Task on_demand_author_image_uses_renditions_only_after_failure_and_retries_the_original(
+            bool hasOriginal, bool has500, string sourceExtension, string cachedExtension, bool providerFails, bool legacyVariant)
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
@@ -1211,19 +1242,22 @@ namespace Chaptarr.Core.Test.MediaCover
             var httpClient = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
             var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
             var proxy = new MediaCoverProxyStub();
-            const string remoteUrl = "https://assets.hardcover.app/authors/166157/6390041-L.jpg";
+            var remoteUrl = "https://assets.hardcover.app/authors/166157/6390041-L" + sourceExtension;
             const int authorId = 900010;
             var authorFolder = Path.Combine(ConfigRoot, "MediaCover", authorId.ToString());
             var identityPath = Path.Combine(authorFolder, "poster.url");
-            var originalPath = Path.Combine(authorFolder, "poster.jpg");
-            var cached250Path = Path.Combine(authorFolder, "poster-250.jpg");
-            var cached500Path = Path.Combine(authorFolder, "poster-500.jpg");
+            var originalPath = Path.Combine(authorFolder, "poster" + sourceExtension);
+            var cached250Path = Path.Combine(authorFolder, "poster-250" + cachedExtension);
+            var cached500Path = Path.Combine(authorFolder, "poster-500" + cachedExtension);
             var originalBytes = BuildPngBytes(80, 120, new Rgba32(20, 120, 210));
             var cached250Bytes = BuildPngBytes(32, 48, new Rgba32(20, 120, 210));
             var cached500Bytes = BuildPngBytes(64, 96, new Rgba32(20, 120, 210));
-            var expectedBytes = hasOriginal ? originalBytes : has500 ? cached500Bytes : cached250Bytes;
+            var expectedBytes = !providerFails || hasOriginal ? originalBytes : has500 ? cached500Bytes : cached250Bytes;
+            var responses = (ImageHttpClientProxy)(object)httpClient;
+            responses.ResponseData = originalBytes;
+            responses.FailureStatus = providerFails ? HttpStatusCode.Forbidden : null;
             var urlHash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(remoteUrl))).ToLowerInvariant()[..16];
-            var variantPath = Path.Combine(authorFolder, $"poster-{urlHash}.jpg");
+            var variantPath = Path.Combine(authorFolder, $"poster-{urlHash}{sourceExtension}");
             var verificationPath = variantPath + ".sha256";
             disk.ExistingPaths.UnionWith(new[] { identityPath, cached250Path });
             if (hasOriginal)
@@ -1261,6 +1295,13 @@ namespace Chaptarr.Core.Test.MediaCover
                 }
             };
 
+            if (legacyVariant)
+            {
+                disk.ExistingPaths.UnionWith(new[] { variantPath, verificationPath });
+                disk.BinaryByPath[variantPath] = cached500Bytes;
+                disk.TextByPath[verificationPath] = MediaCoverRendition.ComputeContentSha256(cached500Bytes);
+            }
+
             var result = await subject.EnsureAuthorImage(author, author.Images.Single());
             var hasRestoredVariant = disk.BinaryByPath.TryGetValue(variantPath, out var restoredBytes);
             var hasVerificationHash = disk.TextByPath.TryGetValue(verificationPath, out var verificationHash);
@@ -1280,26 +1321,48 @@ namespace Chaptarr.Core.Test.MediaCover
                 Assert.That(hasVerificationHash, Is.True);
                 if (hasVerificationHash)
                 {
-                    Assert.That(verificationHash, Is.EqualTo(MediaCoverRendition.ComputeContentSha256(expectedBytes)));
+                    Assert.That(verificationHash, Is.EqualTo(providerFails ? "cached-rendition" : MediaCoverRendition.OriginalImageVerificationPrefix + MediaCoverRendition.ComputeContentSha256(expectedBytes)));
                 }
-                Assert.That(MediaCoverRendition.StoredContentHashIsVerified(verificationPath, diskProvider), Is.True);
-                Assert.That(httpCallsAfterRestore, Is.Zero);
+                Assert.That(MediaCoverRendition.StoredContentHashIsVerified(verificationPath, diskProvider), Is.EqualTo(!providerFails));
+                Assert.That(httpCallsAfterRestore, Is.EqualTo(1));
                 Assert.That(cachedResult.State, Is.EqualTo("downloaded"));
                 Assert.That(cachedResult.Path, Is.EqualTo(variantPath));
-                Assert.That(httpCallsAfterCacheHit, Is.EqualTo(httpCallsAfterRestore));
+                Assert.That(httpCallsAfterCacheHit, Is.EqualTo(providerFails ? 2 : 1));
             });
+
+            // A fallback survives a restart and a canonical-photo change, but is never promoted.
+            subject = new MediaCoverService(proxy, null, null, httpClient, diskProvider, appFolder,
+                null, null, config, null, null, LogManager.GetCurrentClassLogger());
+            disk.ExistingPaths.ExceptWith(new[] { originalPath, cached250Path, cached500Path, identityPath });
+            if (providerFails)
+            {
+                var offline = await subject.EnsureAuthorImage(author, author.Images.Single());
+                Assert.That(offline.State, Is.EqualTo("downloaded"));
+                Assert.That(MediaCoverRendition.StoredContentHashIsVerified(verificationPath, diskProvider), Is.False);
+            }
+
+            responses.FailureStatus = null;
+            var recovered = await subject.EnsureAuthorImage(author, author.Images.Single());
+            Assert.That(recovered.State, Is.EqualTo("downloaded"));
+            Assert.That(disk.BinaryByPath[variantPath], Is.EqualTo(originalBytes));
+            Assert.That(MediaCoverRendition.StoredContentHashIsVerified(verificationPath, diskProvider), Is.True);
+            var callsAfterRecovery = responses.Calls;
+            await subject.EnsureAuthorImage(author, author.Images.Single());
+            Assert.That(responses.Calls, Is.EqualTo(callsAfterRecovery));
 
             author.SelectedPosterHash = MediaCoverRendition.ComputeStableAuthorImageHash(remoteUrl, MediaCoverTypes.Poster);
             var resource = author.ToResource();
             subject.ConvertToLocalUrls(resource.Id, MediaCoverEntity.Author, resource.Images, author.SelectedPosterHash);
-            Assert.That(resource.Images.Single().Url, Is.EqualTo($"/MediaCover/{authorId}/poster-{urlHash}.jpg?v={author.SelectedPosterHash}"));
+            Assert.That(resource.Images.Single().Url, Is.EqualTo($"/MediaCover/{authorId}/poster-{urlHash}{sourceExtension}?v={author.SelectedPosterHash}"));
             Assert.That(resource.Images.Single().RemoteUrl, Is.EqualTo(remoteUrl));
             Assert.That(proxy.ProxyCalls, Is.Zero);
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public async Task on_demand_author_image_should_download_when_canonical_rendition_has_no_matching_verified_identity(bool hasDifferentIdentity)
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public async Task on_demand_author_image_should_download_when_canonical_rendition_has_no_matching_verified_identity(bool hasDifferentIdentity, bool providerFails)
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
@@ -1308,7 +1371,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var httpClient = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
             var responses = (ImageHttpClientProxy)(object)httpClient;
             const string remoteUrl = "https://assets.hardcover.app/authors/900011/target.jpg";
-            const string differentUrl = "https://assets.hardcover.app/authors/900011/other.jpg";
+            const string differentUrl = "https://assets.hardcover.app/authors/900011/Target.jpg";
             const int authorId = 900011;
             var authorFolder = Path.Combine(ConfigRoot, "MediaCover", authorId.ToString());
             var identityPath = Path.Combine(authorFolder, "poster.url");
@@ -1328,6 +1391,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 disk.TextByPath[identityPath] = MediaCoverRendition.BuildAuthorCoverIdentity(differentUrl, VerifiedRealImageHash);
             }
             responses.ResponseData = responseBytes;
+            responses.FailureStatus = providerFails ? HttpStatusCode.Forbidden : null;
             var subject = new MediaCoverService(
                 mediaCoverProxy: null,
                 resizer: null,
@@ -1352,6 +1416,14 @@ namespace Chaptarr.Core.Test.MediaCover
             };
 
             var result = await subject.EnsureAuthorImage(author, author.Images.Single());
+            if (providerFails)
+            {
+                Assert.That(result.ErrorCode, Is.EqualTo("download_failed"));
+                Assert.That(disk.ExistingPaths, Does.Not.Contain(variantPath));
+                Assert.That(responses.Calls, Is.EqualTo(1));
+                return;
+            }
+
             var hasFetchedVariant = disk.BinaryByPath.TryGetValue(variantPath, out var fetchedBytes);
             var hasVerificationHash = disk.TextByPath.TryGetValue(verificationPath, out var verificationHash);
 
@@ -1368,10 +1440,37 @@ namespace Chaptarr.Core.Test.MediaCover
                 Assert.That(hasVerificationHash, Is.True);
                 if (hasVerificationHash)
                 {
-                    Assert.That(verificationHash, Is.EqualTo(MediaCoverRendition.ComputeContentSha256(responseBytes)));
+                    Assert.That(verificationHash, Is.EqualTo(MediaCoverRendition.OriginalImageVerificationPrefix + MediaCoverRendition.ComputeContentSha256(responseBytes)));
                 }
                 Assert.That(((ImageHttpClientProxy)(object)httpClient).Calls, Is.EqualTo(1));
             });
+        }
+
+        [TestCase("https://IMAGES.EXAMPLE/Portrait.jpg?size=Large", true)]
+        [TestCase("HTTPS://images.example/Portrait.jpg?size=Large", true)]
+        [TestCase("https://images.example/portrait.jpg?size=Large", false)]
+        [TestCase("https://images.example/Portrait.jpg?size=large", false)]
+        [TestCase("https://images.example/Portrait.jpg?Size=Large", false)]
+        [TestCase("http://images.example/Portrait.jpg?size=Large", false)]
+        public void author_photo_identity_preserves_path_and_query_case(string requestedUrl, bool matches)
+        {
+            const string storedUrl = "https://images.example/Portrait.jpg?size=Large";
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            var identityPath = Path.Combine(ConfigRoot, "MediaCover", "12", "poster.url");
+            disk.ExistingPaths.Add(identityPath);
+            disk.TextByPath[identityPath] = MediaCoverRendition.BuildAuthorCoverIdentity(storedUrl, VerifiedRealImageHash);
+            Assert.That(MediaCoverRendition.StoredRemoteUrlMatches(identityPath, requestedUrl, diskProvider), Is.EqualTo(matches));
+
+            var proxy = new MediaCoverProxyStub();
+            var subject = new MediaCoverService(proxy, null, null, null, diskProvider, appFolder,
+                null, null, DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>(), null, null, LogManager.GetCurrentClassLogger());
+            var covers = new[] { new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, requestedUrl) };
+            subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, covers);
+            Assert.That(covers[0].Url.StartsWith("/MediaCover/", StringComparison.Ordinal), Is.EqualTo(matches));
+            Assert.That(proxy.ProxyCalls, Is.EqualTo(matches ? 0 : 1));
         }
 
         [Test]
@@ -1943,7 +2042,7 @@ namespace Chaptarr.Core.Test.MediaCover
             };
         }
 
-        private static byte[] BuildPngBytes(int width, int height, Rgba32 color)
+        internal static byte[] BuildPngBytes(int width, int height, Rgba32 color)
         {
             using var image = new Image<Rgba32>(width, height, color);
             using var stream = new MemoryStream();

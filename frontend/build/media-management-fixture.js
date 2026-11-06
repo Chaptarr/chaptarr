@@ -8,17 +8,21 @@ import { createStore } from 'redux';
 import QueueConnector from 'Activity/Queue/QueueConnector';
 import MetadataProfileSelectInputConnector from 'Components/Form/MetadataProfileSelectInputConnector';
 import QualityProfileSelectInputConnector from 'Components/Form/QualityProfileSelectInputConnector';
+import TagInputConnector from 'Components/Form/TagInputConnector';
 import Button from 'Components/Link/Button';
 import pageStyles from 'Components/Page/Page.css';
+import MessagesConnector from 'Components/Page/Sidebar/Messages/MessagesConnector';
 import InteractiveImportSelectFolderModalContentConnector from 'InteractiveImport/Folder/InteractiveImportSelectFolderModalContentConnector';
 import InteractiveImportModalContentConnector from 'InteractiveImport/Interactive/InteractiveImportModalContentConnector';
+import AddNewBookModalContentConnector from 'Search/Book/AddNewBookModalContentConnector';
 import GeneralSettingsConnector from 'Settings/General/GeneralSettingsConnector';
 import ProxySettingsModal from 'Settings/General/ProxySettingsModal';
 import MediaManagementConnector from 'Settings/MediaManagement/MediaManagementConnector';
 import EditRootFolderModal from 'Settings/MediaManagement/RootFolder/EditRootFolderModal';
 import { clearPendingChanges, set } from 'Store/Actions/baseActions';
+import { executeCommand, finishCommand, updateCommand } from 'Store/Actions/commandActions';
 import createSaveHandler from 'Store/Actions/Creators/createSaveHandler';
-import { saveGeneralSettings, saveGeneralSettingsFields, saveMediaManagementSettings, saveMediaManagementSettingsFields, setGeneralSettingsValue, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
+import { cloneMetadataProfile, fetchMetadataProfiles, fetchQualityProfiles, saveGeneralSettings, saveGeneralSettingsFields, saveMediaManagementSettings, saveMediaManagementSettingsFields, saveMetadataProfile, setGeneralSettingsValue, setMediaManagementSettingsValue, setMetadataProfileValue } from 'Store/Actions/settingsActions';
 import createAppStore from 'Store/createAppStore';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import themes from 'Styles/Themes';
@@ -235,6 +239,38 @@ class GeneralIsolationFixture extends Component {
   }
 }
 
+function loadProfiles(appStore) {
+  appStore.dispatch(fetchQualityProfiles());
+  appStore.dispatch(fetchMetadataProfiles());
+  window.cloneMetadataProfile = (id) => {
+    appStore.dispatch(cloneMetadataProfile({ id }));
+    appStore.dispatch(saveMetadataProfile({}));
+  };
+  window.createMetadataProfile = (profileType) => {
+    appStore.dispatch(setMetadataProfileValue({ name: 'name', value: 'New metadata profile' }));
+    appStore.dispatch(setMetadataProfileValue({ name: 'profileType', value: profileType }));
+    appStore.dispatch(saveMetadataProfile({}));
+  };
+  window.getMetadataProfiles = () => appStore.getState().settings.metadataProfiles;
+  window.renderNullTags = () => ReactDOM.render(
+    <Provider store={appStore}>
+      <TagInputConnector name="tags" value={null}
+        onChange={noop}
+      />
+    </Provider>, document.getElementById('root'));
+  window.getAddBookPayload = (profiles) => {
+    let result = null;
+    const connector = new AddNewBookModalContentConnector.WrappedComponent({
+      ...profiles, foreignBookId: 'hc:100', foreignAuthorId: 'hc:200',
+      addBook: (payload) => {
+        result = payload;
+      }
+    });
+    connector.onAddBookPress(false, 'both');
+    return result;
+  };
+}
+
 window.renderSettingsIsolationFixture = (surface = 'quickstart', rootOverrides = {}) => {
   const root = document.getElementById('root');
   ReactDOM.unmountComponentAtNode(root);
@@ -249,11 +285,24 @@ window.renderSettingsIsolationFixture = (surface = 'quickstart', rootOverrides =
     { ...schema, id: 2, name: 'Other books', path: '/data/other', folderType: 1 }
   ] }));
   appStore.dispatch(set({ section: 'system.status', item: { appData: '/config', isWindows: false, mode: 'console', packageUpdateMechanism: 'builtin' } }));
-  appStore.dispatch(set({ section: 'settings.metadataProfiles', isPopulated: true, items: [{ id: 31, name: 'Audio metadata first' }, { id: 32, name: 'Audio metadata second' }] }));
+  loadProfiles(appStore);
   appStore.dispatch(set({ section: 'tags', isPopulated: true, items: [{ id: 51, label: 'audio-tag' }, { id: 52, label: 'ebook-tag' }] }));
   window.getRootFolderState = () => appStore.getState().settings.rootFolders;
   window.getGeneralDraft = () => appStore.getState().settings.general.pendingChanges;
   window.getGeneralSettingsState = () => appStore.getState().settings.general;
+  window.getSettingsCommands = () => appStore.getState().commands.items;
+  window.finishedSettingsCommands = [];
+  window.executeSettingsCommand = (command) => appStore.dispatch(executeCommand({
+    ...command,
+    commandFinished: (finished) => window.finishedSettingsCommands.push(finished)
+  }));
+  window.receiveSettingsCommand = (command) => {
+    if (['completed', 'failed'].includes(command.status)) {
+      appStore.dispatch(finishCommand(command));
+    } else {
+      appStore.dispatch(updateCommand(command));
+    }
+  };
   window.saveGeneralSetting = (changes, fieldsOnly = true) => appStore.dispatch(fieldsOnly ? saveGeneralSettingsFields(changes) : saveGeneralSettings(changes));
   window.setGeneralDraft = (name, value) => appStore.dispatch(setGeneralSettingsValue({ name, value }));
   window.getSettingsDraft = () => appStore.getState().settings.mediaManagement.pendingChanges;
@@ -318,7 +367,7 @@ window.renderSettingsIsolationFixture = (surface = 'quickstart', rootOverrides =
   if (surface === 'settings') {
     content = <MediaManagementConnector />;
   } else if (surface === 'general-settings') {
-    content = <GeneralSettingsConnector />;
+    content = <><GeneralSettingsConnector /><MessagesConnector /></>;
   } else if (surface === 'general') {
     content = <GeneralIsolationFixture />;
   } else if (surface === 'logs') {
@@ -374,5 +423,6 @@ window.renderProfileContractFixture = (props) => {
   const history = createMemoryHistory();
   const appStore = createAppStore(history);
   window.profileChanges = [];
+  loadProfiles(appStore);
   ReactDOM.render(<Provider store={appStore}><ProfileContractFixture {...props} /></Provider>, root);
 };

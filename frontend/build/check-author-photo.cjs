@@ -117,12 +117,13 @@ const alternate = { ...response.images.find((image) => image.remoteUrl.endsWith(
             }
             return route.fulfill({ json: {} });
           }
-          if (pathname.startsWith('/Content/Images/')) {
-            return route.fulfill({ path: path.join(root, 'frontend/src', pathname), contentType: pathname.endsWith('.svg') ? 'image/svg+xml' : 'image/png' });
+          if (pathname.startsWith('/Content/Images/') || pathname.startsWith('/chaptarr/Content/Images/')) {
+            return route.fulfill({ path: path.join(root, 'frontend/src', pathname.replace(/^\/chaptarr/, '')), contentType: pathname.endsWith('.svg') ? 'image/svg+xml' : 'image/png' });
           }
           if (pathname.startsWith('/MediaCover') || pathname.startsWith('/chaptarr/MediaCover/')) {
             imageRequests.push(pathname);
-            if (pathname === failedImagePath || pathname === unavailableRecoveryPath || pathname.startsWith('/MediaCoverProxy/') || pathname.includes('/missing/')) {
+            // Author originals are removed after resizing; only the server's renditions exist.
+            if (pathname.endsWith('/fanart.jpg') || pathname === failedImagePath || pathname === unavailableRecoveryPath || pathname.startsWith('/MediaCoverProxy/') || pathname.includes('/missing/')) {
               return route.fulfill({ status: 404, headers: { 'cache-control': 'no-store' }, body: '' });
             }
             if (holdImage) {
@@ -141,7 +142,7 @@ const alternate = { ...response.images.find((image) => image.remoteUrl.endsWith(
             return route.fulfill({ status: 404, body: '' });
           }
           const variables = Object.entries(themeVariables[theme]).map(([key, value]) => `--${key}:${value}`).join(';');
-          return route.fulfill({ contentType: 'text/html', body: `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><style>:root{${variables}}#root{width:220px;margin:20px}</style><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={urlBase:'',apiRoot:'/api/v1',isProduction:true}</script><script src="/fixture.js"></script>` });
+          return route.fulfill({ contentType: 'text/html', body: `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><style>:root{${variables}}body{background:var(--pageBackground);color:var(--textColor)}#root{width:220px;margin:20px}</style><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={urlBase:'',apiRoot:'/api/v1',isProduction:true}</script><script src="/fixture.js"></script>` });
         });
         await page.goto('http://photo.test/');
         await page.evaluate(() => window.preparePhotoFixture());
@@ -160,7 +161,7 @@ const alternate = { ...response.images.find((image) => image.remoteUrl.endsWith(
         // carousel directly there, and the real details header on desktop.
         const showCarousel = (author, remount = true) => show(width > 1024 ? 'details' : 'poster',
           { ...author, authorId: author.id, showArrowsOnHover: true }, remount);
-        const carouselPlaceholder = width > 1024 ? '/Content/Images/chaptarr-logo.svg' : placeholder;
+        const carouselPlaceholder = placeholder;
 
         // This list is serialized by the real backend mapper, not reordered by this test.
         assert(good.url.startsWith('/MediaCover/'));
@@ -393,7 +394,7 @@ const alternate = { ...response.images.find((image) => image.remoteUrl.endsWith(
           assert(heldRepairLoad);
           assert.equal(hashedRequestCount(), 4, 'the selected hashed rendition must exhaust its existing retries first');
           assert.equal(imageLoadRequests.length - beforeLoadRequests, 1);
-          await expectSource(placeholder);
+          await expectSource(`/chaptarr${placeholder}`);
           assert.equal(await page.evaluate(() => window.photoImageErrorCount), beforeImageErrors + 1);
 
           holdRepairLoad = false;
@@ -422,7 +423,7 @@ const alternate = { ...response.images.find((image) => image.remoteUrl.endsWith(
             await show('poster', recoveryProps);
             await requestPending;
             await responsePending;
-            await expectSource(placeholder);
+            await expectSource(`/chaptarr${placeholder}`);
             await page.waitForTimeout(150);
             assert.equal(imageLoadRequests.length - loadRequestsBefore, 1, 'a failed or pending recovery must not loop');
             assert.equal(hashedRequestCount() - failedImageRequestsBefore, 4);
@@ -510,6 +511,18 @@ const alternate = { ...response.images.find((image) => image.remoteUrl.endsWith(
         await show('banner', { images: [{ ...bad, coverType: 'banner' }] });
         await expectSource('/Content/Images/chaptarr-logo.svg');
         for (const urlBase of ['', '/chaptarr']) {
+          await page.evaluate((base) => {
+            window.Chaptarr.urlBase = base;
+          }, urlBase);
+          for (const mode of ['poster', 'tile', ...(width > 1024 ? ['details'] : [])]) {
+            await show(mode, { ...props, images: [], placeholder: undefined });
+            await expectSource(`${urlBase}${placeholder}`);
+            await show(mode, { ...props, images: [bad], placeholder: undefined });
+            await expectSource(`${urlBase}${placeholder}`);
+          }
+          await page.screenshot({ path: path.join(output, `${theme}-${width}-placeholder${urlBase ? '-url-base' : ''}.png`) });
+          await show('banner', { images: [] });
+          await expectSource(`${urlBase}/Content/Images/chaptarr-logo.svg`);
           await show('poster', { ...props, images: [bad, { ...good, url: `${urlBase}${good.url}` }], isEditorActive: true });
           await expectSource(`${urlBase}${good.url}`);
           assert.equal((await page.locator('[class*="photoCounter"]').innerText()).trim(), '2 / 2');
@@ -521,9 +534,18 @@ const alternate = { ...response.images.find((image) => image.remoteUrl.endsWith(
           for (const mode of ['details', 'bookDetails']) {
             await show(mode, { ...props, title: 'Example Book', titleSlug: 'example', mediaType: 'ebook', images: fanart, author: { ...props, images: fanart } });
             assert.equal(await page.locator('[class*="backdrop"]').first().evaluate((element) => element.style.backgroundImage), `url("${expectedFanartUrl}")`);
+            assert.equal(await page.evaluate((url) => new Promise((resolve) => {
+              const image = new Image();
+              image.onload = () => resolve(true);
+              image.onerror = () => resolve(false);
+              image.src = url;
+            }), expectedFanartUrl), true, 'Header backdrop must load the rendition the server keeps');
             assert(imageRequests.includes(expectedFanartUrl));
           }
         }
+        await page.evaluate(() => {
+          window.Chaptarr.urlBase = '';
+        });
         // Books retain their first-cover behavior, even when a later cover is local.
         await show('book', { images: [{ ...bad, coverType: 'cover' }, { ...good, coverType: 'cover' }] });
         await page.waitForFunction(() => document.querySelector('#root img')?.getAttribute('src').startsWith('data:image/png;'));

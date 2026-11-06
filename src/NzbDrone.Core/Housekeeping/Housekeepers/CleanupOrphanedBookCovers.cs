@@ -44,9 +44,9 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
         public void Clean()
         {
             var timer = Stopwatch.StartNew();
-            var coverDirectories = GetBookCoverDirectories();
+            using var coverDirectories = GetBookCoverDirectories().GetEnumerator();
 
-            if (!coverDirectories.Any())
+            if (!coverDirectories.MoveNext())
             {
                 return;
             }
@@ -57,9 +57,13 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                 : existingBookIds;
             var deletedBookIds = new HashSet<int>();
             var failed = 0;
+            var checkedCount = 0;
 
-            foreach (var coverDirectory in coverDirectories.Where(item => !retainedBookIds.Contains(item.BookId)))
+            do
             {
+                var coverDirectory = coverDirectories.Current;
+                checkedCount++;
+                if (retainedBookIds.Contains(coverDirectory.BookId)) continue;
                 // A setting changed during cleanup must not authorize further library-cache removal.
                 if (_configService.CoverDownloadScope != CoverDownloadScope.LibraryBooks &&
                     existingBookIds.Contains(coverDirectory.BookId))
@@ -78,27 +82,27 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                     _logger.Warn(ex, "Unable to remove cached book-cover directory {0}", coverDirectory.Path);
                 }
             }
+            while (coverDirectories.MoveNext());
 
             if (deletedBookIds.Any())
             {
-                // Monitoring or imports may have made a deleted cover eligible during the sweep.
-                var deletedExistingIds = deletedBookIds.Where(existingBookIds.Contains).ToHashSet();
-                var nowRetainedIds = !deletedExistingIds.Any() ? new List<int>()
-                    : _configService.CoverDownloadScope == CoverDownloadScope.LibraryBooks
-                        ? _bookService.GetLibraryBookIds(deletedExistingIds)
-                        : _bookService.GetBookIds(includeUnmonitored: true).Where(deletedExistingIds.Contains).ToList();
-                if (nowRetainedIds.Any())
+                // Additions, monitoring or imports may have made a deleted cover eligible during the sweep.
+                var nowRetainedIds = _configService.CoverDownloadScope == CoverDownloadScope.LibraryBooks
+                    ? _bookService.GetLibraryBookIds(deletedBookIds)
+                    : deletedBookIds.ToList();
+                var nowRetainedBooks = _bookService.GetExistingBooks(nowRetainedIds);
+                if (nowRetainedBooks.Any())
                 {
-                    _coverService.EnsureBookCoversForBooks(_bookService.GetExistingBooks(nowRetainedIds));
+                    _coverService.EnsureBookCoversForBooks(nowRetainedBooks);
                 }
 
                 _logger.Info("Removed {0} cached book-cover folders; {1} became eligible again; {2} failed; {3} folders checked in {4} ms",
-                    deletedBookIds.Count, nowRetainedIds.Count, failed, coverDirectories.Count, timer.ElapsedMilliseconds);
+                    deletedBookIds.Count, nowRetainedBooks.Count, failed, checkedCount, timer.ElapsedMilliseconds);
             }
             else
             {
                 _logger.Debug("Book-cover cleanup checked {0} folders in {1} ms; {2} failed",
-                    coverDirectories.Count, timer.ElapsedMilliseconds, failed);
+                    checkedCount, timer.ElapsedMilliseconds, failed);
             }
         }
 
@@ -172,19 +176,18 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
             return (bytes, candidates.Count);
         }
 
-        private List<(string Path, int BookId)> GetBookCoverDirectories()
+        private IEnumerable<(string Path, int BookId)> GetBookCoverDirectories()
         {
             var coverRoot = Path.Combine(_appFolderInfo.AppDataFolder, "MediaCover", "Books");
             if (!_diskProvider.FolderExists(coverRoot))
             {
-                return new List<(string Path, int BookId)>();
+                return Enumerable.Empty<(string Path, int BookId)>();
             }
 
             return _diskProvider.GetDirectories(coverRoot)
                 .Select(path => (Path: path, BookId: ParseBookId(path)))
                 .Where(item => item.BookId.HasValue)
-                .Select(item => (Path: item.Path, BookId: item.BookId.Value))
-                .ToList();
+                .Select(item => (Path: item.Path, BookId: item.BookId.Value));
         }
 
         private static int? ParseBookId(string path)
