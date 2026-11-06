@@ -201,7 +201,7 @@
     "typescript-plugin-css-modules/**/glob/minimatch": "3.1.4",
     "filemanager-webpack-plugin/**/glob/minimatch": "3.1.4",
     "filemanager-webpack-plugin/**/readdir-glob/minimatch": "5.1.8",
-    "rimraf/**/minimatch": "10.2.6",
+    "rimraf/**/minimatch": "11.0.1",
     "eslint/**/brace-expansion": "1.1.21",
     "eslint-plugin-import/**/brace-expansion": "1.1.21",
     "eslint-plugin-react/**/brace-expansion": "1.1.21",
@@ -211,6 +211,9 @@
     "@typescript-eslint/parser/**/brace-expansion": "2.1.7",
     "filemanager-webpack-plugin/**/readdir-glob/**/brace-expansion": "2.1.7",
     "rimraf/**/brace-expansion": "5.0.12",
-    "**/@types/node": "26.6.4"
+    "**/@types/node": "26.6.4",
+    "babel-plugin-lodash/**/minimatch": "3.1.4",
+    "**/filelist/minimatch": "5.1.9",
+    "**/minimatch": "11.0.1"
   }
 }

@@ -38,3 +38,28 @@ in `src/Directory.Packages.props`. That is the patched .NET 10 version for
 [GHSA-2fmv-rv2c-59x7](https://github.com/advisories/GHSA-2fmv-rv2c-59x7).
 Keep the central pin current when updating packages that bring Pkcs
 transitively, and verify all target frameworks after restoring the solution.
+
+
+## Frontend glob matching — November 6, 2026
+
+The modern minimatch consumers resolve to 11.0.1 for
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
+Legacy callable-API consumers retain explicit 3.1.4 or 5.x resolutions;
+`babel-plugin-lodash` and `filelist` need these exceptions before the general
+resolution. Verify the actual installed graph as well as the lockfile: a
+successful install alone does not establish that every intended override applied.
+The production frontend build, all 193 CJS tests, TypeScript checks and focused
+application lint pass against the resolved graph. No minimatch 7–10 remains.
+
+A fresh Yarn audit still reports build-tool findings for
+[glob cancellation](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)
+(four moderate dependency paths) and
+[deepmerge object prototypes](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)
+(two low paths). These are not bundled application HTTP dependencies: glob is
+used by local build tooling, and deepmerge is reached through the TypeScript
+checker and Rollup resolver. Build configuration and patterns come from the
+checked-out repository; untrusted code still requires isolated runners without
+secrets. This bounds the currently observed exposure, rather than declaring the
+advisories fixed. The audit has zero high/critical findings; deepmerge has no
+published patched version in the advisory. Keep the findings visible and
+reassess when updating those parent tools. No alert was dismissed.
