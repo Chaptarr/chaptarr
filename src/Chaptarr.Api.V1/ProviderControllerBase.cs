@@ -90,8 +90,6 @@ namespace Chaptarr.Api.V1
             return Created(providerDefinition.Id);
         }
 
-        protected virtual bool SkipUnchangedUpdates => false;
-
         [RestPutById]
         [Consumes("application/json")]
         [Produces("application/json")]
@@ -99,17 +97,14 @@ namespace Chaptarr.Api.V1
         {
             var existing = _providerFactory.Get(providerResource.Id);
             var providerDefinition = GetDefinition(providerResource, true, !forceSave, false, !forceSave, existing);
-            if (SkipUnchangedUpdates)
-            {
-                var comparison = _resourceMapper.ToModel(STJson.Deserialize<TProviderResource>(STJson.ToJson(_resourceMapper.ToResource(existing))));
-                comparison.Settings = existing.Settings;
-                comparison.ImplementationName = providerDefinition.ImplementationName;
-                comparison.Message = providerDefinition.Message;
+            var comparison = _resourceMapper.ToModel(STJson.Deserialize<TProviderResource>(STJson.ToJson(_resourceMapper.ToResource(existing))));
+            comparison.Settings = existing.Settings;
+            _providerFactory.SetProviderCharacteristics(comparison);
+            _providerFactory.SetProviderCharacteristics(providerDefinition);
 
-                if (JToken.DeepEquals(JToken.Parse(comparison.ToJson()), JToken.Parse(providerDefinition.ToJson())))
-                {
-                    return Accepted(providerResource.Id);
-                }
+            if (JToken.DeepEquals(JToken.Parse(comparison.ToJson()), JToken.Parse(providerDefinition.ToJson())))
+            {
+                return Accepted(providerResource.Id);
             }
 
             // Test enabled definitions unless explicitly bypassed.

@@ -37,12 +37,6 @@ textarea {
   line-height: 1.528571429; /* 20/14 */
 }
 
-input::placeholder,
-textarea::placeholder {
-  color: var(--textColor);
-  opacity: 0.8;
-}
-
 /* Better defaults for unordererd lists */
 
 ul {

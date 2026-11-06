@@ -49,19 +49,6 @@
 
   .actions {
     flex: 0 0 auto;
-    overflow-x: auto;
     min-height: $toolbarHeight;
-    /* Local covers hide each edge shadow when that end is reached. The
-       remaining shadow signals more actions even when touch scrollbars vanish. */
-    background-image:
-      linear-gradient(to right, var(--toolbarBackgroundColor) 30%, transparent),
-      linear-gradient(to left, var(--toolbarBackgroundColor) 30%, transparent),
-      linear-gradient(to right, var(--toolbarColor), transparent),
-      linear-gradient(to left, var(--toolbarColor), transparent);
-    background-attachment: local, local, scroll, scroll;
-    background-position: left center, right center, left center, right center;
-    background-size: 32px 100%, 32px 100%, 6px 100%, 6px 100%;
-    background-repeat: no-repeat;
-    scrollbar-width: thin;
   }
 }

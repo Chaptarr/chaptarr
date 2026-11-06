@@ -18,7 +18,7 @@ namespace Chaptarr.Api.V1.Config
             _configService = configService;
             SharedValidator.RuleFor(resource => resource).Custom((resource, context) =>
             {
-                foreach (var error in ConfigValueValidation.Validate(resource))
+                foreach (var error in ConfigValueValidation.Validate(resource, ToResource(_configService)))
                 {
                     context.AddFailure(error);
                 }

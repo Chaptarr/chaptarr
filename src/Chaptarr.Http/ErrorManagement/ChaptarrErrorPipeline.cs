@@ -56,7 +56,8 @@ namespace Chaptarr.Http.ErrorManagement
                     .Select(e => new
                     {
                         propertyName = e.PropertyName,
-                        errorMessage = e.ErrorMessage
+                        errorMessage = e.ErrorMessage,
+                        errorCode = e.ErrorCode
                     })
                     .ToList();
 

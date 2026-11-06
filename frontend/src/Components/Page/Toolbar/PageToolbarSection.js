@@ -1,7 +1,6 @@
 import classNames from 'classnames';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
-import { connect } from 'react-redux';
 import Measure from 'Components/Measure';
 import Menu from 'Components/Menu/Menu';
 import MenuContent from 'Components/Menu/MenuContent';
@@ -11,6 +10,7 @@ import SpinnerIcon from 'Components/SpinnerIcon';
 import { forEach } from 'Helpers/elementChildren';
 import { align, icons } from 'Helpers/Props';
 import dimensions from 'Styles/Variables/dimensions';
+import translate from 'Utilities/String/translate';
 import styles from './PageToolbarSection.css';
 
 const BUTTON_WIDTH = parseInt(dimensions.toolbarButtonWidth);
@@ -20,6 +20,7 @@ const SEPARATOR_WIDTH = 2 * SEPARATOR_MARGIN + 1;
 function calculateOverflowItems(children, isMeasured, width, collapseButtons) {
   let buttonCount = 0;
   let separatorCount = 0;
+  let pinnedButtonCount = 0;
   const validChildren = [];
 
   forEach(children, (child) => {
@@ -27,13 +28,16 @@ function calculateOverflowItems(children, isMeasured, width, collapseButtons) {
       separatorCount++;
     } else {
       buttonCount++;
+      if (!child.props.label) {
+        pinnedButtonCount++;
+      }
     }
 
     validChildren.push(child);
   });
 
   const buttonsWidth = buttonCount * BUTTON_WIDTH;
-  const separatorsWidth = separatorCount + SEPARATOR_WIDTH;
+  const separatorsWidth = separatorCount * SEPARATOR_WIDTH;
   const totalWidth = buttonsWidth + separatorsWidth;
 
   // If the width of buttons and separators is less than
@@ -47,28 +51,34 @@ function calculateOverflowItems(children, isMeasured, width, collapseButtons) {
     return {
       buttons: validChildren,
       buttonCount,
+      pinnedButtonCount,
       overflowItems: []
     };
   }
 
-  const maxButtons = Math.max(Math.floor((width - separatorsWidth) / BUTTON_WIDTH), 1);
+  // Keep wrapped menus intact and reserve a slot for More. At phone widths,
+  // More may be the only action that fits beside the pinned controls.
+  const maxButtons = Math.max(Math.floor(width / BUTTON_WIDTH) - pinnedButtonCount - 1, 0);
   const buttons = [];
   const overflowItems = [];
   let actualButtons = 0;
 
-  // Return all buttons if only one is being pushed to the overflow menu.
-  if (buttonCount - 1 === maxButtons) {
+  // A More button takes the same space as one remaining action.
+  if (buttonCount * BUTTON_WIDTH <= width) {
     return {
-      buttons: validChildren,
+      buttons: validChildren.filter((child) => Object.keys(child.props).length !== 0),
       buttonCount,
+      pinnedButtonCount,
       overflowItems: []
     };
   }
 
-  validChildren.forEach((child, index) => {
+  validChildren.forEach((child) => {
     const isSeparator = Object.keys(child.props).length === 0;
 
-    if (actualButtons < maxButtons) {
+    if (!isSeparator && !child.props.label) {
+      buttons.push(child);
+    } else if (actualButtons < maxButtons) {
       if (!isSeparator) {
         buttons.push(child);
         actualButtons++;
@@ -81,6 +91,7 @@ function calculateOverflowItems(children, isMeasured, width, collapseButtons) {
   return {
     buttons,
     buttonCount,
+    pinnedButtonCount,
     overflowItems
   };
 }
@@ -95,9 +106,7 @@ class PageToolbarSection extends Component {
 
     this.state = {
       isMeasured: false,
-      width: 0,
-      buttons: [],
-      overflowItems: []
+      width: 0
     };
   }
 
@@ -118,7 +127,6 @@ class PageToolbarSection extends Component {
     const {
       children,
       alignContent,
-      isCompact,
       collapseButtons
     } = this.props;
 
@@ -130,19 +138,18 @@ class PageToolbarSection extends Component {
     const {
       buttons,
       buttonCount,
+      pinnedButtonCount,
       overflowItems
-    } = calculateOverflowItems(children, isMeasured, width, collapseButtons && !isCompact);
-
-    // Wide selectors and non-collapsing menu sections need the scroll layout
-    // while the sidebar is open, too. Keep original controls and their wrappers
-    // available rather than converting them into bare overflow-menu props.
+    } = calculateOverflowItems(children, isMeasured, width, collapseButtons);
 
     return (
       <Measure
         onMeasure={this.onMeasure}
         className={styles.sectionContainer}
         style={{
-          flexGrow: isCompact ? 0 : buttonCount
+          minWidth: BUTTON_WIDTH * (pinnedButtonCount + (buttonCount > pinnedButtonCount ? 1 : 0)),
+          flexGrow: collapseButtons ? buttonCount : 0,
+          flexShrink: collapseButtons ? 1 : 0
         }}
       >
         {
@@ -164,7 +171,7 @@ class PageToolbarSection extends Component {
                     <ToolbarMenuButton
                       className={styles.overflowMenuButton}
                       iconName={icons.OVERFLOW}
-                      text="More"
+                      text={translate('More')}
                     />
 
                     <MenuContent>
@@ -211,7 +218,6 @@ class PageToolbarSection extends Component {
 PageToolbarSection.propTypes = {
   children: PropTypes.node,
   alignContent: PropTypes.oneOf([align.LEFT, align.CENTER, align.RIGHT]),
-  isCompact: PropTypes.bool.isRequired,
   collapseButtons: PropTypes.bool.isRequired
 };
 
@@ -220,6 +226,4 @@ PageToolbarSection.defaultProps = {
   collapseButtons: true
 };
 
-export default connect((state) => ({
-  isCompact: state.app.dimensions.width <= parseInt(dimensions.toolbarCompactWidth)
-}))(PageToolbarSection);
+export default PageToolbarSection;

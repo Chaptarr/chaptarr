@@ -24,7 +24,6 @@ namespace Chaptarr.Core.Test.Indexers
     {
         private sealed class Controller : ProviderControllerBase<IndexerResource, IndexerBulkResource, IIndexer, IndexerDefinition>
         {
-            protected override bool SkipUnchangedUpdates => true;
             public Controller(IProviderFactory<IIndexer, IndexerDefinition> factory)
                 : base(factory, "indexer", new IndexerResourceMapper(), new IndexerBulkResourceMapper()) { }
         }

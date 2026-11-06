@@ -105,6 +105,13 @@ for (const rule of config.module.rules) {
       }
       assert.ok(held.has(key), `request ${key} must be held`);
     };
+    const waitForRequestCount = async(predicate, count, message) => {
+      const deadline = Date.now() + 5000;
+      while (requests.filter(predicate).length < count && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(requests.filter(predicate).length, count, message);
+    };
     const release = async(key, payload = {}) => {
       await waitForHeld(key);
       await held.get(key).fulfill({ json: [], ...payload });
@@ -132,14 +139,10 @@ for (const rule of config.module.rules) {
     await waitForHeld('all');
     await stable(1);
     await release('all');
-    await page.waitForFunction(() => window.bookRouteFixture.state().books.isFetching);
-    await page.waitForTimeout(50);
-    assert.equal(held.has('12'), true);
+    await waitForHeld('12');
     await page.evaluate(() => window.bookRouteFixture.fetch({ authorId: 99 }));
-    await page.waitForTimeout(50);
     await release('99');
-    await page.waitForTimeout(50);
-    assert.equal(requests.filter((url) => url.includes('bookId=12')).length, 2, 'cancellation cannot establish absence');
+    await waitForRequestCount((url) => url.includes('bookId=12'), 2, 'cancellation cannot establish absence');
     mode = 'found';
     await release('12', { json: [book(12)] });
     await page.locator('[data-loaded-book="12"]').waitFor();

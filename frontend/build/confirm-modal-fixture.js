@@ -5,8 +5,10 @@ import { Provider } from 'react-redux';
 import { Route, Router, Switch } from 'react-router-dom';
 import { createStore } from 'redux';
 import TextInput from 'Components/Form/TextInput';
+import { shortcuts } from 'Components/keyboardShortcuts';
 import Button from 'Components/Link/Button';
 import Link from 'Components/Link/Link';
+import MenuItem from 'Components/Menu/MenuItem';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
 import Modal from 'Components/Modal/Modal';
 import ModalBody from 'Components/Modal/ModalBody';
@@ -15,6 +17,7 @@ import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import importStyles from 'InteractiveImport/Interactive/InteractiveImportModalContent.css';
 import SettingsToolbarConnector from 'Settings/SettingsToolbarConnector';
+import UnmappedFilesTable from 'UnmappedFiles/UnmappedFilesTable';
 import { fetchTranslations } from 'Utilities/String/translate';
 
 import 'Styles/globals.css';
@@ -29,6 +32,7 @@ const store = createStore((state = {
 
 window.calls = { confirm: 0, cancel: 0, link: 0, nested: 0, unmount: 0 };
 window.fixtureHistory = history;
+window.fixtureShortcuts = shortcuts;
 
 function SettingsPage() {
   const [value, setValue] = useState('Original');
@@ -94,6 +98,7 @@ function ConfirmationFixture() {
                     onChange={({ value: next }) => setValue(next)}
                   />
                   <textarea aria-label="Notes" defaultValue="First line" />
+                  <div contentEditable={true} suppressContentEditableWarning={true}>{'Editable'}</div>
                   <select aria-label="Choice" defaultValue="one"><option value="one">{'One'}</option></select>
                 </div>
             }
@@ -118,7 +123,7 @@ function ConfirmationFixture() {
       <ConfirmModal
         isOpen={nested}
         title="Child confirmation"
-        message="Confirm the child action?"
+        message={<div data-testid="child-content" tabIndex={0}>{'Confirm the child action?'}</div>}
         confirmLabel="Confirm child"
         cancelLabel="Cancel child"
         onConfirm={() => {
@@ -128,6 +133,65 @@ function ConfirmationFixture() {
         onCancel={() => setNested(false)}
       />
     </div>
+  );
+}
+
+function SendLogsFixture() {
+  return (
+    <>
+      <UnmappedRetryFixture />
+      <MenuItem data-testid="disabled-button" title="Disabled reason"
+        isDisabled={true} onPress={() => window.logUploadCalls.push('button')}
+      >
+        {'Disabled button control'}
+      </MenuItem>
+      <MenuItem data-testid="disabled-link" title="Disabled reason"
+        isDisabled={true} to="https://example.test/disabled"
+      >
+        {'Disabled link control'}
+      </MenuItem>
+    </>
+  );
+}
+
+function UnmappedRetryFixture() {
+  const query = new URLSearchParams(window.location.search);
+  const groups = Number(query.get('groups') || 6);
+  const parts = Number(query.get('parts') || 1);
+  const items = Array.from({ length: groups * parts }, (_, i) => ({
+    id: i + 1,
+    path: `/unmapped/Book ${Math.floor(i / parts) + 1}/Part ${i + 1}.mp3`,
+    importUnitKey: `audio:${Math.floor(i / parts)}`,
+    size: 1000,
+    quality: { quality: { id: 1, name: 'MP3' } }
+  }));
+  items.push({ id: 1000, path: '/unmapped/Ebook.epub', importUnitKey: 'ebook:1', size: 1000 });
+  window.retryCalls = [];
+  window.logUploadCalls = [];
+
+  return (
+    <UnmappedFilesTable
+      ref={(table) => {
+        window.unmappedTable = table;
+      }}
+      items={items}
+      columns={[]}
+      isFetching={false}
+      isPopulated={true}
+      isDeleting={false}
+      isSendingLogs={false}
+      isRefreshingFiles={false}
+      isRetryMatching={false}
+      onTableOptionChange={() => {}}
+      onSortPress={() => {}}
+      deleteUnmappedFile={() => {}}
+      deleteUnmappedFiles={() => {}}
+      fetchUnmappedFiles={() => {}}
+      onRefreshUnmappedFilesPress={() => {}}
+      onRetryUnmappedMatchPress={(mediaType, selection) => window.retryCalls.push({ mediaType, selection })}
+      previewMatchingLogsForReview={() => window.logUploadCalls.push('preview')}
+      sendMatchingLogsForReview={() => window.logUploadCalls.push('send')}
+    />
   );
 }
 
@@ -153,6 +217,8 @@ function GroupedFooterFixture() {
 }
 
 fetchTranslations().then(() => {
+  const fixtures = { 'send-logs': SendLogsFixture, 'unmapped-retry': UnmappedRetryFixture, 'grouped-footer': GroupedFooterFixture };
+  const Fixture = fixtures[scenario] || ConfirmationFixture;
   ReactDOM.render(
     <Provider store={store}>
       <Router history={history}>
@@ -165,7 +231,7 @@ fetchTranslations().then(() => {
         }
         {
           scenario !== 'settings' &&
-            (scenario === 'grouped-footer' ? <GroupedFooterFixture /> : <ConfirmationFixture />)
+            <Fixture />
         }
       </Router>
     </Provider>,

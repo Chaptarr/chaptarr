@@ -142,6 +142,9 @@ async function assertFooterFits(page) {
     for (const theme of ['light', 'dark']) {
       for (const width of [320, 390, 1440]) {
         const check = async(name, scenario, run) => {
+          if (process.env.CHAPTARR_DIALOG_SCENARIO && !scenario.startsWith(process.env.CHAPTARR_DIALOG_SCENARIO)) {
+            return;
+          }
           const { page, errors } = await openFixture(browser, scenario, width, theme);
           try {
             await run(page);
@@ -153,6 +156,80 @@ async function assertFooterFits(page) {
             await page.close();
           }
         };
+
+        await check('Send Logs stays disabled with its translated explanation', 'send-logs', async(page) => {
+          const button = page.getByRole('button', { name: translations.UnmappedFilesSendLogsButton, exact: true });
+          if (!await button.isVisible()) {
+            await page.getByRole('button', { name: /^More\b/ }).click();
+          }
+          await button.waitFor();
+          assert.equal(await button.isDisabled(), true);
+          assert.equal(await button.getAttribute('title'), translations.UnmappedFilesSendLogsDisabled);
+          await button.hover({ force: true });
+          await button.evaluate((element) => element.click());
+          const nativeButton = page.getByTestId('disabled-button');
+          const disabledColor = await nativeButton.evaluate((element) => getComputedStyle(element).color);
+          assert.equal(await nativeButton.evaluate((element) => getComputedStyle(element).pointerEvents), 'none');
+          assert.equal(await nativeButton.evaluate((element) => getComputedStyle(element).color), disabledColor);
+          await nativeButton.evaluate((element) => element.click());
+          assert.equal(await page.getByTestId('disabled-link').evaluate((element) => getComputedStyle(element).pointerEvents), 'none');
+          assert.deepEqual(await page.evaluate(() => window.logUploadCalls), []);
+        });
+
+        const retryToolbar = (page) => page.locator(`[aria-label^="${translations.UnmappedFilesRetryMatch}"]`).first();
+        const chooseAudio = (page) => page.getByRole('button', { name: /Audiobooks/ }).click();
+        const calls = (page) => page.evaluate(() => window.retryCalls);
+        await check('Retry six books confirms; cancel and Escape do nothing', 'unmapped-retry', async(page) => {
+          await retryToolbar(page).click();
+          await page.getByText('This will retry matching for 7 books. Continue?').waitFor();
+          await page.keyboard.press('Escape');
+          await chooseAudio(page);
+          await retryToolbar(page).click();
+          assert.equal(await page.getByText('This will retry matching for 6 books. Continue?').isVisible(), true);
+          assert.deepEqual(await calls(page), []);
+          await assertFooterFits(page);
+          if (process.env.CHAPTARR_DIALOG_ARTIFACTS) {
+            fs.mkdirSync(process.env.CHAPTARR_DIALOG_ARTIFACTS, { recursive: true });
+            await page.screenshot({ path: path.join(process.env.CHAPTARR_DIALOG_ARTIFACTS, `${theme}-${width}-retry.png`) });
+          }
+          await pressFocused(page, page.getByRole('button', { name: translations.Cancel, exact: true }));
+          assert.deepEqual(await calls(page), []);
+          await retryToolbar(page).click();
+          await page.keyboard.press('Escape');
+          assert.deepEqual(await calls(page), []);
+          await retryToolbar(page).click();
+          await page.locator('#portal-root').getByRole('button', { name: translations.UnmappedFilesRetryMatch, exact: true }).click();
+          assert.deepEqual(await calls(page), [{ mediaType: 'audiobook', selection: { scope: 'all' } }]);
+        });
+        for (const [groups, parts] of [[5, 1], [1, 10]]) {
+          await check(`Retry ${groups} books / ${groups * parts} files runs immediately`, `unmapped-retry&groups=${groups}&parts=${parts}`, async(page) => {
+            await chooseAudio(page);
+            await retryToolbar(page).click();
+            assert.deepEqual(await calls(page), [{ mediaType: 'audiobook', selection: { scope: 'all' } }]);
+            assert.equal(await page.locator('#portal-root button').count(), 0);
+          });
+        }
+        await check('Selected book groups, select-all exclusions and media filter determine retry count', 'unmapped-retry', async(page) => {
+          await chooseAudio(page);
+          for (let id = 1; id <= 5; id++) {
+            await page.evaluate((fileId) => window.unmappedTable.onSelectedChange({ id: fileId, value: true }), id);
+          }
+          await retryToolbar(page).click();
+          assert.deepEqual(await calls(page), [{ mediaType: 'audiobook', selection: { scope: 'selected', bookFileIds: [1, 2, 3, 4, 5] } }]);
+          await page.evaluate(() => window.unmappedTable.onSelectedChange({ id: 6, value: true }));
+          await retryToolbar(page).click();
+          await page.getByText('This will retry matching for 6 books. Continue?').waitFor();
+          await page.locator('#portal-root').getByRole('button', { name: translations.UnmappedFilesRetryMatch, exact: true }).click();
+          assert.equal((await calls(page)).length, 2);
+          assert.deepEqual((await calls(page))[1].selection.bookFileIds, [1, 2, 3, 4, 5, 6]);
+          await page.evaluate(() => window.unmappedTable.onSelectAllChange({ value: true }));
+          await page.evaluate(() => window.unmappedTable.onSelectedChange({ id: 6, value: false }));
+          await retryToolbar(page).click();
+          assert.deepEqual((await calls(page))[2], { mediaType: 'audiobook', selection: { scope: 'all', exceptBookFileIds: [6] } });
+          await page.getByRole('button', { name: /eBooks/ }).click();
+          await retryToolbar(page).click();
+          assert.deepEqual((await calls(page))[3], { mediaType: 'ebook', selection: { scope: 'all' } });
+        });
 
         await check('Initial focus confirms once', 'confirm', async(page) => {
           const button = page.getByRole('button', { name: 'Confirm', exact: true });
@@ -168,9 +245,24 @@ async function assertFooterFits(page) {
             await assertCalls(page, { cancel: 1 });
           });
         }
-        await check('Content Enter does nothing', 'confirm', async(page) => {
-          await pressFocused(page, page.getByTestId('modal-content'));
+        await check('IME, repeats, modifiers and handled Enter do not confirm', 'confirm', async(page) => {
+          assert.deepEqual(await page.evaluate(() => window.fixtureShortcuts.ACCEPT_CONFIRM_MODAL), {
+            key: 'Enter', name: 'Accept Confirmation Modal'
+          });
+          const content = page.getByTestId('modal-content');
+          for (const option of ['isComposing', 'repeat', 'ctrlKey', 'altKey', 'metaKey', 'shiftKey']) {
+            await content.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, [option]: true });
+            await assertCalls(page, {});
+          }
+          await content.evaluate((element) => element.addEventListener('keydown', (event) => event.preventDefault(), { once: true }));
+          await content.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13 });
           await assertCalls(page, {});
+          await pressFocused(page, content);
+          await assertCalls(page, { confirm: 1 });
+        });
+        await check('Content Enter confirms once', 'confirm', async(page) => {
+          await pressFocused(page, page.getByTestId('modal-content'));
+          await assertCalls(page, { confirm: 1 });
         });
         await check('Link Enter only follows link', 'confirm', async(page) => {
           await pressFocused(page, page.getByRole('link', { name: 'Read details' }));
@@ -200,7 +292,7 @@ async function assertFooterFits(page) {
           });
         }
         await check('Input Enter never confirms', 'inputs', async(page) => {
-          for (const selector of ['input[name=text]', 'textarea', 'select']) {
+          for (const selector of ['input[name=text]', 'textarea', 'select', '[contenteditable=true]']) {
             await pressFocused(page, page.locator(selector));
           }
           assert.match(await page.locator('textarea').inputValue(), /\n/);
@@ -208,7 +300,7 @@ async function assertFooterFits(page) {
         });
         await check('Only top dialog handles Enter and Escape', 'nested', async(page) => {
           await page.getByRole('button', { name: 'Open child' }).click();
-          await page.keyboard.press('Enter');
+          await pressFocused(page, page.getByTestId('child-content'));
           await assertCalls(page, { nested: 1 });
           await page.getByRole('button', { name: 'Open child' }).click();
           await page.keyboard.press('Escape');
@@ -275,6 +367,11 @@ async function assertFooterFits(page) {
           assert.equal(groups.length, 2);
           assert.equal(groups[0].top, groups[1].top, 'Existing half-width groups stay beside each other');
           assert.equal(groups[0].width, groups[1].width);
+          const actionGap = await page.locator('#portal-root [class*="ModalFooter-modalFooter"] > div').last().locator('button').evaluateAll((buttons) => {
+            const [cancel, confirm] = buttons.map((button) => button.getBoundingClientRect());
+            return confirm.top > cancel.top ? confirm.top - cancel.bottom : confirm.left - cancel.right;
+          });
+          assert.equal(actionGap, width < 768 ? 5 : 10, 'Grouped buttons retain their existing mobile/desktop spacing');
         });
         await check('Layout and tab stay inside the dialog', 'confirm', async(page) => {
           await assertFooterFits(page);

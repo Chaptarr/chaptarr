@@ -72,17 +72,25 @@ namespace NzbDrone.Core.Configuration
 
         public static bool IsRssInterval(int value) => value == 0 || value is >= 10 and <= 120;
 
-        public static List<ValidationFailure> Validate(object settings)
+        public static bool HasChanged(object proposed, object stored) => !Equals(proposed, stored);
+
+        public static List<ValidationFailure> Validate(object settings, object stored = null)
         {
             var errors = new List<ValidationFailure>();
             if (settings == null)
             {
                 return errors;
             }
-            var values = settings.GetType().GetProperties().Where(property => property.CanRead && property.GetIndexParameters().Length == 0)
-                .ToDictionary(property => property.Name, property => property.GetValue(settings));
+            var properties = (settings is IConfigService ? typeof(IConfigService) : settings.GetType()).GetProperties()
+                .Where(property => property.CanRead && property.GetIndexParameters().Length == 0).ToList();
+            var values = properties.ToDictionary(property => property.Name, property => property.GetValue(settings));
+            var previous = stored == null ? null : properties.ToDictionary(property => property.Name, property => property.GetValue(stored));
             foreach (var entry in values)
             {
+                if (previous != null && !HasChanged(entry.Value, previous[entry.Key]) &&
+                    !(entry.Key == nameof(IConfigService.AudiobookConversionMaxCpuThreads) &&
+                      HasChanged(values.GetValueOrDefault(nameof(IConfigService.AudiobookConversionConcurrentConversions)), previous.GetValueOrDefault(nameof(IConfigService.AudiobookConversionConcurrentConversions)))))
+                    continue;
                 var invalid = entry.Key switch
                 {
                     nameof(IConfigService.UILanguage) => entry.Value is not int language || language < 1 || !Language.All.Any(item => item.Id == language),

@@ -30,6 +30,7 @@ function ConfirmModal(props) {
       isOpen={isOpen}
       size={size}
       onModalClose={onCancel}
+      onEnterPress={isSpinning ? undefined : onConfirm}
     >
       <ModalContent onModalClose={onCancel}>
         <ModalHeader>{title}</ModalHeader>
