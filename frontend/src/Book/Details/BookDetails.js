@@ -119,6 +119,9 @@ class BookDetails extends Component {
       isSearching,
       onRefreshPress,
       onSearchPress,
+      audioBookShelfKeepsMetadata,
+      isSyncingFromAudioBookShelf,
+      onSyncFromAudioBookShelfPress,
       statistics = {}
     } = this.props;
 
@@ -169,6 +172,19 @@ class BookDetails extends Component {
               isDisabled={!hasBookFiles}
               onPress={this.onRetagPress}
             />
+
+            {
+              audioBookShelfKeepsMetadata ?
+                <PageToolbarButton
+                  label={translate('SyncFromAudioBookShelf')}
+                  title={translate('SyncFromAudioBookShelfHelpText')}
+                  iconName={icons.LINK}
+                  isDisabled={!hasBookFiles}
+                  isSpinning={isSyncingFromAudioBookShelf}
+                  onPress={onSyncFromAudioBookShelfPress}
+                /> :
+                null
+            }
 
             <PageToolbarSeparator />
 
@@ -413,7 +429,10 @@ BookDetails.propTypes = {
   isSmallScreen: PropTypes.bool.isRequired,
   onMonitorTogglePress: PropTypes.func.isRequired,
   onRefreshPress: PropTypes.func,
-  onSearchPress: PropTypes.func.isRequired
+  onSearchPress: PropTypes.func.isRequired,
+  audioBookShelfKeepsMetadata: PropTypes.bool,
+  isSyncingFromAudioBookShelf: PropTypes.bool,
+  onSyncFromAudioBookShelfPress: PropTypes.func
 };
 
 BookDetails.defaultProps = {

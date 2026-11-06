@@ -13,6 +13,7 @@ import {
   fetchIndexerFlags,
   fetchLanguages,
   fetchMetadataProfiles,
+  fetchNotifications,
   fetchQualityProfiles,
   fetchUISettings
 } from 'Store/Actions/settingsActions';
@@ -217,6 +218,10 @@ function createMapDispatchToProps(dispatch, props) {
     dispatchFetchHardcoverConfig() {
       dispatch(fetchHardcoverConfig());
     },
+    dispatchFetchNotifications() {
+      // Lets the library pages know whether an AudioBookShelf connection keeps the metadata.
+      dispatch(fetchNotifications());
+    },
     onResize(dimensions) {
       dispatch(saveDimensions(dimensions));
     },
@@ -255,6 +260,7 @@ class PageConnector extends Component {
       this.props.dispatchFetchUISettings();
       this.props.dispatchFetchStatus();
       this.props.dispatchFetchTranslations();
+      this.props.dispatchFetchNotifications();
     }
   }
 
@@ -327,6 +333,7 @@ class PageConnector extends Component {
   dispatchFetchUISettings: PropTypes.func.isRequired,
   dispatchFetchStatus: PropTypes.func.isRequired,
   dispatchFetchTranslations: PropTypes.func.isRequired,
+  dispatchFetchNotifications: PropTypes.func.isRequired,
   dispatchFetchHardcoverConfig: PropTypes.func.isRequired,
   onSidebarVisibleChange: PropTypes.func.isRequired
 };

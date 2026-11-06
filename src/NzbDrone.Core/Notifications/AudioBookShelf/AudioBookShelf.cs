@@ -35,6 +35,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
         private readonly IRootFolderService _rootFolderService;
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
+        private readonly IAudioBookShelfEditionPinService _editionPinService;
         private readonly Logger _logger;
 
         private static readonly TimeSpan LibraryCacheDuration = TimeSpan.FromMinutes(1);
@@ -50,6 +51,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                               IRootFolderService rootFolderService,
                               IBookService bookService,
                               IEditionService editionService,
+                              IAudioBookShelfEditionPinService editionPinService,
                               Logger logger)
         {
             _proxy = proxy;
@@ -60,6 +62,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             _rootFolderService = rootFolderService;
             _bookService = bookService;
             _editionService = editionService;
+            _editionPinService = editionPinService;
             _logger = logger;
         }
 
@@ -83,6 +86,12 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             else
             {
                 AddLegacyLibraryScans(message.Author, filePath, mediaType, libraryScans);
+            }
+
+            // Scheduled first: SendLibraryScans throws when any library scan fails.
+            if (Settings.AudioBookShelfKeepsMetadata())
+            {
+                ScheduleEditionPins(message.BookFiles);
             }
 
             SendLibraryScans(libraryScans);
@@ -301,12 +310,13 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             };
         }
 
-        public bool AcceptsExternalLibraryEdits => Settings.PushLibraryEdits;
+        // When AudioBookShelf keeps the metadata, Chaptarr never writes metadata or covers to it.
+        public bool AcceptsExternalLibraryEdits => Settings.PushLibraryEdits && !Settings.AudioBookShelfKeepsMetadata();
 
         // Title stays Chaptarr's, matching the calibre forwarder's identity rule.
         public void PushExternalLibraryEdit(Book book, List<BookFile> files, ExternalLibraryEditPayload payload)
         {
-            if (book == null || payload == null || files == null || files.Count == 0)
+            if (book == null || payload == null || files == null || files.Count == 0 || Settings.AudioBookShelfKeepsMetadata())
             {
                 return;
             }
@@ -409,6 +419,12 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
         private void PushBooks(List<(Book Book, List<BookFile> Files)> books, bool includeMetadata)
         {
+            if (Settings.AudioBookShelfKeepsMetadata())
+            {
+                _logger.Debug("AudioBookShelf: AudioBookShelf keeps the metadata, not pushing from Chaptarr");
+                return;
+            }
+
             var pushable = books.Where(x => x.Files.Count > 0).ToList();
 
             if (pushable.Count == 0)
@@ -563,6 +579,198 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             }
         }
 
+        // Runs every mapped AudioBookShelf item through the ASIN pin. Used by the
+        // AudioBookShelfEditionSync command to bring an existing library in line.
+        public Dictionary<AudioBookShelfEditionPinOutcome, int> SyncEditionsFromAudioBookShelf()
+        {
+            var outcomes = new Dictionary<AudioBookShelfEditionPinOutcome, int>();
+
+            if (!Settings.AudioBookShelfKeepsMetadata())
+            {
+                _logger.Debug("AudioBookShelf: '{0}' does not keep the metadata, skipping edition sync", Definition?.Name);
+                return outcomes;
+            }
+
+            foreach (var mapping in Settings.GetLibraryMappings().Where(m => m != null && m.LibraryId.IsNotNullOrWhiteSpace() && m.RootFolderId > 0))
+            {
+                RootFolder rootFolder;
+                List<AudioBookShelfLibraryItemSummary> items;
+
+                try
+                {
+                    rootFolder = _rootFolderService.Get(mapping.RootFolderId);
+                    items = _proxy.GetLibraryItems(Settings, mapping.LibraryId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "AudioBookShelf: unable to read library '{0}' for edition sync", mapping.LibraryId);
+                    continue;
+                }
+
+                if (rootFolder?.Path == null)
+                {
+                    continue;
+                }
+
+                foreach (var item in items.Where(i => i != null && i.RelPath.IsNotNullOrWhiteSpace()))
+                {
+                    if (mapping.LibraryFolderId.IsNotNullOrWhiteSpace() &&
+                        item.FolderId.IsNotNullOrWhiteSpace() &&
+                        !string.Equals(mapping.LibraryFolderId, item.FolderId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var folder = Path.Combine(rootFolder.Path, item.RelPath.Replace('/', Path.DirectorySeparatorChar));
+                    var outcome = PinFromItem(folder, mapping.MediaType, item, Definition?.Tags);
+
+                    if (outcome.HasValue)
+                    {
+                        outcomes[outcome.Value] = outcomes.GetValueOrDefault(outcome.Value) + 1;
+                    }
+                }
+            }
+
+            return outcomes;
+        }
+
+        private AudioBookShelfEditionPinOutcome? PinFromItem(string folder, string mediaType, AudioBookShelfLibraryItemSummary item, HashSet<int> connectionTags)
+        {
+            if (item == null || item.IsMissing || mediaType.IsNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            try
+            {
+                return _editionPinService.PinFolder(folder, mediaType, item.Media?.Metadata?.Asin, connectionTags);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "AudioBookShelf: unable to pin the edition for '{0}'", folder);
+                return null;
+            }
+        }
+
+        // The mapping that ties this root folder to this library (and, when known, to the item's
+        // library folder). Items of a library mapped to another root folder can share a relative
+        // path with this folder and must not be used for it.
+        private static AudioBookShelfLibraryMapping FindMapping(List<AudioBookShelfLibraryMapping> mappings, int rootFolderId, string libraryId, AudioBookShelfLibraryItemSummary item)
+        {
+            return mappings.FirstOrDefault(m =>
+                m != null &&
+                m.RootFolderId == rootFolderId &&
+                m.MediaType.IsNotNullOrWhiteSpace() &&
+                string.Equals(m.LibraryId, libraryId, StringComparison.OrdinalIgnoreCase) &&
+                (m.LibraryFolderId.IsNullOrWhiteSpace() ||
+                 item == null ||
+                 item.FolderId.IsNullOrWhiteSpace() ||
+                 string.Equals(m.LibraryFolderId, item.FolderId, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private void ScheduleEditionPins(List<BookFile> files)
+        {
+            var folders = DistinctFolders(files ?? new List<BookFile>());
+            var mappings = Settings.GetLibraryMappings();
+
+            if (folders.Count == 0 || mappings.Count == 0)
+            {
+                return;
+            }
+
+            var settings = Settings;
+            var tags = Definition?.Tags;
+
+            // Give AudioBookShelf time to pick up the new folder first.
+            Task.Delay(RescanDelay).ContinueWith(_ => PinFolders(settings, mappings, folders, tags));
+        }
+
+        // Pins the AudioBookShelf items that hold these Chaptarr folders. A folder below an item's
+        // folder (e.g. a CD1/ part folder) resolves to that item; each item is pinned once.
+        internal Dictionary<AudioBookShelfEditionPinOutcome, int> PinFolders(AudioBookShelfSettings settings, List<AudioBookShelfLibraryMapping> mappings, List<string> folders, HashSet<int> tags)
+        {
+            var outcomes = new Dictionary<AudioBookShelfEditionPinOutcome, int>();
+            var pinnedItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var libraryId in MappedLibraryIds(mappings))
+            {
+                List<AudioBookShelfLibraryItemSummary> items;
+
+                try
+                {
+                    items = _proxy.GetLibraryItems(settings, libraryId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "AudioBookShelf: unable to read library '{0}' to pin editions", libraryId);
+                    continue;
+                }
+
+                var itemsByRelPath = items
+                    .Where(i => i?.RelPath != null)
+                    .GroupBy(i => i.RelPath.Trim('/'), StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var folder in folders)
+                {
+                    var resolved = ResolveLibraryRelativePath(folder);
+
+                    if (resolved == null)
+                    {
+                        continue;
+                    }
+
+                    var item = FindItemForRelativePath(itemsByRelPath, resolved.Value.RelativePath);
+                    var mapping = item == null ? null : FindMapping(mappings, resolved.Value.RootFolder.Id, libraryId, item);
+
+                    if (mapping == null || !pinnedItems.Add(item.Id))
+                    {
+                        continue;
+                    }
+
+                    var itemFolder = Path.Combine(resolved.Value.RootFolder.Path, item.RelPath.Trim('/').Replace('/', Path.DirectorySeparatorChar));
+                    var outcome = PinFromItem(itemFolder, mapping.MediaType, item, tags);
+
+                    if (outcome.HasValue)
+                    {
+                        outcomes[outcome.Value] = outcomes.GetValueOrDefault(outcome.Value) + 1;
+                    }
+                }
+            }
+
+            return outcomes;
+        }
+
+        // Pins the AudioBookShelf items holding the given Chaptarr folders: the book and author
+        // scopes of the AudioBookShelfEditionSync command.
+        public Dictionary<AudioBookShelfEditionPinOutcome, int> SyncEditionsForFolders(List<string> folders)
+        {
+            if (!Settings.AudioBookShelfKeepsMetadata() || folders == null || folders.Count == 0)
+            {
+                return new Dictionary<AudioBookShelfEditionPinOutcome, int>();
+            }
+
+            return PinFolders(Settings, Settings.GetLibraryMappings(), folders, Definition?.Tags);
+        }
+
+        private static AudioBookShelfLibraryItemSummary FindItemForRelativePath(Dictionary<string, AudioBookShelfLibraryItemSummary> itemsByRelPath, string relativePath)
+        {
+            var rel = relativePath?.Trim('/');
+
+            while (rel.IsNotNullOrWhiteSpace())
+            {
+                if (itemsByRelPath.TryGetValue(rel, out var item))
+                {
+                    return item;
+                }
+
+                var slash = rel.LastIndexOf('/');
+                rel = slash > 0 ? rel.Substring(0, slash) : null;
+            }
+
+            return null;
+        }
+
         private void ScheduleItemRescans(List<RenamedBookFile> renamedFiles)
         {
             if (renamedFiles == null || renamedFiles.Count == 0)
@@ -645,6 +853,18 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                             // Scan first; metadata pushed before it is overwritten from the files.
                             _proxy.ScanItem(settings, item.Id);
                             _logger.Debug("AudioBookShelf: requested item rescan for '{0}'", rel);
+
+                            if (settings.AudioBookShelfKeepsMetadata())
+                            {
+                                var mapping = FindMapping(mappings, resolved.Value.RootFolder.Id, libraryId, item);
+
+                                if (mapping != null)
+                                {
+                                    PinFromItem(pair.Key, mapping.MediaType, item, Definition?.Tags);
+                                }
+
+                                continue;
+                            }
 
                             if (IsIgnored(settings, item, rel))
                             {

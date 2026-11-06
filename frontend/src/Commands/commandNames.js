@@ -19,6 +19,7 @@ export const REFRESH_BOOK = 'RefreshBook';
 export const BULK_REFRESH_BOOK = 'BulkRefreshBook';
 export const RENAME_FILES = 'RenameFiles';
 export const RENAME_AUTHOR = 'RenameAuthor';
+export const AUDIOBOOKSHELF_EDITION_SYNC = 'AudioBookShelfEditionSync';
 export const RESCAN_FOLDERS = 'RescanFolders';
 export const REFRESH_UNMAPPED_FILES = 'RefreshUnmappedFiles';
 export const RETRY_UNMAPPED_MATCH = 'RetryUnmappedMatch';

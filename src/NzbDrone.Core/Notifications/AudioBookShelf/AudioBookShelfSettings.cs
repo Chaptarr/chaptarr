@@ -35,6 +35,15 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
         public string LibraryFolderPath { get; set; }
     }
 
+    public enum AudioBookShelfMetadataKeeper
+    {
+        [FieldOption(Label = "Chaptarr")]
+        Chaptarr = 0,
+
+        [FieldOption(Label = "AudioBookShelf")]
+        AudioBookShelf = 1
+    }
+
     public class AudioBookShelfSettings : IProviderConfig, IJsonOnDeserialized
     {
         private static readonly AudioBookShelfSettingsValidator Validator = new AudioBookShelfSettingsValidator();
@@ -94,6 +103,11 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
         [FieldDefinition(9, Label = "Authenticate with AudioBookShelf (OIDC)", Type = FieldType.OAuth, Hidden = HiddenType.Hidden, HelpText = "Uses AudioBookShelf OpenID Connect (SSO) to generate an API key automatically. This will open a browser popup to the configured AudioBookShelf URL, so it must be reachable from your browser. Your AudioBookShelf server must allow this app's callback URL under OpenID Connect → Mobile Redirect URIs.")]
         public string SignIn { get; set; }
+
+        [FieldDefinition(10, Label = "Metadata Keeper", Type = FieldType.Select, SelectOptions = typeof(AudioBookShelfMetadataKeeper), HelpText = "Which app's book metadata wins. Chaptarr: Chaptarr's pushes (Push Library Edits, covers, and the metadata refresh after a rename) update AudioBookShelf items. AudioBookShelf: Chaptarr never writes metadata or covers to AudioBookShelf, including its metadata.json and cover sidecars in mapped folders, and instead pins each book to the Chaptarr edition whose ASIN matches the one AudioBookShelf matched. A pinned book keeps that edition and no longer accepts other editions")]
+        public int MetadataKeeper { get; set; }
+
+        public bool AudioBookShelfKeepsMetadata() => MetadataKeeper == (int)AudioBookShelfMetadataKeeper.AudioBookShelf;
 
         public string LibraryId { get; set; } // Maintained for migration purposes
         public string Username { get; set; }

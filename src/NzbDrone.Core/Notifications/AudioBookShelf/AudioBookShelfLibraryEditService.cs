@@ -48,6 +48,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             var shelves = _notificationFactory.GetAvailableProviders()
                 .OfType<AudioBookShelf>()
                 .Where(s => ((AudioBookShelfSettings)s.Definition.Settings).PushLibraryEdits)
+                .Where(s => !((AudioBookShelfSettings)s.Definition.Settings).AudioBookShelfKeepsMetadata())
                 .Where(s => !blockedProviders.Contains(s.Definition.Id))
                 .Where(s => ShouldHandleAuthor(s.Definition, author))
                 .ToList();
