@@ -625,6 +625,7 @@ const report = {
     directDownloadUrls: "ordered legacy tag arrays remain strict; the target compatibility API must project the same array shape",
     secretFields: "compared as empty or present, never recorded; host hash concealment requires successful settings readback and authentication proofs",
     deploymentFacts: "explicit typed status facts independently confirmed through the native API; all strict differences remain recorded",
+    missingProfileDiagnostics: "404 status, exact profile ID/message and all public fields remain strict; source-only internal exception descriptions are recorded as explicit diagnostic-redaction policy differences",
   },
   debugValues: includeDebugValues,
   caseCount: results.length,

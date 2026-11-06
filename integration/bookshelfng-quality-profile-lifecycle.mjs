@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { compareResponses } from './bookshelfng-api-contract.mjs';
+import { compareResponses, classifyMissingProfileDiagnosticRedaction } from './bookshelfng-api-contract.mjs';
 
 // Run only against the two disposable services owned by the differential harness.
 // The adapters return {status, value, error}; native GETs use the fourth argument.
@@ -24,30 +24,39 @@ export async function runQualityProfileLifecycle({ sourceRequest, targetRequest,
     return normalized;
   };
 
-  function record(caseId, method, source, target, expectedStatus, normalize = true) {
+  function record(caseId, method, source, target, expectedStatus, normalize = true, missingProfileId) {
     const comparison = compareResponses(source.value, normalize ? normalizeTarget(target.value) : target.value);
+    const policyDifferences = method === 'PUT' && caseId.startsWith('created.unexposed-native.') && caseId.endsWith('.update')
+      ? classifyMissingProfileDiagnosticRedaction(source, target, missingProfileId) : [];
     const reservedIdentities = caseId !== 'create' ||
       (Number.isInteger(sourceId) && sourceId >= minimumNewProfileId && Number.isInteger(targetId) && targetId >= minimumNewProfileId);
     const passed = reservedIdentities && source.status === expectedStatus && target.status === expectedStatus &&
-      source.error === null && target.error === null && comparison.mismatchPaths.length === 0;
+      source.error === null && target.error === null &&
+      (comparison.mismatchPaths.length === 0 || policyDifferences.length > 0);
     onCase({
       caseId: 'quality-profile.lifecycle.' + caseId, method,
       sourceStatus: source.status, targetStatus: target.status,
       sourceError: source.error, targetError: target.error,
       mismatchPaths: comparison.mismatchPaths,
       additivePaths: comparison.additivePaths,
+      providerPresentationDifferenceCount: 0,
+      expectedPolicyDifferences: policyDifferences,
       generatedIdentityNormalization: normalize && sourceId && targetId ? { sourceId, targetId } : null,
       minimumNewProfileId: caseId === 'create' ? minimumNewProfileId : undefined,
-      result: passed ? 'pass' : 'fail'
+      result: passed ? (policyDifferences.length ? 'expected-policy-difference' : 'pass') : 'fail'
     });
-    assert.ok(passed, `${caseId}: profile lifecycle response or source-field mismatch`);
+    assert.ok(passed, `${caseId}: source ${source.status}, target ${target.status}, mismatches: ${comparison.mismatchPaths.join(',') || 'none'}`);
   }
 
-  async function paired(caseId, method, sourcePath, targetPath, expectedStatus, sourceBody, targetBody) {
+  async function paired(caseId, method, sourcePath, targetPath, expectedStatus, sourceBody, targetBody, missingProfileId) {
+    if (missingProfileId !== undefined) {
+      assert.equal(sourcePath, '/qualityprofile/' + missingProfileId);
+      assert.equal(targetPath, sourcePath);
+    }
     const [source, target] = await Promise.all([
       sourceRequest(method, sourcePath, sourceBody), targetRequest(method, targetPath, targetBody)
     ]);
-    record(caseId, method, source, target, expectedStatus);
+    record(caseId, method, source, target, expectedStatus, true, missingProfileId);
     return { source, target };
   }
 
@@ -87,9 +96,12 @@ export async function runQualityProfileLifecycle({ sourceRequest, targetRequest,
       const media = ['audiobook', '1'].includes(String(counterpart.profileType).toLowerCase()) ? 'audiobook' : 'ebook';
       await paired('created.unexposed-native.' + media + '.readback', 'GET', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 404);
       const missing = { ...payload, id: hiddenId, name: name + ' absent ' + media };
-      await paired('created.unexposed-native.' + media + '.update', 'PUT', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 404, missing, missing);
+      await paired('created.unexposed-native.' + media + '.update', 'PUT', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 404, missing, missing, hiddenId);
       await paired('created.unexposed-native.' + media + '.delete', 'DELETE', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 200);
     }
+    const nativeAfterMissingRequests = await targetRequest('GET', '/qualityprofile', undefined, true);
+    assert.equal(nativeAfterMissingRequests.status, 200);
+    assert.deepEqual(nativeAfterMissingRequests.value, nativeCreated.value, 'Missing legacy IDs changed native profile rows');
     if (afterCreate) {
       await afterCreate({ sourceId, targetId, nativeProfiles: added });
       await paired('restart.readback', 'GET', '/qualityprofile/' + sourceId, '/qualityprofile/' + targetId, 200);

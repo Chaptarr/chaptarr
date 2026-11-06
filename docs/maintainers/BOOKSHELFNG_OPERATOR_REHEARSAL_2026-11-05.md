@@ -1027,3 +1027,25 @@ and Docker. It predates the new full-product M4B harness and these later identit
 corrections. The x86 startup cause, new canonical archive qualification and the
 remaining representative-media/external delivery gates remain open. Publication
 and production cutover remain frozen.
+
+
+### Missing-profile HTTP diagnostic classification
+
+Hosted Build [42167374852](https://github.com/snapetech-org/chaptarrng/actions/runs/42167374852)
+passes at `899c1681` on all three platforms, Docker and PostgreSQL, including the
+new native full-product M4B hard-kill recovery case. API run 42167371589 reaches
+the added hidden-native-ID PUT, then stops on an error-body comparison.
+
+A separate isolated `.76`/candidate HTTP probe confirms both missing-profile PUTs
+return 404, their messages and other fields match, and every original profile
+row remains unchanged. Only `description` differs: the predecessor exposes its
+exception stack; the existing Chaptarr error pipeline sets Description to null.
+This is now an explicitly recorded diagnostic-redaction policy difference for
+those known missing-profile requests, rather than a business-field mismatch.
+The classifier requires the exact requested ID/message, 404 on both sides, the
+known source ModelNotFound diagnostic, and equality of all remaining source
+fields. Tests reject changed status, IDs, messages, public fields and unrelated
+descriptions; the classifier also passes replay of the protected real receipt.
+Native rows are compared immediately after the negative mutations, and failure
+messages include statuses and mismatch paths. The updated HTTP run remains
+required. Application error handling and its redaction behavior are unchanged.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   annotateProviderMismatchDetails,
   compareResponses,
+  classifyMissingProfileDiagnosticRedaction,
   classifySystemDeploymentDifferences,
   hasVerifiedHostSettingsAuthentication,
   normalizeProviderApiResponse,
@@ -255,3 +256,21 @@ for (let index = 0; index < settingsProofs.length; index++) {
 }
 assert.equal(hasVerifiedHostSettingsAuthentication(settingsProofs.map((proof, index) => index === 0 ? { ...proof, passwordWriteOnly: false } : proof)), false);
 console.log("Host password concealment requires successful settings save and both authentication proofs.");
+
+const missingProfile = {
+  status: 404, error: null,
+  value: { message: "QualityProfile with ID 5 does not exist", description: "NzbDrone.Core.Datastore.ModelNotFoundException: QualityProfile with ID 5 does not exist\n   at predecessor.Repository.Get()" },
+};
+const redactedProfile = { status: 404, error: null, value: { message: missingProfile.value.message, description: null } };
+assert.equal(classifyMissingProfileDiagnosticRedaction(missingProfile, redactedProfile, 5).length, 1);
+assert.equal(classifyMissingProfileDiagnosticRedaction(missingProfile, { ...redactedProfile, value: { message: missingProfile.value.message } }, 5).length, 1);
+for (const invalid of [
+  { ...redactedProfile, status: 400 },
+  { ...redactedProfile, error: "invalid-json" },
+  { ...redactedProfile, value: { ...redactedProfile.value, message: "QualityProfile with ID 6 does not exist" } },
+  { ...redactedProfile, value: { ...redactedProfile.value, description: "exposed diagnostics" } },
+]) assert.deepEqual(classifyMissingProfileDiagnosticRedaction(missingProfile, invalid, 5), []);
+assert.deepEqual(classifyMissingProfileDiagnosticRedaction(missingProfile, redactedProfile, 6), []);
+assert.deepEqual(classifyMissingProfileDiagnosticRedaction({ ...missingProfile, value: { ...missingProfile.value, description: "A book description" } }, redactedProfile, 5), []);
+assert.deepEqual(classifyMissingProfileDiagnosticRedaction({ ...missingProfile, value: { ...missingProfile.value, requiredBusinessField: 7 } }, redactedProfile, 5), []);
+console.log("Missing-profile diagnostic redaction cannot conceal status, identity, message or other public-field differences.");

@@ -1,5 +1,24 @@
 import { isDeepStrictEqual } from "node:util";
 
+export function classifyMissingProfileDiagnosticRedaction(source, target, id) {
+  if (!Number.isSafeInteger(id) || id <= 0 || source.status !== 404 || target.status !== 404 ||
+      source.error !== null || target.error !== null) return [];
+  const message = `QualityProfile with ID ${id} does not exist`;
+  const before = source.value;
+  const after = target.value;
+  if (!before || !after || Array.isArray(before) || Array.isArray(after) ||
+      before.message !== message || after.message !== message ||
+      typeof before.description !== "string" ||
+      !before.description.startsWith(`NzbDrone.Core.Datastore.ModelNotFoundException: ${message}`) ||
+      after.description != null) return [];
+  const sourcePublic = { ...before };
+  const targetPublic = { ...after };
+  delete sourcePublic.description;
+  delete targetPublic.description;
+  if (compareResponses(sourcePublic, targetPublic).mismatchPaths.length !== 0) return [];
+  return [{ path: "/description", reason: "Internal exception diagnostics are withheld; the missing-profile status and message remain strict." }];
+}
+
 const secretKey =
   /(?:password|secret|token|api.?key|authorization|credential|mam.?id|session.?id)/i;
 
