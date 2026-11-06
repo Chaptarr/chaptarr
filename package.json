@@ -1,6 +1,6 @@
 {
   "name": "chaptarr",
-  "version": "0.9.1040",
+  "version": "0.9.999",
   "description": "Chaptarr",
   "scripts": {
     "build": "webpack --env production --config ./frontend/build/webpack.config.js",
@@ -11,7 +11,8 @@
     "typecheck": "tsc -p frontend/tsconfig.json",
     "lint": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore frontend/",
     "lint-fix": "yarn lint --fix",
-    "check-translations": "node frontend/build/check-missing-translation-keys.js",
+    "check-translations": "node --test frontend/build/check-missing-translation-keys.test.cjs && node frontend/build/check-missing-translation-keys.js",
+    "check-jsx-literals": "eslint --no-eslintrc --config frontend/.eslintrc.user-text.cjs --ignore-path frontend/.eslintignore --ext js,jsx,ts,tsx frontend/src",
     "check-author-photo": "node frontend/build/check-author-photo.cjs",
     "check-author-delete": "node frontend/build/check-author-delete.cjs",
     "check-author-search": "node frontend/build/check-author-search.cjs",
@@ -25,6 +26,8 @@
     "check-backups": "node frontend/build/check-backups.cjs",
     "check-notification-upgrade": "node frontend/build/check-notification-upgrade.cjs",
     "check-manual-import-confirmation": "node frontend/build/check-manual-import-confirmation.cjs",
+    "check-update-popup": "node frontend/build/check-update-popup.cjs",
+    "check-book-file-delete": "node frontend/build/check-book-file-delete.cjs",
     "check-confirm-modal": "node frontend/build/check-confirm-modal.cjs",
     "check-mobile-toolbar": "node frontend/build/check-mobile-toolbar.cjs",
     "lint-browser-checks": "eslint --config frontend/.eslintrc.js --ignore-path frontend/.eslintignore \"frontend/build/*.cjs\" \"frontend/build/*-fixture.js\" \"frontend/build/BookRouteDetailWitness.js\"",
@@ -169,7 +172,7 @@
     "@babel/runtime": "7.28.6"
   },
   "volta": {
-    "node": "24.21.0",
+    "node": "24.22.2",
     "yarn": "1.22.22"
   }
 }

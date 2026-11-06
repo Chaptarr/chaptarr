@@ -27,6 +27,7 @@ jobs:
   # the later Docker build. The same frontend is used on every runtime platform.
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
@@ -44,10 +45,17 @@ jobs:
     - name: Typecheck
       run: yarn typecheck
 
+    - name: Check translation keys
+      run: yarn check-translations
+
+    - name: Check user-facing JSX text
+      run: yarn check-jsx-literals
+
     - name: Build frontend
       run: yarn build
 
   build:
+    timeout-minutes: 90
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -147,13 +155,27 @@ jobs:
       run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
     
     - name: Build Windows tray host
-      if: matrix.os == 'windows-latest'
+      if: runner.os == 'Windows'
       run: dotnet build src/NzbDrone/Chaptarr.csproj --configuration Release
 
+    - name: Check Core test runner
+      run: python3 -m unittest discover -s build-tools -p test_run_core_tests.py
+
+    - name: Build Core tests
+      run: dotnet build src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore
+
     - name: Test
+      timeout-minutes: 60
       env:
         CHAPTARR_PHOTO_RESPONSE: ${{ runner.temp }}/author-photo-response.json
-      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore --verbosity normal
+      run: python3 build-tools/run-core-tests.py --results TestResults/core --workers 6
+
+    - name: Upload Core test results
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: core-tests-${{ matrix.os }}
+        path: TestResults/core
 
     # Reuse the response emitted by the Core suite above. A correct API response
     # alone cannot catch a carousel selecting the wrong photo after a reorder.
@@ -164,6 +186,8 @@ jobs:
         node-version-file: package.json
 
     - name: Install browser check dependencies
+      id: browser_deps
+      timeout-minutes: 10
       if: runner.os == 'Linux'
       run: |
         npm install -g "yarn@$(node -p 'require("./package.json").volta.yarn')" --force
@@ -173,11 +197,17 @@ jobs:
     # Directory-based `yarn lint` does not discover these .cjs runners.
     # Include the shared browser helpers as well as their check runners and fixtures.
     - name: Lint browser checks
-      if: runner.os == 'Linux'
+      timeout-minutes: 5
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       run: yarn lint-browser-checks
 
+    - name: Check browser route capture
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 1
+      run: node --test frontend/build/capture-browser-route.test.cjs
+
     - name: Check author photos
-      if: runner.os == 'Linux'
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         CHAPTARR_PHOTO_RESPONSE: ${{ runner.temp }}/author-photo-response.json
@@ -186,7 +216,7 @@ jobs:
 
     - name: Upload author photo evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: author-photo-evidence
         path: |
@@ -198,46 +228,85 @@ jobs:
     # Covers the delete checkbox, the outgoing request body and the mobile layout.
     # It does NOT prove filesystem deletion is safe -- the Core deletion fixtures do.
     - name: Check author delete UI
-      if: runner.os == 'Linux'
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-author-delete
 
     - name: Check author search confirmation
-      if: runner.os == 'Linux'
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-author-search
 
-    - name: Check author entry, book routes and search controls
-      if: runner.os == 'Linux'
+    - name: Check author sync controls
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
-      run: |
-        yarn check-author-entry
-        yarn check-book-route-guards
-        yarn check-header-search
-        yarn check-indexer-nfo
+        CHAPTARR_SYNC_ONLY: '1'
+      run: yarn check-author-search
+
+    - name: Check author-entry
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-author-entry
+
+    - name: Check book-route-guards
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-book-route-guards
+
+    - name: Check header-search
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-header-search
+
+    - name: Check indexer-nfo
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-indexer-nfo
 
     - name: Check ConfirmModal Enter behavior
-      if: runner.os == 'Linux'
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-confirm-modal
 
     - name: Check manual import replacement confirmation
-      if: runner.os == 'Linux'
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
       run: yarn check-manual-import-confirmation
 
+    - name: Check installed-release popup
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-update-popup
+
+    - name: Check book-file deletion preview
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-book-file-delete
+
     - name: Check Wanted Authors table and actions
-      if: runner.os == 'Linux'
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
@@ -246,29 +315,58 @@ jobs:
 
     - name: Upload Wanted Authors evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: wanted-authors-evidence
         path: ${{ runner.temp }}/chaptarr-wanted-authors-evidence/*
         retention-days: 7
         if-no-files-found: warn
 
-    - name: Check book cover scope and settings
-      if: runner.os == 'Linux'
+    - name: Check book-cover-scope
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
-      run: |
-        yarn check-book-cover-scope
-        yarn check-media-management-cover-scope
-        yarn check-import-lists
-        yarn check-backups
-        yarn check-notification-upgrade
-        yarn check-smart-narrator
+      run: yarn check-book-cover-scope
+
+    - name: Check media-management-cover-scope
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-media-management-cover-scope
+
+    - name: Check import-lists
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-import-lists
+
+    - name: Check backups
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-backups
+
+    - name: Check notification-upgrade
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-notification-upgrade
+
+    - name: Check smart-narrator
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-smart-narrator
 
     - name: Upload cover settings evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: cover-settings-evidence
         path: ${{ runner.temp }}/chaptarr-cover-scope-*.png
@@ -277,7 +375,7 @@ jobs:
 
     - name: Upload author delete evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: author-delete-evidence
         path: ${{ runner.temp }}/chaptarr-delete-ui-*/*.png
@@ -285,7 +383,7 @@ jobs:
         if-no-files-found: warn
     
     - name: Check mobile toolbar
-      if: runner.os == 'Linux'
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 5
       env:
         TMPDIR: ${{ runner.temp }}
@@ -294,7 +392,7 @@ jobs:
 
     - name: Upload mobile toolbar evidence
       if: ${{ !cancelled() && runner.os == 'Linux' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: mobile-toolbar-evidence
         path: ${{ runner.temp }}/chaptarr-toolbar-evidence/*.png
@@ -307,7 +405,7 @@ jobs:
         dotnet publish src/NzbDrone.Update/Chaptarr.Update.csproj -c Release -f net10.0 -o ./publish/Chaptarr/Chaptarr.Update
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: chaptarr-${{ matrix.platform }}
         path: ./publish/
@@ -316,6 +414,9 @@ jobs:
 
   postgres-migrations:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CHAPTARR_REQUIRE_POSTGRES: 'true'
     services:
       postgres:
         image: postgres:16
@@ -360,10 +461,24 @@ jobs:
     - name: Build (migrations smoke)
       run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
 
-    - name: Test - PostgreSQL persistence
+    - name: Check Core test runner
+      run: python3 -m unittest discover -s build-tools -p test_run_core_tests.py
+
+    - name: Build Core tests
+      run: dotnet build src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release
+
+    - name: Test - Core suite with PostgreSQL required
+      timeout-minutes: 60
       env:
         CHAPTARR_TEST_POSTGRES_CONNECTION_STRING: "Host=localhost;Port=5432;Database=postgres;Username=chaptarr;Password=chaptarr;Pooling=false"
-      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release
+      run: python3 build-tools/run-core-tests.py --results TestResults/postgres --workers 6
+
+    - name: Upload PostgreSQL test results
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: core-tests-postgres
+        path: TestResults/postgres
 
     - name: Smoke - migrate up on fresh PostgreSQL
       shell: bash
