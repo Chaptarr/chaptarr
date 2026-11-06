@@ -931,3 +931,28 @@ Failure evidence is retained at
 This gate is open; previous x86 passes do not qualify the failed payload, and
 that campaign does not qualify later backend changes. Publication and cutover
 remain frozen.
+
+
+### Hosted generic-profile validation follow-up
+
+API differential run [42159528647](https://github.com/snapetech-org/chaptarrng/actions/runs/42159528647)
+passes at `2a9e0902`: 103 cases, 98 passes, zero failures/inconclusive cases and
+five explicit expected policy differences. All nine new generic profile lifecycle
+cases pass. Full Build run 42160855848 passes PostgreSQL migration/profile checks,
+but its Linux, Windows and macOS jobs stop at the source-message review check:
+the profile validator's unchanged message moved and its call now chains a
+compatibility condition. The reviewed callsite line and fingerprint are updated;
+all 67 localization tests pass locally afterward. Translation text, source-message
+identity and immutable predecessor catalogs are unchanged. This metadata correction
+requires a new workflow revision; rerunning the old revision cannot validate it.
+
+The exact failing x86 archive also passes a complete local 32-bit Debian container
+No/Manual/Yes/health/forced-rollback run, but repeated startup then reproduces an
+intermittent candidate composition failure. An explicitly diagnostic Host-assembly
+override reproduces managed errors and native SIGABRT/SIGSEGV crashes; a core and
+backtrace are retained privately. Those diagnostic copies are not release payloads.
+A separate Debian VM run fails earlier when the unchanged `.76` predecessor
+segfaults during Manual restart; its source core and evidence are retained
+separately. Neither result closes the hosted x86 failure or establishes its cause.
+A basic probe finds zero parent-method-table offset mismatches across 5,872
+classes and passes seven million inherited type checks, narrowing that hypothesis.

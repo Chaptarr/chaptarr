@@ -13589,9 +13589,9 @@
         },
         {
           "file": "src/Chaptarr.Api.V1/Profiles/Quality/QualityProfileController.cs",
-          "line": 29,
-          "sourceLine": ".WithMessage(\"Profile type must be Audiobook or Ebook\");",
-          "sourceLineSha256": "90f632dd9ba4dba5f8bd6b84a93f3fe8dcba303eedc61a327721d3b467953c22",
+          "line": 34,
+          "sourceLine": ".WithMessage(\"Profile type must be Audiobook or Ebook\")",
+          "sourceLineSha256": "f9e9c9c3fac6fb060e9ba3e4a1e1e73918ab50f9506389096095981d44a6cb71",
           "category": "validation-message",
           "surface": "FluentValidation error response; validation errors are returned to the client UI"
         }

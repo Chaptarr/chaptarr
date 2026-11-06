@@ -200,3 +200,9 @@ Run the disposable source/candidate HTTP lifecycle as well as SQLite/PostgreSQL
 transaction and rollback cases. Normalize only newly generated top-level profile
 IDs from the two create responses, never nested quality or group IDs. Verify
 restart readback and complete cleanup against the original rows.
+
+
+When a reviewed server-message call moves or its fluent syntax changes, review
+and update that callsite in `docs/localization/server-message-sources.json`.
+Preserve unchanged message IDs/text and predecessor catalogs. Run
+`yarn test-localization`; Core/controller tests do not verify these fingerprints.
