@@ -196,6 +196,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn('mkdir -p "$fixture_library/Fixture Author/Ebooks"', installed)
         self.assertIn('"$fixture_library/Fixture Author/Audiobooks"', installed)
         self.assertIn('-v "$fixture_library:/library"', installed)
+        self.assertIn('--exclude-legacy-x86-mam-indexer', installed)
 
     def test_macos_handoff_runs_do_not_serialize_public_and_private_pools(self) -> None:
         path = WORKFLOW.parent / "bookshelfng-standalone-macos-acceptance.yml"

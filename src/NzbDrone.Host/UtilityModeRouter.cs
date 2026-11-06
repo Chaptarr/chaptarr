@@ -173,6 +173,26 @@ namespace NzbDrone.Host
                 case ApplicationModes.CheckBookshelfMigration:
                     {
                         _appFolderFactory.Register();
+                        if (_startupContext.Args.TryGetValue("bookshelf-health-url", out var healthUrl))
+                        {
+                            var timeoutSeconds = 14700;
+                            if (_startupContext.Args.TryGetValue("bookshelf-health-timeout-seconds", out var timeoutValue) &&
+                                (!int.TryParse(timeoutValue, out timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 14700))
+                            {
+                                throw new InvalidDataException("BookshelfNG HTTP health timeout must be between 1 and 14700 seconds.");
+                            }
+
+                            // Do not open the migrated database until the application has
+                            // published its health endpoint. This keeps a failed HTTP probe
+                            // read-only and avoids repeatedly opening SQLite beside a server
+                            // that is still completing first-start migration.
+                            WaitForBookshelfHttpReady(
+                                string.Equals(healthUrl, "auto", StringComparison.OrdinalIgnoreCase)
+                                    ? GetBookshelfHttpHealthUrl().ToString()
+                                    : healthUrl,
+                                timeoutSeconds);
+                        }
+
                         var database = _connectionStringFactory.MainDbConnection;
                         if (database.DatabaseType is not (DatabaseType.SQLite or DatabaseType.PostgreSQL) ||
                             DatabaseLineageGuard.Detect(database.ConnectionString, database.DatabaseType) != DatabaseLineage.Chaptarr)
@@ -193,22 +213,6 @@ namespace NzbDrone.Host
                             throw new InvalidDataException("BookshelfNG handoff health check found a missing or unsupported compatibility profile.");
                         }
                         var providerDialect = compatibilityProfile.ProviderDialect;
-
-                        if (_startupContext.Args.TryGetValue("bookshelf-health-url", out var healthUrl))
-                        {
-                            var timeoutSeconds = 14700;
-                            if (_startupContext.Args.TryGetValue("bookshelf-health-timeout-seconds", out var timeoutValue) &&
-                                (!int.TryParse(timeoutValue, out timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 14700))
-                            {
-                                throw new InvalidDataException("BookshelfNG HTTP health timeout must be between 1 and 14700 seconds.");
-                            }
-
-                            WaitForBookshelfHttpReady(
-                                string.Equals(healthUrl, "auto", StringComparison.OrdinalIgnoreCase)
-                                    ? GetBookshelfHttpHealthUrl().ToString()
-                                    : healthUrl,
-                                timeoutSeconds);
-                        }
 
                         var journal = new BookshelfMigrationJournal(new AppFolderInfo(_startupContext).AppDataFolder);
                         journal.RecordOutcome(

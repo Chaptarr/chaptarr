@@ -76,7 +76,8 @@ def executable(root: Path, name: str) -> Path:
     return candidates[0]
 
 
-def create_source_data(data_dir: Path, source_auxiliary: bool = False) -> None:
+def create_source_data(data_dir: Path, source_auxiliary: bool = False,
+                       exclude_legacy_x86_mam_indexer: bool = False) -> None:
     data_dir.mkdir(parents=True)
     database = data_dir / "readarr.db"
     schema = REPO / "src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.Schema.158.sql"
@@ -90,6 +91,16 @@ def create_source_data(data_dir: Path, source_auxiliary: bool = False) -> None:
         connection.execute("UPDATE DownloadClients SET Enable=0")
         connection.execute("UPDATE ImportLists SET EnableAutomaticAdd=0,ShouldSearch=0")
         connection.execute("UPDATE Notifications SET OnApplicationUpdate=0,OnHealthIssue=0,OnAuthorAdded=0")
+        if exclude_legacy_x86_mam_indexer:
+            # The public .76 x86 predecessor carries the legacy runtime defect that
+            # can crash while its startup health check invokes MAM's nested
+            # FluentValidation delegate. Other installed RIDs and the dedicated
+            # migration tests retain this provider; x86 still migrates two provider
+            # implementations while qualifying the corrected candidate runtime.
+            removed = connection.execute(
+                "DELETE FROM Indexers WHERE Implementation='MyAnonaMouse'"
+            ).rowcount
+            require(removed == 1, "The x86 predecessor fixture did not contain exactly one MAM indexer")
         connection.commit()
     if source_auxiliary:
         fixtures = REPO / "integration/standalone-handoff/fixtures"
@@ -149,23 +160,66 @@ def start_predecessor(app: Path, data_dir: Path, log_path: Path) -> subprocess.P
     return process
 
 
-def stop_process(process: subprocess.Popen[bytes], label: str) -> None:
-    if process.poll() is not None:
-        if process in RUNNING:
-            RUNNING.remove(process)
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=20)
-    except subprocess.TimeoutExpired:
+def process_group_ids(process_group: int) -> list[int]:
+    result = subprocess.run(
+        ["ps", "-A", "-o", "pid=", "-o", "pgid=", "-o", "stat="],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    members = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 3:
+            continue
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            process_id, group_id = int(fields[0]), int(fields[1])
+        except ValueError:
+            continue
+        if group_id == process_group and not fields[2].startswith("Z"):
+            members.append(process_id)
+    return members
+
+
+def stop_process(process: subprocess.Popen[bytes], label: str) -> None:
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-        process.wait(timeout=10)
+        try:
+            process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=10)
+
+    remaining = process_group_ids(process.pid)
+    for process_id in remaining:
+        try:
+            os.kill(process_id, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + 10
+    while process_group_ids(process.pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    remaining = process_group_ids(process.pid)
+    for process_id in remaining:
+        try:
+            os.kill(process_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + 5
+    while process_group_ids(process.pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    require(not process_group_ids(process.pid), f"{label}: predecessor process group remained after shutdown")
+    if label.startswith("BookshelfNG"):
+        deadline = time.monotonic() + 5
+        while http_ready() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        require(not http_ready(), f"{label}: /ping remained available after shutdown")
     if process in RUNNING:
         RUNNING.remove(process)
     print(f"{label}: stopped", flush=True)
@@ -464,9 +518,10 @@ def verify_candidate_backup(data_dir: Path) -> None:
             "forced rollback's retained target database is not a valid migrated database")
 
 
-def run_no_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
+def run_no_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str],
+                source_auxiliary: bool = False, exclude_legacy_x86_mam_indexer: bool = False) -> None:
     data_dir = work / "no-choice-data"
-    create_source_data(data_dir, source_auxiliary)
+    create_source_data(data_dir, source_auxiliary, exclude_legacy_x86_mam_indexer)
     old = start_predecessor(predecessor, data_dir, work / "no-predecessor.log")
     stop_process(old, "BookshelfNG before No")
     before = file_snapshot(data_dir)
@@ -491,9 +546,11 @@ def run_no_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[st
     print("No choice: predecessor database, config, and canary were unchanged; old /ping restarted successfully", flush=True)
 
 
-def run_headless_manual_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
+def run_headless_manual_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str],
+                             source_auxiliary: bool = False,
+                             exclude_legacy_x86_mam_indexer: bool = False) -> None:
     data_dir = work / "headless-manual-data"
-    create_source_data(data_dir, source_auxiliary)
+    create_source_data(data_dir, source_auxiliary, exclude_legacy_x86_mam_indexer)
     old = start_predecessor(predecessor, data_dir, work / "headless-manual-predecessor.log")
     stop_process(old, "BookshelfNG before headless Manual")
     before = file_snapshot(data_dir)
@@ -528,9 +585,10 @@ def run_headless_manual_case(predecessor: Path, launcher: Path, work: Path, base
     print("Headless Manual: source files remained unchanged and the old /ping restarted successfully", flush=True)
 
 
-def run_yes_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
+def run_yes_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str],
+                 source_auxiliary: bool = False, exclude_legacy_x86_mam_indexer: bool = False) -> None:
     data_dir = work / "yes-choice-data"
-    create_source_data(data_dir, source_auxiliary)
+    create_source_data(data_dir, source_auxiliary, exclude_legacy_x86_mam_indexer)
     old = start_predecessor(predecessor, data_dir, work / "yes-predecessor.log")
     stop_process(old, "BookshelfNG before Yes")
     source_hash = logical_database_hash(data_dir / "readarr.db")
@@ -554,9 +612,11 @@ def run_yes_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[s
             f"candidate did not remove its handoff lock after stopping; remaining entries: {lock_entries}")
 
 
-def run_rollback_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str], source_auxiliary: bool = False) -> None:
+def run_rollback_case(predecessor: Path, launcher: Path, work: Path, base_env: dict[str, str],
+                      source_auxiliary: bool = False,
+                      exclude_legacy_x86_mam_indexer: bool = False) -> None:
     data_dir = work / "rollback-data"
-    create_source_data(data_dir, source_auxiliary)
+    create_source_data(data_dir, source_auxiliary, exclude_legacy_x86_mam_indexer)
     old = start_predecessor(predecessor, data_dir, work / "rollback-predecessor.log")
     stop_process(old, "BookshelfNG before forced rollback")
     source_hash = logical_database_hash(data_dir / "readarr.db")
@@ -601,7 +661,8 @@ def elf_identity(path: Path) -> tuple[int, int] | None:
 
 def save_evidence(work: Path, output: Path, predecessor: Path, candidate: Path,
                   revision: str | None, runtime_id: str | None, executable_elf_identity: tuple[int, int] | None,
-                  cases: list[str], success: bool, source_auxiliary: bool = False) -> None:
+                  cases: list[str], success: bool, source_auxiliary: bool = False,
+                  excluded_legacy_x86_mam_indexer: bool = False) -> None:
     output = output.resolve()
     require(not output.exists(), f"Evidence destination already exists: {output}")
     require(not output.is_relative_to(work.resolve()), "Evidence destination must be outside the temporary workspace")
@@ -629,6 +690,7 @@ def save_evidence(work: Path, output: Path, predecessor: Path, candidate: Path,
         "executableElfMachine": executable_elf_identity[1] if executable_elf_identity else None,
         "sourceHardcoverMode": "false",
         "preinitializedSourceAuxiliaryDatabases": source_auxiliary,
+        "excludedLegacyX86MamIndexer": excluded_legacy_x86_mam_indexer,
         "completedCases": cases,
         "success": success,
         "retainedFiles": retained,
@@ -644,6 +706,8 @@ def main() -> int:
     parser.add_argument("--runtime-id", help="Validate Linux predecessor and candidate ELF architecture for this RID")
     parser.add_argument("--preinitialized-source-auxiliary-databases", action="store_true",
                         help="Use checksum-pinned .76 log/cache schemas for an existing-installation baseline")
+    parser.add_argument("--exclude-legacy-x86-mam-indexer", action="store_true",
+                        help="Exclude the synthetic MAM row that crashes the public .76 x86 startup validator")
     args = parser.parse_args()
     if args.output:
         require(not args.output.exists(), f"Evidence destination already exists: {args.output}")
@@ -667,6 +731,8 @@ def main() -> int:
             executable_elf_identity = elf_identity(candidate_root / "ChaptarrNG/Chaptarr")
             require(executable_elf_identity == expected,
                     "Candidate executable architecture does not match the requested RID")
+        require(not args.exclude_legacy_x86_mam_indexer or args.runtime_id == "linux-x86",
+                "The legacy MAM startup exclusion is restricted to the public .76 linux-x86 predecessor")
         launcher = candidate_root / "ChaptarrNG/scripts/bookshelfng-standalone-launch.sh"
         require(launcher.is_file() and os.access(launcher, os.X_OK),
                 "Candidate archive does not contain an executable standalone handoff launcher")
@@ -677,13 +743,18 @@ def main() -> int:
 
         print(f"BookshelfNG predecessor SHA-256: {sha256(args.predecessor_archive)}", flush=True)
         print(f"ChaptarrNG candidate SHA-256: {sha256(args.candidate_archive)}", flush=True)
-        run_no_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
+        run_no_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases,
+                    args.exclude_legacy_x86_mam_indexer)
         cases.append("No")
-        run_headless_manual_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
+        run_headless_manual_case(predecessor, launcher, work, base_env,
+                                 args.preinitialized_source_auxiliary_databases,
+                                 args.exclude_legacy_x86_mam_indexer)
         cases.append("headless Manual")
-        run_yes_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
+        run_yes_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases,
+                     args.exclude_legacy_x86_mam_indexer)
         cases.append("Yes, health and retained source backup")
-        run_rollback_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases)
+        run_rollback_case(predecessor, launcher, work, base_env, args.preinitialized_source_auxiliary_databases,
+                          args.exclude_legacy_x86_mam_indexer)
         cases.append("failed health rollback and restored predecessor health")
         success = True
         print("Standalone archive No/Manual/Yes/health/backup/rollback acceptance passed.", flush=True)
@@ -700,7 +771,8 @@ def main() -> int:
         if args.output:
             save_evidence(work, args.output, args.predecessor_archive, args.candidate_archive,
                           args.candidate_revision, args.runtime_id, executable_elf_identity, cases, success,
-                          args.preinitialized_source_auxiliary_databases)
+                          args.preinitialized_source_auxiliary_databases,
+                          args.exclude_legacy_x86_mam_indexer)
         if success:
             shutil.rmtree(work, ignore_errors=True)
 

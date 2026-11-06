@@ -802,6 +802,8 @@ test('interactive package migration choices default to No before conversion', ()
   const aurInstall = read('packaging/legacy/aur/bookshelfng-bin/bookshelfng.install');
   const chocolatey = read('packaging/legacy/chocolatey/tools/chocolateyinstall.ps1.in');
   const desktopSupervisor = read('packaging/legacy/desktop/bookshelfng-supervisor.sh');
+  const utilityRouter = read('src/NzbDrone.Host/UtilityModeRouter.cs');
+  const bootstrap = read('src/NzbDrone.Host/Bootstrap.cs');
 
   assert.match(debianPreinstall, /has_controlling_tty\(\) \{\s*\[ -t 0 \] && \( : <\/dev\/tty >\/dev\/tty \)/,
     'Debian requires a TTY on stdin so dpkg pseudo-terminals cannot make headless apt prompt');
@@ -852,6 +854,15 @@ test('interactive package migration choices default to No before conversion', ()
     'standalone utility failures never wait for terminal input during rollback');
   assert.match(desktopSupervisor, /health_deadline=\$\(\([\s\S]*?timeout_seconds[\s\S]*?run_utility -check-bookshelf-migration[\s\S]*?-bookshelf-health-timeout-seconds=1[\s\S]*?health_deadline/,
     'standalone health checks retry while migration and service startup complete');
+  const healthMode = utilityRouter.indexOf('case ApplicationModes.CheckBookshelfMigration:');
+  const httpProbe = utilityRouter.indexOf('WaitForBookshelfHttpReady(', healthMode);
+  const migratedDatabase = utilityRouter.indexOf('var database = _connectionStringFactory.MainDbConnection;', healthMode);
+  assert.ok(healthMode >= 0 && httpProbe > healthMode && migratedDatabase > httpProbe,
+    'installed health checks wait for HTTP before opening the first-start migrated database');
+  assert.doesNotMatch(bootstrap, /ConfigureContainer<IContainer>[\s\S]*?Resolve<UtilityModeRouter>/,
+    'recovery utility startup does not resolve services while a host container is still being assembled');
+  assert.match(bootstrap, /var utilityServices = new ServiceCollection\(\)[\s\S]*?utilityFactory\.CreateBuilder\(utilityServices\)[\s\S]*?utilityFactory\.CreateServiceProvider\(utilityContainer\)[\s\S]*?GetRequiredService<IUtilityModeRouter>\(\)\.Route\(appMode\)/,
+    'recovery utility services are populated before the utility router is resolved');
 });
 
 test('Linux and Windows VM jobs execute package-specific migration-choice checks', () => {

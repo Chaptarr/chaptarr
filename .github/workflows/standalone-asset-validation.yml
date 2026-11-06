@@ -488,7 +488,7 @@ jobs:
           mkdir -p "$fixture_library/Fixture Author/Ebooks" "$fixture_library/Fixture Author/Audiobooks"
           if [[ "$FLAVOR" == x86 ]]; then
             docker_platform=(--platform linux/386)
-            fixture_options=(--preinitialized-source-auxiliary-databases)
+            fixture_options=(--preinitialized-source-auxiliary-databases --exclude-legacy-x86-mam-indexer)
           fi
           docker build "${docker_platform[@]}" -t "$image" -f "integration/standalone-handoff/Dockerfile.$FLAVOR" integration/standalone-handoff
           docker run "${docker_platform[@]}" --rm --network none --user "$(id -u):$(id -g)" \

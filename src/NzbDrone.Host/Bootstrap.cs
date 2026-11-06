@@ -96,38 +96,36 @@ namespace NzbDrone.Host
                     // Utility mode
                     default:
                         {
-                            new HostBuilder()
-                                .UseServiceProviderFactory(new DryIocServiceProviderFactory(new Container(rules => rules.WithNzbDroneRules())))
-                                .ConfigureContainer<IContainer>(c =>
-                                {
-                                    c.AutoAddServices(Bootstrap.ASSEMBLIES)
-                                        .RegisterHttpClients()
-                                        .AddIndexerProxyProvider()
-                                        .AddNzbDroneLogger()
-                                        .AddDatabase()
-                                        .AddFuzzyMatchingServices()
-                                        .AddImportServices()
-                                        .AddNamingPatternServices()
-                                        // .AddHardcoverServices() // Removed - using V5 API via BookInfoProxy
-                                        .AddStartupContext(startupContext)
-                                        .Resolve<UtilityModeRouter>()
-                                        .Route(appMode);
-                                })
-                                .ConfigureServices(services =>
-                                {
-                                    services.AddLogging(logging =>
-                                    {
-                                        logging.ClearProviders();
-                                        logging.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace);
-                                        logging.AddNLog();
-                                    });
-                                    services.Configure<PostgresOptions>(config.GetSection("Chaptarr:Postgres"));
-                                    services.Configure<AppOptions>(config.GetSection("Chaptarr:App"));
-                                    services.Configure<AuthOptions>(config.GetSection("Chaptarr:Auth"));
-                                    services.Configure<ServerOptions>(config.GetSection("Chaptarr:Server"));
-                                    services.Configure<LogOptions>(config.GetSection("Chaptarr:Log"));
-                                    services.Configure<UpdateOptions>(config.GetSection("Chaptarr:Update"));
-                                }).Build();
+                            var utilityServices = new ServiceCollection();
+                            utilityServices.AddLogging(logging =>
+                            {
+                                logging.ClearProviders();
+                                logging.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace);
+                                logging.AddNLog();
+                            });
+                            utilityServices.Configure<PostgresOptions>(config.GetSection("Chaptarr:Postgres"));
+                            utilityServices.Configure<AppOptions>(config.GetSection("Chaptarr:App"));
+                            utilityServices.Configure<AuthOptions>(config.GetSection("Chaptarr:Auth"));
+                            utilityServices.Configure<ServerOptions>(config.GetSection("Chaptarr:Server"));
+                            utilityServices.Configure<LogOptions>(config.GetSection("Chaptarr:Log"));
+                            utilityServices.Configure<UpdateOptions>(config.GetSection("Chaptarr:Update"));
+
+                            var utilityFactory = new DryIocServiceProviderFactory(
+                                new Container(rules => rules.WithNzbDroneRules()));
+                            using var utilityContainer = utilityFactory.CreateBuilder(utilityServices);
+                            utilityContainer.AutoAddServices(Bootstrap.ASSEMBLIES)
+                                .RegisterHttpClients()
+                                .AddIndexerProxyProvider()
+                                .AddNzbDroneLogger()
+                                .AddDatabase()
+                                .AddFuzzyMatchingServices()
+                                .AddImportServices()
+                                .AddNamingPatternServices()
+                                // .AddHardcoverServices() // Removed - using V5 API via BookInfoProxy
+                                .AddStartupContext(startupContext);
+
+                            var utilityProvider = utilityFactory.CreateServiceProvider(utilityContainer);
+                            utilityProvider.GetRequiredService<IUtilityModeRouter>().Route(appMode);
 
                             break;
                         }
