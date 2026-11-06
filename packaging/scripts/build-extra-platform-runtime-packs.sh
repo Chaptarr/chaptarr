@@ -142,6 +142,79 @@ worker_source = worker.read_text()
 if worker_source.count(old_worker) != 1:
     raise SystemExit("Unrecognized Unix x86 delegate return-buffer worker; review the runtime patch")
 worker.write_text(worker_source.replace(old_worker, new_worker, 1))
+
+# Unix x86 EH funclets can enumerate the same movable stack slot once from the
+# funclet and again from its parent. The promotion pass tolerates that duplicate,
+# but the relocation pass must update the slot only once. Keep the correction
+# architecture-scoped and fail closed if the pinned runtime source changes.
+gc_enum = root / "src/coreclr/vm/gcenv.ee.common.cpp"
+old_double_reporting = """void CheckDoubleReporting(GCCONTEXT *pCtx, Object **ppObj, uint32_t flags)
+{
+    if (((flags & GC_CALL_PINNED) == 0) && pCtx->sc->promotion)
+    {
+        if (pCtx->pScannedSlots == NULL)
+        {
+            pCtx->pScannedSlots = new (nothrow) SetSHash<Object**, PtrSetSHashTraits<Object**> >();
+            if (pCtx->pScannedSlots == NULL)
+            {
+                return;
+            }
+        }
+        _ASSERTE_ALL_BUILDS(pCtx->pScannedSlots->Lookup(ppObj) == NULL);
+        pCtx->pScannedSlots->AddNoThrow(ppObj);
+    }
+}"""
+new_double_reporting = """bool CheckDoubleReporting(GCCONTEXT *pCtx, Object **ppObj, uint32_t flags)
+{
+    bool shouldTrack = (flags & GC_CALL_PINNED) == 0;
+#if !defined(TARGET_UNIX) || !defined(TARGET_X86)
+    shouldTrack = shouldTrack && pCtx->sc->promotion;
+#endif
+    if (shouldTrack)
+    {
+        if (pCtx->pScannedSlots == NULL)
+        {
+            pCtx->pScannedSlots = new (nothrow) SetSHash<Object**, PtrSetSHashTraits<Object**> >();
+            if (pCtx->pScannedSlots == NULL)
+            {
+                return false;
+            }
+        }
+        bool isDuplicate = pCtx->pScannedSlots->Lookup(ppObj) != NULL;
+        if (g_pConfig->GetCheckDoubleReporting())
+        {
+            _ASSERTE_ALL_BUILDS(!isDuplicate);
+        }
+        if (isDuplicate)
+        {
+            return true;
+        }
+        pCtx->pScannedSlots->AddNoThrow(ppObj);
+    }
+
+    return false;
+}"""
+old_enum_call = """    if (g_pConfig->GetCheckDoubleReporting())
+    {
+        CheckDoubleReporting(pCtx, ppObj, flags);
+    }"""
+new_enum_call = """#if defined(TARGET_UNIX) && defined(TARGET_X86)
+    // Relocating a duplicate movable slot twice corrupts its updated reference.
+    if (CheckDoubleReporting(pCtx, ppObj, flags))
+    {
+        return;
+    }
+#else
+    if (g_pConfig->GetCheckDoubleReporting())
+    {
+        CheckDoubleReporting(pCtx, ppObj, flags);
+    }
+#endif"""
+gc_enum_source = gc_enum.read_text()
+if gc_enum_source.count(old_double_reporting) != 1 or gc_enum_source.count(old_enum_call) != 1:
+    raise SystemExit("Unrecognized GC root enumeration source; review the Unix x86 EH correction")
+gc_enum.write_text(gc_enum_source.replace(old_double_reporting, new_double_reporting, 1).replace(
+    old_enum_call, new_enum_call, 1))
 edit("eng/Subsets.props", lambda s: re.sub(r'^.*crossgen-corelib\.proj.*\n', "", s, flags=re.MULTILINE))
 edit("eng/Subsets.props", lambda s: s.replace(
     "Condition=\"'$(RuntimeFlavor)' != 'Mono' and ('$(TargetsMobile)' != 'true' and '$(TargetsLinuxBionic)' != 'true')\" Include=\"$(InstallerProjectRoot)pkg\\sfx\\Microsoft.NETCore.App\\Microsoft.NETCore.App.Crossgen2.sfxproj\"",
@@ -202,7 +275,7 @@ if 'Microsoft.NETCore.App.Runtime.linux-x86' not in text:
 dependencies.write_text(text)
 PY
     sed -i '/dnceng\/internal/d' "$aspnet_repo/NuGet.config"
-    dotnet nuget add source "$runtime_shipping" --name chaptarr-linux-x86-runtime --configfile "$aspnet_repo/NuGet.config"
+    "$dotnet_root/dotnet" nuget add source "$runtime_shipping" --name chaptarr-linux-x86-runtime --configfile "$aspnet_repo/NuGet.config"
 }
 
 build_linux_x86_aspnetcore() {

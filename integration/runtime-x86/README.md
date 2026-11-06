@@ -10,15 +10,25 @@ Compacting collections both inside and after a catch must preserve retained
 delegates, their closure and referenced objects. The after-catch case is a control;
 it does not replace the inside-catch check.
 
-The November 6 retained runtime pack passes the earlier nullable checks but fails
-the new inside-catch check on its first collection. A small dependency-free
-reproduction has the same result, while its after-catch control passes. Disabling
-background GC or tiered compilation does not qualify that pack: expanded native
-test runs still abort. This is an open runtime qualification failure, separate
-from the return-buffer correction below. Keep this new check fail-closed when
-reusing old runtime packs; do not infer installed startup safety from the earlier
-probe's success. Private invocations, logs and core dumps are retained under
-`/var/tmp/chaptarrng-native-standalone-20261105/x86-core-tests/`.
+The retained November 6 runtime pack passes the nullable checks but fails the
+inside-catch check on its first collection. The runtime builder therefore applies
+an exact Unix x86 correction that tracks movable root slots during both promotion
+and relocation and ignores a repeated relocation of the same slot. The corrected
+runtime passes repeated compacting collections both inside and after catch
+handlers. Pinned roots and every non-Unix-x86 target retain upstream behavior.
+Keep this check fail-closed when reusing old runtime packs; do not infer installed
+startup safety from the earlier probe's success.
+
+The corrected runtime also accounts for the complete current-head Core test
+inventory under native x86. SQLite-heavy groups run in bounded isolated test
+processes because one long-lived 32-bit VSTest host can abort during cleanup after
+thousands of cases even when the container reports no memory-limit event. Every
+runnable discovered case has a passing result; the
+remaining entries are intentional skips, the explicit live BookLore contract,
+or result-name aliases from Unicode and custom scorecard cases. This sharding is
+test-host containment, not a waiver of installed startup, migration or rollback
+acceptance. Structured private results are retained for the handoff; raw crash
+and root-trace diagnostics are not retained.
 
 The original runtime reproduces incorrect nullable returns and access violations
 outside ChaptarrNG. The pinned upstream Unix x86
