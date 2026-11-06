@@ -58,6 +58,11 @@ including its forced-KILL case. Bash syntax checks alone do not verify recovery.
 
 ## Linux x86 runtime qualification
 
+Require compacting-GC checks inside and after catch handlers in the native runtime
+probe. A passing allocation-only or nullable-delegate probe does not establish
+exception-path reference safety. Preserve the failing minimal reproduction and
+verify any runtime correction against installed startup, migration and rollback.
+
 Keep the guarded Unix delegate return-buffer source correction and native runtime
 qualification together. A runtime probe or archive build alone does not prove
 installed startup and rollback. Record kernel, archive hash, source auxiliary

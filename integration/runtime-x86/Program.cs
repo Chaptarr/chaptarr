@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using FluentValidation;
 
 if (RuntimeInformation.ProcessArchitecture != Architecture.X86)
@@ -8,6 +9,19 @@ if (RuntimeInformation.ProcessArchitecture != Architecture.X86)
 }
 
 Console.WriteLine($"Runtime qualification: {RuntimeInformation.FrameworkDescription}, {RuntimeInformation.ProcessArchitecture}");
+try
+{
+    ExceptionCollectionProbe.Run(collectInsideCatch: false);
+    Console.WriteLine("PASS compacting collection after catch: retained delegates and objects");
+    ExceptionCollectionProbe.Run(collectInsideCatch: true);
+    Console.WriteLine("PASS compacting collection inside catch: retained delegates and objects");
+}
+catch (Exception error)
+{
+    Console.Error.WriteLine($"FAIL exception/collection qualification: {error}");
+    return 1;
+}
+
 var sample = new Sample { Score = 1.5 };
 Expression<Func<Sample, double?>> expression = item => item.Score;
 var accessors = new (string Name, Func<Sample, double?> Read)[]
@@ -46,6 +60,54 @@ if (validator.Validate(new Sample { Score = -1 }).IsValid || validator.Validate(
 }
 
 Console.WriteLine("PASS validation: 1,000,000 valid results; negative and missing values rejected");
+return 0;
+
+static class ExceptionCollectionProbe
+{
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void Raise() => throw new IOException("Expected qualification exception");
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void Run(bool collectInsideCatch)
+    {
+        var first = new Marker("first");
+        var second = new Marker("second");
+        Action verify = () =>
+        {
+            if (first.Text != "first" || second.Text != "second")
+            {
+                throw new InvalidOperationException("Collection corrupted a retained marker.");
+            }
+        };
+
+        for (var iteration = 0; iteration < 128; iteration++)
+        {
+            try
+            {
+                Raise();
+            }
+            catch (IOException)
+            {
+                if (collectInsideCatch)
+                {
+                    GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                }
+            }
+
+            if (!collectInsideCatch)
+            {
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            }
+
+            verify();
+        }
+    }
+
+    private sealed class Marker(string text)
+    {
+        public string Text { get; } = text;
+    }
+}
 
 sealed class Sample
 {
