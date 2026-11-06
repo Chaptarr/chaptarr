@@ -496,6 +496,24 @@ jobs:
             --TestCaseFilter:"FullyQualifiedName~real_m4b_tool_should_" \
             --Logger:"console;verbosity=normal"
 
+    - name: Test native product hard-kill and M4B recovery
+      if: matrix.platform == 'linux-x64'
+      run: >-
+        python3 integration/test-m4b-whole-app-recovery.py
+        --candidate-directory _output/net10.0
+        --candidate-revision "$GITHUB_SHA"
+        --image chaptarrng-m4b-test:ci
+        --work-dir "${{ runner.temp }}/m4b-whole-app-recovery"
+
+    - name: Upload native M4B process recovery evidence
+      if: always() && matrix.platform == 'linux-x64'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: m4b-whole-app-recovery-${{ github.run_id }}
+        path: ${{ runner.temp }}/m4b-whole-app-recovery/evidence/
+        if-no-files-found: warn
+        retention-days: 30
+
     - name: Configure Chromium cache for direct-download browser tests
       if: runner.os == 'Linux'
       env:

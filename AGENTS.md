@@ -206,3 +206,16 @@ When a reviewed server-message call moves or its fluent syntax changes, review
 and update that callsite in `docs/localization/server-message-sources.json`.
 Preserve unchanged message IDs/text and predecessor catalogs. Run
 `yarn test-localization`; Core/controller tests do not verify these fingerprints.
+
+
+## Whole-product audiobook crash recovery
+
+Component-worker restart tests do not establish product-process recovery. Run
+`integration/test-m4b-whole-app-recovery.py` against the native Linux x64 product
+with the pinned M4B tool image, a new work directory and read-only candidate
+inputs. Verify actual hard-kill status, absence of every original tool process,
+durable attempt counts, HTTP health, input hashes and decoded chapter metadata.
+Queued-job fixtures must include importer-style staged chapter sidecars; a
+`TagOptions.ChaptersTxtContent` value alone does not stage those inputs. Compare
+manifest digests as hexadecimal bytes. Keep synthetic process recovery separate
+from acquisition/import, representative-media and installed archive acceptance.

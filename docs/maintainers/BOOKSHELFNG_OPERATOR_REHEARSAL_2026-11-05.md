@@ -956,3 +956,33 @@ segfaults during Manual restart; its source core and evidence are retained
 separately. Neither result closes the hosted x86 failure or establishes its cause.
 A basic probe finds zero parent-method-table offset mismatches across 5,872
 classes and passes seven million inherited type checks, narrowing that hypothesis.
+
+
+### Whole-product M4B hard-kill recovery
+
+`integration/test-m4b-whole-app-recovery.py` now exercises the native Linux x64
+product with the pinned real-tool image. The source-build inputs were compared
+byte-for-byte with `802e3b8b` (zero backend/build-source differences), then the
+console product built with zero warnings/errors. The final reusable harness
+passes against that output: native HTTP health, a real FFmpeg gate, SIGKILL of
+the product container, exit of every original application/tool process, durable
+Converting/attempt-1 state, restart health, and ReadyToImport/attempt-2 recovery.
+The resulting AAC/M4B has the expected duration, chapter titles and offsets, a
+matching manifest digest, and unchanged source hashes. The injected exit is 137
+with OOMKilled false. The harness removes only its owned stopped containers;
+private evidence remains under
+`/var/tmp/chaptarrng-native-standalone-20261105/m4b-whole-app-general-802e3b8b-final/evidence/`.
+
+The fixture inserts a queued job offline into a fresh native database and stages
+chapter-sidecar inputs as the importer does. It does not establish HTTP enqueue,
+acquisition/import completion, representative operator-media acceptance, installed
+service recovery or final canonical archive acceptance. The hosted Linux Build
+now runs it in addition to the existing component real-tool cases and uploads
+only its synthetic evidence directory, excluding the generated configuration
+and database. Exact-head CI for this new harness remains required.
+
+Initial test attempts are retained separately: one compared uppercase/lowercase
+SHA-256 strings literally, and another supplied chapter metadata without the
+importer's chapter-sidecar staging. Correcting those test fixtures required no
+application behavior changes. Earlier full-product derivative checks also pass,
+but they remain identified derivatives rather than canonical archives.

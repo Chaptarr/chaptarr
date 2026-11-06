@@ -218,6 +218,32 @@ synthetic; this exercises the conversion service across abrupt process death,
 not the complete ChaptarrNG host or an installed service. Representative
 audiobooks, full-host crash recovery, and deployment acceptance remain open.
 
+The full-product synthetic check is now available separately as
+`integration/test-m4b-whole-app-recovery.py`. It starts the native Linux x64
+application with a fresh database, stops it to insert an offline queued-job
+fixture, and stages chapter sidecars as the importer does. Once real FFmpeg is
+blocked, it kills the application container with SIGKILL and verifies every
+original application/tool process exited without an OOM kill. Restarting that
+same product container must recover the durable job exactly once, retain HTTP
+health, preserve input hashes, and produce a digest-checked AAC/M4B artifact
+with the requested chapter titles and offsets. It uses the pinned tool image
+above and mounts the supplied application directory read-only:
+
+```sh
+python3 integration/test-m4b-whole-app-recovery.py \
+  --candidate-directory _output/net10.0 \
+  --candidate-revision "$(git rev-parse HEAD)" \
+  --image chaptarrng-m4b-test:ci \
+  --work-dir /var/tmp/chaptarrng-m4b-full-process-unique
+```
+
+Use a new task-owned work directory each time. The harness removes only its
+own stopped containers and retains logs, provenance, synthetic media and
+results; CI uploads its `evidence/` directory. It also accepts an extracted
+Linux x64 archive directory, but does not itself establish installed handoff,
+HTTP enqueue/acquisition/import, operator-media acceptance or release readiness.
+The full hosted Build runs it after the existing real-tool component cases.
+
 After building the test assembly as in `.github/workflows/build.yml`, run it
 locally with:
 
