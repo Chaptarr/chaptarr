@@ -798,3 +798,25 @@ pass or a reason to modify BookshelfNG. Initial fixture setup failures (source
 schema flags and the direct-launch temporary directory) remain recorded.
 Headed workflow acceptance is still in progress. No publication, production
 migration, external-channel delivery or cutover has occurred.
+
+### Headed book-card follow-up
+
+The candidate's Both-format poster list rendered all nine migrated format/copy
+records but omitted their format badges. The shared paged-item connector did
+not pass `bookIndex.selectedMediaType` to its view. It now forwards that state
+independently of each record's own format. Behavioral connector-to-view tests
+reproduce the missing property before the fix and pass afterward for audiobook
+and ebook rows, including a later change back to a single-format filter.
+
+All 192 frontend CJS tests, TypeScript checking and focused lint pass. The
+production UI bundle builds with 47 CSS ordering warnings; no styles were
+changed. A clearly identified UI-only derivative over the unchanged canonical
+backend visibly shows Audiobook/eBook badges on the correct cards. It preserves
+the nine-row count, quality-profile labels and the existing migrated login.
+The original canonical archive remains untouched. The new frontend revision
+still requires its own retained canonical bundle qualification after the
+remaining headed workflow checks.
+
+Book details and the Files tab also render the migrated ebook, series,
+400-byte synthetic file, original path and import history. Required screenshots
+are persisted through the pool artifact API before any desktop release.

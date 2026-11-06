@@ -421,6 +421,7 @@ jobs:
         node --test
         frontend/src/Book/Index/getBookIndexQuery.test.cjs
         frontend/src/Book/Index/BookIndex.test.cjs
+        frontend/src/Book/Index/BookIndexItemConnector.test.cjs
 
     - name: Test book infinite-scroll id deduplication
       run: node --test frontend/src/Store/Reducers/bookInfiniteScrollReducer.test.cjs

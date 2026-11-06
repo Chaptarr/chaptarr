@@ -104,6 +104,7 @@ function createMapStateToProps() {
     // Component expects flattened book fields via spread
     return {
       ...book,
+      selectedMediaType: state.bookIndex.selectedMediaType,
       author,
       qualityProfile,
       showSearchAction,
