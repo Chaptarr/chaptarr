@@ -936,8 +936,10 @@ remain frozen.
 ### Hosted generic-profile validation follow-up
 
 API differential run [42159528647](https://github.com/snapetech-org/chaptarrng/actions/runs/42159528647)
-passes at `2a9e0902`: 103 cases, 98 passes, zero failures/inconclusive cases and
-five explicit expected policy differences. All nine new generic profile lifecycle
+completed at `2a9e0902`: 103 cases, 98 passes, zero failures, four explicit
+expected policy differences and one inconclusive predecessor paging request.
+The earlier zero-inconclusive summary was incorrect; the retained JSON records
+BookshelfNG HTTP 500 for `books.paged` while ChaptarrNG returns HTTP 200. All nine new generic profile lifecycle
 cases pass. Full Build run 42160855848 passes PostgreSQL migration/profile checks,
 but its Linux, Windows and macOS jobs stop at the source-message review check:
 the profile validator's unchanged message moved and its call now chains a
@@ -1049,3 +1051,35 @@ descriptions; the classifier also passes replay of the protected real receipt.
 Native rows are compared immediately after the negative mutations, and failure
 messages include statuses and mismatch paths. The updated HTTP run remains
 required. Application error handling and its redaction behavior are unchanged.
+
+
+### Verified API accounting and native x86 diagnostics, November 6
+
+API run [42177965215](https://github.com/snapetech-org/chaptarrng/actions/runs/42177965215)
+completes at `d232a58c`: 109 cases, 102 passes, six explicit policy differences,
+zero strict failures and one inconclusive source error. All 15 profile lifecycle
+cases complete (13 strict passes and two diagnostic-redaction policy cases).
+The aggregate provider-presentation difference count is 578. The GitHub success
+status does not mean every request supplied a valid predecessor response.
+
+The full-page source request fails in `LinkAuthorStatistics`: authors without
+monitored editions yield an empty statistics object whose BookStatistics is null,
+then SelectMany dereferences it. This intentionally populated migration fixture
+contains such authors. The source failure remains recorded; it is neither a
+parity pass nor a reason to discard those data pockets. Earlier small-page
+comparisons and target success do not replace the missing full-page comparison.
+
+The exact native x86 runtime passes 15 profile transaction tests using the signed
+Microsoft.TestPlatform.Portable 18.10.1 AnyCPU driver and the candidate's x86 SQLite
+library in a private test-output copy. Full-suite execution then exits 139,
+OOMKilled false, on the same runtime. Its retained core shows a delegate call
+through UTF-16 string bytes and several registers pointing inside strings; this
+is evidence of invalid managed references, not a proven root cause. Both baseline
+and nonconcurrent-GC test discovery complete; further runtime diagnosis continues.
+
+Initial driver attempts used an incompatible ReadyToRun driver or x64 SQLite;
+those setup failures are preserved separately and do not establish application
+failures. The private runtimeconfig selects 10.0.12 because the build SDK's output
+requests 10.0.14; no shared SDK, cache or source test output was modified. Logs,
+invocations, provenance and the full-suite core are retained under
+`/var/tmp/chaptarrng-native-standalone-20261105/x86-core-tests/`.
