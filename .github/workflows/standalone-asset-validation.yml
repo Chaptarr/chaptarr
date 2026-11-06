@@ -484,6 +484,8 @@ jobs:
           image="chaptarrng-standalone-handoff-${RID}:$GITHUB_RUN_ID"
           docker_platform=()
           fixture_options=()
+          fixture_library="$RUNNER_TEMP/standalone-handoff/library"
+          mkdir -p "$fixture_library/Fixture Author/Ebooks" "$fixture_library/Fixture Author/Audiobooks"
           if [[ "$FLAVOR" == x86 ]]; then
             docker_platform=(--platform linux/386)
             fixture_options=(--preinitialized-source-auxiliary-databases)
@@ -494,6 +496,7 @@ jobs:
             -e TMPDIR=/work/work -v "$PWD:/repo:ro" \
             -v "$RUNNER_TEMP/standalone-predecessor:/predecessor:ro" \
             -v "$RUNNER_TEMP/standalone-candidate:/candidate:ro" \
+            -v "$fixture_library:/library" \
             -v "$RUNNER_TEMP/standalone-handoff:/work" \
             "$image" "/predecessor/$predecessor" "/candidate/$candidate" \
             --output /work/evidence --candidate-revision "$GITHUB_SHA" --runtime-id "$RID" "${fixture_options[@]}" \

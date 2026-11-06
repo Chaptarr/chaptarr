@@ -189,6 +189,14 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn("'ubuntu-24.04'", job, job_name)
             self.assertIn('"group":"ng-shared-main-jit"', job, job_name)
 
+    def test_standalone_installed_handoff_mounts_the_source_library_fixture(self) -> None:
+        source = (WORKFLOW.parent / "standalone-asset-validation.yml").read_text(encoding="utf-8")
+        installed = step_block(source, "Exercise installed archive and export evidence after consumers exit")
+        self.assertIn('fixture_library="$RUNNER_TEMP/standalone-handoff/library"', installed)
+        self.assertIn('mkdir -p "$fixture_library/Fixture Author/Ebooks"', installed)
+        self.assertIn('"$fixture_library/Fixture Author/Audiobooks"', installed)
+        self.assertIn('-v "$fixture_library:/library"', installed)
+
     def test_macos_handoff_runs_do_not_serialize_public_and_private_pools(self) -> None:
         path = WORKFLOW.parent / "bookshelfng-standalone-macos-acceptance.yml"
         source = path.read_text(encoding="utf-8")
