@@ -730,3 +730,71 @@ qualification of this new application revision remain pending.
 Private traces, failure logs and coherent input copies are retained for the
 investigation. Publication, external channel acceptance, headed UI acceptance
 and production cutover remain open.
+
+## Canonical `60d892da` follow-up — 2026-11-06 UTC
+
+The parent-graph fix is pushed as
+`60d892da58bcc167a75fe837345cefa5e9f0a059`. Full Core passes 5,248 tests with
+29 skipped and no failures. Canonical validation is now green:
+
+- Full Build: `42139610355`, including Linux, Windows, macOS, PostgreSQL and Docker.
+- Strict API: `42139653526`; existing explicit runtime/security dispositions
+  and source-error boundaries remain separate from exact matches.
+- Ten archives and all five installed Linux handoffs: `42139657879`.
+- Four retained Windows/macOS consumers: `42140808219`.
+- Helm: `42139661768`; security/Semgrep/Trivy: `42139665980`, `42139670886`,
+  `42139675203`.
+
+All ten downloaded archives match their producer checksums. The untouched musl
+x64 archive repeats the full two-library comparison at 2 GiB: 88,405 records,
+zero source-value mismatches, and no missing, extra or duplicate identities.
+The canonical 301-work cold-start/refresh/repeat/new-ID monitor lifecycle also
+passes at 2 GiB with zero allocation errors and both format counterparts
+preserved. The earlier local derivative is diagnostic evidence; these new
+results qualify the retained producer payload itself.
+
+Both frozen full operator snapshots pass fresh preview, conversion, health,
+restore-preview and rollback at 2 GiB. Source user columns, provider settings,
+author metadata and all 56,058 files are preserved. Rollback matches all logical
+tables and SQLite sequences; restored bytes match the retained source backup.
+Frozen originals remain unchanged. Both canonical Seerr web format cases pass
+request, approval, local torrent acquisition, import, scan, restart and identity
+audits with the identified repaired client fixture.
+
+Fourteen actual rename commands and fourteen restart readbacks pass across
+EPUB, KEPUB, AZW3, MOBI, PDF, MP3 and M4B. Source and target produce the same
+paths; IDs, copied bytes and originals are preserved. No mapped M4A rename case
+is claimed. The untouched FreeBSD archive passes No/Manual/Yes, health, backup
+and forced rollback in the native guest. SSH transport readiness needed separate
+diagnosis and a task-owned control connection; application harness deadlines
+were unchanged. Failed readiness attempts and network evidence remain retained.
+
+Real Debian 13 and Fedora 44 package transactions both pass No/Yes, conversion,
+HTTP health, service restart and forced application/source rollback. Fedora's
+case kills the exact target after schema 126 and HTTP 200 while SELinux remains
+enforcing. Both cases preserve environment and canary. Separate explicit
+downgrades restore the predecessor package-manager version and healthy source.
+Candidate package hashes are:
+
+- Debian: `e141525147fd0fc29ddf1aa102abdbcc7cf6118eede5c608b3d726b020163b99`.
+- Fedora: `eee9c1e3f9949fc32f90ab8605c6381de6cda1f581fd2dd35f7161454521f419`.
+
+The owner authorized Desktop Pool v2 repair after repeated capacity timeouts,
+with an explicit requirement to preserve sessions in use. Inspection confirmed
+three stale quarantined slots, four non-ended historical reservations, no live
+leases, zero Kasm sessions and no desktop containers. Coordinator state and
+artifacts were backed up; authenticated Finish recovery cleared only those
+stale rows and preserved profile verification. Another task's FIFO reservation
+was preserved. Recovery is recorded in the owner repository at
+`docs/runbooks/agent-desktop-pool-v2-recovery-20261106.md` (`0310642`).
+
+A fresh independent Chrome lease is now exercising synthetic source and
+candidate services on its own loopback namespace. Migrated Forms login and the
+candidate's populated four-author library render successfully. The public `.76`
+source renders a blank main page with React selector `TypeError` errors; its
+pinned source imports `defaultMemoize` with reselect 5.3.0, while the candidate
+uses `lruMemoize`. That source failure is retained, not treated as a candidate
+pass or a reason to modify BookshelfNG. Initial fixture setup failures (source
+schema flags and the direct-launch temporary directory) remain recorded.
+Headed workflow acceptance is still in progress. No publication, production
+migration, external-channel delivery or cutover has occurred.

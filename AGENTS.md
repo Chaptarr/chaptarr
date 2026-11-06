@@ -161,6 +161,13 @@ health hooks are waiting; a long startup deadline must not delay crash rollback.
 
 ## Full-library compatibility acceptance
 
+Joined edition reads must share book and author parents by native database ID
+within a result and across parameter batches. Retaining a full parent graph per
+edition can exhaust small-container heaps on populated libraries. Keep separate
+format/copy IDs distinct; provider or legacy IDs are not safe parent-cache keys.
+Validate populated startup, ordinary API reads and repeated refreshes with the
+real container limit before attributing allocation errors to GC configuration.
+
 Synthetic API samples do not establish response parity. Compare every managed
 source author, work and file after a fresh migration; check duplicate, missing
 and extra IDs separately from field comparisons. Preserve raw predecessor
