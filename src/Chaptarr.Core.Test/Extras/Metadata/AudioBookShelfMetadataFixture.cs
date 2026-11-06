@@ -8,6 +8,7 @@ using NzbDrone.Core.Extras.Metadata;
 using NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Notifications.AudioBookShelf;
 using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.Extras.Metadata
@@ -234,9 +235,63 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             });
         }
 
-        private static AudioBookShelfMetadata CreateSubject(List<RootFolder> rootFolders)
+        [TestCase("ebook", "/library/Matt Dinniman/A Parade of Horribles/book.epub")]
+        [TestCase("audiobook", "/library/Matt Dinniman/A Parade of Horribles/book.m4b")]
+        public void should_not_write_sidecars_where_audiobookshelf_keeps_the_metadata(string mediaType, string path)
         {
-            var subject = new AudioBookShelfMetadata(new FakeRootFolderService(rootFolders), null, null);
+            var keeper = new FakeKeeperLookup(rootFolderId: 1, mediaType);
+            var subject = CreateSubject(new List<RootFolder>
+            {
+                BuildRoot(audiobookMetadata: true, audiobookCover: true, ebookMetadata: true, ebookCover: true)
+            }, keeper);
+
+            var author = BuildAuthor();
+            var bookFile = BuildBookFile(mediaType, path);
+            bookFile.Edition.Images.Add(new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example.test/edition.webp"));
+
+            Assert.That(subject.BookImages(author, bookFile), Is.Empty);
+            Assert.That(subject.BookMetadata(author, bookFile), Is.Null);
+            Assert.That(keeper.Queries, Is.Not.Empty);
+        }
+
+        [Test]
+        public void should_still_write_sidecars_for_the_other_media_type()
+        {
+            var subject = CreateSubject(new List<RootFolder>
+            {
+                BuildRoot(ebookCover: true)
+            }, new FakeKeeperLookup(rootFolderId: 1, "audiobook"));
+
+            var author = BuildAuthor();
+            var bookFile = BuildBookFile("ebook", "/library/Matt Dinniman/A Parade of Horribles/book.epub");
+            bookFile.Edition.Images.Add(new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example.test/edition.webp"));
+
+            Assert.That(subject.BookImages(author, bookFile), Has.Count.EqualTo(1));
+        }
+
+        private class FakeKeeperLookup : IAudioBookShelfKeeperLookup
+        {
+            private readonly int _rootFolderId;
+            private readonly string _mediaType;
+
+            public FakeKeeperLookup(int rootFolderId, string mediaType)
+            {
+                _rootFolderId = rootFolderId;
+                _mediaType = mediaType;
+            }
+
+            public List<(int RootFolderId, string MediaType)> Queries { get; } = new();
+
+            public bool AudioBookShelfKeepsMetadata(int rootFolderId, string mediaType)
+            {
+                Queries.Add((rootFolderId, mediaType));
+                return rootFolderId == _rootFolderId && mediaType == _mediaType;
+            }
+        }
+
+        private static AudioBookShelfMetadata CreateSubject(List<RootFolder> rootFolders, IAudioBookShelfKeeperLookup keeperLookup = null)
+        {
+            var subject = new AudioBookShelfMetadata(new FakeRootFolderService(rootFolders), null, null, keeperLookup);
             subject.Definition = new MetadataDefinition
             {
                 Settings = new AudioBookShelfMetadataSettings()

@@ -8,6 +8,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Extras.Metadata.Files;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Notifications.AudioBookShelf;
 using NzbDrone.Core.RootFolders;
 using MediaCoverModel = NzbDrone.Core.MediaCover.MediaCover;
 
@@ -26,14 +27,17 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
         private readonly IRootFolderService _rootFolderService;
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
+        private readonly IAudioBookShelfKeeperLookup _keeperLookup;
 
         public AudioBookShelfMetadata(IRootFolderService rootFolderService,
                                       IBookService bookService,
-                                      IEditionService editionService)
+                                      IEditionService editionService,
+                                      IAudioBookShelfKeeperLookup keeperLookup)
         {
             _rootFolderService = rootFolderService;
             _bookService = bookService;
             _editionService = editionService;
+            _keeperLookup = keeperLookup;
         }
 
         public override string Name => "AudioBookShelf Sidecars";
@@ -190,7 +194,13 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
                 ? rootFolder.GetEbookSettings()
                 : rootFolder.GetAudiobookSettings();
 
-            return settings != null && isEnabled(settings);
+            if (settings == null || !isEnabled(settings))
+            {
+                return false;
+            }
+
+            // AudioBookShelf owns the metadata for this folder; writing ours would overwrite its match.
+            return _keeperLookup?.AudioBookShelfKeepsMetadata(rootFolder.Id, IsEbook(bookFile) ? "ebook" : "audiobook") != true;
         }
 
         private (Edition Edition, Book Book) ResolveBook(Author author, BookFile bookFile)

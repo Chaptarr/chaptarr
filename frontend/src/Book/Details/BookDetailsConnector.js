@@ -12,6 +12,7 @@ import { clearEditions, fetchEditions } from 'Store/Actions/editionActions';
 import { clearQueueDetails, fetchQueueDetails } from 'Store/Actions/queueActions';
 import { cancelFetchReleases, clearReleases } from 'Store/Actions/releaseActions';
 import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
+import createAudioBookShelfKeeperSelector from 'Store/Selectors/createAudioBookShelfKeeperSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
@@ -51,7 +52,8 @@ function createMapStateToProps() {
     createCommandsSelector(),
     createUISettingsSelector(),
     createDimensionsSelector(),
-    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions) => {
+    createAudioBookShelfKeeperSelector(),
+    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions, audioBookShelfKeepsMetadata) => {
       try {
         const book = books.items.find((b) => b.id === bookId);
 
@@ -116,6 +118,18 @@ function createMapStateToProps() {
         isRenamingAuthorCommand.body.authorIds.indexOf(author.id) > -1
         );
 
+        const absSyncCommand = findCommand(commands, { name: commandNames.AUDIOBOOKSHELF_EDITION_SYNC });
+        const absSyncBody = absSyncCommand && absSyncCommand.body;
+        const isSyncingFromAudioBookShelf = !!(
+          absSyncBody &&
+          isCommandExecuting(absSyncCommand) &&
+          (
+            ((absSyncBody.authorIds || []).length === 0 && (absSyncBody.bookIds || []).length === 0) ||
+            (absSyncBody.bookIds || []).indexOf(book.id) > -1 ||
+            (absSyncBody.authorIds || []).indexOf(author.id) > -1
+          )
+        );
+
         const isFetching = isBookFilesFetching || editions.isFetching;
         const isPopulated = isBookFilesPopulated && editions.isPopulated;
         const selectedEdition = editions.items
@@ -142,6 +156,8 @@ function createMapStateToProps() {
           isSearching,
           isRenamingFiles,
           isRenamingAuthor,
+          audioBookShelfKeepsMetadata,
+          isSyncingFromAudioBookShelf,
           isFetching,
           isPopulated,
           bookFilesError,
@@ -191,13 +207,15 @@ class BookDetailsConnector extends Component {
       anyReleaseOk,
       isRefreshing,
       isRenamingFiles,
-      isRenamingAuthor
+      isRenamingAuthor,
+      isSyncingFromAudioBookShelf
     } = this.props;
 
     if (
       (prevProps.isRefreshing && !isRefreshing) ||
       (prevProps.isRenamingFiles && !isRenamingFiles) ||
       (prevProps.isRenamingAuthor && !isRenamingAuthor) ||
+      (prevProps.isSyncingFromAudioBookShelf && !isSyncingFromAudioBookShelf) ||
       !_.isEqual(getMonitoredEditions(prevProps), getMonitoredEditions(this.props)) ||
       (prevProps.anyReleaseOk === false && anyReleaseOk === true)
     ) {
@@ -262,6 +280,13 @@ class BookDetailsConnector extends Component {
     });
   };
 
+  onSyncFromAudioBookShelfPress = () => {
+    this.props.executeCommand({
+      name: commandNames.AUDIOBOOKSHELF_EDITION_SYNC,
+      bookIds: [this.props.id]
+    });
+  };
+
   //
   // Render
 
@@ -272,6 +297,7 @@ class BookDetailsConnector extends Component {
         onMonitorTogglePress={this.onMonitorTogglePress}
         onRefreshPress={this.onRefreshPress}
         onSearchPress={this.onSearchPress}
+        onSyncFromAudioBookShelfPress={this.onSyncFromAudioBookShelfPress}
       />
     );
   }
@@ -283,6 +309,7 @@ BookDetailsConnector.propTypes = {
   isRefreshing: PropTypes.bool.isRequired,
   isRenamingFiles: PropTypes.bool.isRequired,
   isRenamingAuthor: PropTypes.bool.isRequired,
+  isSyncingFromAudioBookShelf: PropTypes.bool,
   isBookFetching: PropTypes.bool,
   isBookPopulated: PropTypes.bool,
   bookId: PropTypes.number.isRequired,
