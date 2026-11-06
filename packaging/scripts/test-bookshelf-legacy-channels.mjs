@@ -176,6 +176,9 @@ test('Linux, macOS and FreeBSD standalone archives include the optional, recover
   assert.match(launcher, /Install the sqlite3 package/,
     'FreeBSD tells operators how to restore the SQLite runtime prerequisite');
   assert.match(launcher, /standalone-archive/);
+  assert.match(handoffTest, /"executableElfBits"/,
+    'installed evidence records application ELF architecture separately from the harness process');
+  assert.match(handoffTest, /"executableElfMachine"/);
   assert.match(migrationGuide, /bookshelfng-standalone-launch\.sh/);
   assert.match(migrationGuide, /running[\s\S]*Chaptarr[\s\S]*directly skips the optional handoff prompt/);
   assert.ok(supervisor.includes('if [ ! -x "$console" ]; then'));

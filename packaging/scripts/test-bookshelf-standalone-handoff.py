@@ -600,7 +600,8 @@ def elf_identity(path: Path) -> tuple[int, int] | None:
 
 
 def save_evidence(work: Path, output: Path, predecessor: Path, candidate: Path,
-                  revision: str | None, runtime_id: str | None, cases: list[str], success: bool, source_auxiliary: bool = False) -> None:
+                  revision: str | None, runtime_id: str | None, executable_elf_identity: tuple[int, int] | None,
+                  cases: list[str], success: bool, source_auxiliary: bool = False) -> None:
     output = output.resolve()
     require(not output.exists(), f"Evidence destination already exists: {output}")
     require(not output.is_relative_to(work.resolve()), "Evidence destination must be outside the temporary workspace")
@@ -624,6 +625,8 @@ def save_evidence(work: Path, output: Path, predecessor: Path, candidate: Path,
         "machine": platform.machine(),
         "processPointerBits": struct.calcsize("P") * 8,
         "runtimeId": runtime_id,
+        "executableElfBits": executable_elf_identity[0] if executable_elf_identity else None,
+        "executableElfMachine": executable_elf_identity[1] if executable_elf_identity else None,
         "sourceHardcoverMode": "false",
         "preinitializedSourceAuxiliaryDatabases": source_auxiliary,
         "completedCases": cases,
@@ -650,6 +653,7 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="bookshelfng-standalone-handoff-", dir=temp_root))
     success = False
     cases: list[str] = []
+    executable_elf_identity = None
     try:
         predecessor_root = extract_archive(args.predecessor_archive.resolve(), work / "predecessor")
         candidate_root = extract_archive(args.candidate_archive.resolve(), work / "candidate")
@@ -660,7 +664,8 @@ def main() -> int:
             require(args.runtime_id in architectures, "ELF architecture validation requires a supported Linux RID")
             expected = architectures[args.runtime_id]
             require(elf_identity(predecessor) == expected, "Predecessor executable architecture does not match the requested RID")
-            require(elf_identity(candidate_root / "ChaptarrNG/Chaptarr") == expected,
+            executable_elf_identity = elf_identity(candidate_root / "ChaptarrNG/Chaptarr")
+            require(executable_elf_identity == expected,
                     "Candidate executable architecture does not match the requested RID")
         launcher = candidate_root / "ChaptarrNG/scripts/bookshelfng-standalone-launch.sh"
         require(launcher.is_file() and os.access(launcher, os.X_OK),
@@ -694,7 +699,8 @@ def main() -> int:
                 print(f"Could not stop a test process cleanly: {error}", file=sys.stderr, flush=True)
         if args.output:
             save_evidence(work, args.output, args.predecessor_archive, args.candidate_archive,
-                          args.candidate_revision, args.runtime_id, cases, success, args.preinitialized_source_auxiliary_databases)
+                          args.candidate_revision, args.runtime_id, executable_elf_identity, cases, success,
+                          args.preinitialized_source_auxiliary_databases)
         if success:
             shutil.rmtree(work, ignore_errors=True)
 
