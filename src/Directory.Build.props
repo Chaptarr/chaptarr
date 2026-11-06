@@ -44,8 +44,10 @@
   <PropertyGroup>
     <Configuration Condition="'$(Configuration)'==''">Release</Configuration>
     <!-- Centralize intermediate and default outputs -->
-    <BaseIntermediateOutputPath>$(ChaptarrRootDir)_temp\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
-    <IntermediateOutputPath>$(ChaptarrRootDir)_temp\obj\$(MSBuildProjectName)\$(Configuration)\</IntermediateOutputPath>
+    <ChaptarrIntermediateRoot Condition="'$(ChaptarrStandaloneIntermediateRoot)'!=''">$(ChaptarrStandaloneIntermediateRoot)</ChaptarrIntermediateRoot>
+    <ChaptarrIntermediateRoot Condition="'$(ChaptarrIntermediateRoot)'==''">$(ChaptarrRootDir)_temp\obj</ChaptarrIntermediateRoot>
+    <BaseIntermediateOutputPath>$(ChaptarrIntermediateRoot)\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <IntermediateOutputPath>$(ChaptarrIntermediateRoot)\$(MSBuildProjectName)\$(Configuration)\</IntermediateOutputPath>
     <OutputPath>$(ChaptarrRootDir)_temp\bin\$(Configuration)\$(MSBuildProjectName)\</OutputPath>
 
     <!-- Output to _output and _tests respectively -->

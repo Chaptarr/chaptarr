@@ -141,6 +141,8 @@ test('AppImage keeps its desktop identity, BookshelfNG data directory, and Chapt
 
 test('Linux, macOS and FreeBSD standalone archives include the optional, recoverable BookshelfNG handoff', () => {
   const builder = read('packaging/scripts/build-standalone.sh');
+  const buildProps = read('src/Directory.Build.props');
+  const tagLibBuildProps = read('src/TagLibSharp/Directory.Build.props');
   const launcher = read('scripts/bookshelfng-standalone-launch.sh');
   const supervisor = read('packaging/legacy/desktop/bookshelfng-supervisor.sh');
   const migrationGuide = read('docs/MIGRATE_FROM_BOOKSHELFNG.md');
@@ -152,6 +154,10 @@ test('Linux, macOS and FreeBSD standalone archives include the optional, recover
     'extra-platform restores cannot reuse a same-version runtime from a shared NuGet cache');
   assert.match(builder, /"--artifacts-path"\s+"\$work\/artifacts"/,
     'extra-platform restore metadata cannot point repository intermediates at the temporary package cache');
+  assert.match(builder, /ChaptarrStandaloneIntermediateRoot=\$work\/obj/,
+    'repository-level intermediate output overrides remain inside the standalone task workspace');
+  assert.match(buildProps, /ChaptarrStandaloneIntermediateRoot[\s\S]*?ChaptarrIntermediateRoot[\s\S]*?MSBuildProjectName/);
+  assert.match(tagLibBuildProps, /ChaptarrStandaloneIntermediateRoot[\s\S]*?MSBuildProjectName/);
   assert.match(builder, /Published runtime[\s\S]*?does not match the selected custom runtime package/,
     'the published main and updater runtimes must match the selected runtime package');
   assert.match(builder, /if \[\[ "\$\(uname -s\)" == Darwin \]\][\s\S]*?tar -czf/,

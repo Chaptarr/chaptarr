@@ -5,5 +5,8 @@
     <RepositoryType>git</RepositoryType>
 
     <LangVersion>latest</LangVersion>
+
+    <BaseIntermediateOutputPath Condition="'$(ChaptarrStandaloneIntermediateRoot)'!=''">$(ChaptarrStandaloneIntermediateRoot)\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <IntermediateOutputPath Condition="'$(ChaptarrStandaloneIntermediateRoot)'!=''">$(ChaptarrStandaloneIntermediateRoot)\$(MSBuildProjectName)\$(Configuration)\</IntermediateOutputPath>
   </PropertyGroup>
 </Project>
