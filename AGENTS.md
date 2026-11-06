@@ -148,6 +148,17 @@ suite; preserve shared package caches. Record an interrupted storage-bound run
 and stop its consumers before moving or cleaning its outputs. Do not relax test
 or application timeouts to hide slow scratch storage.
 
+When replacing a copied SQLite main database, retain evidence of and remove
+unrelated WAL/SHM/journal sidecars from that task-owned copy before opening it.
+Do not mix one snapshot's main file with another snapshot's sidecars. Verify
+integrity and required input files before starting probe consumers; Docker's
+short bind syntax otherwise creates directories for missing file inputs.
+
+Observe a live SQLite database as its service user so a diagnostic reader cannot
+create root-owned sidecars. Restore native SELinux labels after copying a test
+database from a home directory. Exercise process death while native package
+health hooks are waiting; a long startup deadline must not delay crash rollback.
+
 ## Full-library compatibility acceptance
 
 Synthetic API samples do not establish response parity. Compare every managed

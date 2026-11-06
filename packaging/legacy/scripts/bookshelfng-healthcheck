@@ -73,7 +73,13 @@ if [ "${#health_timeout}" -gt 5 ] || [ "$health_timeout" -lt 1 ] || [ "$health_t
 fi
 deadline=$(( $(date +%s) + health_timeout ))
 health_url=${BOOKSHELFNG_HEALTH_URL:-auto}
+main_process_alive() {
+  # systemd supplies MAINPID to ExecStartPost. A failed main process must
+  # release this hook so ExecStopPost can restore the source installation.
+  [ -z "${MAINPID:-}" ] || kill -0 "$MAINPID" 2>/dev/null
+}
 while [ "$(date +%s)" -lt "$deadline" ]; do
+  if ! main_process_alive; then break; fi
   selinux_enforce_file=${CHAPTARR_BOOKSHELF_SELINUX_ENFORCE_FILE:-/sys/fs/selinux/enforce}
   if [ "${CHAPTARR_BOOKSHELF_HANDOFF_HEALTH_MODE:-}" = database-listener ] &&
      [ -r "$selinux_enforce_file" ] &&
@@ -101,14 +107,20 @@ PY
       if [ "$health_port" -ge 1 ] && [ "$health_port" -le 65535 ] &&
          CHAPTARR_BOOKSHELF_PROC_NET_TCP_FILE=${CHAPTARR_BOOKSHELF_PROC_NET_TCP_FILE:-/proc/net/tcp} \
          CHAPTARR_BOOKSHELF_PROC_NET_TCP6_FILE=${CHAPTARR_BOOKSHELF_PROC_NET_TCP6_FILE:-/proc/net/tcp6} \
-         python3 - "$health_port" "$deadline" <<'PY'
+         python3 - "$health_port" "$deadline" "${MAINPID:-}" <<'PY'
 import sys
 import time
 import os
 
 port = int(sys.argv[1])
 deadline = int(sys.argv[2])
+main_pid = int(sys.argv[3]) if sys.argv[3] else None
 while time.time() < deadline:
+    if main_pid is not None:
+        try:
+            os.kill(main_pid, 0)
+        except ProcessLookupError:
+            sys.exit(1)
     port_hex = f"{port:04X}"
     for path in (
         os.environ["CHAPTARR_BOOKSHELF_PROC_NET_TCP_FILE"],
@@ -146,14 +158,17 @@ PY
   if /usr/lib/chaptarrng/bin/Chaptarr /check-bookshelf-migration -data="$data_dir" >/dev/null 2>&1; then
     remaining=$(( deadline - $(date +%s) ))
     if [ "$remaining" -lt 1 ]; then break; fi
+    # Bound each HTTP wait so a dead service cannot hold recovery until the
+    # full migration deadline. A live service still gets that full deadline.
+    if [ "$remaining" -gt 5 ]; then remaining=5; fi
     if ! /usr/lib/chaptarrng/bin/Chaptarr /check-bookshelf-migration \
       -data="$data_dir" \
       "-bookshelf-health-url=$health_url" \
       "-bookshelf-health-timeout-seconds=$remaining"; then
-      write_status intervention-required
-      echo "BookshelfNG conversion did not pass its database and local HTTP health checks within ${health_timeout} seconds. Automatic rollback will restore the retained source database and the prior BookshelfNG package if both are valid." >&2
-      exit 1
+      continue
     fi
+
+    if ! main_process_alive; then break; fi
 
     "$journal" outcome conversion verified
     "$journal" state converted

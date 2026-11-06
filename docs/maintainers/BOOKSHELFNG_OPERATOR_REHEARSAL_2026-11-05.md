@@ -645,4 +645,68 @@ The final post-refresh mapping repair passes the full Core suite: 5,246 passed,
 29 skipped, no failures. The earlier run's only failure was a new assertion
 expecting insertion order; legacy resolution intentionally orders audio before
 ebook. The corrected assertion preserves that existing contract. The repair
-still needs its own canonical qualification.
+has now completed its canonical qualification described below.
+
+## Canonical application qualification at `3caff177`
+
+The full cross-platform Build (`42127922607`), strict API suite (`42127926493`),
+ten-archive producer and five installed Linux cases (`42127930955`), four retained
+Windows/macOS consumers (`42129843754`), and Helm rehearsal (`42127935076`) all
+passed. The consumers ran at repository head `4dfb8c9a`, with the unchanged
+`3caff177` application inputs verified before archive reuse. Native FreeBSD
+acceptance also passed No/Manual/Yes, health, backup and forced rollback.
+
+Fresh frozen source copies and the canonical target compared 88,405 author,
+book and file records across the two operator libraries with zero missing,
+extra or duplicate identities and zero source-value differences. Target-only
+fields and omitted source-null fields were accounted for separately; this is
+not a byte-identical JSON claim. Both fresh conversions preserved source user
+columns, provider settings and authentication hashes, passed integrity and
+foreign-key checks, and restored all logical tables and sequences on rollback.
+Neither production library was changed.
+
+Both SeerrNG web request-to-acquisition/import/restart cases passed against the
+canonical application using the repaired, unpublished client fixture. Actual
+rename and restart replay preserved IDs, paths and bytes for EPUB, KEPUB, AZW3,
+MOBI, PDF, MP3 and M4B. No mapped M4A source file was available for this replay.
+
+The canonical Debian package also passed its real systemd transaction, restart,
+forced failure recovery and explicit predecessor downgrade. Fedora 44 passed
+the actual DNF No/Yes transaction, converted application health and restart with
+SELinux enforcing. Its subsequent SIGKILL test reached schema 126 and HTTP 200,
+then exposed a health-hook defect: the listener wait could outlive the main
+process and delay rollback until the full startup deadline. Canceling that wait
+restored a healthy predecessor; that intervention is not automatic crash
+recovery acceptance. Process-death detection and bounded HTTP probes pass two
+regression cases and the rebuilt real RPM's after-readiness SIGKILL case. With
+SELinux enforcing, DNF exits 1, the hook releases automatic rollback, and the
+predecessor returns healthy with schema 158, all original counts, environment
+and canary preserved. RPM package metadata still names the candidate until an
+explicit downgrade; application recovery is not package-database rollback.
+The repaired package hash is
+`61d8fc0aec49262f0fdba466c2a88681945fc60c042e8a70378a4914c6be3a90`;
+it combines the unchanged canonical application with the repaired health hook.
+
+The three security scans at `4dfb8c9a` passed (`42129828890`, `42129834139`,
+`42129838969`). The scoped StartOS dependency override fixes CVE-2026-118764
+without upgrading its SDK. CodeQL remains disabled.
+
+## Remaining low-memory refresh investigation
+
+The three-edition canonical repeat replay passes at a 2 GiB container limit.
+The 301-work repeat refresh and legacy-ID lifecycle pass at 6 GiB, but fail with
+managed allocation errors at 2 GiB on a fresh converted copy. Corrected inputs
+exclude unrelated SQLite sidecars; metadata-only replay still reproduces the
+failure. Command completion alone does not qualify the failed API readback.
+
+A diagnostic cold-start allocation trace identifies substantial temporary
+allocation in matching-title backfill and author-event edition loading. A forced
+diagnostic collection leaves a much smaller live heap; neither a retained leak
+nor the precise allocation failure mechanism has yet been established. A
+separate probe using the candidate runtime confirms that a 2 GiB container is
+recognized as a 1.5 GiB managed-heap budget. No GC workaround has been shipped.
+The traced 2 GiB case fails during initial book readback before submitting the
+refresh command, narrowing this reproduction to startup/API materialization.
+Private traces, failure logs and coherent input copies are retained for the
+investigation. Publication, external channel acceptance, headed UI acceptance
+and production cutover remain open.

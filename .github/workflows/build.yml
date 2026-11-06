@@ -256,6 +256,12 @@ jobs:
       if: matrix.platform == 'linux-x64'
       run: python3 scripts/test_workflow_runner_policy.py
 
+    - name: Test native package recovery after main process death
+      if: matrix.platform == 'linux-x64'
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: python3 packaging/scripts/test-bookshelfng-healthcheck-process.py
+
     - name: Test candidate BookshelfNG Debian bridge package
       if: matrix.platform == 'linux-x64'
       env:
