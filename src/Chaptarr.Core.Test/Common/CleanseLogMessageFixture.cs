@@ -11,6 +11,35 @@ namespace Chaptarr.Core.Test.Common
     [TestFixture]
     public class CleanseLogMessageFixture
     {
+        [TestCase("api_key=synthetic-secret", "api_key=(removed)")]
+        [TestCase("Archive refused api_key=synthetic-secret", "Archive refused api_key=(removed)")]
+        [TestCase("to=alice%40example.com", "to=(removed)%40example.com")]
+        [TestCase("Alice <alice@example.com>", "Alice <(removed)@example.com>")]
+        [TestCase("иван@example.com", "(removed)@example.com")]
+        [TestCase("读者@example.com", "(removed)@example.com")]
+        [TestCase("प्रेम@example.com", "(removed)@example.com")]
+        [TestCase("@handle Name (@handle) (removed)@host", "@handle Name (@handle) (removed)@host")]
+        [TestCase("https://hooks.slack.com/services/T0/B0/synthetic-secret", "https://hooks.slack.com/services/(removed)")]
+        [TestCase("https://hooks.slack-gov.com/services/T0/B0/synthetic-secret", "https://hooks.slack-gov.com/services/(removed)")]
+        [TestCase("https://discordapp.com/api/webhooks/123/synthetic-secret", "https://discordapp.com/api/webhooks/(removed)/(removed)")]
+        [TestCase("https://apprise.example/base/notify/synthetic-secret?tag=books", "https://apprise.example/base/notify/(removed)?tag=books")]
+        [TestCase("https://apprise.example/notify", "https://apprise.example/notify")]
+        [TestCase("{\"data\":{\"sid\":\"synthetic-secret\",\"inside\":\"keep\",\"residual\":\"keep\"}}", "{\"data\":{\"sid\":\"(removed)\",\"inside\":\"keep\",\"residual\":\"keep\"}}")]
+        [TestCase("{\"sessionID\":\"synthetic-secret\"}", "{\"sessionID\":\"(removed)\"}")]
+        [TestCase("{\"mam_id\":\"synthetic-secret\"}", "{\"mam_id\":\"(removed)\"}")]
+        [TestCase("mam_id=synthetic-secret", "mam_id=(removed)")]
+        [TestCase("https://books.example/rest/ping?u=synthetic-user&p=synthetic-secret&c=Chaptarr&v=1.15", "https://books.example/rest/ping?u=(removed)&p=(removed)&c=Chaptarr&v=1.15")]
+        [TestCase("https://books.example/rest/ping?p=synthetic-secret&u=synthetic-user&c=Chaptarr", "https://books.example/rest/ping?p=(removed)&u=(removed)&c=Chaptarr")]
+        [TestCase("https://books.example/rest/ping?u=synthetic-user&amp;p=synthetic-secret", "https://books.example/rest/ping?u=(removed)&amp;p=(removed)")]
+        [TestCase("https://books.example/callback?code_verifier=synthetic-secret", "https://books.example/callback?code_verifier=(removed)")]
+        [TestCase("https://books.example/search?u=keep&p=2", "https://books.example/search?u=keep&p=2")]
+        [TestCase("Cookie: session=abc123; other=def456", "Cookie: (removed)")]
+        public void provider_wire_shapes_use_the_shared_credential_rules(string input, string expected)
+        {
+            Assert.That(CleanseLogMessage.Cleanse(input), Is.EqualTo(expected));
+            Assert.That(CleanseLogMessage.Cleanse(expected), Is.EqualTo(expected), "Redaction must be idempotent");
+        }
+
         [TestCase("<link>?pwd=secret</link>", "<link>?pwd=(removed)</link>")]
         [TestCase("<link>?i=1&pwd=secret</link>", "<link>?i=1&pwd=(removed)</link>")]
         [TestCase("<link>?i=1&amp;pwd=secret</link>", "<link>?i=1&amp;pwd=(removed)</link>")]

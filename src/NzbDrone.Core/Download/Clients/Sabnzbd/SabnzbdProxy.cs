@@ -285,7 +285,7 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
 
             HttpResponse response;
 
-            _logger.Debug("Url: {0}", SensitiveDataSanitizer.SanitizeUrl(httpRequest.Url.ToString()));
+            _logger.Debug("Url: {0}", CleanseLogMessage.Cleanse(httpRequest.Url.ToString()));
 
             try
             {

@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
@@ -19,10 +21,13 @@ namespace NzbDrone.Common.Instrumentation
         private static readonly Regex[] CleansingRules =
         {
             // Url
-            new (@"(?<=\?|&|;|: |[""'])(?:(?:(?:(?:api|auth|pass)[-_]?)?key|rss[-_]?key|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd|pwd|_sid|sessionid|torrent_pass)=|feed=torrents_notify_)" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"\b(?:authorization_code|code|client_secret|id_token|refresh_token|secret)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=^|\s|\?|&|;|: |[""'])(?:(?:(?:(?:api|auth|pass)[-_]?)?key|rss[-_]?key|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd|pwd|_sid|sessionid|mam_id|torrent_pass)=|feed=torrents_notify_)" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"\b(?:authorization_code|code_verifier|code|client_secret|id_token|refresh_token|secret)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"(?<=\?|&)[^&;=<>\s]*?(username|password)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
-            new (@"/rest/[^?<>\s""']+\?(?:[^<>\s""']*?(?:&|&amp;))?p=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            // Session identifiers are exact keys: "inside" and "residual" are metadata.
+            new (@"""(?:sid|sessionid|mam_id)""\s*:\s*" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            // Email local parts may contain Unicode combining marks or form-encoded @.
+            new (@"(?<![\p{L}\p{M}\p{N}._%+-])(?<secret>[\p{L}\p{M}\p{N}._%+-]+)(?:@|%40)[\p{L}\p{M}\p{N}.-]+\.[\p{L}\p{M}]{2,}\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // URL userinfo (http(s)://user:pass@host)
             new (@"(?<=://)(?<secret>[^/@\s]+:[^@/\s]+)(?=@)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // HTTP headers that sometimes get embedded into logs/exception messages
@@ -42,6 +47,9 @@ namespace NzbDrone.Common.Instrumentation
             new (@"(?:getnzb|rss)[^\s""'<>]*?(?<=\?|&|;)r=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\b(\w*)?(_?(?<!use|get_)token|username|passwo?rd)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"-hd.me/torrent/[a-z0-9-]\.[0-9]+\.(?<secret>[0-9a-z]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+
+            // Aria2 authenticates in a traced XML-RPC string, not a named query field.
+            new (@"<string>token:(?<secret>[^<]+)</string>", RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Trackers Announce Keys; Designed for Qbit Json; should work for all in theory
             new (@"announce(\.php)?(/|%2f|%3fpasskey%3d)(?<secret>[a-z0-9]{16,})|(?<secret>[a-z0-9]{16,})(/|%2f)announce", RegexOptions.Compiled | RegexOptions.IgnoreCase),
@@ -71,15 +79,24 @@ namespace NzbDrone.Common.Instrumentation
             new (@"(?<=""(token|tokensecret)"":\s)" + DoubleQuotedSecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Webhooks
-            // Notifiarr
-            new (@"api/v[0-9]/notification/chaptarr/(?<secret>[\w-]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            // Slack incoming webhook path is a credential, including on GovSlack.
+            new (@"https?://hooks\.(?:slack\.com|slack-gov\.com)/services/(?<secret>[^?\s""'<>]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            // Apprise's supported persistent-configuration endpoint also uses a path key.
+            new (@"https?://(?:(?!://)[^\s""'<>?])+/notify/(?<secret>[^/?\s""'<>]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Discord
-            new (@"discord.com/api/webhooks/((?<secret>[\w-]+)/)?(?<secret>[\w-]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?:discord|discordapp)\.com/api/webhooks/((?<secret>[\w-]+)/)?(?<secret>[\w-]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
 
             // Telegram
             new (@"api.telegram.org/bot(?<id>[\d]+):(?<secret>[\w-]+)/", RegexOptions.Compiled | RegexOptions.IgnoreCase)
         };
+
+        // Scope short credentials to a Subsonic URL, then consume each query value once.
+        private static readonly Regex SubsonicUrlRegex = new (
+            @"/rest/(?:(?!/rest/)[^?<>\s""'])+\?(?:[^<>\s""']|(?<==)""(?:\\.|[^""\\])*""|(?<==)'(?:\\.|[^'\\])*')*",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex SubsonicCredentialRegex = new (
+            @"(?<=\?|&|&amp;)(?:u|p)=" + SecretValue, RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex DownloadUrlFieldRegex = new (
             @"(?<prefix>""(?:dl|dl[-_]?link|download[-_]?(?:urls?|links?))""\s*:\s*)(?<value>""(?:\\.|[^""\\])*""|\[(?:\s*""(?:\\.|[^""\\])*""\s*,?\s*)*\])",
@@ -96,18 +113,11 @@ namespace NzbDrone.Common.Instrumentation
                 return message;
             }
 
+            message = SubsonicUrlRegex.Replace(message, match => SubsonicCredentialRegex.Replace(match.Value, CleanseCaptures));
+
             foreach (var regex in CleansingRules)
             {
-                message = regex.Replace(message, m =>
-                {
-                    var value = m.Value;
-                    foreach (var capture in m.Groups["secret"].Captures.OfType<Capture>().Reverse())
-                    {
-                        value = value.Replace(capture.Index - m.Index, capture.Length, "(removed)");
-                    }
-
-                    return value;
-                });
+                message = regex.Replace(message, CleanseCaptures);
             }
 
             // Download URL fields may carry credentials in provider-specific path segments.
@@ -125,6 +135,35 @@ namespace NzbDrone.Common.Instrumentation
             message = CleanseRemoteIPRegex.Replace(message, CleanseRemoteIP);
 
             return message;
+        }
+
+        private static string CleanseCaptures(Match match)
+        {
+            var value = match.Value;
+            foreach (var capture in match.Groups["secret"].Captures.OfType<Capture>().Reverse())
+            {
+                value = value.Replace(capture.Index - match.Index, capture.Length, "(removed)");
+            }
+
+            return value;
+        }
+
+        public static string Cleanse(string message, IEnumerable<string> privateValues)
+        {
+            if (string.IsNullOrEmpty(message))
+            {
+                return message;
+            }
+
+            // Caller-supplied secrets supplement the shared rules; no global secret cache.
+            foreach (var value in privateValues.Where(value => !string.IsNullOrEmpty(value))
+                .SelectMany(value => new[] { value, System.Text.Json.JsonSerializer.Serialize(value)[1..^1] })
+                .Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
+            {
+                message = message.Replace(value, "(removed)", StringComparison.Ordinal);
+            }
+
+            return Cleanse(message);
         }
 
         private static string CleanseRemoteIP(Match match)

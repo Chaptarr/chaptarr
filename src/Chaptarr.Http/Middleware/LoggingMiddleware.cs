@@ -117,7 +117,7 @@ namespace Chaptarr.Http.Middleware
             var rawTarget = request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget;
             if (rawTarget.IsNotNullOrWhiteSpace())
             {
-                return SensitiveDataSanitizer.SanitizeUrl(rawTarget);
+                return CleanseLogMessage.Cleanse(rawTarget);
             }
 
             string pathAndQuery;
@@ -131,7 +131,7 @@ namespace Chaptarr.Http.Middleware
                 pathAndQuery = request.Path;
             }
 
-            return SensitiveDataSanitizer.SanitizeUrl(pathAndQuery);
+            return CleanseLogMessage.Cleanse(pathAndQuery);
         }
 
         private static string GetOrigin(HttpContext context)
