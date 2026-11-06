@@ -575,3 +575,17 @@ test('book queue controls remain active after a remount cycle', async() => {
   assert.equal(bookIndex._isUnmounted, false);
   assert.equal(bookIndex.state.isStartingRefresh, false);
 });
+
+test('narrow Books pages keep statistics in document flow across resizing and editing', () => {
+  const bookIndex = makeBookIndex();
+  bookIndex.state.scroller = {};
+  const footer = () => findElements(bookIndex.render(), (element) => element.type === './BookIndexFooterConnector')[0];
+
+  assert.equal(footer().props.isSticky, true);
+  bookIndex.props = { ...bookIndex.props, isSmallScreen: true };
+  assert.equal(footer().props.isSticky, false);
+  bookIndex.props = { ...bookIndex.props, isSmallScreen: false };
+  assert.equal(footer().props.isSticky, true);
+  bookIndex.state.isEditorActive = true;
+  assert.equal(footer().props.isSticky, false);
+});

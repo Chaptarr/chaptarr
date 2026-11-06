@@ -1,3 +1,42 @@
+.toolbar {
+  composes: toolbar from '~Components/Page/Toolbar/PageToolbar.css';
+}
+
+/* Shared toolbar CSS also appears in other lazy-loaded page chunks. */
+.toolbar.toolbar {
+  flex-wrap: wrap;
+  height: auto;
+}
+
+.mediaTypeToggle {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: 10px;
+  min-height: $toolbarHeight;
+}
+
+.actionToolbar {
+  display: flex;
+  flex: 1 1 $toolbarButtonWidth;
+  min-width: $toolbarButtonWidth;
+  height: $toolbarHeight;
+}
+
+/* Keep all four nested menus intact and measurable before their first render. */
+.viewToolbar {
+  display: flex;
+  flex: 0 0 calc(4 * $toolbarButtonWidth + 2 * $toolbarSeparatorMargin + 1px);
+  height: $toolbarHeight;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .mediaTypeToggle {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+}
+
 .pageContentBodyWrapper {
   display: flex;
   flex: 1 0 1px;

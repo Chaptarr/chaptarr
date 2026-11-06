@@ -820,3 +820,32 @@ remaining headed workflow checks.
 Book details and the Files tab also render the migrated ebook, series,
 400-byte synthetic file, original path and import history. Required screenshots
 are persisted through the pool artifact API before any desktop release.
+
+
+### Narrow Books-page follow-up
+
+Headed testing at 250% standard Chrome zoom (approximately 410 CSS pixels,
+not a touch-device simulation) exposed two usability failures. The format
+selector was counted as a single fixed-width toolbar action, clipping controls;
+the fixed statistics footer also grew tall enough to cover the toolbar and book
+list. The format selector now has its own responsive group, ordinary actions
+retain their working overflow menu, and View/Sort/Filter remain original nested
+menus. Their group has a stable initial width for the measurement lifecycle.
+The toolbar can wrap, and statistics use document flow on small screens while
+remaining pinned on ordinary desktop views outside the editor.
+
+The footer regression fails before the fix and passes afterward across narrow,
+desktop-resize and editor transitions. All 193 frontend CJS tests, TypeScript,
+application JS lint and focused CSS lint pass. The production bundle builds with
+the existing 47 CSS ordering warnings. A headed UI derivative over canonical
+`60d892da` visibly shows the complete narrow toolbar and book cards; screenshot
+`338b62cb-5e78-4fb4-b950-a21dbe7e104f` is persisted. Initial layout attempts and
+logs remain retained, including the fixed-footer obstruction that inspection
+identified. New canonical archive validation is still required.
+
+The first clean desktop ended during an MCP reconnect; the coordinator reported
+its idempotency key as ended and its container was absent before a new isolated
+QA phase was acquired. Only the two task-owned synthetic backends were rebound
+to the new desktop namespace. Existing profiles, other reservations and original
+candidate payloads were preserved. Screenshot updates can lag accepted inputs;
+visual checks wait for a confirmed new state before acting.

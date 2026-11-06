@@ -825,136 +825,142 @@ class BookIndex extends Component {
 
     return (
       <PageContent>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar className={styles.toolbar}>
+          <div className={styles.mediaTypeToggle}>
             <MediaTypeToggle
               selectedMediaType={selectedMediaType}
               includeBoth={true}
               onMediaTypeChange={onMediaTypeChange}
             />
+          </div>
 
-            <PageToolbarButton
-              label={refreshLabel}
-              iconName={icons.REFRESH}
-              spinningName={icons.REFRESH}
-              isSpinning={isRefreshPending}
-              isDisabled={hasNoAuthor || isRefreshPending}
-              onPress={this.onRefreshBookPress}
-            />
+          <div className={styles.actionToolbar}>
+            <PageToolbarSection>
+              <PageToolbarButton
+                label={refreshLabel}
+                iconName={icons.REFRESH}
+                spinningName={icons.REFRESH}
+                isSpinning={isRefreshPending}
+                isDisabled={hasNoAuthor || isRefreshPending}
+                onPress={this.onRefreshBookPress}
+              />
 
-            <PageToolbarButton
-              label={translate('RSSSync')}
-              iconName={icons.RSS}
-              isSpinning={isRssSyncPending}
-              isDisabled={hasNoAuthor || isRssSyncPending}
-              onPress={this.onRssSyncPress}
-            />
+              <PageToolbarButton
+                label={translate('RSSSync')}
+                iconName={icons.RSS}
+                isSpinning={isRssSyncPending}
+                isDisabled={hasNoAuthor || isRssSyncPending}
+                onPress={this.onRssSyncPress}
+              />
 
-            <PageToolbarSeparator />
+              <PageToolbarSeparator />
 
-            <PageToolbarButton
-              label={isEditorActive ? searchEditorLabel : searchIndexLabel}
-              iconName={icons.SEARCH}
-              isDisabled={isSearching || !listedBookCount}
-              onPress={this.onSearchPress}
-            />
+              <PageToolbarButton
+                label={isEditorActive ? searchEditorLabel : searchIndexLabel}
+                iconName={icons.SEARCH}
+                isDisabled={isSearching || !listedBookCount}
+                onPress={this.onSearchPress}
+              />
 
-            <PageToolbarSeparator />
+              <PageToolbarSeparator />
 
-            {
-              isEditorActive ?
-                <PageToolbarButton
-                  label={translate('BookIndex')}
-                  iconName={icons.AUTHOR_CONTINUING}
-                  isDisabled={hasNoAuthor}
-                  onPress={this.onEditorTogglePress}
-                /> :
-                <PageToolbarButton
-                  label={translate('BookEditor')}
-                  iconName={icons.EDIT}
-                  isDisabled={hasNoAuthor}
-                  onPress={this.onEditorTogglePress}
-                />
-            }
+              {
+                isEditorActive ?
+                  <PageToolbarButton
+                    label={translate('BookIndex')}
+                    iconName={icons.AUTHOR_CONTINUING}
+                    isDisabled={hasNoAuthor}
+                    onPress={this.onEditorTogglePress}
+                  /> :
+                  <PageToolbarButton
+                    label={translate('BookEditor')}
+                    iconName={icons.EDIT}
+                    isDisabled={hasNoAuthor}
+                    onPress={this.onEditorTogglePress}
+                  />
+              }
 
-            {
-              isEditorActive ?
-                <PageToolbarButton
-                  label={allSelected ? translate('UnselectAll') : translate('SelectAll')}
-                  iconName={icons.CHECK_SQUARE}
-                  isSpinning={isSelectingAll}
-                  isDisabled={hasNoAuthor || isSelectingAll}
-                  onPress={this.onSelectAllPress}
-                /> :
-                null
-            }
+              {
+                isEditorActive ?
+                  <PageToolbarButton
+                    label={allSelected ? translate('UnselectAll') : translate('SelectAll')}
+                    iconName={icons.CHECK_SQUARE}
+                    isSpinning={isSelectingAll}
+                    isDisabled={hasNoAuthor || isSelectingAll}
+                    onPress={this.onSelectAllPress}
+                  /> :
+                  null
+              }
 
-          </PageToolbarSection>
+            </PageToolbarSection>
+          </div>
 
-          <PageToolbarSection
-            alignContent={align.RIGHT}
-            collapseButtons={true}
-          >
-            {
-              view === 'table' ?
-                <TableOptionsModalWrapper
-                  {...otherProps}
-                  columns={columns}
-                  optionsComponent={BookIndexTableOptionsConnector}
-                >
+          <div className={styles.viewToolbar}>
+            <PageToolbarSection
+              alignContent={align.RIGHT}
+              collapseButtons={false}
+            >
+              {
+                view === 'table' ?
+                  <TableOptionsModalWrapper
+                    {...otherProps}
+                    columns={columns}
+                    optionsComponent={BookIndexTableOptionsConnector}
+                  >
+                    <PageToolbarButton
+                      label={translate('Options')}
+                      iconName={icons.TABLE}
+                    />
+                  </TableOptionsModalWrapper> :
+                  null
+              }
+
+              {
+                view === 'posters' ?
                   <PageToolbarButton
                     label={translate('Options')}
-                    iconName={icons.TABLE}
-                  />
-                </TableOptionsModalWrapper> :
-                null
-            }
+                    iconName={icons.POSTER}
+                    isDisabled={hasNoAuthor}
+                    onPress={this.onPosterOptionsPress}
+                  /> :
+                  null
+              }
 
-            {
-              view === 'posters' ?
-                <PageToolbarButton
-                  label={translate('Options')}
-                  iconName={icons.POSTER}
-                  isDisabled={hasNoAuthor}
-                  onPress={this.onPosterOptionsPress}
-                /> :
-                null
-            }
+              {
+                view === 'overview' ?
+                  <PageToolbarButton
+                    label={translate('Options')}
+                    iconName={icons.OVERVIEW}
+                    isDisabled={hasNoAuthor}
+                    onPress={this.onOverviewOptionsPress}
+                  /> :
+                  null
+              }
 
-            {
-              view === 'overview' ?
-                <PageToolbarButton
-                  label={translate('Options')}
-                  iconName={icons.OVERVIEW}
-                  isDisabled={hasNoAuthor}
-                  onPress={this.onOverviewOptionsPress}
-                /> :
-                null
-            }
+              <PageToolbarSeparator />
 
-            <PageToolbarSeparator />
+              <BookIndexViewMenu
+                view={view}
+                isDisabled={hasNoAuthor}
+                onViewSelect={onViewSelect}
+              />
 
-            <BookIndexViewMenu
-              view={view}
-              isDisabled={hasNoAuthor}
-              onViewSelect={onViewSelect}
-            />
+              <BookIndexSortMenu
+                sortKey={sortKey}
+                sortDirection={sortDirection}
+                isDisabled={hasNoAuthor}
+                onSortSelect={onSortSelect}
+              />
 
-            <BookIndexSortMenu
-              sortKey={sortKey}
-              sortDirection={sortDirection}
-              isDisabled={hasNoAuthor}
-              onSortSelect={onSortSelect}
-            />
-
-            <BookIndexFilterMenu
-              selectedFilterKey={selectedFilterKey}
-              filters={filters}
-              customFilters={customFilters}
-              isDisabled={hasNoAuthor}
-              onFilterSelect={onFilterSelect}
-            />
-          </PageToolbarSection>
+              <BookIndexFilterMenu
+                selectedFilterKey={selectedFilterKey}
+                filters={filters}
+                customFilters={customFilters}
+                isDisabled={hasNoAuthor}
+                onFilterSelect={onFilterSelect}
+              />
+            </PageToolbarSection>
+          </div>
         </PageToolbar>
 
         <div className={styles.pageContentBodyWrapper}>
@@ -1065,7 +1071,7 @@ class BookIndex extends Component {
 
         {
           isLoaded &&
-            <BookIndexFooterConnector isSticky={!isEditorActive} />
+            <BookIndexFooterConnector isSticky={!isEditorActive && !this.props.isSmallScreen} />
         }
 
         {
