@@ -45,6 +45,7 @@ namespace Chaptarr.Core.Test.Backup
         private static readonly Dictionary<string, (bool Included, bool Folder, string Reason)> AppDataScope = new(StringComparer.Ordinal)
         {
             ["backup-temp"] = (false, true, "Instance-owned, private temporary backup payloads are removed after use"),
+            ["backup-scheduled-failure.json"] = (false, false, "Current installation backup health; not restored from historical backups"),
             ["chaptarr.lock"] = (false, false, "Exclusive process ownership is runtime state and must never be restored"),
             ["chaptarr.pid"] = (false, false, "The process identifier must never be restored"),
             ["update_required"] = (false, false, "An update request marker must never be restored"),
@@ -297,7 +298,7 @@ namespace Chaptarr.Core.Test.Backup
         }
 
         private BackupService CreateService(IMainDatabase database, IAppFolderInfo folders, IRestoreDatabase restoration = null, IArchiveService archive = null,
-            ILogDatabase logs = null, ICacheDatabase cache = null, IConnectionStringFactory connectionStrings = null, bool includeExtras = true, int interval = 7, IHostApplicationLifetime hostLifetime = null, IDiskProvider disk = null, IEventAggregator events = null)
+            ILogDatabase logs = null, ICacheDatabase cache = null, IConnectionStringFactory connectionStrings = null, bool includeExtras = true, int interval = 7, IHostApplicationLifetime hostLifetime = null, IDiskProvider disk = null, IEventAggregator events = null, Logger logger = null)
         {
             var config = InterfaceProxy.Proxy<IConfigService>((method, _) => method.Name switch
             {
@@ -311,7 +312,7 @@ namespace Chaptarr.Core.Test.Backup
                 ? CancellationToken.None : null);
             return new BackupService(hostLifetime, database, new MakeDatabaseBackup(_logger, connectionStrings), new DiskTransferService(disk ?? _disk, _logger),
                 disk ?? _disk, folders, archive ?? new ArchiveService(_logger), config, restoration ?? new DatabaseRestorationService(_disk, folders),
-                events ?? InterfaceProxy.Proxy<IEventAggregator>((_, _) => null), _logger,
+                events ?? InterfaceProxy.Proxy<IEventAggregator>((_, _) => null), logger ?? _logger,
                 logs ?? new LogDatabase(new Database("logs", () => new SqliteConnection(ConnectionString(folders.GetLogDatabase())))),
                 cache ?? new CacheDatabase(new Database("cache", () => new SqliteConnection(ConnectionString(folders.GetCacheDatabase())))));
         }
@@ -362,7 +363,7 @@ namespace Chaptarr.Core.Test.Backup
         {
             var staging = InterfaceProxy.Proxy<IStagingDbContext>((_, _) => failed ? new IOException("Unreadable scratch database") : null);
             var localization = InterfaceProxy.Proxy<NzbDrone.Core.Localization.ILocalizationService>((_, args) => args[0]);
-            var check = new NzbDrone.Core.HealthCheck.Checks.StagingDatabaseCheck(staging, localization).Check();
+            var check = new NzbDrone.Core.HealthCheck.Checks.StagingDatabaseCheck(staging, new AppFolders(_root), localization).Check();
             Assert.That(check.Type, Is.EqualTo(failed ? NzbDrone.Core.HealthCheck.HealthCheckResult.Error : NzbDrone.Core.HealthCheck.HealthCheckResult.Ok));
         }
 

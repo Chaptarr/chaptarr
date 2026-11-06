@@ -49,6 +49,8 @@ class LogFiles extends Component {
       logLevel,
       isSavingSettings,
       saveSettingsError,
+      settingsError,
+      isSettingsLoaded,
       onRefreshPress,
       onDeleteFilesPress,
       onLogLevelChange,
@@ -105,7 +107,7 @@ class LogFiles extends Component {
                       name="logLevel"
                       value={logLevel}
                       values={logLevelOptions}
-                      isDisabled={isSavingSettings}
+                      isDisabled={!isSettingsLoaded || isSavingSettings}
                       onChange={onLogLevelChange}
                       className={styles.logLevelDropdown}
                     />
@@ -118,6 +120,12 @@ class LogFiles extends Component {
               }
             </div>
           </Alert>
+
+          {settingsError && (
+            <Alert kind={kinds.WARNING} role="alert">
+              {translate('LogSettingsLoadFailed')}
+            </Alert>
+          )}
 
           {saveSettingsError && (
             <Alert kind={kinds.DANGER} role="alert">
@@ -175,6 +183,8 @@ LogFiles.propTypes = {
   logLevel: PropTypes.string,
   isSavingSettings: PropTypes.bool,
   saveSettingsError: PropTypes.object,
+  settingsError: PropTypes.object,
+  isSettingsLoaded: PropTypes.bool,
   onRefreshPress: PropTypes.func.isRequired,
   onDeleteFilesPress: PropTypes.func.isRequired,
   onLogLevelChange: PropTypes.func.isRequired

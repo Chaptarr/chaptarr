@@ -3,6 +3,7 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import { Provider } from 'react-redux';
 import { Router } from 'react-router-dom';
+import AuthorEditorFooter from 'Author/Editor/AuthorEditorFooter';
 import { set } from 'Store/Actions/baseActions';
 import createAppStore from 'Store/createAppStore';
 import themes from 'Styles/Themes';
@@ -44,6 +45,31 @@ window.showSettingsRestoreError = () => {
     </Provider>, element
   );
   modal.setState({ manualFilePath: '/config/test.chaptarr-settings-backup.json', passphrase: 'synthetic password', categories: { remotePathMappings: true } }, modal.onRestorePress);
+};
+window.showTagsFooter = (selectedMediaType) => {
+  store.dispatch(set({ section: 'authors', items: [{ id: 1, authorName: 'Frank Herbert', tags: [1, 2], audiobookTags: [1], ebookTags: [2] }], itemMap: { 1: 0 } }));
+  store.dispatch(set({ section: 'tags', items: [{ id: 1, label: 'audio-tag' }, { id: 2, label: 'ebook-tag' }] }));
+  window.tagChanges = [];
+  ReactDOM.unmountComponentAtNode(document.getElementById('root'));
+  ReactDOM.render(
+    <Provider store={store}>
+      <Router history={history}>
+        <AuthorEditorFooter
+          authorIds={[1]}
+          selectedCount={1}
+          selectedMediaType={selectedMediaType}
+          isSaving={false}
+          isDeleting={false}
+          isOrganizingAuthor={false}
+          isRetaggingAuthor={false}
+          showMetadataProfile={false}
+          onSaveSelected={(changes) => window.tagChanges.push(changes)}
+          onOrganizeAuthorPress={() => {}}
+          onRetagAuthorPress={() => {}}
+        />
+      </Router>
+    </Provider>, document.getElementById('root')
+  );
 };
 fetchTranslations().then(() => {
   ReactDOM.render(<Provider store={store}><Router history={history}><BackupsConnector /></Router></Provider>, document.getElementById('root'));

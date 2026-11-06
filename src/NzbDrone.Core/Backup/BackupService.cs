@@ -61,8 +61,11 @@ namespace NzbDrone.Core.Backup
         private readonly object _backupGate = new();
         private int _activeBackups;
         private TaskCompletionSource _backupCompletion;
+        private ScheduledBackupFailure _scheduledFailure;
+        private bool _failureStateLoaded;
 
-        public static readonly Regex BackupFileRegex = new Regex(@"\A(chaptarr|readarr|audioarr)_backup_(v[0-9.]+_)?[._0-9]+\.zip\z", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        public static readonly Regex BackupFileRegex = new Regex(@"\A(chaptarr|readarr|audioarr)_backup_[^/\\\r\n]+\.zip\z", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex GeneratedBackupFileRegex = new Regex(@"\A(chaptarr|readarr|audioarr)_backup_(v[0-9.]+_)?[._0-9]+\.zip\z", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public BackupService(IHostApplicationLifetime appLifetime,
                              IMainDatabase maindDb,
@@ -120,6 +123,17 @@ namespace NzbDrone.Core.Backup
             try
             {
                 BackupCore(backupType, linked.Token);
+                if (backupType == BackupType.Scheduled) SaveScheduledFailure(null);
+            }
+            catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
+            {
+                if (backupType == BackupType.Scheduled)
+                    SaveScheduledFailure(new ScheduledBackupFailure
+                    {
+                        FailedAt = DateTime.UtcNow,
+                        Reason = NzbDrone.Common.Instrumentation.CleanseLogMessage.Cleanse(error.Message)
+                    });
+                throw;
             }
             finally
             {
@@ -131,6 +145,60 @@ namespace NzbDrone.Core.Backup
                     }
                 }
             }
+        }
+
+        private ScheduledBackupFailure ReadScheduledFailure()
+        {
+            lock (_backupGate)
+            {
+                if (!_failureStateLoaded)
+                {
+                    var path = _appFolderInfo.GetScheduledBackupFailure();
+                    try
+                    {
+                        _scheduledFailure = File.Exists(path) ? JsonSerializer.Deserialize<ScheduledBackupFailure>(File.ReadAllText(path)) : null;
+                        _failureStateLoaded = true;
+                    }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+                    {
+                        if (error is JsonException) _failureStateLoaded = true;
+                        _logger.Warn(error, "Unable to read the last scheduled backup failure");
+                    }
+                }
+                return _scheduledFailure;
+            }
+        }
+
+        private void SaveScheduledFailure(ScheduledBackupFailure failure)
+        {
+            lock (_backupGate)
+            {
+                _scheduledFailure = failure;
+                _failureStateLoaded = true;
+                var path = _appFolderInfo.GetScheduledBackupFailure();
+                var temporary = path + ".tmp";
+                try
+                {
+                    if (failure == null) File.Delete(path);
+                    else
+                    {
+                        File.WriteAllText(temporary, JsonSerializer.Serialize(failure));
+                        File.Move(temporary, path, overwrite: true);
+                    }
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    _logger.Warn(error, "Unable to persist scheduled backup status; status is retained for this process");
+                }
+                finally
+                {
+                    try { File.Delete(temporary); }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                    { _logger.Warn(error, "Unable to remove temporary scheduled backup status"); }
+                }
+            }
+            try { _eventAggregator.PublishEvent(new BackupRestoreStateChangedEvent()); }
+            catch (Exception error) { _logger.Warn(error, "Unable to refresh backup health after status changed"); }
         }
 
         private void BackupCore(BackupType backupType, CancellationToken cancellationToken)
@@ -308,6 +376,7 @@ namespace NzbDrone.Core.Backup
         {
             var status = DatabaseRestorationService.GetStatus(_appFolderInfo);
             status.ScheduleDisabled = _configService.BackupInterval == 0;
+            status.ScheduledBackupFailure = ReadScheduledFailure();
             if (_maindDb.DatabaseType == DatabaseType.PostgreSQL)
             {
                 int? major = null;
@@ -357,6 +426,14 @@ namespace NzbDrone.Core.Backup
                     CreatePrivateFolder(temporaryPath);
                     var available = _diskProvider.GetAvailableSpace(temporaryPath)
                         ?? throw new IOException("Unable to determine free disk space for backup extraction.");
+                    using (var archive = ZipFile.OpenRead(backupFileName))
+                    {
+                        var unpackedBytes = archive.Entries.Aggregate(0L, (total, entry) => checked(total + entry.Length));
+                        var required = checked(2 * unpackedBytes);
+                        // The upload ZIP already occupies disk; free space is measured after uploading.
+                        if (available < required)
+                            throw new IOException($"Insufficient space for backup extraction and staging: need {required} bytes, have {available} bytes.");
+                    }
                     var timer = Stopwatch.StartNew();
                     _archiveService.ExtractZip(backupFileName, temporaryPath, available);
                     _logger.Info("Backup extracted: {0} bytes in {1} ms", Directory.GetFiles(temporaryPath, "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length), timer.ElapsedMilliseconds);
@@ -677,7 +754,9 @@ namespace NzbDrone.Core.Backup
             var retention = _configService.BackupRetention;
 
             _logger.Debug("Cleaning up backup files older than {0} days", retention);
-            var files = GetBackupFiles(GetBackupFolder(backupType));
+            // Renamed archives remain available for restore, but are no longer owned by retention.
+            var files = GetBackupFiles(GetBackupFolder(backupType))
+                .Where(file => GeneratedBackupFileRegex.IsMatch(Path.GetFileName(file)));
 
             foreach (var file in files)
             {

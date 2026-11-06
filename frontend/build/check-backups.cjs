@@ -33,6 +33,8 @@ function compileFixture() {
   }));
 }
 
+const overwriteRemovals = ['Download client: Old Deluge', 'Remote path mapping: seedbox:/remote/ → /downloads/', 'Proxy: Old proxy', 'Custom format: Old format', 'Delay profile: favorites (#2)', 'Release profile: favorites / +unabridged / −abridged (#7)'];
+
 const strings = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../src/NzbDrone.Core/Localization/Core/en.json'), 'utf8'));
 
 async function check(browser, width, lostReply) {
@@ -49,8 +51,10 @@ async function check(browser, width, lostReply) {
   let restores = 0;
   let rejectRestore = false;
   let statusRequests = 0;
+  let statusUnavailable = false;
   let restarts = 0;
   let settingsRestores = 0;
+  let cleanPreview = false;
   let failedRestore = true;
   let dismissals = 0;
   let navigations = 0;
@@ -65,9 +69,10 @@ async function check(browser, width, lostReply) {
       return route.fulfill({ json: { Strings: strings } });
     }
     if (pathname.endsWith('/system/settingsbackup/restore')) {
+      const preview = request.postDataJSON()?.preview;
       settingsRestores++;
       if (settingsRestores > 2) {
-        return route.fulfill({ json: { applied: ['Indexers'], warnings: ['Skipped unavailable provider'] } });
+        return route.fulfill({ json: preview ? { warnings: ['Skipped unavailable provider'], wouldRemove: cleanPreview ? [] : overwriteRemovals } : { applied: ['Indexers'], warnings: ['Skipped unavailable provider'] } });
       }
       if (settingsRestores === 2) {
         return route.fulfill({ status: 500, json: {
@@ -79,8 +84,14 @@ async function check(browser, width, lostReply) {
         { propertyName: 'RemotePath', errorMessage: 'Remote folder is required' }
       ] });
     }
+    if ((/\/(qualityprofile|metadataprofile|rootfolder)$/).test(pathname)) {
+      return route.fulfill({ json: [] });
+    }
     if (pathname.endsWith('/system/backup/status')) {
       statusRequests++;
+      if (statusUnavailable) {
+        return route.fulfill({ status: 503, json: { message: 'Offline' } });
+      }
       return route.fulfill({ json: { pendingRestore: pending, canCancelRestore: pending, scheduleDisabled: true, restoreFailed: failedRestore } });
     }
     if (pathname.endsWith('/system/backup/restore/failed') && request.method() === 'DELETE') {
@@ -99,10 +110,14 @@ async function check(browser, width, lostReply) {
     if (pathname.endsWith('/system/backup/restore/7')) {
       restores++;
       if (rejectRestore) {
-        return route.fulfill({ status: 400, json: { message: 'Fixture restore validation failure' } });
+        return route.fulfill({ status: rejectRestore === true ? 400 : rejectRestore, json: { message: 'Fixture restore validation failure' } });
       }
-      if (lostReply) {
+      if (lostReply === true) {
         return route.abort('failed');
+      }
+      if (typeof lostReply === 'number') {
+        pending = true;
+        return route.fulfill({ status: lostReply, body: 'Proxy timeout' });
       }
       return route.fulfill({ json: { restartRequired: true } });
     }
@@ -189,6 +204,19 @@ async function check(browser, width, lostReply) {
     await page.screenshot({ path: path.join(artifacts, `partial-settings-${width}-${lostReply}.png`), fullPage: true });
     await page.getByRole('button', { name: strings.Close, exact: true }).click();
     await page.evaluate(() => window.showSettingsRestoreError());
+    for (const removal of overwriteRemovals) {
+      await page.getByText(removal, { exact: true }).waitFor();
+    }
+    await page.getByText(strings.SettingsRestoreWillRemove, { exact: true }).waitFor();
+    const beforeCancel = settingsRestores;
+    await page.getByRole('button', { name: strings.Cancel, exact: true }).click();
+    assert.equal(settingsRestores, beforeCancel, 'Cancelling preview must not restore');
+    await page.getByRole('button', { name: strings.Restore, exact: true }).click();
+    for (const removal of overwriteRemovals) {
+      await page.getByText(removal, { exact: true }).waitFor();
+    }
+    await page.getByText(strings.SettingsRestoreWillRemove, { exact: true }).waitFor();
+    await page.getByRole('button', { name: strings.Restore, exact: true }).last().click();
     await page.getByText('Skipped unavailable provider', { exact: true }).waitFor();
     assert.equal(navigations, 1, 'Successful settings restore must keep results visible');
     await page.getByText('Skipped unavailable provider', { exact: true }).scrollIntoViewIfNeeded();
@@ -199,10 +227,25 @@ async function check(browser, width, lostReply) {
     await reload;
     await page.waitForFunction(() => window.fixtureReady && window.fixtureState().system.backupStatus.isPopulated);
     assert.equal(navigations, 2, 'Close refreshes the app after settings changed');
+    cleanPreview = true;
+    const beforeCleanRestore = settingsRestores;
+    await page.evaluate(() => window.showSettingsRestoreError());
+    await page.getByText('Skipped unavailable provider', { exact: true }).waitFor();
+    assert.equal(settingsRestores, beforeCleanRestore + 2, 'A clean preview applies without an extra confirmation');
+    assert.equal(await page.getByText(strings.SettingsRestorePreview, { exact: true }).count(), 0);
+    await page.getByRole('button', { name: strings.Close, exact: true }).click();
+    await page.waitForFunction(() => window.fixtureReady && window.fixtureState().system.backupStatus.isPopulated);
+
     assert.equal(await page.getByRole('button', { name: strings.DeleteFailedRestoreFiles, exact: true }).isDisabled(), true);
     const cancel = page.getByRole('button', { name: strings.CancelRestore, exact: true });
     await cancel.focus();
     await page.keyboard.press('Enter');
+    await page.getByText(strings.CancelRestoreConfirm, { exact: true }).waitFor();
+    assert.equal(cancels, 0, 'Opening the confirmation sends no DELETE');
+    await page.getByRole('button', { name: strings.Cancel, exact: true }).click();
+    assert.equal(cancels, 0, 'Declining keeps the staged restore');
+    await cancel.click();
+    await page.locator('#portal-root').getByRole('button', { name: strings.CancelRestore, exact: true }).click();
     await page.waitForFunction(() => window.fixtureState().system.backupStatus.item.pendingRestore === false);
     assert.equal(cancels, 1);
     await page.getByRole('button', { name: strings.DeleteFailedRestoreFiles, exact: true }).click();
@@ -222,6 +265,20 @@ async function check(browser, width, lostReply) {
     assert.equal(dismissals, 2);
     assert.equal(await page.getByText('Recovery folder is locked', { exact: true }).count(), 0);
 
+    for (const proxyStatus of [502, 504, 503]) {
+      rejectRestore = proxyStatus === 503 ? 502 : proxyStatus;
+      statusUnavailable = proxyStatus === 503;
+      const statusBefore = statusRequests;
+      await page.locator('table').getByRole('button', { name: strings.RestoreBackup, exact: true }).click();
+      await page.getByRole('button', { name: strings.Restore, exact: true }).click();
+      const message = statusUnavailable ? strings.BackupRestoreStatusUnconfirmed : strings.BackupRestoreProxyTimeout;
+      await page.locator('#portal-root').getByText(message, { exact: true }).waitFor();
+      assert.equal(statusRequests, statusBefore + 1);
+      assert.equal(await page.evaluate(() => !!window.fixtureState().app.isRestarting), false, 'Proxy failures without staging cannot trigger restart/reload');
+      await page.getByRole('button', { name: strings.Cancel, exact: true }).click();
+    }
+    rejectRestore = false;
+    statusUnavailable = false;
     const themeColors = new Set();
     for (const theme of ['light', 'dark']) {
       await page.evaluate((name) => window.setFixtureTheme(name), theme);
@@ -231,14 +288,24 @@ async function check(browser, width, lostReply) {
     }
     assert.equal(themeColors.size, 2, 'Both themes must change the rendered table colors');
     await page.locator('table').getByRole('button', { name: strings.RestoreBackup, exact: true }).click();
+    await page.getByText(strings.RestoreBackupReplaceWarning, { exact: true }).waitFor();
     await page.getByText(strings.RestoreBackupQueueHelp, { exact: true }).waitFor();
     const reconnect = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/system/status'), { timeout: 15000 });
     await page.getByRole('button', { name: strings.Restore, exact: true }).click();
     await page.waitForFunction(() => window.fixtureState().app.isRestarting === true);
     assert.equal(await page.getByRole('button', { name: strings.Restore, exact: true }).isDisabled(), true);
-    assert.equal(restores, 2);
+    assert.equal(restores, 5);
     assert.equal(restarts, 0, 'The browser must not own the restore restart');
     await reconnect;
+    for (const scope of ['audiobook', 'ebook', 'all']) {
+      await page.evaluate((value) => window.showTagsFooter(value), scope);
+      const label = strings.SetChaptarrTagsForFormat.replace('{format}', strings[({ audiobook: 'Audiobooks', ebook: 'Ebooks' })[scope] || 'AudiobooksAndEbooks']);
+      await page.getByRole('button', { name: label, exact: true }).click();
+      assert.equal(await page.getByText('audio-tag', { exact: true }).isVisible(), scope !== 'ebook');
+      assert.equal(await page.getByText('ebook-tag', { exact: true }).isVisible(), scope !== 'audiobook');
+      await page.getByRole('button', { name: strings.Apply, exact: true }).click();
+      assert.deepEqual(await page.evaluate(() => window.tagChanges), [{ tags: [], applyTags: 'add', mediaType: scope === 'all' ? null : scope }]);
+    }
     assert.deepEqual(errors, []);
     await page.screenshot({ path: path.join(artifacts, `backup-${width}-${lostReply}.png`), fullPage: true });
   } catch (error) {
@@ -255,7 +322,7 @@ async function check(browser, width, lostReply) {
     await compileFixture();
     browser = await chromium.launch();
     for (const width of [1440, 375]) {
-      for (const lostReply of [false, true]) {
+      for (const lostReply of width === 1440 ? [false, true, 502, 504] : [false]) {
         await check(browser, width, lostReply);
       }
     }

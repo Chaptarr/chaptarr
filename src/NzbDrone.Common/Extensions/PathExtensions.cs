@@ -424,6 +424,8 @@ namespace NzbDrone.Common.Extensions
             return Path.Combine(GetAppDataPath(appFolderInfo), STAGING_DB);
         }
 
+        public static string GetScheduledBackupFailure(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "backup-scheduled-failure.json");
+
         public static string GetBackupWorkingFolder(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "backup-temp");
         public static string GetAppDataLockFile(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "chaptarr.lock");
         public static string GetPidFile(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "chaptarr.pid");

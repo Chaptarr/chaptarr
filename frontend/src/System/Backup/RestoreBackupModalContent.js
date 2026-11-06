@@ -159,7 +159,9 @@ class RestoreBackupModalContent extends Component {
               />
           }
 
+          {restoreError && <Alert kind={kinds.DANGER}>{getErrorMessage(restoreError)}</Alert>}
           {!id && <Alert kind={kinds.INFO}>{translate('BackupUploadLimitHelp')}</Alert>}
+          <Alert kind={kinds.WARNING}>{translate('RestoreBackupReplaceWarning')}</Alert>
           <Alert kind={kinds.WARNING}>{translate('RestoreBackupQueueHelp')}</Alert>
           {omittedComponents.length > 0 && <Alert kind={kinds.WARNING}>{translate('BackupOmittedComponents', { components: omittedComponents.join(', ') })}</Alert>}
 

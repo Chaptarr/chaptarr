@@ -20,6 +20,12 @@ namespace NzbDrone.Core.HealthCheck.Checks
             var key = status.RestoreFailed ? "BackupRestoreFailedWarning" :
                 status.PendingRestore ? "BackupRestorePendingWarning" :
                 status.DatabaseBackupUnavailableReason != null ? "BackupToolsUnavailableWarning" : null;
+            if (key == null && status.ScheduledBackupFailure is { } failure)
+                return new HealthCheck(GetType(), HealthCheckResult.Warning,
+                    _localizationService.GetLocalizedString("ScheduledBackupFailedWarning", new System.Collections.Generic.Dictionary<string, object>
+                    {
+                        ["time"] = failure.FailedAt.ToString("u"), ["reason"] = failure.Reason
+                    }));
             return key == null ? new HealthCheck(GetType()) :
                 new HealthCheck(GetType(), HealthCheckResult.Warning, _localizationService.GetLocalizedString(key));
         }

@@ -1,6 +1,7 @@
 using System;
 using System.Data;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using Microsoft.Data.Sqlite;
 using Dapper;
 using NLog;
@@ -24,9 +25,18 @@ namespace NzbDrone.Core.Datastore
         private readonly Logger _logger;
         private readonly string _connectionString;
         private readonly object _initializationLock = new object();
+        private readonly TimeProvider _clock;
+        private DateTimeOffset _nextInitializationAttempt;
+        internal static readonly TimeSpan InitializationRetryInterval = TimeSpan.FromMinutes(1);
 
         public StagingDbContext(IAppFolderInfo appFolderInfo, Logger logger)
+            : this(appFolderInfo, logger, TimeProvider.System)
         {
+        }
+
+        internal StagingDbContext(IAppFolderInfo appFolderInfo, Logger logger, TimeProvider clock)
+        {
+            _clock = clock;
             _appFolderInfo = appFolderInfo;
             _logger = logger;
             
@@ -50,6 +60,8 @@ namespace NzbDrone.Core.Datastore
                 {
                     if (InitializationError != null)
                     {
+                        if (_clock.GetUtcNow() < _nextInitializationAttempt)
+                            ExceptionDispatchInfo.Capture(InitializationError).Throw();
                         InitializeDatabase();
                     }
                 }
@@ -86,10 +98,12 @@ namespace NzbDrone.Core.Datastore
             {
                 InitializeDatabaseCore();
                 InitializationError = null;
+                _nextInitializationAttempt = default;
             }
             catch (Exception ex)
             {
                 InitializationError = ex;
+                _nextInitializationAttempt = _clock.GetUtcNow() + InitializationRetryInterval;
                 throw;
             }
         }

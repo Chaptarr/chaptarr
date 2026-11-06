@@ -357,7 +357,7 @@ export const actionHandlers = handleThunks({
 
     const promise = createAjaxRequest(ajaxOptions).request;
 
-    promise.done(() => {
+    const restored = () => {
       dispatch(setAppValue({ isRestarting: true }));
       dispatch(pingServer());
       dispatch(set({
@@ -365,18 +365,29 @@ export const actionHandlers = handleThunks({
         isRestoring: false,
         restoreError: null
       }));
-    });
+    };
+    const failed = (xhr) => dispatch(set({ section: backupsSection, isRestoring: false, restoreError: xhr }));
+    promise.done(restored);
 
     promise.fail((xhr) => {
-      if (xhr.status === 0 || xhr.status === 502 || xhr.status === 504) {
+      if (xhr.status === 502 || xhr.status === 504) {
+        // A proxy timeout does not prove that the upload reached the server.
+        const { request } = createAjaxRequest({ url: '/system/backup/status', dataType: 'json' });
+        request.done((status) => {
+          if (status.pendingRestore) {
+            restored();
+          } else {
+            failed({ status: xhr.status, responseJSON: { message: translate('BackupRestoreProxyTimeout') } });
+          }
+        });
+        request.fail(() => failed({ status: xhr.status, responseJSON: { message: translate('BackupRestoreStatusUnconfirmed') } }));
+        return;
+      }
+      if (xhr.status === 0) {
         dispatch(setAppValue({ isRestarting: true }));
         dispatch(pingServer());
       }
-      dispatch(set({
-        section: backupsSection,
-        isRestoring: false,
-        restoreError: xhr
-      }));
+      failed(xhr);
     });
   },
 

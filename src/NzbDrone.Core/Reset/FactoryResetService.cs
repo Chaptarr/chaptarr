@@ -273,6 +273,8 @@ namespace NzbDrone.Core.Reset
 
         private void ResetAppDataFiles(Dictionary<string, object> preservedHostConfig)
         {
+            TryDeleteFile(_appFolderInfo.GetScheduledBackupFailure());
+
             // Wipe app-level caches.
             TryDeleteFolder(_appFolderInfo.GetMediaCoverPath(), recursive: true);
             TryDeleteFolder(_appFolderInfo.GetDataProtectionPath(), recursive: true);

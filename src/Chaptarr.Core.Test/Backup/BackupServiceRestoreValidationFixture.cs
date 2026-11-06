@@ -131,6 +131,7 @@ namespace Chaptarr.Core.Test.Backup
         {
             var configPath = _appFolderInfo.GetConfigPath();
             File.WriteAllText(configPath, "original");
+            using (System.IO.Compression.ZipFile.Open(Path.Combine(_tempFolder, "backup.zip"), System.IO.Compression.ZipArchiveMode.Create)) { }
 
             Assert.Throws<RestoreBackupFailedException>(() => _subject.Restore(Path.Combine(_tempFolder, "backup.zip")));
 

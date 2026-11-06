@@ -16,6 +16,26 @@ namespace Chaptarr.Core.Test.Common
     [NonParallelizable]
     public class DualDatabaseFixtureFixture
     {
+        [Test]
+        public void required_postgres_cannot_be_silently_skipped()
+        {
+            const string connectionKey = "CHAPTARR_TEST_POSTGRES_CONNECTION_STRING";
+            const string requiredKey = "CHAPTARR_REQUIRE_POSTGRES";
+            var connection = Environment.GetEnvironmentVariable(connectionKey);
+            var required = Environment.GetEnvironmentVariable(requiredKey);
+            try
+            {
+                Environment.SetEnvironmentVariable(connectionKey, null);
+                Environment.SetEnvironmentVariable(requiredKey, "true");
+                Assert.Throws<AssertionException>(() => DualDatabaseFixture.Run(true, _ => Assert.Fail("Must not open a database")));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(connectionKey, connection);
+                Environment.SetEnvironmentVariable(requiredKey, required);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void cloned_databases_must_isolate_schema_data_and_migration_history(bool postgres)
@@ -114,6 +134,8 @@ namespace Chaptarr.Core.Test.Common
                 else
                 {
                     Assert.That(File.Exists(name), Is.False);
+                    Assert.That(File.Exists(name + "-wal"), Is.False);
+                    Assert.That(File.Exists(name + "-shm"), Is.False);
                 }
             });
         }

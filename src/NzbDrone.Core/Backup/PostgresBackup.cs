@@ -96,7 +96,7 @@ namespace NzbDrone.Core.Backup
 
             foreach (var path in candidates.Where(File.Exists))
             {
-                var version = Run(path, new[] { "--version" }, null, cancellationToken);
+                var version = Run(path, new[] { "--version" }, null, cancellationToken, timeout: TimeSpan.FromSeconds(10));
                 var match = Regex.Match(version, @"PostgreSQL\)\s+(\d+)\.");
                 if (match.Success && int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) == major)
                 {
@@ -140,9 +140,12 @@ namespace NzbDrone.Core.Backup
             return value.Replace("\\", "\\\\").Replace(":", "\\:");
         }
 
-        private static string Run(string executable, IEnumerable<string> arguments, string connectionString, CancellationToken cancellationToken, string workingFolder = null)
+        internal static string Run(string executable, IEnumerable<string> arguments, string connectionString, CancellationToken cancellationToken, string workingFolder = null, TimeSpan? timeout = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromMinutes(30));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+            var operationToken = linked.Token;
             var info = new ProcessStartInfo(executable)
             {
                 UseShellExecute = false,
@@ -196,11 +199,11 @@ namespace NzbDrone.Core.Backup
                 }
 
                 using var process = Process.Start(info) ?? throw new InvalidOperationException("Unable to start PostgreSQL client tools.");
-                var output = process.StandardOutput.ReadToEndAsync(cancellationToken);
-                var error = process.StandardError.ReadToEndAsync(cancellationToken);
+                var output = process.StandardOutput.ReadToEndAsync(operationToken);
+                var error = process.StandardError.ReadToEndAsync(operationToken);
                 try
                 {
-                    process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+                    process.WaitForExitAsync(operationToken).GetAwaiter().GetResult();
                     var result = output.GetAwaiter().GetResult();
                     var diagnostic = error.GetAwaiter().GetResult();
                     if (process.ExitCode != 0)
@@ -221,10 +224,19 @@ namespace NzbDrone.Core.Backup
                     // Killing a blocked client does not cancel its server-side lock wait.
                     if (connectionString != null)
                     {
-                        using var connection = Open(connectionString);
-                        connection.Execute("SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name = @Name AND usename = CURRENT_USER AND datname = current_database()",
-                            new { Name = applicationName });
+                        try
+                        {
+                            using var connection = Open(connectionString);
+                            connection.Execute("SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name = @Name AND usename = CURRENT_USER AND datname = current_database()",
+                                new { Name = applicationName }, commandTimeout: 10);
+                        }
+                        catch (Exception cancellationError)
+                        {
+                            NLog.LogManager.GetCurrentClassLogger().Warn(cancellationError, "Unable to cancel the timed-out PostgreSQL backup connection");
+                        }
                     }
+                    if (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+                        throw new TimeoutException($"PostgreSQL {Path.GetFileNameWithoutExtension(executable)} exceeded its {timeout ?? TimeSpan.FromMinutes(30)} time limit. No completed backup/restore was reported.");
                     throw;
                 }
                 finally

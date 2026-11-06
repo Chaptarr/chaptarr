@@ -14,7 +14,7 @@ function createMapStateToProps() {
   return createSelector(
     (state) => state.system.logFiles,
     (state) => state.system.status.item,
-    (state) => state.settings.general.item,
+    (state) => state.settings.general,
     createCommandExecutingSelector(commandNames.DELETE_LOG_FILES),
     (logFiles, status, generalSettings, deleteFilesExecuting) => {
       const {
@@ -27,7 +27,7 @@ function createMapStateToProps() {
         isWindows
       } = status;
 
-      const logLevel = generalSettings.logLevel || 'info';
+      const logLevel = generalSettings.item.logLevel || 'info';
 
       return {
         isFetching,
@@ -35,7 +35,9 @@ function createMapStateToProps() {
         deleteFilesExecuting,
         currentLogView: 'Log Files',
         location: combinePath(isWindows, appData, ['logs']),
-        logLevel
+        logLevel,
+        isSettingsLoaded: generalSettings.isPopulated && !generalSettings.isFetching && !generalSettings.error,
+        settingsError: generalSettings.error
       };
     }
   );
@@ -68,6 +70,9 @@ class LogFilesConnector extends Component {
 
   onRefreshPress = () => {
     this.props.fetchLogFiles();
+    if (!this.props.isSettingsLoaded) {
+      this.props.fetchGeneralSettings();
+    }
   };
 
   onDeleteFilesPress = () => {
@@ -82,6 +87,9 @@ class LogFilesConnector extends Component {
   };
 
   onLogLevelChange = ({ value }) => {
+    if (!this.props.isSettingsLoaded || this.state.isSavingSettings) {
+      return;
+    }
     this.setState({ isSavingSettings: true, saveSettingsError: null });
     const request = this.props.saveGeneralSettings({ logLevel: value });
     this.saveRequest = request;
@@ -114,6 +122,7 @@ class LogFilesConnector extends Component {
 }
 
 LogFilesConnector.propTypes = {
+  isSettingsLoaded: PropTypes.bool.isRequired,
   deleteFilesExecuting: PropTypes.bool.isRequired,
   fetchLogFiles: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired,

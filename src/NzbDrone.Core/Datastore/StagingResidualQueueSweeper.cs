@@ -77,13 +77,13 @@ namespace NzbDrone.Core.Datastore
                     var completedResults = _ingestQueue.GetImportResults(items.Select(item => item.Path).ToArray())
                         .ToDictionary(result => result.QueueItemId);
                     var representedPaths = (_mediaFileService.GetFileWithPath(items.Select(item => item.Path).ToList()) ?? new List<BookFile>())
-                        .GroupBy(file => file.Path, PathEqualityComparer.Instance).Where(group => group.Count() == 1)
-                        .Select(group => group.Key).ToHashSet(PathEqualityComparer.Instance);
+                        .Select(file => file.Path).ToHashSet(PathEqualityComparer.Instance);
                     var verifiedResults = new List<int>();
                     var verifiedPaths = new List<string>();
                     foreach (var item in items)
                     {
-                        if (item.Status == "done" && representedPaths.Contains(item.Path) && completedResults.TryGetValue(item.Id, out var result))
+                        if (item.Status == "done" && completedResults.TryGetValue(item.Id, out var result) &&
+                            (representedPaths.Contains(item.Path) || !_diskProvider.GetFileInfo(item.Path).Exists))
                         {
                             verifiedResults.Add(result.Id);
                         }

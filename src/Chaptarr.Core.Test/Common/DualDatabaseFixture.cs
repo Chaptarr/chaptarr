@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using Dapper;
 using Microsoft.Data.Sqlite;
@@ -22,18 +21,15 @@ namespace Chaptarr.Core.Test.Common
             var adminString = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
             if (postgres && string.IsNullOrEmpty(adminString))
             {
+                if (string.Equals(Environment.GetEnvironmentVariable("CHAPTARR_REQUIRE_POSTGRES"), "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    Assert.Fail("CHAPTARR_REQUIRE_POSTGRES is true, but CHAPTARR_TEST_POSTGRES_CONNECTION_STRING is missing.");
+                }
                 Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING to exercise PostgreSQL persistence");
             }
 
             var name = DatabaseName(postgres, "api_identity_");
-            var connectionString = ConnectionString(postgres, name, adminString);
-
-            IDbConnection Open()
-            {
-                IDbConnection connection = postgres ? new NpgsqlConnection(connectionString) : new SqliteConnection(connectionString);
-                connection.Open();
-                return connection;
-            }
+            var connectionString = ConnectionString(postgres, name, adminString, pooled: !postgres);
 
             try
             {
@@ -46,12 +42,13 @@ namespace Chaptarr.Core.Test.Common
                 {
                     CreateDatabase(postgres, name, adminString, GetTemplate(postgres, migrationType, adminString));
                 }
-                if (TableMapping.Mapper.TableMap.Count == 0)
-                {
-                    TableMapping.Map();
-                }
-
-                var database = new MainDatabase(new Database("dual-database-regression", Open));
+                var connectionInfo = new DatabaseConnectionInfo(postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite, connectionString);
+                // The clone is already migrated; use the application's connection initialization.
+                var factory = new DbFactory(
+                    InterfaceProxy.Proxy<IMigrationController>((_, _) => null),
+                    InterfaceProxy.Proxy<IConnectionStringFactory>((_, _) => connectionInfo),
+                    null);
+                var database = new MainDatabase(factory.Create(migrationType));
                 test(database);
             }
             finally
@@ -66,9 +63,9 @@ namespace Chaptarr.Core.Test.Common
             return postgres ? name : Path.Combine(TestContext.CurrentContext.WorkDirectory, name + ".db");
         }
 
-        private static string ConnectionString(bool postgres, string name, string adminString) => postgres
+        private static string ConnectionString(bool postgres, string name, string adminString, bool pooled = false) => postgres
             ? new NpgsqlConnectionStringBuilder(adminString) { Database = name, Pooling = false }.ConnectionString
-            : new SqliteConnectionStringBuilder { DataSource = name, Pooling = false }.ToString();
+            : new SqliteConnectionStringBuilder { DataSource = name, Pooling = pooled, Cache = SqliteCacheMode.Private }.ToString();
 
         private static void Migrate(bool postgres, string connectionString, MigrationType migrationType, long? desiredVersion = null)
         {
@@ -126,6 +123,8 @@ namespace Chaptarr.Core.Test.Common
             }
             else
             {
+                using var connection = new SqliteConnection(ConnectionString(false, name, null, pooled: true));
+                SqliteConnection.ClearPool(connection);
                 File.Delete(name);
             }
         }

@@ -227,14 +227,10 @@ namespace Chaptarr.Core.Test.Backup
                 PostgresArchive(stores, new AppFolders(Path.Combine(_root, "authenticated")));
                 Assert.That(Directory.GetDirectories(_root, "chaptarr_pgpass_*", SearchOption.AllDirectories), Is.Empty);
 
-                var run = typeof(PostgresBackup).GetMethod("Run", BindingFlags.Static | BindingFlags.NonPublic);
-                var failure = Assert.Throws<TargetInvocationException>(() => run.Invoke(null, new object[]
-                {
+                var failure = Assert.Throws<InvalidOperationException>(() => PostgresBackup.Run(
                     PostgresBackup.Tool("pg_dump", PostgresBackup.ServerMajor(configured)),
-                    new[] { "--schema=missing_" + Guid.NewGuid().ToString("N"), "--schema-only" }, configured, CancellationToken.None, _root
-                }));
-                Assert.That(failure.InnerException, Is.TypeOf<InvalidOperationException>());
-                Assert.That(failure.InnerException.ToString().Contains(password, StringComparison.Ordinal), Is.False, "Client failures must not expose credentials");
+                    new[] { "--schema=missing_" + Guid.NewGuid().ToString("N"), "--schema-only" }, configured, CancellationToken.None, _root));
+                Assert.That(failure.ToString().Contains(password, StringComparison.Ordinal), Is.False, "Client failures must not expose credentials");
                 Assert.That(Directory.GetDirectories(_root, "chaptarr_pgpass_*", SearchOption.AllDirectories), Is.Empty);
                 Assert.That(messages.Logs.Any(message => message.Contains(password, StringComparison.Ordinal)), Is.False, "Backup logs must not expose credentials");
             }
@@ -540,11 +536,9 @@ namespace Chaptarr.Core.Test.Backup
             var sensitive = "synthetic-sensitive-" + Guid.NewGuid().ToString("N");
             var executable = Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
                 "..", "..", "..", OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet"));
-            var method = typeof(PostgresBackup).GetMethod("Run", BindingFlags.Static | BindingFlags.NonPublic);
-            var exception = Assert.Throws<TargetInvocationException>(() => method.Invoke(null,
-                new object[] { executable, new[] { "--" + sensitive }, null, CancellationToken.None, null }));
-            Assert.That(exception.InnerException, Is.InstanceOf<InvalidOperationException>());
-            Assert.That(exception.InnerException.Message.Contains(sensitive, StringComparison.Ordinal), Is.False);
+            var exception = Assert.Throws<InvalidOperationException>(() => PostgresBackup.Run(
+                executable, new[] { "--" + sensitive }, null, CancellationToken.None));
+            Assert.That(exception.Message.Contains(sensitive, StringComparison.Ordinal), Is.False);
         }
 
         [TestCase(true)]

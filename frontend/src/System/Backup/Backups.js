@@ -52,7 +52,8 @@ class Backups extends Component {
 
     this.state = {
       isRestoreModalOpen: false,
-      isConfirmDeleteModalOpen: false
+      isConfirmDeleteModalOpen: false,
+      isConfirmCancelModalOpen: false
     };
   }
 
@@ -70,6 +71,19 @@ class Backups extends Component {
   onConfirmDeletePress = () => {
     this.onDeleteModalClose();
     this.props.onDismissFailedRestoresPress();
+  };
+
+  onCancelRestorePress = () => {
+    this.setState({ isConfirmCancelModalOpen: true });
+  };
+
+  onCancelRestoreModalClose = () => {
+    this.setState({ isConfirmCancelModalOpen: false });
+  };
+
+  onConfirmCancelRestorePress = () => {
+    this.onCancelRestoreModalClose();
+    this.props.onCancelRestorePress();
   };
 
   onRestorePress = () => {
@@ -94,8 +108,7 @@ class Backups extends Component {
       onDeleteBackupPress,
       backupStatus,
       backupStatusError,
-      restoreError,
-      onCancelRestorePress
+      restoreError
     } = this.props;
 
     const hasBackups = isPopulated && !!items.length;
@@ -138,7 +151,7 @@ class Backups extends Component {
           {backupStatus.pendingRestore &&
             <Alert kind={kinds.WARNING}>
               {translate('BackupRestorePendingWarning')}
-              {backupStatus.canCancelRestore && <Button onPress={onCancelRestorePress}>{translate('CancelRestore')}</Button>}
+              {backupStatus.canCancelRestore && <Button onPress={this.onCancelRestorePress}>{translate('CancelRestore')}</Button>}
             </Alert>}
           {restoreError && <Alert kind={kinds.DANGER}>{restoreError.responseJSON?.message || translate('BackupRestoreRequestFailed')}</Alert>}
 
@@ -209,6 +222,16 @@ class Backups extends Component {
           confirmLabel={translate('Delete')}
           onConfirm={this.onConfirmDeletePress}
           onCancel={this.onDeleteModalClose}
+        />
+
+        <ConfirmModal
+          isOpen={this.state.isConfirmCancelModalOpen}
+          kind={kinds.WARNING}
+          title={translate('CancelRestore')}
+          message={translate('CancelRestoreConfirm')}
+          confirmLabel={translate('CancelRestore')}
+          onConfirm={this.onConfirmCancelRestorePress}
+          onCancel={this.onCancelRestoreModalClose}
         />
 
         <RestoreBackupModalConnector

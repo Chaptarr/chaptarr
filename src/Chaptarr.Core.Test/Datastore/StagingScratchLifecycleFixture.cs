@@ -105,7 +105,8 @@ namespace Chaptarr.Core.Test.Datastore
             var logging = new NLog.Config.LoggingConfiguration();
             logging.AddRuleForAllLevels(messages);
             factory.Configuration = logging;
-            _context = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => _folder), factory.GetLogger("staging-recovery"));
+            var clock = new ManualTimeProvider();
+            _context = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => _folder), factory.GetLogger("staging-recovery"), clock);
             _queue = new IngestQueueRepository(_context, _logger);
             using var control = new SqliteConnection(new SqliteConnectionStringBuilder
             {
@@ -122,6 +123,7 @@ namespace Chaptarr.Core.Test.Datastore
             Assert.That(_context.InitializationError, Is.SameAs(failure));
             Assert.That(control.QuerySingle<string>("SELECT status FROM ingest_queue WHERE path=@abandoned", new { abandoned }), Is.EqualTo("in_progress"));
             control.Execute("DROP TRIGGER block_startup_recovery;");
+            clock.Advance(StagingDbContext.InitializationRetryInterval);
             messages.Logs.Clear();
 
             using var ready = new CountdownEvent(callers);
@@ -164,9 +166,11 @@ namespace Chaptarr.Core.Test.Datastore
         public void failed_staging_initialization_creates_schema_when_storage_becomes_available()
         {
             var folder = Path.Combine(_folder, "unavailable");
-            var context = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => folder), _logger);
+            var clock = new ManualTimeProvider();
+            var context = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => folder), _logger, clock);
             Assert.Throws<SqliteException>(() => context.InitializeDatabase());
             Directory.CreateDirectory(folder);
+            clock.Advance(StagingDbContext.InitializationRetryInterval);
 
             using var connection = (SqliteConnection)context.OpenConnection();
             try
@@ -182,6 +186,32 @@ namespace Chaptarr.Core.Test.Datastore
             {
                 SqliteConnection.ClearPool(connection);
             }
+        }
+
+        [Test]
+        public void repeated_staging_access_during_an_outage_retries_once_per_interval_then_recovers()
+        {
+            var folder = Path.Combine(_folder, "unavailable-retry");
+            var clock = new ManualTimeProvider();
+            using var factory = new LogFactory();
+            var messages = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var logging = new NLog.Config.LoggingConfiguration();
+            logging.AddRuleForAllLevels(messages);
+            factory.Configuration = logging;
+            var context = new StagingDbContext(Stub<IAppFolderInfo>((_, _) => folder), factory.GetLogger("staging-retry"), clock);
+            var firstFailure = Assert.Throws<SqliteException>(() => context.InitializeDatabase());
+            for (var i = 0; i < 20; i++)
+                Assert.That(Assert.Throws<SqliteException>(() => context.OpenConnection()), Is.SameAs(firstFailure));
+            Assert.That(messages.Logs.Count(message => message == "Initializing staging database"), Is.EqualTo(1));
+            clock.Advance(StagingDbContext.InitializationRetryInterval);
+            Assert.Throws<SqliteException>(() => context.OpenConnection());
+            Assert.That(messages.Logs.Count(message => message == "Initializing staging database"), Is.EqualTo(2));
+            Directory.CreateDirectory(folder);
+            clock.Advance(StagingDbContext.InitializationRetryInterval);
+            using var connection = (SqliteConnection)context.OpenConnection();
+            Assert.That(context.InitializationError, Is.Null);
+            Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM ingest_queue"), Is.Zero);
+            SqliteConnection.ClearPool(connection);
         }
 
         [TestCase(false, false, 100)]
@@ -268,7 +298,7 @@ namespace Chaptarr.Core.Test.Datastore
                         ? author : throw new NotSupportedException(method.Name)),
                     service, null, null, null, _logger,
                     deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => Stub<IDeleteMediaFiles>((method, _) =>
-                        method.Name == nameof(IDeleteMediaFiles.DeleteBookFiles) ? null : throw new NotSupportedException(method.Name))));
+                        method.Name == nameof(IDeleteMediaFiles.DeleteBookFiles) ? selected.ToList() : throw new NotSupportedException(method.Name))));
                 var timer = Stopwatch.StartNew();
                 bookService.DeleteBook(audio.BookId, deleteFiles);
                 timer.Stop();
@@ -403,7 +433,7 @@ namespace Chaptarr.Core.Test.Datastore
             Set("_logger", logger ?? _logger);
             Set("_eventAggregator", Stub<IEventAggregator>((method, args) => null));
             await (Task)typeof(ImportOrchestratorV2).GetMethod("StageFilesAsync", BindingFlags.Instance | BindingFlags.NonPublic)
-                .Invoke(orchestrator, new object[] { _folder, new RootFolder { Path = _folder, FolderType = folderType }, 123, null, FilterFilesType.Known });
+                .Invoke(orchestrator, new object[] { _folder, new RootFolder { Path = _folder, FolderType = folderType }, 123, null, FilterFilesType.Known, null });
         }
 
         [TestCase(false)]
@@ -619,13 +649,19 @@ namespace Chaptarr.Core.Test.Datastore
                     nameof(IDiskProvider.GetFileInfo) => new FileSystem().FileInfo.FromFileName((string)args[0]),
                     _ => Default(method.ReturnType)
                 });
-                var repository = Stub<IMediaFileRepository>((method, args) => method.Name == nameof(IMediaFileRepository.GetFilesWithBasePath)
-                    ? paths.Select(path => new BookFile { Path = path, EditionId = 1, Size = new FileInfo(path).Length, Modified = File.GetLastWriteTimeUtc(path) }).ToList()
-                    : Default(method.ReturnType));
+                var repository = Stub<IMediaFileRepository>((method, args) => method.Name switch
+                {
+                    nameof(IMediaFileRepository.GetFilesWithBasePath) => paths.Select(path => new BookFile
+                        { Path = path, EditionId = 1, Size = new FileInfo(path).Length, Modified = File.GetLastWriteTimeUtc(path) }).ToList(),
+                    nameof(IMediaFileRepository.GetFileWithPath) => new List<BookFile> { new BookFile { Path = imported, EditionId = 1 } },
+                    _ => Default(method.ReturnType)
+                });
+                var editions = Stub<IEditionService>((method, args) => method.Name == nameof(IEditionService.GetEditions)
+                    ? new List<Edition> { new Edition { Id = 1, BookId = 123 } } : Default(method.ReturnType));
                 var books = Stub<IBookService>((method, args) => method.Name == nameof(IBookService.GetExistingBooks)
                     ? new List<Book> { new Book { Id = 123, AuthorId = 456, Title = "Imported book" } } : Default(method.ReturnType));
                 var discovery = Stub<IDiscoveryWorker>((method, args) => Task.FromResult(0));
-                var orchestrator = new ImportOrchestratorV2(_queue, null, discovery, null, null, books, null, authorService,
+                var orchestrator = new ImportOrchestratorV2(_queue, null, discovery, null, null, books, editions, authorService,
                     null, null, disk, null, null, repository, null, events, _logger);
                 var result = orchestrator.ProcessFilesAsync(_folder, new RootFolder { Path = _folder, FolderType = FolderType.Ebook }).GetAwaiter().GetResult();
                 Assert.Multiple(() =>
@@ -674,6 +710,29 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(reads, Is.EqualTo(postgres ? 1 : 3));
                 Assert.Throws<ApplicationException>(() => authors.Get(ids));
             });
+        }
+
+        [TestCase(0)]
+        [TestCase(2)]
+        public void completed_scratch_is_released_when_file_is_gone_or_already_has_durable_rows(int rows)
+        {
+            var path = AddItem("residual");
+            if (rows == 0) File.Delete(path);
+            var files = Stub<IMediaFileService>((method, args) => Enumerable.Range(1, rows)
+                .Select(id => new BookFile { Id = id, Path = path, EditionId = id }).ToList());
+            var disk = Stub<IDiskProvider>((method, args) => new FileSystem().FileInfo.FromFileName((string)args[0]));
+            new StagingResidualQueueSweeper(_queue, files, disk, null, _logger).SweepAllResidualItems(completedOnly: true);
+            Assert.That(_queue.GetImportResults(), Is.Empty);
+        }
+
+        [Test]
+        public void completed_scratch_is_retained_when_file_stat_throws()
+        {
+            var path = AddItem("unavailable");
+            var files = Stub<IMediaFileService>((method, args) => new List<BookFile>());
+            var disk = Stub<IDiskProvider>((method, args) => throw new IOException("share unavailable"));
+            new StagingResidualQueueSweeper(_queue, files, disk, null, _logger).SweepAllResidualItems(completedOnly: true);
+            Assert.That(_queue.GetImportResults().Single().Path, Is.EqualTo(path));
         }
 
         [Test]
