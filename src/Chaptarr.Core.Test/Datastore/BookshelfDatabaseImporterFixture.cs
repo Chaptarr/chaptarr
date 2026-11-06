@@ -79,6 +79,47 @@ namespace Chaptarr.Core.Test.Datastore
             Environment.SetEnvironmentVariable("METADATA_URL", _previousMetadataUrl);
         }
 
+        [Test]
+        public void should_reserve_quality_profile_ids_deleted_before_source_migration()
+        {
+            using (var source = new SqliteConnection(_sourceConnectionString))
+            {
+                source.Open();
+                using var command = source.CreateCommand();
+                command.CommandText = @"
+                    INSERT INTO QualityProfiles (Id, Name, Cutoff, Items, UpgradeAllowed)
+                    SELECT 127, 'Deleted synthetic profile', Cutoff, Items, UpgradeAllowed
+                    FROM QualityProfiles ORDER BY Id LIMIT 1;
+                    DELETE FROM QualityProfiles WHERE Id=127;";
+                command.ExecuteNonQuery();
+            }
+
+            Assert.That(QueryScalar<long>(_sourcePath, "SELECT seq FROM sqlite_sequence WHERE name='QualityProfiles';"), Is.EqualTo(127));
+            new MigrationController(LogManager.GetLogger(nameof(BookshelfDatabaseImporterFixture)), null).Migrate(
+                _sourceConnectionString, new MigrationContext(MigrationType.Main), DatabaseType.SQLite);
+
+            Assert.That(QueryScalar<string>(_sourcePath,
+                "SELECT Value FROM Config WHERE LOWER(Key)='bookshelfnglegacyqualityprofilesequence';"), Is.EqualTo("127"));
+        }
+
+        [Test]
+        public void should_reject_out_of_range_source_profile_sequence_without_changing_source()
+        {
+            using (var source = new SqliteConnection(_sourceConnectionString))
+            {
+                source.Open();
+                using var command = source.CreateCommand();
+                command.CommandText = "UPDATE sqlite_sequence SET seq=2147483648 WHERE name='QualityProfiles';";
+                command.ExecuteNonQuery();
+            }
+
+            var before = File.ReadAllBytes(_sourcePath);
+            Assert.Throws<InvalidDataException>(() => new MigrationController(
+                LogManager.GetLogger(nameof(BookshelfDatabaseImporterFixture)), null).Migrate(
+                _sourceConnectionString, new MigrationContext(MigrationType.Main), DatabaseType.SQLite));
+            Assert.That(File.ReadAllBytes(_sourcePath), Is.EqualTo(before));
+        }
+
         [TestCase(40, "")]
         [TestCase(40, "  Reader One / Reader Two  ")]
         [TestCase(41, "")]

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using Dapper;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Profiles;
@@ -28,7 +29,7 @@ namespace NzbDrone.Core.Profiles.Qualities
 
     public class BookshelfQualityProfileService : IBookshelfQualityProfileService
     {
-        private const string CounterKey = "bookshelfnglegacyqualityprofilesequence";
+        private const string CounterKey = BookshelfNGCompatibilityProfile.QualityProfileIdentitySequenceKey;
         private static readonly object WriteGate = new();
         private readonly IMainDatabase _database;
         private readonly IProfileRepository _repository;
@@ -197,7 +198,11 @@ FROM ""BookshelfLegacyIdentityMap"" WHERE ""Source""='BookshelfNG' AND LOWER(""E
                 new { LegacyId = legacyId }, transaction).ToList();
             if (mappings.Count == 0)
             {
-                var native = connection.QuerySingleOrDefault<QualityProfile>("SELECT * FROM \"QualityProfiles\" WHERE \"Id\"=@LegacyId AND \"ProfileType\"=1", new { LegacyId = legacyId }, transaction);
+                var native = connection.QuerySingleOrDefault<QualityProfile>(@"SELECT p.* FROM ""QualityProfiles"" p
+WHERE p.""Id""=@LegacyId AND p.""ProfileType""=1
+AND NOT EXISTS (SELECT 1 FROM ""BookshelfLegacyIdentityMap"" m
+WHERE m.""Source""='BookshelfNG' AND LOWER(m.""EntityType"")='qualityprofile' AND m.""TargetId""=p.""Id"")",
+                    new { LegacyId = legacyId }, transaction);
                 if (native == null)
                 {
                     throw new ModelNotFoundException(typeof(QualityProfile), legacyId);

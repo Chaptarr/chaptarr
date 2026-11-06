@@ -149,7 +149,8 @@ namespace NzbDrone.Core.Datastore
             DbTransaction transaction,
             string sourceDatabasePath,
             int sourceSchemaVersion,
-            string sourceApiBasePath = null)
+            string sourceApiBasePath = null,
+            int? sourceQualityProfileIdentityHighWater = null)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
             if (target == null) throw new ArgumentNullException(nameof(target));
@@ -160,6 +161,8 @@ namespace NzbDrone.Core.Datastore
             }
 
             ValidateSourceSchema(source);
+            var qualityProfileIdentityHighWater = Math.Max(
+                sourceQualityProfileIdentityHighWater ?? 0, ReadQualityProfileIdentityHighWater(source));
             var mediaInference = BookshelfMediaTypeInference.Read(source);
             var mediaChoices = BookshelfBookMediaMapping.Load(source, sourceDatabasePath, mediaInference);
             mediaInference.ApplyMediaChoices(mediaChoices);
@@ -184,7 +187,7 @@ namespace NzbDrone.Core.Datastore
             ImportBlocklist(source, target, transaction, authors, books, report);
             ImportDownloadHistory(source, target, transaction, authors, report);
 
-            ImportConfig(source, target, transaction, report, sourceSchemaVersion, sourceApiBasePath);
+            ImportConfig(source, target, transaction, report, sourceSchemaVersion, sourceApiBasePath, qualityProfileIdentityHighWater);
             CopyTable(source, target, transaction, report, "CustomFilters");
             CopyTable(source, target, transaction, report, "CustomFormats");
             CopyTable(source, target, transaction, report, "DelayProfiles");
@@ -297,6 +300,59 @@ namespace NzbDrone.Core.Datastore
                 command.CommandText = $"DELETE FROM {Quote(table)};";
                 command.ExecuteNonQuery();
             }
+        }
+
+        internal static int ReadQualityProfileIdentityHighWater(DbConnection source, DbTransaction transaction = null)
+        {
+            using var maximum = source.CreateCommand();
+            maximum.Transaction = transaction;
+            maximum.CommandText = "SELECT COALESCE(MAX(\"Id\"),0) FROM \"QualityProfiles\";";
+            var highWater = Convert.ToInt64(maximum.ExecuteScalar(), CultureInfo.InvariantCulture);
+            if (source is NpgsqlConnection)
+            {
+                string sequenceSchema = null;
+                string sequenceName = null;
+                using (var sequence = source.CreateCommand())
+                {
+                    sequence.Transaction = transaction;
+                    sequence.CommandText = @"SELECT n.nspname,c.relname FROM pg_class c
+JOIN pg_namespace n ON n.oid=c.relnamespace
+WHERE c.oid=pg_get_serial_sequence('""QualityProfiles""','Id')::regclass;";
+                    using var reader = sequence.ExecuteReader();
+                    if (reader.Read())
+                    {
+                        sequenceSchema = reader.GetString(0);
+                        sequenceName = reader.GetString(1);
+                    }
+                }
+
+                if (sequenceName != null)
+                {
+                    using var sequence = source.CreateCommand();
+                    sequence.Transaction = transaction;
+                    sequence.CommandText = $"SELECT last_value,is_called FROM {Quote(sequenceSchema)}.{Quote(sequenceName)};"; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- both interpolated identifiers are escaped.
+                    using var reader = sequence.ExecuteReader();
+                    if (reader.Read())
+                    {
+                        // setval(..., false) makes the saved value the next ID.
+                        highWater = Math.Max(highWater, reader.GetInt64(0) - (reader.GetBoolean(1) ? 0 : 1));
+                    }
+                }
+            }
+            else if (TableExists(source, "sqlite_sequence"))
+            {
+                using var sequence = source.CreateCommand();
+                sequence.Transaction = transaction;
+                sequence.CommandText = "SELECT COALESCE(MAX(seq),0) FROM sqlite_sequence WHERE name='QualityProfiles';";
+                highWater = Math.Max(highWater, Convert.ToInt64(sequence.ExecuteScalar(), CultureInfo.InvariantCulture));
+            }
+
+            if (highWater < 0 || highWater > int.MaxValue)
+            {
+                throw new InvalidDataException("BookshelfNG quality profile identity sequence is outside the supported integer range; conversion stopped before promotion.");
+            }
+
+            return (int)highWater;
         }
 
         private static Dictionary<(int SourceId, int MediaType), int> ImportQualityProfiles(
@@ -2163,7 +2219,8 @@ namespace NzbDrone.Core.Datastore
             DbTransaction transaction,
             BookshelfDatabaseImportReport report,
             int sourceSchemaVersion,
-            string sourceApiBasePath)
+            string sourceApiBasePath,
+            int qualityProfileIdentityHighWater)
         {
             const string legacyMatchKey = "bookimportminimummatchpercent";
             const string chaptarrStrictnessKey = "bookmatchingstrictness";
@@ -2609,6 +2666,16 @@ namespace NzbDrone.Core.Datastore
                     authorPathSettingDisposition = "BookshelfNG's opt-in author path initialization was disabled; its new-author root overrides were not applied";
                 }
             }
+
+            var counterKey = BookshelfNGCompatibilityProfile.QualityProfileIdentitySequenceKey;
+            var counterRows = configRows.Where(row => string.Equals(GetString(row, "Key"), counterKey, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (counterRows.Count > 1)
+            {
+                throw new InvalidDataException("BookshelfNG contains ambiguous quality profile identity counters; conversion stopped before promotion.");
+            }
+
+            UpsertCompatibilityProfileValue(configRows, targetColumns, counterRows, counterKey,
+                qualityProfileIdentityHighWater.ToString(CultureInfo.InvariantCulture), ref nextGeneratedConfigId, target);
 
             foreach (var row in configRows)
             {

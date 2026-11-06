@@ -69,7 +69,7 @@ namespace NzbDrone.Core.Datastore
                     var cleanedSchemas = CleanOrphanedTemporarySchemas(sourceConnection, sourceSchema);
                     reportOutcome?.Invoke("orphan-stages-cleaned", cleanedSchemas.ToString(CultureInfo.InvariantCulture));
                 }
-                CreateConsistentSnapshot(sourceConnection, sourceSchema, snapshotSchema);
+                var qualityProfileIdentityHighWater = CreateConsistentSnapshot(sourceConnection, sourceSchema, snapshotSchema);
                 reportProgress?.Invoke("snapshotted", snapshotSchema);
 
                 if (sourceVersion < SupportedSourceMigration)
@@ -111,7 +111,8 @@ namespace NzbDrone.Core.Datastore
                         transaction,
                         mediaMapBasePath,
                         sourceVersion,
-                        sourceApiBasePath);
+                        sourceApiBasePath,
+                        qualityProfileIdentityHighWater);
                     ValidateImportReport(sourceTables, importReport);
                     transaction.Commit();
                 }
@@ -231,7 +232,7 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-        private static void CreateConsistentSnapshot(NpgsqlConnection connection, string sourceSchema, string snapshotSchema)
+        private static int CreateConsistentSnapshot(NpgsqlConnection connection, string sourceSchema, string snapshotSchema)
         {
             var tables = GetSchemaTables(connection, sourceSchema);
             if (tables.Count == 0)
@@ -242,6 +243,8 @@ namespace NzbDrone.Core.Datastore
             EnsureSupportedSchemaObjects(connection, sourceSchema);
 
             using var transaction = connection.BeginTransaction(IsolationLevel.RepeatableRead);
+            // CREATE TABLE AS retains rows but not the source allocator state.
+            var qualityProfileIdentityHighWater = BookshelfDatabaseImporter.ReadQualityProfileIdentityHighWater(connection, transaction);
             CreateSchema(connection, snapshotSchema, transaction);
             MarkTemporarySchema(connection, snapshotSchema, sourceSchema, transaction);
             foreach (var table in tables)
@@ -253,6 +256,7 @@ namespace NzbDrone.Core.Datastore
             }
 
             transaction.Commit();
+            return qualityProfileIdentityHighWater;
         }
 
         private static void MarkTemporarySchema(NpgsqlConnection connection, string temporarySchema, string sourceSchema, DbTransaction transaction = null)

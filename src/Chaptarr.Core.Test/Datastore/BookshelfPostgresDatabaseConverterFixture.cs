@@ -117,6 +117,36 @@ namespace Chaptarr.Core.Test.Datastore
             }
         }
 
+        [TestCase(true, "127")]
+        [TestCase(false, "126")]
+        public void should_preserve_source_quality_profile_sequence_across_row_only_snapshot(bool isCalled, string expectedCounter)
+        {
+            var sourceConnectionString = BuildConnectionString(_baseConnectionString, _sourceSchema);
+            MigrateBookshelfSourceToLatest(sourceConnectionString);
+            SeedMatchingThreshold(sourceConnectionString);
+            SeedCurrentBookshelfSourceWithLibrary(sourceConnectionString);
+            using (var source = new NpgsqlConnection(sourceConnectionString))
+            {
+                source.Open();
+                using var command = source.CreateCommand();
+                command.CommandText = "SELECT setval(pg_get_serial_sequence('\"QualityProfiles\"','Id'),127,@called);";
+                command.Parameters.AddWithValue("called", isCalled);
+                command.ExecuteScalar();
+            }
+
+            Environment.SetEnvironmentVariable("HARDCOVER", "true");
+            var controller = new MigrationController(LogManager.GetLogger(nameof(BookshelfPostgresDatabaseConverterFixture)),
+                null, new TestAppFolderInfo(_temporaryDirectory));
+            var converted = controller.MigrateBookshelf(sourceConnectionString,
+                new MigrationContext(MigrationType.Main), DatabaseType.PostgreSQL, previewOnly: false);
+            _knownBackupSchemas.Add(converted.BackupPath);
+
+            Assert.That(ReadConfigValue(sourceConnectionString, "bookshelfnglegacyqualityprofilesequence"), Is.EqualTo(expectedCounter));
+            using var retainedSource = new NpgsqlConnection(BuildConnectionString(_baseConnectionString, converted.BackupPath));
+            retainedSource.Open();
+            Assert.That(BookshelfDatabaseImporter.ReadQualityProfileIdentityHighWater(retainedSource), Is.EqualTo(int.Parse(expectedCounter)));
+        }
+
         [Test]
         public void should_preview_convert_and_restore_a_current_bookshelf_postgres_schema()
         {

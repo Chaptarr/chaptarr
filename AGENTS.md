@@ -219,3 +219,11 @@ Queued-job fixtures must include importer-style staged chapter sidecars; a
 `TagOptions.ChaptersTxtContent` value alone does not stage those inputs. Compare
 manifest digests as hexadecimal bytes. Keep synthetic process recovery separate
 from acquisition/import, representative-media and installed archive acceptance.
+
+
+Preserve deleted source quality-profile IDs through migration by importing the
+allocator high-water mark, not only MAX(Id) or surviving identity mappings.
+PostgreSQL row-only snapshots lose sequence metadata: capture it from the source
+before cloning, including is_called=false. Hidden native audiobook IDs already
+owned by a legacy mapping must not become additional legacy aliases; exercise
+negative read/update/delete paths and verify both original counterparts remain.

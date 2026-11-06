@@ -986,3 +986,44 @@ SHA-256 strings literally, and another supplied chapter metadata without the
 importer's chapter-sidecar staging. Correcting those test fixtures required no
 application behavior changes. Earlier full-product derivative checks also pass,
 but they remain identified derivatives rather than canonical archives.
+
+
+### Quality-profile identity boundary follow-up
+
+A new regression creates and deletes source profile 127 before migration. It
+fails against the previous importer because no legacy allocator high-water mark
+survives conversion. Import now reserves the source SQLite sequence as well as
+current IDs. PostgreSQL captures its allocator state before the row-only snapshot
+is created, including the distinction between `setval(..., true)` and
+`setval(..., false)`. The compatibility counter is imported transactionally;
+out-of-range source allocators stop conversion without changing the source.
+
+Three further regressions reproduce an unexposed native audiobook ID acting as
+a second legacy address for another profile: GET incorrectly returned it, PUT
+mutated it, and DELETE removed it. The native-ID fallback now excludes rows
+already owned by a legacy mapping. Missing legacy reads/updates reject, and
+missing deletes remain no-ops without altering either counterpart.
+
+All 125 focused SQLite/importer cases and 25 separate PostgreSQL cases pass.
+Full Core passes 5,280 tests with 46 skipped and zero failures; all 67
+localization tests also pass. The disposable HTTP fixture now creates/deletes
+profile 127 before the source snapshot and requires new source/target wire IDs
+above that boundary. It also checks hidden native counterpart IDs return 404
+and cannot delete the new legacy profile. The fixture's two rows, allocator 127
+and SQLite integrity are verified locally. New exact-head HTTP and hosted Build
+validation remain required; the earlier HTTP receipts do not cover these added
+boundary cases.
+
+Failure and passing logs are retained under
+`/var/tmp/chaptarrng-native-standalone-20261105/release-api-fix/` (the
+`profile-source-sequence-*`, `profile-hidden-native-alias-before-fix.log` and
+`profile-identity-boundaries-*` receipts). A fixture-preparation attempt first
+omitted its required empty config/library directories; that failed attempt is
+retained alongside the successful preparation.
+
+Hosted Build [42161823059](https://github.com/snapetech-org/chaptarrng/actions/runs/42161823059)
+completed successfully at `802e3b8b` on Linux, Windows and macOS, plus PostgreSQL
+and Docker. It predates the new full-product M4B harness and these later identity
+corrections. The x86 startup cause, new canonical archive qualification and the
+remaining representative-media/external delivery gates remain open. Publication
+and production cutover remain frozen.

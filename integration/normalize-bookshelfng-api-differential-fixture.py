@@ -25,6 +25,7 @@ expected_counts = {
     "Books": (6, 'SELECT COUNT(*) FROM "Books"'),
     "Editions": (9, 'SELECT COUNT(*) FROM "Editions"'),
     "Users": (1, 'SELECT COUNT(*) FROM "Users"'),
+    "QualityProfiles": (2, 'SELECT COUNT(*) FROM "QualityProfiles"'),
 }
 
 for path in args.database:
@@ -35,6 +36,15 @@ for path in args.database:
                 raise RuntimeError(
                     f"Expected {expected} {table} rows in the disposable fixture, found {count}."
                 )
+
+        # A retired profile's ID must remain reserved through migration, even
+        # though no current row or identity-map entry exposes it.
+        connection.execute('''INSERT INTO "QualityProfiles" ("Id", "Name", "Cutoff", "Items", "UpgradeAllowed")
+            SELECT 127, 'Deleted differential profile', "Cutoff", "Items", "UpgradeAllowed"
+            FROM "QualityProfiles" ORDER BY "Id" LIMIT 1''')
+        connection.execute('DELETE FROM "QualityProfiles" WHERE "Id"=127')
+        if connection.execute("SELECT seq FROM sqlite_sequence WHERE name='QualityProfiles'").fetchone() != (127,):
+            raise RuntimeError("Unexpected disposable quality-profile allocator state")
 
         for source_id, in connection.execute('SELECT "Id" FROM "AuthorMetadata"'):
             provider_id = str(10000 + source_id)

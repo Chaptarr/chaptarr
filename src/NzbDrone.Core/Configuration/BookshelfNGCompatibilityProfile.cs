@@ -12,6 +12,7 @@ namespace NzbDrone.Core.Configuration
         public const int CurrentIdentityMapVersion = 1;
         public const int LatestSupportedSourceSchemaVersion = 158;
         public const string CurrentFormatSemantics = "audiobook-ebook-split-v1";
+        public const string QualityProfileIdentitySequenceKey = "bookshelfnglegacyqualityprofilesequence";
 
         public int Version { get; set; }
         public string SourceProduct { get; set; } = string.Empty;

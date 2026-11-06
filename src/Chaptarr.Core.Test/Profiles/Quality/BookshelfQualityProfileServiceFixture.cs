@@ -309,6 +309,33 @@ CREATE TRIGGER fail_ebook BEFORE {sqlOperation} ON ""QualityProfiles"" FOR EACH 
             Assert.Throws<ModelNotFoundException>(() => _subject.Get(NativeIds(created.LegacyId).Last()));
         }
 
+        [TestCase("get")]
+        [TestCase("update")]
+        [TestCase("delete")]
+        public void unexposed_native_audio_id_cannot_alias_or_mutate_another_legacy_profile(string operation)
+        {
+            _subject.Create(Generic("First"));
+            var second = _subject.Create(Generic("Second"));
+            var nativeAudioId = second.Profile.Id;
+            Assert.That(_subject.All().Select(profile => profile.LegacyId), Does.Not.Contain(nativeAudioId));
+            var before = Snapshot();
+
+            if (operation == "get")
+            {
+                Assert.Throws<ModelNotFoundException>(() => _subject.Get(nativeAudioId));
+            }
+            else if (operation == "update")
+            {
+                Assert.Throws<ModelNotFoundException>(() => _subject.Update(nativeAudioId, Generic("Wrong legacy alias")));
+            }
+            else
+            {
+                _subject.Delete(nativeAudioId);
+            }
+
+            Assert.That(Snapshot(), Is.EqualTo(before));
+        }
+
         [Test]
         public void deletion_of_an_unknown_legacy_id_is_a_noop_and_cannot_delete_a_native_ebook()
         {

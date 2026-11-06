@@ -4,7 +4,8 @@ import { compareResponses } from './bookshelfng-api-contract.mjs';
 
 // Run only against the two disposable services owned by the differential harness.
 // The adapters return {status, value, error}; native GETs use the fourth argument.
-export async function runQualityProfileLifecycle({ sourceRequest, targetRequest, onCase, afterCreate, afterUpdate }) {
+export async function runQualityProfileLifecycle({ sourceRequest, targetRequest, onCase, afterCreate, afterUpdate, minimumNewProfileId = 1 }) {
+  assert.ok(Number.isInteger(minimumNewProfileId) && minimumNewProfileId > 0);
   const name = 'Synthetic profile lifecycle ' + randomUUID();
   const sourceBefore = await sourceRequest('GET', '/qualityprofile');
   const targetBefore = await targetRequest('GET', '/qualityprofile');
@@ -25,7 +26,9 @@ export async function runQualityProfileLifecycle({ sourceRequest, targetRequest,
 
   function record(caseId, method, source, target, expectedStatus, normalize = true) {
     const comparison = compareResponses(source.value, normalize ? normalizeTarget(target.value) : target.value);
-    const passed = source.status === expectedStatus && target.status === expectedStatus &&
+    const reservedIdentities = caseId !== 'create' ||
+      (Number.isInteger(sourceId) && sourceId >= minimumNewProfileId && Number.isInteger(targetId) && targetId >= minimumNewProfileId);
+    const passed = reservedIdentities && source.status === expectedStatus && target.status === expectedStatus &&
       source.error === null && target.error === null && comparison.mismatchPaths.length === 0;
     onCase({
       caseId: 'quality-profile.lifecycle.' + caseId, method,
@@ -34,6 +37,7 @@ export async function runQualityProfileLifecycle({ sourceRequest, targetRequest,
       mismatchPaths: comparison.mismatchPaths,
       additivePaths: comparison.additivePaths,
       generatedIdentityNormalization: normalize && sourceId && targetId ? { sourceId, targetId } : null,
+      minimumNewProfileId: caseId === 'create' ? minimumNewProfileId : undefined,
       result: passed ? 'pass' : 'fail'
     });
     assert.ok(passed, `${caseId}: profile lifecycle response or source-field mismatch`);
@@ -74,6 +78,16 @@ export async function runQualityProfileLifecycle({ sourceRequest, targetRequest,
     assert.equal(added.length, 2, 'A generic profile requires exactly two native counterparts');
     assert.ok(added.some((profile) => ['audiobook', '1'].includes(String(profile.profileType).toLowerCase())));
     assert.ok(added.some((profile) => ['ebook', '2'].includes(String(profile.profileType).toLowerCase())));
+    for (const counterpart of added) {
+      // A hidden native ID is not a second legacy address for this profile.
+      // Skip a numeric collision with a real source ID in an independently
+      // advanced fixture; the fresh differential fixture exercises both IDs.
+      const hiddenId = counterpart.id;
+      if (hiddenId === sourceId || hiddenId === targetId || sourceBefore.value.some((profile) => profile.id === hiddenId)) continue;
+      const media = ['audiobook', '1'].includes(String(counterpart.profileType).toLowerCase()) ? 'audiobook' : 'ebook';
+      await paired('created.unexposed-native.' + media + '.readback', 'GET', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 404);
+      await paired('created.unexposed-native.' + media + '.delete', 'DELETE', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 200);
+    }
     if (afterCreate) {
       await afterCreate({ sourceId, targetId, nativeProfiles: added });
       await paired('restart.readback', 'GET', '/qualityprofile/' + sourceId, '/qualityprofile/' + targetId, 200);

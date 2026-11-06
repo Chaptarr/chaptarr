@@ -530,6 +530,8 @@ if (
 }
 
 await runQualityProfileLifecycle({
+  // The source normalizer creates and deletes profile 127 before migration.
+  minimumNewProfileId: 128,
   sourceRequest: (method, path, body) => method === "GET"
     ? getJson(sourceUrl, sourceKey, path) : requestJson(sourceUrl, sourceKey, method, path, body),
   targetRequest: (method, path, body, native = false) => method === "GET"
