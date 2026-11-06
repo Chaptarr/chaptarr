@@ -228,8 +228,11 @@ namespace NzbDrone.Core.Books
                 return new List<Edition>();
             }
 
-            // populate the books, author metadata, and author also
-            // this hopefully speeds up the track matching a lot
+            // Keep one parent graph per identity for this result. A joined
+            // author can have thousands of editions; retaining a full author
+            // and book object for every row exhausts small-container heaps.
+            var booksById = new Dictionary<int, Book>();
+            var authorsById = new Dictionary<int, Author>();
             List<Edition> QueryForBookIds(int[] chunkBookIds)
             {
                 var builder = new SqlBuilder(_database.DatabaseType)
@@ -241,8 +244,24 @@ namespace NzbDrone.Core.Books
                         {
                             if (book != null)
                             {
-                                book.Author = author;
-                                edition.Book = book;
+                                if (!booksById.TryGetValue(book.Id, out var parent))
+                                {
+                                    if (author != null)
+                                    {
+                                        if (!authorsById.TryGetValue(author.Id, out var sharedAuthor))
+                                        {
+                                            sharedAuthor = author;
+                                            authorsById.Add(author.Id, author);
+                                        }
+
+                                        book.Author = sharedAuthor;
+                                    }
+
+                                    parent = book;
+                                    booksById.Add(book.Id, book);
+                                }
+
+                                edition.Book = parent;
                             }
 
                             return edition;

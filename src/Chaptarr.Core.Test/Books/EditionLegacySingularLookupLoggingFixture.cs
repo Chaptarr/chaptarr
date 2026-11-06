@@ -216,7 +216,29 @@ namespace Chaptarr.Core.Test.Books
             return memoryTarget;
         }
 
-        private static void WithRepository(Action<EditionRepository> action)
+        [TestCase(false)]
+        [TestCase(true)]
+        public void edition_results_should_share_parent_graphs_without_merging_format_copies(bool chunked)
+        {
+            WithRepository(repository =>
+            {
+                var ids = chunked
+                    ? new[] { 1 }.Concat(Enumerable.Range(3, SqliteVariableLimit.MaxParameters)).Concat(new[] { 2 })
+                    : new[] { 1, 1, 2 }.AsEnumerable();
+                var editions = repository.FindByBook(ids).OrderBy(edition => edition.Id).ToList();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(editions.Select(edition => edition.Id), Is.EqualTo(new[] { 1, 2, 3 }));
+                    Assert.That(editions[0].Book, Is.SameAs(editions[2].Book));
+                    Assert.That(editions[0].Book, Is.Not.SameAs(editions[1].Book));
+                    Assert.That(editions[0].Book.Author, Is.SameAs(editions[1].Book.Author));
+                    Assert.That(editions[0].Book.MediaType, Is.Not.EqualTo(editions[1].Book.MediaType));
+                });
+            }, connection => connection.Execute("INSERT INTO \"Editions\" (\"Id\", \"BookId\") VALUES (3, 1);"));
+        }
+
+        private static void WithRepository(Action<EditionRepository> action, Action<SqliteConnection> seed = null)
         {
             var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"edition_legacy_lookup_{Guid.NewGuid():N}.db");
             var connectionString = new SqliteConnectionStringBuilder
@@ -239,6 +261,7 @@ namespace Chaptarr.Core.Test.Books
                     connection.Execute("INSERT INTO \"Editions\" (\"Id\", \"BookId\", \"Asin\", \"AudibleASIN\", \"Isbn13\", \"HardcoverEditionId\") VALUES " +
                                        "(1, 1, 'B00EXPECTED', NULL, '9780123456789', 'edition:123'), " +
                                        "(2, 2, 'B00EXPECTED', NULL, '9780123456789', 'edition:123');");
+                    seed?.Invoke(connection);
                 }
 
                 var database = new Database("main", () =>
@@ -278,6 +301,9 @@ namespace Chaptarr.Core.Test.Books
                 .Where(property => property.Name == nameof(ModelBase.Id) || (property.IsMappableProperty() && !excluded.Contains(property.Name)))
                 .GroupBy(property => property.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
+                // Match native schemas: Dapper's joined splitOn=Id requires
+                // each table's identity column before its other columns.
+                .OrderBy(property => property.Name == nameof(ModelBase.Id) ? 0 : 1)
                 .Select(property => property.Name == nameof(ModelBase.Id)
                     ? "\"Id\" INTEGER PRIMARY KEY AUTOINCREMENT"
                     : $"\"{property.Name}\" {GetSqliteColumnType(property)} NULL")

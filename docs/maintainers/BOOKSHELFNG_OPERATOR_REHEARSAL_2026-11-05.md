@@ -686,6 +686,10 @@ explicit downgrade; application recovery is not package-database rollback.
 The repaired package hash is
 `61d8fc0aec49262f0fdba466c2a88681945fc60c042e8a70378a4914c6be3a90`;
 it combines the unchanged canonical application with the repaired health hook.
+The same repaired package also passes No/Yes conversion, HTTP health and a real
+service restart. Explicit predecessor downgrade restores the package-manager
+version and healthy source separately. Both cases' evidence and the repaired
+RPM are retained on the creating host.
 
 The three security scans at `4dfb8c9a` passed (`42129828890`, `42129834139`,
 `42129838969`). The scoped StartOS dependency override fixes CVE-2026-118764
@@ -707,6 +711,22 @@ separate probe using the candidate runtime confirms that a 2 GiB container is
 recognized as a 1.5 GiB managed-heap budget. No GC workaround has been shipped.
 The traced 2 GiB case fails during initial book readback before submitting the
 refresh command, narrowing this reproduction to startup/API materialization.
+The completed trace records a 1,589,896,760-byte live-heap peak and repeated
+full collections running out of small-object-heap space. Joined edition loading
+retains a separate book and author graph per edition; the copied library has an
+author with 18,439 edition rows. `FindByBook` now shares book and author parents
+by database identity within each result, including across SQLite parameter
+batches. It retains separate format-specific book IDs and every edition row.
+
+The local application derivative passes the corrected 2 GiB cold-start and
+301-work lifecycle replay: 301 unique legacy IDs and provider identities, source
+provider-set equality, original and repeated ID stability, both format rows
+unmonitored through the new legacy ID, database integrity and no allocation
+errors. Eight focused repository tests pass, including shared parents and
+distinct format copies across parameter batches. The initial test-schema column
+order did not match native `splitOn=Id` layout; correcting that fixture restored
+the intended joined mapping. The full Core suite and canonical archive/installed
+qualification of this new application revision remain pending.
 Private traces, failure logs and coherent input copies are retained for the
 investigation. Publication, external channel acceptance, headed UI acceptance
 and production cutover remain open.
