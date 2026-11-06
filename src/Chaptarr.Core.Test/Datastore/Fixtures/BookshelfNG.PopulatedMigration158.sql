@@ -60,5 +60,5 @@ INSERT INTO VersionInfo (Version, AppliedOn, Description)
                 VALUES (90, 'Fixture release', '2026-01-04', '{}', '{}', 1, 'download-91', 20, 30);
                 INSERT INTO History (Id, SourceTitle, Date, Quality, Data, EventType, DownloadId, AuthorId, BookId)
                 VALUES (93, 'book.epub', '2026-01-04', '{}', '{"FileId":"51","ImportedPath":"/library/Fixture Author/book.epub"}', 3, 'download-91', 20, 30);
-                INSERT INTO Commands (Id, Name, Body, Priority, Status, QueuedAt, Trigger)
-                VALUES (100, 'OldCommand', '{}', 1, 0, '2026-01-04', 0);
+                INSERT INTO Commands (Id, Name, Body, Priority, Status, QueuedAt, StartedAt, EndedAt, Duration, Trigger)
+                VALUES (100, 'OldCommand', '{}', 1, 2, '2026-01-04', '2026-01-04', '2026-01-04', '00:00:00', 0);

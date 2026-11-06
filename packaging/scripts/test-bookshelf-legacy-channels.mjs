@@ -148,6 +148,12 @@ test('Linux, macOS and FreeBSD standalone archives include the optional, recover
 
   assert.match(builder, /publish_standalone_project\(\)[\s\S]*?if \[\[ "\$rid" == linux-x86 \|\| "\$rid" == freebsd-x64 \]\][\s\S]*?dotnet publish "\$@" "\$\{restore_sources\[@\]\}"/,
     'macOS Bash can publish standalone RIDs without expanding an empty array under nounset');
+  assert.match(builder, /export NUGET_PACKAGES="\$work\/nuget-packages"/,
+    'extra-platform restores cannot reuse a same-version runtime from a shared NuGet cache');
+  assert.match(builder, /"--artifacts-path"\s+"\$work\/artifacts"/,
+    'extra-platform restore metadata cannot point repository intermediates at the temporary package cache');
+  assert.match(builder, /Published runtime[\s\S]*?does not match the selected custom runtime package/,
+    'the published main and updater runtimes must match the selected runtime package');
   assert.match(builder, /if \[\[ "\$\(uname -s\)" == Darwin \]\][\s\S]*?tar -czf/,
     'macOS uses its supported BSD tar options');
   assert.match(builder, /elif command -v shasum[\s\S]*?shasum -a 256/,

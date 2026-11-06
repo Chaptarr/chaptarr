@@ -60,6 +60,24 @@ if (validator.Validate(new Sample { Score = -1 }).IsValid || validator.Validate(
 }
 
 Console.WriteLine("PASS validation: 1,000,000 valid results; negative and missing values rejected");
+
+var nested = new ParentSample { Child = new ChildSample { Ratio = 1.5 } };
+var nestedValidator = new ParentSampleValidator();
+for (var iteration = 0; iteration < 1_000_000; iteration++)
+{
+    if (!nestedValidator.Validate(nested).IsValid)
+    {
+        throw new InvalidOperationException("Nested validation rejected the valid nullable value.");
+    }
+}
+
+if (nestedValidator.Validate(new ParentSample { Child = new ChildSample { Ratio = -1 } }).IsValid ||
+    nestedValidator.Validate(new ParentSample { Child = new ChildSample() }).IsValid)
+{
+    throw new InvalidOperationException("Nested validation accepted an invalid nullable value.");
+}
+
+Console.WriteLine("PASS nested validation: 1,000,000 valid results; negative and missing values rejected");
 return 0;
 
 static class ExceptionCollectionProbe
@@ -119,5 +137,31 @@ sealed class SampleValidator : AbstractValidator<Sample>
     public SampleValidator()
     {
         RuleFor(item => item.Score).NotNull().GreaterThanOrEqualTo(0);
+    }
+}
+
+sealed class ParentSample
+{
+    public ChildSample Child { get; set; } = new();
+}
+
+sealed class ChildSample
+{
+    public double? Ratio { get; set; }
+}
+
+sealed class ParentSampleValidator : AbstractValidator<ParentSample>
+{
+    public ParentSampleValidator()
+    {
+        RuleFor(item => item.Child).SetValidator(_ => new ChildSampleValidator());
+    }
+}
+
+sealed class ChildSampleValidator : AbstractValidator<ChildSample>
+{
+    public ChildSampleValidator()
+    {
+        RuleFor(item => item.Ratio).NotNull().GreaterThanOrEqualTo(0);
     }
 }

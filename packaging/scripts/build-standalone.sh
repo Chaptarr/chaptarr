@@ -55,11 +55,17 @@ bundle="$work/ChaptarrNG"
 mkdir -p "$bundle"
 
 if [[ "$rid" == linux-x86 || "$rid" == freebsd-x64 ]]; then
+  # The custom packs intentionally retain the framework's official version. A
+  # shared NuGet cache may already contain a different build with the same
+  # package ID/version, so restore these archives into an isolated cache.
+  export NUGET_PACKAGES="$work/nuget-packages"
   custom_nuget_config="$work/platform-runtime.NuGet.config"
   python3 packaging/scripts/create-standalone-nuget-config.py \
     "$runtime_packs" src/NuGet.config "$custom_nuget_config" "$rid"
   # The custom Linux x86 and FreeBSD runtime packs are pinned to 10.0.12.
   restore_sources=(
+    "--artifacts-path"
+    "$work/artifacts"
     "-p:RestoreConfigFile=$custom_nuget_config"
     "-p:RuntimeFrameworkVersion=10.0.12"
     "-p:ChaptarrExtraPlatformRuntimePacks=true"
@@ -102,6 +108,32 @@ publish_standalone_project src/NzbDrone.Update/Chaptarr.Update.csproj \
   -p:UseAppHost=true \
   --verbosity minimal \
   --output "$bundle/Chaptarr.Update"
+
+if [[ "$rid" == linux-x86 || "$rid" == freebsd-x64 ]]; then
+  python3 - \
+    "$runtime_packs/Microsoft.NETCore.App.Runtime.${rid}.10.0.12.nupkg" \
+    "$bundle/libcoreclr.so" \
+    "$bundle/Chaptarr.Update/libcoreclr.so" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+import zipfile
+
+package = Path(sys.argv[1])
+runtime_paths = [Path(value) for value in sys.argv[2:]]
+rid = package.name.removeprefix("Microsoft.NETCore.App.Runtime.").removesuffix(".10.0.12.nupkg")
+member = f"runtimes/{rid}/native/libcoreclr.so"
+with zipfile.ZipFile(package) as package_zip:
+    expected = hashlib.sha256(package_zip.read(member)).hexdigest()
+
+for runtime_path in runtime_paths:
+    actual = hashlib.sha256(runtime_path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise SystemExit(
+            f"Published runtime {runtime_path} does not match the selected custom runtime package"
+        )
+PY
+fi
 
 mkdir -p "$bundle/UI"
 cp -a _output/UI/. "$bundle/UI/"

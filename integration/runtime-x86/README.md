@@ -5,7 +5,8 @@ job succeeds. The archive workflow compiles it with the pinned SDK, then runs it
 in a native 32-bit Debian container with the candidate runtime, no network,
 read-only inputs and no additional capabilities. Direct, compiled and interpreted
 nullable-double accessors must each return the exact value one million times.
-FluentValidation must accept valid values and reject negative/missing values.
+FluentValidation, including a nested child validator, must accept valid values
+and reject negative/missing values.
 Compacting collections both inside and after a catch must preserve retained
 delegates, their closure and referenced objects. The after-catch case is a control;
 it does not replace the inside-catch check.
