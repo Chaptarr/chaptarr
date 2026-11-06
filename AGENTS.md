@@ -174,3 +174,14 @@ and extra IDs separately from field comparisons. Preserve raw predecessor
 metadata at import boundaries, and keep native display transformations scoped
 to native responses. Save real-data response bodies and configuration privately;
 commit only aggregate results and synthetic regressions.
+
+
+## Imported generic quality profiles
+
+BookshelfNG quality profiles are generic and can retain both formats' qualities
+in each imported native clone. Name-only edits must preserve those saved choices.
+Any validation exception must require a persistent imported profile mapping, PUT,
+the same profile type and previously enabled choices; do not allow creates or
+newly incompatible qualities, cutoffs or conversion targets. Test save/readback,
+format changes and grouped-cutoff injection. Compare all persisted fields and
+IDs after a headed save/reload/restore, not only HTTP success.

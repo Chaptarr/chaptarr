@@ -849,3 +849,34 @@ QA phase was acquired. Only the two task-owned synthetic backends were rebound
 to the new desktop namespace. Existing profiles, other reservations and original
 candidate payloads were preserved. Screenshot updates can lag accepted inputs;
 visual checks wait for a confirmed new state before acting.
+
+
+### Imported profile edit follow-up
+
+Headed settings validation found that changing only a migrated generic profile's
+name failed native validation: its preserved PDF quality and cutoff were rejected
+on the audiobook clone. Validation now permits unchanged imported choices only
+on PUT, with a persistent profile identity mapping and unchanged profile type.
+Creates, unmapped updates, newly incompatible choices, changed conversion targets
+and new incompatible group-cutoff children remain rejected.
+
+Both audiobook/ebook retention regressions fail before the fix. All 34 focused
+controller cases pass afterward, including update/readback and the rejection
+boundaries. Full Core passes 5,257 tests with 29 skipped and zero failures. The
+isolated headed service uses a clearly identified API-assembly derivative over
+canonical `60d892da`, retaining the original archive and the verified UI bundle.
+Actual Chrome save, full page reload and reopening show the temporary profile
+name persisted. A SQLite observer running as application UID 99 with a read-only
+config mount confirms only profile 1's Name changed across all columns of all
+four profiles. Restoring the name through Chrome leaves zero profile differences
+from the baseline. Screenshot `00344c80-eca6-410e-ba1f-4381d6552a7c` is persisted.
+This qualifies the isolated derivative; new canonical payload acceptance remains
+required. The baseline observer first used the wrong database basename; that
+failed attempt is retained. The fixture uses converted `readarr.db` in place.
+
+The `17dc081d` canonical campaign includes the preceding UI/dependency fixes,
+with API, Helm, Security, Semgrep and Trivy successful; full Build and producer
+validation were still running when this new profile defect was found. Those
+runs do not qualify this later backend correction. Existing profile list/schema
+comparisons also do not establish complete unchanged-client profile mutation
+coverage; the same-input create/update/delete lifecycle remains a review item.
