@@ -32,6 +32,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
             public string PlexAuthUserId { get; set; } = string.Empty;
             public Queue<string> PlexAuthUserIdResponses { get; } = new Queue<string>();
             public bool TrustCgnatIpAddresses { get; set; }
+            public string UrlBase { get; set; } = string.Empty;
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -43,8 +44,9 @@ namespace Chaptarr.Core.Test.Http.Authentication
                     "get_PlexAuthUserId" => PlexAuthUserIdResponses.Count > 0 ? PlexAuthUserIdResponses.Dequeue() : PlexAuthUserId,
                     "get_PlexAuthUsername" => string.Empty,
                     "get_TrustCgnatIpAddresses" => TrustCgnatIpAddresses,
-                    "get_UrlBase" => string.Empty,
+                    "get_UrlBase" => UrlBase,
                     "get_InstanceName" => "Chaptarr",
+                    "get_AllowedHosts" => "chaptarr.example",
                     "get_OidcAllowedEmails" => string.Empty,
                     "get_OidcAllowedEmailDomains" => string.Empty,
                     "get_OidcAllowAnyVerifiedUser" => false,
@@ -62,9 +64,14 @@ namespace Chaptarr.Core.Test.Http.Authentication
         {
             public PlexTvUserResponse User { get; set; } = new PlexTvUserResponse { Id = 5678, Username = "second-user" };
 
+            public string CallbackUrl { get; private set; }
+
             public PlexTvPinResponse CreatePin() => new PlexTvPinResponse { Id = 10, Code = "pin-code" };
-            public PlexTvSignInUrlResponse GetSignInUrl(string callbackUrl, int pinId, string pinCode) =>
-                new PlexTvSignInUrlResponse { OauthUrl = "https://app.plex.tv/auth" };
+            public PlexTvSignInUrlResponse GetSignInUrl(string callbackUrl, int pinId, string pinCode)
+            {
+                CallbackUrl = callbackUrl;
+                return new PlexTvSignInUrlResponse { OauthUrl = "https://app.plex.tv/auth" };
+            }
             public string GetAuthToken(int pinId) => "plex-token";
             public PlexTvUserResponse GetUser(string authToken) => User;
             public List<PlexTvResourceResponse> GetResources(string authToken) => throw new NotImplementedException();
@@ -88,11 +95,40 @@ namespace Chaptarr.Core.Test.Http.Authentication
         [Test]
         public void unbound_plex_login_should_allow_local_binding_flow()
         {
-            var controller = CreatePlexController(ConfigFileProviderProxy.Create(), IPAddress.Parse("192.168.86.10"));
+            var controller = CreatePlexController(ConfigFileProviderProxy.Create(), IPAddress.Parse("10.0.0.10"));
 
             var result = controller.Start();
 
             Assert.That(result, Is.TypeOf<RedirectResult>());
+        }
+
+        [TestCase("X-Forwarded-For", "127.0.0.1")]
+        [TestCase("X-Forwarded-Host", "localhost")]
+        [TestCase("X-Forwarded-Proto", "https")]
+        [TestCase("Forwarded", "for=127.0.0.1")]
+        public async Task first_plex_binding_allows_local_forwarders(string header, string value)
+        {
+            var controller = CreatePlexController(ConfigFileProviderProxy.Create(), IPAddress.Parse("10.0.0.10"));
+            controller.Request.Headers[header] = value;
+            Assert.That(controller.Start(), Is.TypeOf<RedirectResult>());
+            Assert.That((await controller.Callback("state") as ObjectResult)?.StatusCode, Is.Not.EqualTo(403));
+        }
+
+        [TestCase("X-Forwarded-For")]
+        [TestCase("X-Real-IP")]
+        public async Task public_clients_behind_a_local_proxy_cannot_bind_plex_or_recover_oidc(string header)
+        {
+            var config = ConfigFileProviderProxy.Create();
+            var controller = CreatePlexController(config, IPAddress.Parse("10.0.0.10"));
+            controller.Request.Headers[header] = "203.0.113.9";
+            Assert.That((controller.Start() as ObjectResult)?.StatusCode, Is.EqualTo(403));
+            Assert.That((await controller.Callback("state") as ObjectResult)?.StatusCode, Is.EqualTo(403));
+
+            var state = (ConfigFileProviderProxy)(object)config;
+            state.ConfiguredAuthenticationMethod = AuthenticationType.Oidc;
+            state.AuthenticationMethod = AuthenticationType.None;
+            state.AuthenticationMethodIsMisconfigured = true;
+            Assert.That(GetMisconfiguredScheme(controller.HttpContext, config), Is.EqualTo("API"));
         }
 
         [Test]
@@ -117,7 +153,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
             state.PlexAuthUserIdResponses.Enqueue(string.Empty);
             state.PlexAuthUserIdResponses.Enqueue("1234");
 
-            var controller = CreatePlexController(config, IPAddress.Parse("192.168.86.10"));
+            var controller = CreatePlexController(config, IPAddress.Parse("10.0.0.10"));
             Assert.That(controller.Start(), Is.TypeOf<RedirectResult>());
 
             var setCookie = controller.Response.Headers.SetCookie.ToString();
@@ -131,7 +167,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
         }
 
         [Test]
-        public void incomplete_oidc_should_allow_local_recovery_and_require_api_auth_remotely()
+        public void incomplete_oidc_should_allow_local_recovery_and_require_api_authentication_remotely()
         {
             var config = ConfigFileProviderProxy.Create();
             var state = (ConfigFileProviderProxy)(object)config;
@@ -139,7 +175,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
             state.AuthenticationMethod = AuthenticationType.None;
             state.AuthenticationMethodIsMisconfigured = true;
 
-            var localScheme = GetMisconfiguredScheme(CreateHttpContext("192.168.86.10"), config);
+            var localScheme = GetMisconfiguredScheme(CreateHttpContext("10.0.0.10"), config);
             var remoteScheme = GetMisconfiguredScheme(CreateHttpContext("203.0.113.20"), config);
 
             Assert.That(localScheme, Is.EqualTo(AuthenticationType.None.ToString()));
@@ -160,10 +196,28 @@ namespace Chaptarr.Core.Test.Http.Authentication
             Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Error));
         }
 
-        private static PlexAuthenticationController CreatePlexController(IConfigFileProvider config, IPAddress remoteIpAddress)
+        [TestCase("https", "public.example", "/chaptarr")]
+        [TestCase("https", "public.example:8443", "")]
+        [TestCase("http", "localhost:8787", "/chaptarr")]
+        public void plex_callback_returns_to_the_origin_that_received_the_state_cookie(string scheme, string host, string urlBase)
+        {
+            var config = ConfigFileProviderProxy.Create();
+            ((ConfigFileProviderProxy)(object)config).UrlBase = urlBase;
+            ((ConfigFileProviderProxy)(object)config).PlexAuthUserId = "1234";
+            var plex = new PlexTvServiceStub();
+            var controller = CreatePlexController(config, IPAddress.Loopback, plex);
+            controller.Request.Host = new HostString(host);
+            controller.Request.Scheme = scheme;
+            Assert.That(controller.Start(), Is.TypeOf<RedirectResult>());
+            Assert.That(plex.CallbackUrl, Does.StartWith($"{scheme}://{host}{urlBase}/auth/plex/callback?state="));
+            Assert.That(new Uri(plex.CallbackUrl).Query.Length, Is.GreaterThan("?state=".Length));
+            Assert.That(controller.Response.Headers.SetCookie.ToString(), Does.Not.Contain("domain="));
+        }
+
+        private static PlexAuthenticationController CreatePlexController(IConfigFileProvider config, IPAddress remoteIpAddress, PlexTvServiceStub plex = null)
         {
             var controller = new PlexAuthenticationController(
-                new PlexTvServiceStub(),
+                plex ?? new PlexTvServiceStub(),
                 config,
                 new CacheManager(),
                 LogManager.GetCurrentClassLogger())
@@ -182,6 +236,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
         private static DefaultHttpContext CreateHttpContext(string remoteIpAddress)
         {
             var context = new DefaultHttpContext();
+            context.Request.Host = new HostString("localhost");
             context.Connection.RemoteIpAddress = IPAddress.Parse(remoteIpAddress);
             return context;
         }

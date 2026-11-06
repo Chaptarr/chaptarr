@@ -54,6 +54,8 @@ namespace NzbDrone.Host
                 b.ClearProviders();
                 b.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace);
                 b.AddFilter("Microsoft.AspNetCore", Microsoft.Extensions.Logging.LogLevel.Warning);
+                b.AddFilter("Microsoft.AspNetCore.HostFiltering", LogLevel.Information);
+                b.AddFilter("Microsoft.AspNetCore.HttpOverrides", LogLevel.Debug);
                 b.AddFilter("Chaptarr.Http.Authentication", LogLevel.Information);
                 b.AddFilter("Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager", LogLevel.Error);
                 b.AddNLog();
@@ -61,6 +63,7 @@ namespace NzbDrone.Host
 
             services.Configure<ForwardedHeadersOptions>(options =>
             {
+                options.ForwardLimit = null;
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
                 options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("10.0.0.0"), 8));
                 options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("172.16.0.0"), 12));
@@ -260,7 +263,7 @@ namespace NzbDrone.Host
                 firewallAdapter.MakeAccessible();
             }
 
-            app.UseForwardedHeaders();
+            app.UseValidatedForwardedHeaders();
             app.UsePathBase(new PathString(configFileProvider.UrlBase));
             app.UseMiddleware<ServarrMediaTypeScopeMiddleware>();
             app.UseMiddleware<LoggingMiddleware>();

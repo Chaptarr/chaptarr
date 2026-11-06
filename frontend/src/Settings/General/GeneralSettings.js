@@ -19,6 +19,7 @@ import UpdateSettings from './UpdateSettings';
 
 const requiresRestartKeys = [
   'bindAddress',
+  'allowedHosts',
   'port',
   'urlBase',
   'enableSsl',
@@ -43,14 +44,8 @@ class GeneralSettings extends Component {
   componentDidUpdate(prevProps) {
     const {
       savedSettings,
-      isSaving,
-      isResettingApiKey
+      isSaving
     } = this.props;
-
-    if (!isResettingApiKey && prevProps.isResettingApiKey) {
-      this.setState({ isRestartRequiredModalOpen: true });
-      return;
-    }
 
     if (isSaving || !prevProps.isSaving) {
       return;

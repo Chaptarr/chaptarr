@@ -10,6 +10,7 @@ namespace Chaptarr.Api.V1.Config
     public class HostConfigResource : RestResource
     {
         public string BindAddress { get; set; }
+        public string AllowedHosts { get; set; }
         public int Port { get; set; }
         public int SslPort { get; set; }
         public bool EnableSsl { get; set; }
@@ -65,12 +66,14 @@ namespace Chaptarr.Api.V1.Config
             return new HostConfigResource
             {
                 BindAddress = model.BindAddress,
+                AllowedHosts = model.AllowedHosts,
                 Port = model.Port,
                 SslPort = model.SslPort,
                 EnableSsl = model.EnableSsl,
                 LaunchBrowser = model.LaunchBrowser,
                 AuthenticationMethod = model.AuthenticationMethod,
                 AuthenticationRequired = model.AuthenticationRequired,
+                TrustCgnatIpAddresses = model.TrustCgnatIpAddresses,
 
                 //Username
                 //Password
