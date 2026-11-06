@@ -86,6 +86,8 @@ export async function runQualityProfileLifecycle({ sourceRequest, targetRequest,
       if (hiddenId === sourceId || hiddenId === targetId || sourceBefore.value.some((profile) => profile.id === hiddenId)) continue;
       const media = ['audiobook', '1'].includes(String(counterpart.profileType).toLowerCase()) ? 'audiobook' : 'ebook';
       await paired('created.unexposed-native.' + media + '.readback', 'GET', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 404);
+      const missing = { ...payload, id: hiddenId, name: name + ' absent ' + media };
+      await paired('created.unexposed-native.' + media + '.update', 'PUT', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 404, missing, missing);
       await paired('created.unexposed-native.' + media + '.delete', 'DELETE', '/qualityprofile/' + hiddenId, '/qualityprofile/' + hiddenId, 200);
     }
     if (afterCreate) {
