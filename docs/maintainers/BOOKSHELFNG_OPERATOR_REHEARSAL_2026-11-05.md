@@ -1083,3 +1083,55 @@ failures. The private runtimeconfig selects 10.0.12 because the build SDK's outp
 requests 10.0.14; no shared SDK, cache or source test output was modified. Logs,
 invocations, provenance and the full-suite core are retained under
 `/var/tmp/chaptarrng-native-standalone-20261105/x86-core-tests/`.
+
+### Linux x86 runtime correction and exact installed acceptance
+
+The x86 failure was corrected at `57bc7d9f` by keeping the guarded Unix
+delegate return-buffer fix and relocating exception funclet roots after compacting
+GC. The native qualification now requires compacting collections both inside and
+after catch handlers, including the nested FluentValidation delegate shape that
+reproduced the failure. This supersedes the unresolved-cause status above.
+
+The first rebuilt archive was not acceptable: restore reused a stale custom
+runtime package from the shared NuGet cache. Standalone restore and intermediates
+are now task-local, and the build fails unless both packaged `libcoreclr.so`
+copies match the selected custom runtime package. A standalone build followed by
+the ordinary no-restore Core test path passes, proving that the isolated build no
+longer poisons repository project metadata or shared restore state.
+
+The retained corrected Linux x86 archive is
+`ChaptarrNG-0.0.0-linux-x86.tar.gz`, SHA-256
+`f8e8748258bbe566ca09c5ebc027e06924ae83eba45eecdc62e6d5f0c055d78c`.
+Its main and updater runtimes both have SHA-256
+`7c2687a326b48cb10a1a669e87e565c834419955e5f39fa1397d07cec986ba2c`.
+The archive was reused at final head `5a96ccf6` only because the intervening
+change affected the external evidence harness and did not change application,
+build, launcher or supervisor inputs.
+
+Native `linux/386` installed acceptance passes No, headless Manual and Yes,
+source and target health, retained source backup and forced-failure automatic
+rollback. The result records a 32-bit ELF executable with machine value 3 rather
+than relying on the Python harness process pointer width. The structured result
+is retained under
+`/var/tmp/chaptarrng-native-standalone-20261106/container-evidence/verified-5a96ccf6/`;
+`result.json` has SHA-256
+`fc7866576fc0d4870c6fd0b9aaaf3352ed81afca91b50db877d6fe8fdf045eae`.
+Task-owned raw crash and register traces were removed after the correction and
+structured evidence were secured. Publication and cutover remain frozen pending
+the exact-head hosted runs and the remaining external delivery decisions.
+
+Exact application-head Build
+[42272702808](https://github.com/snapetech-org/chaptarrng/actions/runs/42272702808)
+passes Linux, Windows, macOS, PostgreSQL and Docker at `5a96ccf6`, including the
+Windows `.76` Chocolatey handoff and rollback. Standalone run
+[42272707424](https://github.com/snapetech-org/chaptarrng/actions/runs/42272707424)
+builds and verifies every archive, including the corrected Linux x86 payload and
+native runtime qualification. Its public runner remains in the musl acquisition
+step far beyond the approximately three-minute prior canonical duration, with no
+failure annotation. The exact uploaded musl artifact independently passes the
+ebook and audiobook migration, local qBittorrent transfer, import and restart
+checks plus the cover-proxy authentication check on `kspld0`. The workflow now
+bounds the Docker build, optional package installation and each smoke command at
+ten minutes so runner or mirror stalls fail explicitly instead of consuming the
+six-hour default. A new workflow revision must supply the final hosted receipt;
+rerunning the old revision would not validate that bound.

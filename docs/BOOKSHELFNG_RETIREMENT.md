@@ -1,5 +1,56 @@
 # BookshelfNG retirement status
 
+## Current status — 2026-11-06 UTC
+
+The source and migration candidate is now internally qualified as the
+BookshelfNG replacement at application head `5a96ccf6`. Two frozen operator
+libraries passed fresh preview, conversion, target health, restore preview and
+rollback. Across 88,405 author, work and file response records there are no
+missing, extra or duplicate identities and no source-value differences. Source
+user columns, authentication hashes, provider settings, author metadata, all
+56,058 files, logical tables and SQLite sequences are preserved; rollback
+restores the retained source database bytes. The source installations and
+production media were not changed.
+
+The complete Seerr ebook and audiobook cases pass request, approval, local
+torrent acquisition, import, scan, restart and database-identity audits with the
+identified repaired Seerr client. Nonempty saved-indexer responses and native
+metadata refresh pass bounded live capture plus offline source/target replay.
+The source's third indexer remains HTTP 410 and both source download-client
+connections remain HTTP 502; those pre-existing external-service failures are
+recorded rather than represented as successful live grabs. Real-media reads
+cover EPUB, KEPUB, AZW3, MOBI, PDF, MP3, M4B and M4A. Actual rename/restart
+comparison covers the seven mapped formats available in the operator snapshots;
+no mapped M4A rename case is claimed. Whole-product M4B hard-kill recovery also
+passes with the pinned real-tool image.
+
+Headed Chrome acceptance covers migrated login, the populated Both-format
+library, format badges, book details, files and import history, narrow responsive
+layout, and an imported generic quality-profile name save, full reload, reopen
+and restore with complete database-row comparison. The frontend inputs are
+unchanged by the later backend profile, runtime and build-isolation corrections.
+Generic legacy quality-profile create, read, update, delete, restart and rollback
+also pass SQLite, PostgreSQL and source/candidate HTTP differential coverage.
+
+The Linux x86 runtime failure is corrected. The final native `linux/386`
+installed case passes No, headless Manual, Yes, health, retained source backup
+and forced-failure automatic rollback using archive SHA-256
+`f8e8748258bbe566ca09c5ebc027e06924ae83eba45eecdc62e6d5f0c055d78c`.
+Standalone restore and intermediates are task-local, and packaging rejects a
+runtime whose main or updater `libcoreclr.so` does not match the selected custom
+runtime package. The exact evidence and correction are in the
+[operator rehearsal](maintainers/BOOKSHELFNG_OPERATOR_REHEARSAL_2026-11-05.md).
+
+No known application or data-migration parity defect remains open. This does
+not mean every external distribution has delivered the candidate. Feed/catalog
+publication, signing and maintainer acceptance for StartOS, Cloudron, Unraid,
+Co-op Cloud and third-party catalogs; legacy package-feed authorization; pinned
+or offline operator delivery; explicit production migration; and final cutover
+remain separate operational decisions. Release and migration-bridge gates stay
+closed until those actions are intentionally authorized. BookshelfNG remains
+operational and no package, alias, bridge or production installation was changed
+by this qualification.
+
 ## Current status — 2026-11-05 UTC
 
 The unpublished candidate now includes schema-126 migration identity indexes. Public hosted runners are

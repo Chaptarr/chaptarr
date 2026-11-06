@@ -374,19 +374,19 @@ jobs:
         mkdir -p "$RUNNER_TEMP/acquisition-candidate"
         tar -xzf "$RUNNER_TEMP/release-assets/ChaptarrNG-0.0.0-linux-musl-x64.tar.gz" \
           -C "$RUNNER_TEMP/acquisition-candidate"
-        docker build -t chaptarrng-acquisition-qbittorrent:20261105 \
+        timeout --foreground 10m docker build -t chaptarrng-acquisition-qbittorrent:20261105 \
           -f integration/acquisition/Dockerfile.qbittorrent integration/acquisition
-        python3 integration/run-acquisition-smoke.py \
+        timeout --foreground 10m python3 integration/run-acquisition-smoke.py \
           --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
           --output "$RUNNER_TEMP/acquisition-evidence"
         if ! command -v ffmpeg >/dev/null; then
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          timeout --foreground 10m sudo apt-get update
+          timeout --foreground 10m sudo apt-get install -y ffmpeg
         fi
-        python3 integration/run-acquisition-smoke.py --media-type audiobook \
+        timeout --foreground 10m python3 integration/run-acquisition-smoke.py --media-type audiobook \
           --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
           --output "$RUNNER_TEMP/acquisition-audio-evidence"
-        python3 integration/run-cover-proxy-smoke.py \
+        timeout --foreground 10m python3 integration/run-cover-proxy-smoke.py \
           --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
           --output "$RUNNER_TEMP/cover-proxy-evidence" \
           --source-commit "$GITHUB_SHA"
