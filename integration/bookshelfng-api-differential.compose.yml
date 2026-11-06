@@ -68,6 +68,10 @@ services:
         target: /harness/bookshelfng-api-contract.mjs
         read_only: true
       - type: bind
+        source: ${BOOKSHELFNG_QUALITY_PROFILE_LIFECYCLE_SCRIPT:?Set the read-only profile lifecycle script path}
+        target: /harness/bookshelfng-quality-profile-lifecycle.mjs
+        read_only: true
+      - type: bind
         source: ${BOOKSHELFNG_DIFFERENTIAL_EVIDENCE:?Set the differential evidence directory}
         target: /evidence
     networks:

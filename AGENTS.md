@@ -185,3 +185,18 @@ the same profile type and previously enabled choices; do not allow creates or
 newly incompatible qualities, cutoffs or conversion targets. Test save/readback,
 format changes and grouped-cutoff injection. Compare all persisted fields and
 IDs after a headed save/reload/restore, not only HTTP success.
+
+
+## Legacy generic quality profile mutations
+
+Unscoped BookshelfNG profile requests use durable legacy IDs and transactional
+native audiobook/ebook counterparts. Preserve source mixed-format validation,
+shared custom-format scores and native-only conversion preferences. Check every
+counterpart for author/list/root references before deleting either one. Keep the
+persistent legacy ID high-water counter across deletion; native IDs can collide
+with legacy IDs and must not substitute for identity mappings.
+
+Run the disposable source/candidate HTTP lifecycle as well as SQLite/PostgreSQL
+transaction and rollback cases. Normalize only newly generated top-level profile
+IDs from the two create responses, never nested quality or group IDs. Verify
+restart readback and complete cleanup against the original rows.

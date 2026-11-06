@@ -86,6 +86,7 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             public QualityProfile Add(QualityProfile profile) => throw new NotImplementedException();
             public void Update(QualityProfile profile) => _profiles[_profiles.FindIndex(existing => existing.Id == profile.Id)] = profile;
             public void Delete(int id) => throw new NotImplementedException();
+            public void EnsureNotInUse(IEnumerable<int> ids) => throw new NotImplementedException();
             public QualityProfile Get(int id) => _profiles.Single(profile => profile.Id == id);
             public bool Exists(int id) => throw new NotImplementedException();
         }
@@ -100,29 +101,68 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             public List<int> ResolveBookIds(IEnumerable<int> sourceIds, BookMediaType? mediaType = null) => throw new NotImplementedException();
         }
 
+        private sealed class StubBookshelfProfiles : IBookshelfQualityProfileService
+        {
+            private readonly IQualityProfileService _profiles;
+            public StubBookshelfProfiles(IQualityProfileService profiles) => _profiles = profiles;
+            public string LastOperation { get; private set; }
+            public int LastId { get; private set; }
+            public QualityProfile LastProfile { get; private set; }
+            public List<BookshelfQualityProfile> All() => _profiles.GetByType(ProfileType.Audiobook)
+                .Select(profile => new BookshelfQualityProfile { LegacyId = profile.Id, Profile = profile }).ToList();
+            public BookshelfQualityProfile Get(int id) => new()
+            {
+                LegacyId = id, Profile = LastProfile != null && LastId == id ? LastProfile : _profiles.Get(id)
+            };
+            public BookshelfQualityProfile Create(QualityProfile profile)
+            {
+                LastOperation = "create";
+                LastId = 7;
+                LastProfile = profile;
+                return Get(7);
+            }
+
+            public BookshelfQualityProfile Update(int id, QualityProfile profile)
+            {
+                LastOperation = "update";
+                LastId = id;
+                LastProfile = profile;
+                return Get(id);
+            }
+
+            public void Delete(int id)
+            {
+                LastOperation = "delete";
+                LastId = id;
+            }
+        }
+
         private sealed class TestQualityProfileController : QualityApi.QualityProfileController
         {
             public TestQualityProfileController(IEnumerable<CustomFormat> formats = null, params QualityProfile[] profiles)
-                : this(new StubLegacyIdentityMap(), formats, profiles)
+                : this(new StubLegacyIdentityMap(), new StubQualityProfileService(formats, profiles), formats)
             {
             }
 
-            private TestQualityProfileController(StubLegacyIdentityMap identityMap, IEnumerable<CustomFormat> formats, QualityProfile[] profiles)
-                : base(new StubQualityProfileService(formats, profiles), new StubCustomFormatService(formats), identityMap)
+            private TestQualityProfileController(StubLegacyIdentityMap identityMap, StubQualityProfileService profiles, IEnumerable<CustomFormat> formats)
+                : this(identityMap, profiles, new StubBookshelfProfiles(profiles), formats)
+            {
+            }
+
+            private TestQualityProfileController(StubLegacyIdentityMap identityMap, StubQualityProfileService profiles,
+                StubBookshelfProfiles bookshelfProfiles, IEnumerable<CustomFormat> formats)
+                : base(profiles, new StubCustomFormatService(formats), identityMap, bookshelfProfiles)
             {
                 LegacyMappings = identityMap.Mappings;
+                BookshelfService = bookshelfProfiles;
                 ControllerContext.HttpContext = new DefaultHttpContext();
                 ControllerContext.HttpContext.Request.Method = "POST";
             }
 
             public List<BookshelfLegacyIdentityMapEntry> LegacyMappings { get; }
-
+            public StubBookshelfProfiles BookshelfService { get; }
             public QualityApi.QualityProfileResource GetResourceForTest(int id) => GetResourceById(id);
-
-            public void ValidateForTest(QualityApi.QualityProfileResource resource)
-            {
-                ValidateResource(resource, skipValidate: true);
-            }
+            public void ValidateForTest(QualityApi.QualityProfileResource resource) => ValidateResource(resource, skipValidate: true);
         }
 
         [Test]
@@ -787,6 +827,102 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             });
             return (controller, QualityApi.ProfileResourceMapper.ToResource(profile));
         }
+
+        [Test]
+        public void legacy_create_accepts_the_generic_predecessor_payload_and_returns_its_wire_id()
+        {
+            var controller = new TestQualityProfileController();
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+            var result = controller.Create(resource);
+            var created = (Microsoft.AspNetCore.Mvc.CreatedAtActionResult)result.Result;
+            Assert.That(controller.BookshelfService.LastOperation, Is.EqualTo("create"));
+            Assert.That(((QualityApi.QualityProfileResource)created.Value).Id, Is.EqualTo(7));
+            Assert.That(created.RouteValues["id"], Is.EqualTo(7));
+        }
+
+        [Test]
+        public void legacy_update_and_delete_use_the_legacy_identity_service()
+        {
+            var controller = new TestQualityProfileController();
+            SetGenericFacade(controller);
+            controller.ControllerContext.HttpContext.Request.Method = "PUT";
+            var resource = GenericResource();
+            resource.Id = 9;
+            controller.ValidateForTest(resource);
+            var result = controller.Update(resource);
+            var updated = (Microsoft.AspNetCore.Mvc.AcceptedAtActionResult)result.Result;
+            Assert.That(controller.BookshelfService.LastOperation, Is.EqualTo("update"));
+            Assert.That(((QualityApi.QualityProfileResource)updated.Value).Id, Is.EqualTo(9));
+            controller.DeleteProfile(9);
+            Assert.That(controller.BookshelfService.LastOperation, Is.EqualTo("delete"));
+            Assert.That(controller.BookshelfService.LastId, Is.EqualTo(9));
+        }
+
+        [Test]
+        public void legacy_validation_retains_the_source_all_qualities_requirement()
+        {
+            var controller = new TestQualityProfileController();
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            resource.Items.RemoveAt(0);
+            var exception = Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+            Assert.That(exception.Errors.Any(error => error.PropertyName == "Items" && error.ErrorMessage == "Must contain all qualities"), Is.True);
+        }
+
+        [Test]
+        public void generic_legacy_validation_does_not_relax_native_or_format_scoped_requests()
+        {
+            var controller = new TestQualityProfileController();
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(GenericResource()));
+            SetGenericFacade(controller, "ebook");
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(GenericResource()));
+        }
+
+        [Test]
+        public void generic_profiles_expose_shared_custom_formats_and_preserve_native_specific_formats_outside_the_wire()
+        {
+            var formats = new[]
+            {
+                new CustomFormat { Id = 11, Name = "Shared" },
+                new CustomFormat { Id = 22, Name = "Native audio", AppliesTo = CustomFormatMediaType.Audiobook }
+            };
+            var profile = CreateProfile(1, "Imported", ProfileType.Audiobook);
+            profile.FormatItems = formats.Select(format => new ProfileFormatItem { Format = format, Score = 1 }).ToList();
+            var controller = new TestQualityProfileController(formats, profile);
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            resource.FormatItems.Add(new QualityApi.ProfileFormatItemResource { Format = 11, Score = 1 });
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+            Assert.That(controller.GetAll().Single().FormatItems.Select(item => item.Format), Is.EqualTo(new[] { 11 }));
+        }
+
+        [Test]
+        public void legacy_custom_format_validation_preserves_the_source_permissive_extra_item_contract()
+        {
+            var controller = new TestQualityProfileController(new[] { new CustomFormat { Id = 11, Name = "Shared" } });
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            resource.FormatItems.Add(new QualityApi.ProfileFormatItemResource { Format = 11, Score = 1 });
+            resource.FormatItems.Add(new QualityApi.ProfileFormatItemResource { Format = 999, Score = 2 });
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+            resource.FormatItems.RemoveAt(0);
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+        }
+
+        private static void SetGenericFacade(TestQualityProfileController controller, string mediaType = null)
+        {
+            controller.ControllerContext.HttpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("bookshelf", mediaType, "", isBookshelfCompatibility: true);
+        }
+
+        private static QualityApi.QualityProfileResource GenericResource() => new()
+        {
+            Name = "Source generic", Cutoff = CoreQuality.M4B.Id,
+            Items = CoreQuality.All.Select(quality => new QualityApi.QualityProfileQualityItemResource { Quality = quality, Allowed = true }).ToList(),
+            FormatItems = new List<QualityApi.ProfileFormatItemResource>()
+        };
 
         private static QualityProfile CreateProfile(int id, string name, ProfileType type)
         {

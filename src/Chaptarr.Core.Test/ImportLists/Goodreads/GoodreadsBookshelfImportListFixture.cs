@@ -33,6 +33,7 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             public QualityProfile Add(QualityProfile profile) => throw new NotImplementedException();
             public void Update(QualityProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
+            public void EnsureNotInUse(IEnumerable<int> ids) => throw new NotImplementedException();
             public List<QualityProfile> All() => new();
             public List<QualityProfile> GetByType(ProfileType type) => new();
             public QualityProfile Get(int id) => throw new NotImplementedException();

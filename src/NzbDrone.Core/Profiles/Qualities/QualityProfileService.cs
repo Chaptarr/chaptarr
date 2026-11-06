@@ -20,6 +20,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         QualityProfile Add(QualityProfile profile);
         void Update(QualityProfile profile);
         void Delete(int id);
+        void EnsureNotInUse(IEnumerable<int> ids);
         List<QualityProfile> All();
         List<QualityProfile> GetByType(ProfileType type);
         QualityProfile Get(int id);
@@ -73,30 +74,25 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public void Delete(int id)
         {
-            var authorInUse = _authorService
-                .GetAllAuthors()
-                .Any(a => a.AudiobookQualityProfileId == id || a.EbookQualityProfileId == id);
-
-            var importListInUse = _importListFactory
-                .All()
-                .Any(l => l.QualityProfileId == id);
-
-            var rootFolderInUse = _rootFolderService
-                .All()
-                .Any(rf =>
-                {
-                    var ab = rf.GetAudiobookSettings();
-                    var eb = rf.GetEbookSettings();
-                    return (ab?.QualityProfileId == id) || (eb?.QualityProfileId == id);
-                });
-
-            if (authorInUse || importListInUse || rootFolderInUse)
-            {
-                var profile = _profileRepository.Get(id);
-                throw new QualityProfileInUseException(profile.Name);
-            }
-
+            EnsureNotInUse(new[] { id });
             _profileRepository.Delete(id);
+        }
+
+        public void EnsureNotInUse(IEnumerable<int> ids)
+        {
+            var authors = _authorService.GetAllAuthors();
+            var lists = _importListFactory.All();
+            var roots = _rootFolderService.All();
+            foreach (var id in ids.Distinct())
+            {
+                var authorInUse = authors.Any(author => author.AudiobookQualityProfileId == id || author.EbookQualityProfileId == id);
+                var importListInUse = lists.Any(list => list.QualityProfileId == id);
+                var rootFolderInUse = roots.Any(root => root.GetAudiobookSettings()?.QualityProfileId == id || root.GetEbookSettings()?.QualityProfileId == id);
+                if (authorInUse || importListInUse || rootFolderInUse)
+                {
+                    throw new QualityProfileInUseException(_profileRepository.Get(id).Name);
+                }
+            }
         }
 
         public List<QualityProfile> All()

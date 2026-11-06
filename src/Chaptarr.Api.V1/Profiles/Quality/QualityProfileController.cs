@@ -20,16 +20,19 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         private readonly IQualityProfileService _qualityProfileService;
         private readonly ICustomFormatService _formatService;
         private readonly IBookshelfLegacyIdentityMapService _bookshelfLegacyIdentityMap;
+        private readonly IBookshelfQualityProfileService _bookshelfProfiles;
 
-        public QualityProfileController(IQualityProfileService qualityProfileService, ICustomFormatService formatService, IBookshelfLegacyIdentityMapService bookshelfLegacyIdentityMap = null)
+        public QualityProfileController(IQualityProfileService qualityProfileService, ICustomFormatService formatService, IBookshelfLegacyIdentityMapService bookshelfLegacyIdentityMap = null, IBookshelfQualityProfileService bookshelfProfiles = null)
         {
             _qualityProfileService = qualityProfileService;
             _formatService = formatService;
             _bookshelfLegacyIdentityMap = bookshelfLegacyIdentityMap;
+            _bookshelfProfiles = bookshelfProfiles;
             SharedValidator.RuleFor(c => c.Name).NotEmpty();
             SharedValidator.RuleFor(c => c.ProfileType)
                 .Must(x => Enum.IsDefined(typeof(ProfileType), x))
-                .WithMessage("Profile type must be Audiobook or Ebook");
+                .WithMessage("Profile type must be Audiobook or Ebook")
+                .When(_ => !IsGenericBookshelfRequest());
             SharedValidator.RuleFor(c => c.Cutoff).ValidCutoff();
             SharedValidator.RuleFor(c => c.Items).ValidItems();
 
@@ -37,20 +40,33 @@ namespace Chaptarr.Api.V1.Profiles.Quality
 
             SharedValidator.RuleFor(c => c).Custom((profile, context) =>
             {
-                foreach (var failure in GetProfileTypeQualityFailures(profile, GetRetainedImportedProfile(profile)))
+                var genericBookshelf = IsGenericBookshelfRequest();
+                if (genericBookshelf)
                 {
-                    context.AddFailure(failure.PropertyName, failure.Message);
+                    var qualities = FlattenQualityIds(profile.Items).Select(quality => quality.Id).OrderBy(id => id);
+                    if (!qualities.SequenceEqual(NzbDrone.Core.Qualities.Quality.All.Select(quality => quality.Id).OrderBy(id => id)))
+                    {
+                        context.AddFailure("Items", "Must contain all qualities");
+                    }
+                }
+                else
+                {
+                    foreach (var failure in GetProfileTypeQualityFailures(profile, GetRetainedImportedProfile(profile)))
+                    {
+                        context.AddFailure(failure.PropertyName, failure.Message);
+                    }
                 }
 
                 var formatItems = profile.FormatItems ?? new List<ProfileFormatItemResource>();
                 var expectedIds = _formatService.All()
-                    .Where(format => format.AppliesToProfile(profile.ProfileType))
+                    .Where(format => genericBookshelf ? format.AppliesTo == CustomFormatMediaType.Both : format.AppliesToProfile(profile.ProfileType))
                     .Select(format => format.Id)
                     .ToHashSet();
                 var suppliedIds = formatItems.Select(item => item.Format).ToList();
 
-                if (suppliedIds.Count != suppliedIds.Distinct().Count() ||
-                    !expectedIds.SetEquals(suppliedIds))
+                if (genericBookshelf
+                    ? !expectedIds.IsSubsetOf(suppliedIds)
+                    : suppliedIds.Count != suppliedIds.Distinct().Count() || !expectedIds.SetEquals(suppliedIds))
                 {
                     context.AddFailure("FormatItems", "Every applicable Custom Format, and no incompatible ones, must be present. Try refreshing your browser.");
                 }
@@ -67,6 +83,12 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         [RestPostById]
         public ActionResult<QualityProfileResource> Create([FromBody] QualityProfileResource resource)
         {
+            if (IsGenericBookshelfRequest())
+            {
+                var created = BookshelfProfiles.Create(ToGenericBookshelfModel(resource));
+                return Created(created.LegacyId);
+            }
+
             var model = resource.ToModel();
             model = _qualityProfileService.Add(model);
             return Created(model.Id);
@@ -75,12 +97,24 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         [RestDeleteById]
         public void DeleteProfile(int id)
         {
+            if (IsGenericBookshelfRequest())
+            {
+                BookshelfProfiles.Delete(id);
+                return;
+            }
+
             _qualityProfileService.Delete(id);
         }
 
         [RestPutById]
         public ActionResult<QualityProfileResource> Update([FromBody] QualityProfileResource resource)
         {
+            if (IsGenericBookshelfRequest())
+            {
+                BookshelfProfiles.Update(resource.Id, ToGenericBookshelfModel(resource));
+                return Accepted(resource.Id);
+            }
+
             var model = resource.ToModel();
 
             _qualityProfileService.Update(model);
@@ -90,6 +124,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
 
         protected override QualityProfileResource GetResourceById(int id)
         {
+            if (IsGenericBookshelfRequest())
+            {
+                return ToGenericBookshelfResource(BookshelfProfiles.Get(id));
+            }
+
             var bookshelfCompatibility = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true;
             return _qualityProfileService.Get(id).ToResource(filterToProfileType: !bookshelfCompatibility);
         }
@@ -98,6 +137,11 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         public List<QualityProfileResource> GetAll([FromQuery] string mediaType = null)
         {
             var requestedMediaType = QualityProfileMediaTypeParser.ParseOrNull(mediaType);
+            if (IsGenericBookshelfRequest() && !requestedMediaType.HasValue)
+            {
+                return BookshelfProfiles.All().Select(ToGenericBookshelfResource).OrderBy(profile => profile.Id).ToList();
+            }
+
             var bookshelfCompatibility = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true;
             var profiles = requestedMediaType.HasValue
                 ? _qualityProfileService.GetByType(requestedMediaType.Value.ToProfileType())
@@ -106,6 +150,31 @@ namespace Chaptarr.Api.V1.Profiles.Quality
                     : _qualityProfileService.All();
 
             return profiles.ToResource(filterToProfileType: requestedMediaType.HasValue);
+        }
+
+        private IBookshelfQualityProfileService BookshelfProfiles => _bookshelfProfiles ??
+            throw new InvalidOperationException("BookshelfNG quality profile compatibility is unavailable.");
+
+        private bool IsGenericBookshelfRequest()
+        {
+            var facade = HttpContext?.GetReadarrFacadeContext();
+            return facade?.IsBookshelfCompatibility == true && string.IsNullOrWhiteSpace(facade.MediaType);
+        }
+
+        private static QualityProfile ToGenericBookshelfModel(QualityProfileResource resource)
+        {
+            resource.ProfileType = ProfileType.Audiobook;
+            return resource.ToModel();
+        }
+
+        private QualityProfileResource ToGenericBookshelfResource(BookshelfQualityProfile profile)
+        {
+            var resource = profile.Profile.ToResource(filterToProfileType: false);
+            resource.Id = profile.LegacyId;
+            var sharedFormats = _formatService.All().Where(format => format.AppliesTo == CustomFormatMediaType.Both)
+                .Select(format => format.Id).ToHashSet();
+            resource.FormatItems = resource.FormatItems.Where(item => sharedFormats.Contains(item.Format)).ToList();
+            return resource;
         }
 
         private QualityProfileResource GetRetainedImportedProfile(QualityProfileResource profile)

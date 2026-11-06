@@ -36,6 +36,7 @@ export CHAPTARRNG_TARGET_IMAGE_ID="target-image-id-not-built"
 export BOOKSHELFNG_FIXTURE_SHA256="runtime-seed-pending"
 export BOOKSHELFNG_API_DIFFERENTIAL_SCRIPT="$ROOT/integration/bookshelfng-api-differential.mjs"
 export BOOKSHELFNG_API_CONTRACT_SCRIPT="$ROOT/integration/bookshelfng-api-contract.mjs"
+export BOOKSHELFNG_QUALITY_PROFILE_LIFECYCLE_SCRIPT="$ROOT/integration/bookshelfng-quality-profile-lifecycle.mjs"
 export BOOKSHELFNG_DIFFERENTIAL_EVIDENCE="$REPORT_DIR"
 
 cleanup() {

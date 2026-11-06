@@ -61,7 +61,7 @@ app_pid=""
 mkdir -p "$test_results_directory"
 dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj \
   --configuration Release --no-restore --no-build --verbosity normal \
-  --filter 'FullyQualifiedName~BookshelfPostgresDatabaseConverterFixture|FullyQualifiedName~BookshelfPostgresExternalBackupFixture' \
+  --filter 'FullyQualifiedName~BookshelfPostgresDatabaseConverterFixture|FullyQualifiedName~BookshelfPostgresExternalBackupFixture|FullyQualifiedName~BookshelfQualityProfilePostgresServiceFixture' \
   -- \
   "NUnit.WorkDirectory=$data_dir" \
   "NUnit.TestOutputXml=nunit-results"

@@ -13,6 +13,8 @@ import {
   sanitizeApiResponse,
 } from "./bookshelfng-api-contract.mjs";
 
+import { runQualityProfileLifecycle } from "./bookshelfng-quality-profile-lifecycle.mjs";
+
 const sourceUrl = (
   process.env.BOOKSHELFNG_API_URL ?? "http://127.0.0.1:18787/api/v1"
 ).replace(/\/+$/, "");
@@ -526,6 +528,14 @@ if (
     }
   }
 }
+
+await runQualityProfileLifecycle({
+  sourceRequest: (method, path, body) => method === "GET"
+    ? getJson(sourceUrl, sourceKey, path) : requestJson(sourceUrl, sourceKey, method, path, body),
+  targetRequest: (method, path, body, native = false) => method === "GET"
+    ? getJson(targetUrl, targetKey, path, native) : requestJson(targetUrl, targetKey, method, path, body),
+  onCase: (result) => results.push(result),
+});
 
 // Exercise legacy write contracts against the two isolated copies. The
 // monitoring edit verifies the old work ID still addresses its migrated

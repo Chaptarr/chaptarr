@@ -880,3 +880,54 @@ validation were still running when this new profile defect was found. Those
 runs do not qualify this later backend correction. Existing profile list/schema
 comparisons also do not establish complete unchanged-client profile mutation
 coverage; the same-input create/update/delete lifecycle remains a review item.
+
+
+### Generic quality profile lifecycle follow-up
+
+The source `.76` accepts a generic profile containing all nine quality entries,
+with EPUB, MP3 and M4B allowed and M4B as cutoff. The candidate previously rejected
+that same POST with ProfileType, Items and Cutoff errors. Isolated source rows
+were cleaned up after recording this mismatch.
+
+Generic legacy CRUD now creates and updates two native counterparts atomically,
+using persistent legacy IDs and an ID high-water counter retained after deletion.
+Shared updates preserve native conversion preferences and format-specific custom
+format scores. Deletion checks both counterparts for author, import-list and
+root-folder references before removing either. Missing deletes remain no-ops;
+ambiguous or incomplete mapped identities fail closed. Native validation remains
+strict outside generic compatibility requests.
+
+All 52 focused SQLite/controller cases pass. Twelve PostgreSQL 16 cases separately
+pass, including concurrent creation, native/legacy ID collision, reference guards
+and rollback when the second counterpart's insert/update/delete fails. Full Core
+passes 5,275 tests, with 41 skipped and zero failures. PostgreSQL cases skipped in
+the ordinary local suite are covered by that separate database run.
+
+The real `.76` source and an explicitly derived candidate pass nine strict HTTP
+lifecycle cases with zero source-field mismatches. A separate ten-case run
+restarts the candidate process between create and update: wire/native IDs and
+native conversion settings survive restart, then the generic update preserves
+those native settings. Cleanup leaves the original source and native profile
+rows unchanged. Only generated top-level profile IDs are normalized from their
+actual create responses. These cases are now part of the disposable differential
+harness; new canonical archive and exact-head CI qualification remain required.
+
+Private evidence is retained under
+`/var/tmp/chaptarrng-desktop-repair-20261105/` on the desktop-pool guest and
+`/var/tmp/chaptarrng-native-standalone-20261105/release-api-fix/` on kspld0.
+The services use synthetic fixtures, not operator databases.
+
+### x86 canonical campaign failure
+
+The `17dc081d` full Build, API, Helm and security checks succeeded. Producer run
+42151309562 built all ten archives, but its installed Linux x86 handoff failed
+(job 127687941185). The candidate migrated to schema 126 and listened on the
+health endpoint, then exited before acceptance completed. Automatic source
+restore passed. The retained log does not establish the exit cause. The exact
+x86 archive SHA-256 is
+`26647f6bed7eea57e5711eb5eb713b1e8531958493b5adaf90e208fd9d9c6a30`.
+Failure evidence is retained at
+`/var/tmp/chaptarrng-native-standalone-20261105/producer-17dc081d-x86-failure/`.
+This gate is open; previous x86 passes do not qualify the failed payload, and
+that campaign does not qualify later backend changes. Publication and cutover
+remain frozen.
