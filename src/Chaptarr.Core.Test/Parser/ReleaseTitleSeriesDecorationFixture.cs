@@ -46,7 +46,7 @@ namespace Chaptarr.Core.Test.Parser
         [TestCase("J.K. Rowling - Pocket Potters Book 3 - Hermione Granger", true)]
         [TestCase("J.K. Rowling - Pocket Potters 99 - Hermione Granger", true)]
         // A stated position we BELIEVE belongs to a sibling is a derived guess and never overrules a
-        // present book title. Only a sibling's own title blocks. Ruled 2026-09-18.
+        // present book title. Only a sibling's own title blocks.
         [TestCase("J.K. Rowling - Pocket Potters 2 - Hermione Granger", true)]
         [TestCase("J.K. Rowling - Pocket Potters 4 - Hermione Granger", true)]
         [TestCase("J.K. Rowling - Pocket Potters 2 - Ron Weasley", false)]

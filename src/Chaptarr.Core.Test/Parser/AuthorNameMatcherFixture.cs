@@ -4,8 +4,9 @@ using NLog;
 using NLog.Config;
 using NLog.Targets;
 using NUnit.Framework;
-using NzbDrone.Core.Parser;
 using NzbDrone.Core.Authors;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.CustomFormats;
 
 namespace Chaptarr.Core.Test.Parser
@@ -324,7 +325,32 @@ namespace Chaptarr.Core.Test.Parser
         [TestCase("Anne Smith-Jones", "Anne Jones", false)]
         [TestCase("John Smith", "John Smith's", true)]
         [TestCase("John Smith", "John Smith\u02bcs", true)]
-        [TestCase("John Smith", "John Smiths", false)]
+        // One trailing surname s is compatible in either direction.
+        [TestCase("John Smith", "John Smiths", true)]
+        [TestCase("Frank Herbert", "Frank Herberts", true)]
+        [TestCase("Frank Herbert", "Herberts, Frank", true)]
+        [TestCase("Frank Herbert", "Frank Herbert‘s", true)]
+        [TestCase("Nora Roberts", "Nora Robert", true)]
+        [TestCase("Stephen Fry", "Stephen Frys", true)]
+        [TestCase("Robert Stevenson", "Robert Louis Stevensons", true)]
+        [TestCase("Ursula K. Le Guin", "Ursula K. Le Guins", true)]
+        [TestCase("Douglas Adams", "Douglas Adam's", true)]
+        [TestCase("Anne Smith-Jones", "Anne Smith-Joness", true)]
+        [TestCase("Frank Herbert", "Frank & Brian Herberts", true)]
+        [TestCase("Frank Herberts", "Frank & Brian Herbert", true)]
+        [TestCase("Frank Herbert", "Frank and Brian Herberts", true)]
+        [TestCase("Frank Herbert", "Brian Herberts", false)]
+        [TestCase("Frank Herbert", "Frank Hebert", false)]
+        [TestCase("Frank Herbert", "Franks Herbert", false)]
+        [TestCase("James Smith", "Jame Smith", false)]
+        [TestCase("John Smith", "Pat Smiths, John Doe", false)]
+        [TestCase("Anne Smith-Jones", "Anne Smiths-Jones", false)]
+        [TestCase("Le Guin, Ursula K.", "Ursula Les Guin", false)]
+        [TestCase("Brian Herbert", "Frank Herberts and Pat Smith", false)]
+        [TestCase("Лев Толстой", "Лев Толстойс", false)]
+        [TestCase("山田 太郎", "山田 太郎子", false)]
+        [TestCase("Voltaire", "Voltaires", false)]
+        [TestCase("Frank Herbert", "FrankHerberts", false)]
         [TestCase("Лев Н. Толстой", "Лев Толстой", true)]
         [TestCase("José García", "Jose Garcia", true)]
         [TestCase("がとう", "かとう", false)]
@@ -381,7 +407,43 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(AuthorNameMatcher.AuthorNamesMatch(candidate, expected), Is.EqualTo(matches));
         }
 
+        [TestCase("'", "john smiths", true)]
+        [TestCase("’", "john smiths", true)]
+        [TestCase("‘", "john smiths", false)]
+        [TestCase("ʼ", "john smith's", true)]
+        public void possessive_proof_preserves_the_released_stored_key_and_name_alphabets(string apostrophe, string key, bool exact)
+        {
+            var credit = "John Smith" + apostrophe + "s";
+            Assert.Multiple(() =>
+            {
+                Assert.That(StringSuperNormalizer.NormalizeForFts(credit), Is.EqualTo(key));
+                Assert.That(ReleaseTitleMatchScorer.Tokenize(credit), Is.EqualTo(new[] { "john", "smiths" }));
+                Assert.That(AuthorNameMatcher.AuthorNamesExactlyMatch(AuthorNameMatcher.PrepareName("John Smith"),
+                    AuthorNameMatcher.PrepareName(credit)), Is.EqualTo(exact));
+                Assert.That(AuthorNameMatcher.ContainsAuthorName("John Smith", credit + " - A Book"), Is.True);
+            });
+        }
+
+        [TestCase("Frank Herbert", "Frank Herberts")]
+        [TestCase("Nora Roberts", "Nora Robert")]
+        public void surname_compatibility_must_not_change_exact_identity(string expected, string candidate)
+        {
+            Assert.That(AuthorNameMatcher.AuthorNamesExactlyMatch(AuthorNameMatcher.PrepareName(expected),
+                AuthorNameMatcher.PrepareName(candidate)), Is.False);
+        }
+
         [TestCase("Pat Smith", "Titel von Pat Smith", true)]
+        [TestCase("Frank Herbert", "Frank Herberts Dune", true)]
+        [TestCase("Frank Herberts", "Frank Herbert Dune", true)]
+        [TestCase("Frank Herbert", "Herberts, Frank - Dune", true)]
+        [TestCase("Frank Herbert", "Frank & Brian Herberts - Dune", true)]
+        [TestCase("Frank Herbert", "Brian Herberts - Dune", false)]
+        [TestCase("Frank Herbert", "Franks Herbert - Dune", false)]
+        [TestCase("Michael Ende", "Michael Endes Momo", true)]
+        [TestCase("Лев Толстой", "Лев Толстойс Война и мир", false)]
+        [TestCase("Лев Толстой", "Лев Толстые Война и мир", false)]
+        [TestCase("Voltaire", "Voltaires Candide", false)]
+        [TestCase("Robert Williams", "Robert William Chambers - Title", true)]
         [TestCase("Pat Smith", "Titre par Pat Smith", true)]
         [TestCase("Pat Smith", "Título por Pat Smith", true)]
         [TestCase("Pat Smith", "Gelesen von Pat Smith", true)]
@@ -406,7 +468,8 @@ namespace Chaptarr.Core.Test.Parser
         [TestCase("Robert Louis Stevenson", "Robert Andrew Stevenson", false)]
         [TestCase("Robert Louis Stevenson", "Robert Q Stevenson", false)]
         [TestCase("John Smith", "John Smith’s", true)]
-        [TestCase("John Smith", "John Smiths", false)]
+        // One trailing surname s is compatible in either direction.
+        [TestCase("John Smith", "John Smiths", true)]
         [TestCase("Gabriel Garcia Marquez", "Gabriel Jose de la Concordia Garcia Marquez", true)]
         [TestCase("Gabriel Garcia Marquez", "Marquez, Gabriel Jose de la Concordia Garcia", true)]
         [TestCase("Gabriel Garcia Marquez", "Gabriel Jose de la Concordia Francisco Marquez", false)]
@@ -551,12 +614,14 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(AuthorNameMatcher.IsCoherentNameSpan(source, tokens, (0, 1, false), matchedStart, matchedEnd), Is.True);
         }
 
-        [TestCase(false, false)]
-        [TestCase(false, true)]
-        [TestCase(true, false)]
-        [TestCase(true, true)]
+        [TestCase(false, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(true, false, false)]
+        [TestCase(true, true, false)]
+        [TestCase(false, true, true)]
+        [TestCase(true, true, true)]
         [NonParallelizable]
-        public void span_search_should_bound_candidates_and_log_work_even_when_stopped_early(bool stopAfterFirst, bool hasAnchor)
+        public void span_search_should_bound_candidates_and_log_work_even_when_stopped_early(bool stopAfterFirst, bool hasAnchor, bool surnameSuffix)
         {
             var previous = LogManager.Configuration;
             var previousThreshold = LogManager.GlobalThreshold;
@@ -567,7 +632,7 @@ namespace Chaptarr.Core.Test.Parser
             {
                 LogManager.GlobalThreshold = LogLevel.Trace;
                 LogManager.Configuration = configuration;
-                var source = (hasAnchor ? "Robert Louis Stevenson " : "Alice Mary Doe ") + string.Join(" ", Enumerable.Repeat("padding", 100));
+                var source = (hasAnchor ? (surnameSuffix ? "Robert Louis Stevensons " : "Robert Louis Stevenson ") : "Alice Mary Doe ") + string.Join(" ", Enumerable.Repeat("padding", 100));
                 var tokens = ReleaseTitleMatchScorer.TokenizeWithSpans(source);
                 var spans = AuthorNameMatcher.FindNameSpans(source, tokens, AuthorNameMatcher.PrepareName("Robert Stevenson"));
                 if (stopAfterFirst)
@@ -583,6 +648,7 @@ namespace Chaptarr.Core.Test.Parser
                 Assert.That(memory.Logs, Has.Count.EqualTo(1));
                 Assert.That(memory.Logs[0], Does.Contain($"tokens=103, maxSpan=103, examined={(hasAnchor ? 1 : 0)}"));
                 Assert.That(memory.Logs[0], Does.Match(@"matched=\d+, elapsedMs=\d+[.,]\d{3}"));
+                Assert.That(memory.Logs[0], Does.Contain($"possessiveAnchors={(surnameSuffix ? 1 : 0)}"));
             }
             finally
             {

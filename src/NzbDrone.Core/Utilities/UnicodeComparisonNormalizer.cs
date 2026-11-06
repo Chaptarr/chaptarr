@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using NzbDrone.Core.Books.Extensions;
 
 namespace NzbDrone.Core.Utilities
 {
@@ -21,6 +22,8 @@ namespace NzbDrone.Core.Utilities
 
         internal static IEnumerable<(string Value, int Index, int Length)> WordSpans(string text, bool preserveFtsConnectors = false, bool includePossessive = false, bool splitNumbers = false)
         {
+            var possessives = includePossessive ? StringSuperNormalizer.PossessiveRegex.Matches(text ?? string.Empty) : null;
+            var possessiveIndex = 0;
             var index = 0;
             while (index < (text?.Length ?? 0))
             {
@@ -48,11 +51,13 @@ namespace NzbDrone.Core.Utilities
                        (IsWordCharacter(rune) || IsCombiningMark(rune)) &&
                        (!splitNumbers || IsCombiningMark(rune) || Rune.IsNumber(rune) == numeric));
 
-                if (includePossessive && index + 1 < text.Length &&
-                    (text[index] == '\'' || text[index] == '\u2018' || text[index] == '\u2019') &&
-                    (text[index + 1] == 's' || text[index + 1] == 'S'))
+                if (possessives != null)
                 {
-                    index += 2;
+                    while (possessiveIndex < possessives.Count && possessives[possessiveIndex].Index < index) possessiveIndex++;
+                    if (possessiveIndex < possessives.Count && possessives[possessiveIndex].Index == index)
+                    {
+                        index += possessives[possessiveIndex++].Length;
+                    }
                 }
 
                 yield return (text.Substring(start, index - start), start, index - start);

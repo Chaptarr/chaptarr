@@ -61,7 +61,7 @@ namespace NzbDrone.Core.Parser
 
         public static ReleasePackDetection Detect(string releaseTitle, Book targetBook)
         {
-            releaseTitle = NormalizeSceneSeparators(releaseTitle);
+            releaseTitle = NormalizeSceneSeparators(TitleBracketCatalog.NormalizeForParsing(releaseTitle));
 
             if (string.IsNullOrWhiteSpace(releaseTitle))
             {

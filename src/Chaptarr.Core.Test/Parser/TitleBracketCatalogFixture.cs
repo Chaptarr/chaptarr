@@ -25,6 +25,41 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(TitleBracketCatalog.TrimUnclosedTail(title), Is.EqualTo(title));
         }
 
+        [TestCase("Garden （Illustrated）", "Garden (Illustrated)")]
+        [TestCase("Garden ［Illustrated］", "Garden [Illustrated]")]
+        [TestCase("Garden 【Illustrated】", "Garden [Illustrated]")]
+        [TestCase("Garden {Illustrated}", "Garden (Illustrated)")]
+        [TestCase("Garden （Book 2 【Illustrated】）", "Garden (Book 2 [Illustrated])")]
+        public void parser_forms_come_from_the_catalog_without_dropping_contents(string title, string expected)
+        {
+            Assert.That(TitleBracketCatalog.NormalizeForParsing(title), Is.EqualTo(expected));
+            Assert.That(TitleBracketCatalog.NormalizeForParsing(expected), Is.SameAs(expected));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("Garden (Book 2) [Illustrated]")]
+        [TestCase("Garden 「3」『3』《3》〈3〉")]
+        public void ordinary_and_uncatalogued_brackets_are_not_changed(string title)
+        {
+            Assert.That(TitleBracketCatalog.NormalizeForParsing(title), Is.SameAs(title));
+        }
+
+        [TestCase("{", "}")]
+        [TestCase("（", "）")]
+        [TestCase("(", ")")]
+        public void release_parser_uses_the_shared_fold_but_preserves_raw_evidence(string open, string close)
+        {
+            var raw = "Frank Herbert - Dune " + open + "Unabridged" + close + " m4b";
+            var baseline = "Frank Herbert - Dune (Unabridged) m4b";
+            Assert.That(NzbDrone.Core.Parser.Parser.CleanReleaseTitleForParsing(raw), Is.EqualTo(raw));
+            var parsed = NzbDrone.Core.Parser.Parser.ParseBookTitle(raw);
+            var control = NzbDrone.Core.Parser.Parser.ParseBookTitle(baseline);
+            Assert.That(parsed, Is.Not.Null);
+            Assert.That(parsed.BookTitle, Is.EqualTo(control.BookTitle));
+            Assert.That(parsed.ReleaseTitle, Is.EqualTo(raw));
+        }
+
         [Test]
         public void stacked_groups_are_all_removed_and_reported_last_first()
         {

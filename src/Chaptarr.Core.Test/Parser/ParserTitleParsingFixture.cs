@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Parser.Model;
 using CoreParser = NzbDrone.Core.Parser.Parser;
 
 namespace Chaptarr.Core.Test.Parser
@@ -8,6 +10,66 @@ namespace Chaptarr.Core.Test.Parser
     [TestFixture]
     public class ParserTitleParsingFixture
     {
+        [TestCase("（320kbps）", "(320kbps)")]
+        [TestCase("［320kbps］", "[320kbps]")]
+        [TestCase("【320kbps】", "[320kbps]")]
+        [TestCase("{320kbps}", "(320kbps)")]
+        [TestCase("{Unabridged}", "(Unabridged)")]
+        [TestCase("&#65288;320kbps&#65289;", "(320kbps)")]
+        public void catalog_brackets_reach_the_legacy_parser_as_ascii(string suffix, string asciiSuffix)
+        {
+            var actual = CoreParser.ParseBookTitle("Frank Herbert - Dune " + suffix);
+            var expected = CoreParser.ParseBookTitle("Frank Herbert - Dune " + asciiSuffix);
+
+            Assert.That(actual, Is.Not.Null);
+            Assert.That(actual.AuthorName, Is.EqualTo("Frank Herbert"));
+            Assert.That(actual.BookTitle, Is.EqualTo("Dune"));
+            Assert.That(actual.ReleaseTitle, Is.EqualTo("Frank Herbert - Dune " + System.Net.WebUtility.HtmlDecode(suffix)));
+            expected.ReleaseTitle = actual.ReleaseTitle;
+            Assert.That(System.Text.Json.JsonSerializer.Serialize(actual),
+                Is.EqualTo(System.Text.Json.JsonSerializer.Serialize(expected)));
+        }
+
+        [Test]
+        public void shared_cleaning_preserves_original_brackets()
+        {
+            const string title = "Frank Herbert - Dune （NMR 320 kbps）";
+
+            Assert.That(CoreParser.CleanReleaseTitleForParsing(title), Is.EqualTo(title));
+            Assert.That(CoreParser.CleanReleaseTitleForParsing("Frank Herbert - Dune (NMR 320 kbps)"), Is.EqualTo("Frank Herbert - Dune"));
+        }
+
+        [TestCase("Unabridged")]
+        [TestCase("320kbps")]
+        public void custom_formats_keep_original_brackets_and_group_matches_ascii_parsing(string note)
+        {
+            var original = $"Frank Herbert - Dune {{{note}}}-ReleaseGroup";
+            var release = new ReleaseInfo { Title = original };
+            var parsed = CoreParser.ParseBookTitle(release.Title);
+            var ascii = CoreParser.ParseBookTitle($"Frank Herbert - Dune ({note})-ReleaseGroup");
+            Assert.That(parsed, Is.Not.Null);
+            Assert.That(ascii, Is.Not.Null);
+            Assert.That(parsed.ReleaseGroup, Is.EqualTo(ascii.ReleaseGroup));
+            Assert.That(parsed.ReleaseTitle, Is.EqualTo(original));
+            var actualInput = new CustomFormatInput { BookInfo = parsed };
+            var asciiInput = new CustomFormatInput { BookInfo = ascii };
+            foreach (var pattern in new[] { "Dune", "ReleaseGroup" })
+            {
+                var title = new ReleaseTitleSpecification { Value = pattern };
+                var group = new ReleaseGroupSpecification { Value = pattern };
+                Assert.That(title.IsSatisfiedBy(actualInput), Is.EqualTo(title.IsSatisfiedBy(asciiInput)), pattern);
+                Assert.That(group.IsSatisfiedBy(actualInput), Is.EqualTo(group.IsSatisfiedBy(asciiInput)), pattern);
+            }
+
+            var curlyTitle = new ReleaseTitleSpecification { Value = System.Text.RegularExpressions.Regex.Escape($"{{{note}}}") };
+            var parenthesizedTitle = new ReleaseTitleSpecification { Value = System.Text.RegularExpressions.Regex.Escape($"({note})") };
+            Assert.That(curlyTitle.IsSatisfiedBy(actualInput), Is.True);
+            Assert.That(curlyTitle.IsSatisfiedBy(asciiInput), Is.False);
+            Assert.That(parenthesizedTitle.IsSatisfiedBy(actualInput), Is.False);
+            Assert.That(parenthesizedTitle.IsSatisfiedBy(asciiInput), Is.True);
+            Assert.That(release.Title, Is.EqualTo(original), "Parsing must not rewrite the stored indexer title");
+        }
+
         [Test]
         public void should_parse_author_and_book_from_author_dash_title_with_suffix()
         {

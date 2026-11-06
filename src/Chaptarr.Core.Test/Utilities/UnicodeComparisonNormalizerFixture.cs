@@ -84,18 +84,30 @@ namespace Chaptarr.Core.Test.Utilities
             }
         }
 
-        [TestCase(false, false)]
-        [TestCase(true, false)]
-        [TestCase(false, true)]
-        public void word_spans_should_preserve_existing_bmp_punctuation_rules(bool connectors, bool possessive)
+        [TestCase(false)]
+        [TestCase(true)]
+        public void word_spans_should_preserve_existing_bmp_punctuation_rules(bool connectors)
         {
             var pattern = connectors ? @"[\p{L}\p{Nd}]+(?:[-\.][\p{L}\p{Nd}]+)*"
-                : possessive ? @"[\p{L}\p{Nd}]+(?:['\u2018\u2019][sS])?" : @"[\p{L}\p{Nd}]+";
+                : @"[\p{L}\p{Nd}]+";
             foreach (var value in new[] { "Renée’s high-opp 125", "a..b -a- a.-b a-.b a--b", "Fred'son Fred’sS", "村上 春樹 العربية", "élève & book 🌶️" })
             {
                 var expected = Regex.Matches(value, pattern).Select(m => (m.Value, m.Index, m.Length));
-                Assert.That(UnicodeComparisonNormalizer.WordSpans(value, connectors, possessive), Is.EqualTo(expected), value);
+                Assert.That(UnicodeComparisonNormalizer.WordSpans(value, connectors), Is.EqualTo(expected), value);
             }
+        }
+
+        [TestCase("Fred's", "Fred's")]
+        [TestCase("Fred’s", "Fred’s")]
+        [TestCase("Fred‘s", "Fred‘s")]
+        [TestCase("Fredʼs", "Fredʼs")]
+        [TestCase("Fred'son", "Fred|son")]
+        [TestCase("O'Sullivan", "O|Sullivan")]
+        [TestCase("Fred’sS", "Fred|sS")]
+        public void possessive_highlights_require_the_shared_word_boundary(string value, string expected)
+        {
+            Assert.That(string.Join("|", UnicodeComparisonNormalizer.WordSpans(value, includePossessive: true)
+                .Select(span => span.Value)), Is.EqualTo(expected));
         }
 
         [TestCase("Astorias𠀀Smut", "Astorias𠀀Smut")]

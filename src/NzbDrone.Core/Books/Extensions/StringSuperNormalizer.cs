@@ -16,8 +16,8 @@ namespace NzbDrone.Core.Books.Extensions
         // ========================================================================
 
         // Regex for possessive normalization: matches 's at word boundary
-        // Covers: ' (U+0027 straight), ' (U+2019 right curly), ' (U+2018 left curly)
-        private static readonly Regex PossessiveRegex = new Regex("['\\u2018\\u2019]s\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        // Preserve the released stored-key alphabet: straight and left/right curly apostrophes.
+        internal static readonly Regex PossessiveRegex = new Regex("['\\u2018\\u2019]s\\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>
         /// Normalizes text for FTS matching:

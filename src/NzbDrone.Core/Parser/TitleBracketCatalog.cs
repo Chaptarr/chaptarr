@@ -8,14 +8,14 @@ namespace NzbDrone.Core.Parser
     // Bracket pairs around title qualifiers, including the full-width forms used in CJK titles.
     internal static class TitleBracketCatalog
     {
-        private static readonly (char Open, char Close)[] Pairs =
+        private static readonly (char Open, char Close, char AsciiOpen, char AsciiClose)[] Pairs =
         {
-            ('(', ')'),
-            ('[', ']'),
-            ('（', '）'),
-            ('［', '］'),
-            ('【', '】'),
-            ('{', '}')
+            ('(', ')', '(', ')'),
+            ('[', ']', '[', ']'),
+            ('（', '）', '(', ')'),
+            ('［', '］', '[', ']'),
+            ('【', '】', '[', ']'),
+            ('{', '}', '(', ')')
         };
 
         public static IReadOnlyList<char> Openers { get; } = Pairs.Select(pair => pair.Open).ToArray();
@@ -23,6 +23,25 @@ namespace NzbDrone.Core.Parser
         // One correctly paired segment whose inner text is captured as "label", e.g. "(Unabridged)" or "【典藏版】".
         public static string PairedSegmentPattern { get; } = string.Join("|", Pairs.Select(pair =>
             EscapeLiteral(pair.Open) + "(?<label>[^" + EscapeForClass(pair.Open) + EscapeForClass(pair.Close) + "]*)" + EscapeLiteral(pair.Close)));
+
+        // Fold only parser input; title proof and stored release names keep their original brackets.
+        public static string NormalizeForParsing(string title)
+        {
+            if (string.IsNullOrEmpty(title))
+            {
+                return title;
+            }
+
+            foreach (var pair in Pairs)
+            {
+                if (pair.Open != pair.AsciiOpen)
+                {
+                    title = title.Replace(pair.Open, pair.AsciiOpen).Replace(pair.Close, pair.AsciiClose);
+                }
+            }
+
+            return title;
+        }
 
         // The title without its trailing bracket groups, or the title itself when nothing else would remain.
         public static string BaseTitle(string title, List<string> removedGroups = null)

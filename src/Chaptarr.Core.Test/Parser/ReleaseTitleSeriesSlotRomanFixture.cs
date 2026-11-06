@@ -272,7 +272,7 @@ namespace Chaptarr.Core.Test.Parser
         [Test]
         public void a_distinctive_title_is_never_overruled_by_a_slot_numeral()
         {
-            // The 2026-09-18 ruling: a derived position never overrules a present book title. That
+            // A derived position never overrules a present book title. That
             // holds because the slot only opens when the stored title IS the series name.
             var rowling = new Author { Id = 617, Name = "J.K. Rowling" };
             var stone = Make(1, rowling, "Harry Potter and the Sorcerer's Stone", "Harry Potter", "1");

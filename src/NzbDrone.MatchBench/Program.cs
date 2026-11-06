@@ -977,7 +977,7 @@ namespace NzbDrone.MatchBench
         {
             var sourceAppData = GetArg(startupContext, "data") ??
                                 Environment.GetEnvironmentVariable("CHAPTARR_APPDATA") ??
-                                "/workspace/audioarrdata";
+                                "/config";
             var prefix = GetArg(startupContext, "prefix") ?? "/audiobooks";
             var limit = Math.Max(1, GetIntArg(startupContext, "limit", 250));
             var inputSource = (GetArg(startupContext, "source") ?? "bookfiles").Trim().ToLowerInvariant();
@@ -3627,7 +3627,7 @@ FROM Books;")
 
             var dbPath = GetArg(startupContext, "db") ??
                          Environment.GetEnvironmentVariable("CHAPTARR_DB") ??
-                         "/workspace/audioarrdata/chaptarr.db";
+                         "/config/chaptarr.db";
 
             if (string.IsNullOrWhiteSpace(prowlarrUrl))
             {
@@ -3661,7 +3661,7 @@ FROM Books;")
                 return 2;
             }
 
-            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/workspace/audioarrdata";
+            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/config";
             if (RejectPostgresForSqliteSnapshot(new StartupContext("/prowlarrbench", $"/data={sourceAppData}"), "prowlarrbench"))
             {
                 return 2;
@@ -3849,7 +3849,7 @@ FROM Books;")
         {
             var dbPath = GetArg(startupContext, "db") ??
                          Environment.GetEnvironmentVariable("CHAPTARR_DB") ??
-                         "/workspace/audioarrdata/chaptarr.db";
+                         "/config/chaptarr.db";
             var releasePath = GetArg(startupContext, "releases");
             var bookIds = ParseTargetBookIds(GetArg(startupContext, "bookids"));
             var interactiveSearch = GetBoolArg(startupContext, "interactive", true);
@@ -3867,7 +3867,7 @@ FROM Books;")
                 return 2;
             }
 
-            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/workspace/audioarrdata";
+            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/config";
             var snapshotContext = new StartupContext("/releasereplay", $"/data={sourceAppData}");
             if (RejectPostgresForSqliteSnapshot(snapshotContext, "releasereplay"))
             {
@@ -4072,7 +4072,7 @@ FROM Books;")
         {
             var dbPath = GetArg(startupContext, "db") ??
                          Environment.GetEnvironmentVariable("CHAPTARR_DB") ??
-                         "/workspace/audioarrdata/chaptarr.db";
+                         "/config/chaptarr.db";
             var proxyUrl = GetArg(startupContext, "proxy");
             var bookIds = ParseTargetBookIds(GetArg(startupContext, "bookids"));
             var interactiveSearch = GetBoolArg(startupContext, "interactive", true);
@@ -4092,7 +4092,7 @@ FROM Books;")
                 return 2;
             }
 
-            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/workspace/audioarrdata";
+            var sourceAppData = GetArg(startupContext, "data") ?? Path.GetDirectoryName(Path.GetFullPath(dbPath)) ?? "/config";
             if (RejectPostgresForSqliteSnapshot(new StartupContext("/mambench", $"/data={sourceAppData}"), "mambench"))
             {
                 return 2;
@@ -5146,7 +5146,7 @@ WHERE b.Id IN @bookIds
             System.Console.WriteLine("  /requiretags=true|false  (default true)");
             System.Console.WriteLine();
             System.Console.WriteLine("Example:");
-            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /matchbench /data=/workspace/audioarrdata /prefix=/audiobooks/SomeAuthor /limit=300 /repeat=3 /authorid=12");
+            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /matchbench /data=/config /prefix=/audiobooks/SomeAuthor /limit=300 /repeat=3 /authorid=12");
             System.Console.WriteLine();
             System.Console.WriteLine("2) Library matching audit (real matcher, snapshot by default):");
             System.Console.WriteLine("  Required: /libraryaudit");
@@ -5161,15 +5161,15 @@ WHERE b.Id IN @bookIds
             System.Console.WriteLine("  Sources: bookfiles replays exactly stored BookFiles tags/durations; staging replays ingest_queue; disk re-extracts tags from real files.");
             System.Console.WriteLine();
             System.Console.WriteLine("Example:");
-            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/workspace/audioarrdata /source=bookfiles /prefix=/audiobooks/audiobooks/J.K.\\ Rowling /limit=50 /flow=all /strictness=all /pathfallback=all");
-            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/workspace/audioarrdata /source=bookfiles /bookfileid=3081 /includemissing=true /flow=scan-local /ftstop=50");
+            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/config /source=bookfiles /prefix=/audiobooks/Example\\ Author /limit=50 /flow=all /strictness=all /pathfallback=all");
+            System.Console.WriteLine("  dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /libraryaudit /data=/config /source=bookfiles /bookfileid=3081 /includemissing=true /flow=scan-local /ftstop=50");
             System.Console.WriteLine();
             System.Console.WriteLine("3) Prowlarr recall audit (no matching verdicts or grabs):");
             System.Console.WriteLine("  Required: /prowlarrbench and PROWLARR_API_KEY set (or /apikey=...)");
             System.Console.WriteLine("  Optional: /prowlarr=<url> (or PROWLARR_URL), /db=<path>, /sample=10, /max=60, /querymode=both|authorTitle|titleOnly, /indexerids=2,14, /worstcase=true|false, /bookids=1,2, /author=<name> /title=<title>, /cases='Author|Title[|SeriesPos];Author|Title|SeriesName|SeriesPos;...'");
             System.Console.WriteLine();
             System.Console.WriteLine("Example:");
-            System.Console.WriteLine("  PROWLARR_URL=http://192.0.2.10:9696 PROWLARR_API_KEY=*** dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /prowlarrbench /db=/workspace/audioarrdata/chaptarr.db /sample=10 /querymode=both");
+            System.Console.WriteLine("  PROWLARR_URL=http://192.0.2.10:9696 PROWLARR_API_KEY=*** dotnet run --project src/NzbDrone.MatchBench/Chaptarr.MatchBench.csproj -- /prowlarrbench /db=/config/chaptarr.db /sample=10 /querymode=both");
             System.Console.WriteLine();
             System.Console.WriteLine("4) Native MyAnonaMouse request/parser + production decision audit (search-only):");
             System.Console.WriteLine("  Required: /mambench /db=<chaptarr.db> /bookids=1,2 /proxy=<http-proxy-url>");

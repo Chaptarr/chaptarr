@@ -16,6 +16,8 @@ namespace NzbDrone.Core.Parser
 {
     public static class Parser
     {
+        internal static readonly char[] SubtitleSeparators = { ':', '：' };
+
         private static readonly Logger Logger = NzbDroneLogger.GetLogger(typeof(Parser));
 
         private static readonly Regex[] ReportBookTitleRegex = new[]
@@ -293,7 +295,7 @@ namespace NzbDrone.Core.Parser
                     result.Quality = QualityParser.ParseQuality(title);
                     Logger.Trace("Quality parsed: {0}", result.Quality);
 
-                    result.ReleaseGroup = ParseReleaseGroup(releaseTitle);
+                    result.ReleaseGroup = ParseReleaseGroup(CleanReleaseTitleForParsing(title, normalizeBrackets: true));
 
                     Logger.Trace("Release Group parsed: {0}", result.ReleaseGroup);
 
@@ -330,8 +332,9 @@ namespace NzbDrone.Core.Parser
                 Logger.Trace("Parsing string '{0}'", title);
 
                 var releaseTitle = CleanReleaseTitleForParsing(title);
+                var parseTitle = CleanReleaseTitleForParsing(title, normalizeBrackets: true);
 
-                var simpleTitle = SimpleTitleRegex.Replace(releaseTitle);
+                var simpleTitle = SimpleTitleRegex.Replace(parseTitle);
 
                 // TODO: Quick fix stripping [url] - prefixes.
                 simpleTitle = WebsitePrefixRegex.Replace(simpleTitle);
@@ -376,7 +379,7 @@ namespace NzbDrone.Core.Parser
                                 result.Quality = QualityParser.ParseQuality(title);
                                 Logger.Trace("Quality parsed: {0}", result.Quality);
 
-                                result.ReleaseGroup = ParseReleaseGroup(releaseTitle);
+                                result.ReleaseGroup = ParseReleaseGroup(parseTitle);
 
                                 var subGroup = GetSubGroup(match);
                                 if (!subGroup.IsNullOrWhiteSpace())
@@ -548,7 +551,9 @@ namespace NzbDrone.Core.Parser
             return title;
         }
 
-        public static string CleanReleaseTitleForParsing(string title)
+        public static string CleanReleaseTitleForParsing(string title) => CleanReleaseTitleForParsing(title, normalizeBrackets: false);
+
+        private static string CleanReleaseTitleForParsing(string title, bool normalizeBrackets)
         {
             if (title.IsNullOrWhiteSpace())
             {
@@ -557,6 +562,11 @@ namespace NzbDrone.Core.Parser
 
             var cleaned = MalformedApostropheEntityRegex.Replace(title, "'");
             cleaned = WebUtility.HtmlDecode(cleaned);
+            if (normalizeBrackets)
+            {
+                cleaned = TitleBracketCatalog.NormalizeForParsing(cleaned);
+            }
+
             cleaned = LeadingUsenetCounterRegex.Replace(cleaned, string.Empty);
             cleaned = MultipartArticleCounterRegex.Replace(cleaned, " ");
             cleaned = TrailingYEncRegex.Replace(cleaned, string.Empty);

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Utilities;
@@ -426,7 +426,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return string.Empty;
             }
 
-            return UnicodeComparisonNormalizer.NormalizeWords(Regex.Replace(value, "['\u2018\u2019]s$", "s", RegexOptions.IgnoreCase));
+            return UnicodeComparisonNormalizer.NormalizeWords(StringSuperNormalizer.PossessiveRegex.Replace(value, "s"));
         }
 
         private static bool IsNonSemanticGap(string value, int start, int end)

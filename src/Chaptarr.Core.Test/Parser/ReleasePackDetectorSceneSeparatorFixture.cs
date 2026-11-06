@@ -19,6 +19,27 @@ namespace Chaptarr.Core.Test.Parser
             };
         }
 
+        [TestCase("【Books 1-3】", "[Books 1-3]", ReleasePackDetectionVerdict.MultipleBooks)]
+        [TestCase("【Dune 1-3】", "[Dune 1-3]", ReleasePackDetectionVerdict.MultipleBooks)]
+        [TestCase("【1-3】", "[1-3]", ReleasePackDetectionVerdict.None)]
+        [TestCase("［Dune 1-3］", "[Dune 1-3]", ReleasePackDetectionVerdict.MultipleBooks)]
+        [TestCase("［1-3］", "[1-3]", ReleasePackDetectionVerdict.None)]
+        [TestCase("（1 of 2）", "(1 of 2)", ReleasePackDetectionVerdict.SingleBookSplitRelease)]
+        [TestCase("{1 of 2}", "(1 of 2)", ReleasePackDetectionVerdict.SingleBookSplitRelease)]
+        [TestCase("{Unabridged}", "(Unabridged)", ReleasePackDetectionVerdict.None)]
+        public void catalog_brackets_use_existing_pack_rules_without_changing_the_release(string suffix, string asciiSuffix, ReleasePackDetectionVerdict verdict)
+        {
+            var title = "Frank Herbert - Dune " + suffix;
+            var release = new NzbDrone.Core.Parser.Model.ReleaseInfo { Title = title };
+            var actual = ReleasePackDetector.Detect(release, Target());
+            var expected = ReleasePackDetector.Detect("Frank Herbert - Dune " + asciiSuffix, Target());
+
+            Assert.That(actual.Verdict, Is.EqualTo(verdict));
+            Assert.That(actual.PackType, Is.EqualTo(expected.PackType));
+            Assert.That(actual.MatchedValue, Is.EqualTo(expected.MatchedValue));
+            Assert.That(release.Title, Is.EqualTo(title));
+        }
+
         [TestCase("Frank.Herbert s.Dune.Saga.Collection .Books.1-6")]
         [TestCase("Frank_Herbert_Dune_Books_1-6")]
         [TestCase("Frank Herbert - Dune - Books 1-6")]

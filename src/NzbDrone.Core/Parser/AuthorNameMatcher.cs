@@ -12,6 +12,7 @@ namespace NzbDrone.Core.Parser
     public static class AuthorNameMatcher
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+        // Preserve the released name-proof alphabet; unifying persisted keys needs a separate rebuild.
         private static readonly Regex Possessive = new Regex(@"['\u2019\u02bc]s\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private const string HardContributorPattern = @"[;\uff1b/|+\u3001\uff0c\u00d7]|\s[-\u2013\u2014\u00b7\u2022]\s";
         private static readonly Regex ContributorBoundary = new Regex(@"[&\uff06]|" + HardContributorPattern, RegexOptions.Compiled);
@@ -249,7 +250,7 @@ namespace NzbDrone.Core.Parser
                   left.Tokens.SequenceEqual(right.Tokens, StringComparer.OrdinalIgnoreCase)));
         }
 
-        internal static bool AuthorNamesMatch((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) left, (List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) right)
+        internal static bool AuthorNamesMatch((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) left, (List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) right, bool allowSurnameSuffix = true)
         {
             if (left.Tokens.Count == 0 || right.Tokens.Count == 0)
             {
@@ -277,8 +278,8 @@ namespace NzbDrone.Core.Parser
             var rightJoiners = SharedFamilyJoiners(right);
             if (leftJoiners.Count > 0 || rightJoiners.Count > 0)
             {
-                return leftJoiners.Count == 0 ? MatchesJoinedMember(left, right, rightJoiners) :
-                    rightJoiners.Count == 0 && MatchesJoinedMember(right, left, leftJoiners);
+                return leftJoiners.Count == 0 ? MatchesJoinedMember(left, right, rightJoiners, allowSurnameSuffix) :
+                    rightJoiners.Count == 0 && MatchesJoinedMember(right, left, leftJoiners, allowSurnameSuffix);
             }
 
             if (left.JoinerIndexes.Any(index => left.Tokens[index] == "&") ||
@@ -292,12 +293,9 @@ namespace NzbDrone.Core.Parser
                 return false;
             }
 
-            for (var index = 1; index <= surnameCount; index++)
+            if (!FamilyNamesMatch(left.Tokens, right.Tokens, surnameCount, allowSurnameSuffix))
             {
-                if (!string.Equals(left.Tokens[^index], right.Tokens[^index], StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
+                return false;
             }
 
             var leftGivenCount = left.Tokens.Count - surnameCount;
@@ -333,15 +331,67 @@ namespace NzbDrone.Core.Parser
             return SuppliedGivenPartsMatch(shorter, longer, required);
         }
 
+        private static bool SurnameTokenMatches(string left, string right, bool allowSurnameSuffix = true)
+        {
+            if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var shorter = left.Length < right.Length ? left : right;
+            var longer = left.Length < right.Length ? right : left;
+            return allowSurnameSuffix && shorter.Length > 0 && longer.Length == shorter.Length + 1 &&
+                (longer[^1] == 's' || longer[^1] == 'S') &&
+                longer.AsSpan(0, shorter.Length).Equals(shorter.AsSpan(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static bool HasSurnameSuffixAnchor(IReadOnlyList<string> expected, IReadOnlyList<string> supplied)
+        {
+            if (expected.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var token in supplied)
+            {
+                if (!string.Equals(expected[^1], token, StringComparison.OrdinalIgnoreCase) &&
+                    SurnameTokenMatches(expected[^1], token))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool FamilyNamesMatch(IReadOnlyList<string> left, IReadOnlyList<string> right, int count, bool allowSurnameSuffix = true)
+        {
+            if (left.Count < count || right.Count < count)
+            {
+                return false;
+            }
+
+            for (var index = 1; index <= count; index++)
+            {
+                // Only the final family token allows an apostrophe-less possessive suffix.
+                if (index == 1 ? !SurnameTokenMatches(left[^index], right[^index], allowSurnameSuffix) :
+                    !string.Equals(left[^index], right[^index], StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static IReadOnlyList<int> SharedFamilyJoiners((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) credit)
             => credit.JoinerIndexes.Count == 0 ? Array.Empty<int>() :
                 credit.JoinerIndexes.Where(index => index >= credit.FirstCount && index + 1 < credit.Tokens.Count - credit.LastCount).ToArray();
 
-        private static bool MatchesJoinedMember((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expected, (List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) credit, IReadOnlyList<int> joiners)
+        private static bool MatchesJoinedMember((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expected, (List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) credit, IReadOnlyList<int> joiners, bool allowSurnameSuffix = true)
         {
             var expectedGiven = expected.Tokens.Take(expected.Tokens.Count - expected.LastCount).ToList();
-            var family = expected.Tokens.TakeLast(expected.LastCount).ToList();
-            var sharedFamily = credit.Tokens.TakeLast(expected.LastCount).SequenceEqual(family, StringComparer.OrdinalIgnoreCase);
+            var sharedFamily = FamilyNamesMatch(expected.Tokens, credit.Tokens, expected.LastCount, allowSurnameSuffix);
             var start = 0;
             foreach (var end in joiners.Append(credit.Tokens.Count))
             {
@@ -351,7 +401,7 @@ namespace NzbDrone.Core.Parser
                     return true;
                 }
 
-                var complete = supplied.Count > expected.LastCount && supplied.TakeLast(expected.LastCount).SequenceEqual(family, StringComparer.OrdinalIgnoreCase);
+                var complete = supplied.Count > expected.LastCount && FamilyNamesMatch(expected.Tokens, supplied, expected.LastCount, allowSurnameSuffix);
                 if (complete || (end < credit.Tokens.Count && sharedFamily))
                 {
                     var given = complete ? supplied.Take(supplied.Count - expected.LastCount).ToList() : supplied;
@@ -454,19 +504,19 @@ namespace NzbDrone.Core.Parser
             return ContainsAuthorName(expectedName, fieldValue, ReleaseTitleMatchScorer.TokenizeWithSpans(fieldValue));
         }
 
-        internal static bool ContainsAuthorName((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expectedName, string fieldValue, IReadOnlyList<TitleTokenSpan> tokens)
+        internal static bool ContainsAuthorName((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expectedName, string fieldValue, IReadOnlyList<TitleTokenSpan> tokens, bool allowSurnameSuffix = true)
         {
-            return ContainsAuthorName(expectedName, fieldValue, tokens, Array.Empty<(int Start, int End)>());
+            return ContainsAuthorName(expectedName, fieldValue, tokens, Array.Empty<(int Start, int End)>(), allowSurnameSuffix);
         }
 
-        internal static bool ContainsAuthorName((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expectedName, string fieldValue, IReadOnlyList<TitleTokenSpan> tokens, IReadOnlyList<(int Start, int End)> exactTitleSpans)
+        internal static bool ContainsAuthorName((List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expectedName, string fieldValue, IReadOnlyList<TitleTokenSpan> tokens, IReadOnlyList<(int Start, int End)> exactTitleSpans, bool allowSurnameSuffix = true)
         {
-            return FindNameSpans(fieldValue, tokens, expectedName).Any(span =>
+            return FindNameSpans(fieldValue, tokens, expectedName, allowSurnameSuffix).Any(span =>
                 IsCoherentNameSpan(fieldValue, tokens, span) ||
                 exactTitleSpans.Any(title => IsCoherentNameSpan(fieldValue, tokens, span, title.Start, title.End)));
         }
 
-        internal static IEnumerable<(int Start, int End, bool Inverted)> FindNameSpans(string source, IReadOnlyList<TitleTokenSpan> tokens, (List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expected)
+        internal static IEnumerable<(int Start, int End, bool Inverted)> FindNameSpans(string source, IReadOnlyList<TitleTokenSpan> tokens, (List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, IReadOnlyList<int> JoinerIndexes) expected, bool allowSurnameSuffix = true)
         {
             if (expected.Tokens.Count == 0)
             {
@@ -479,7 +529,7 @@ namespace NzbDrone.Core.Parser
             var nameTokens = tokens.Select(token => NormalizeNameToken(source, token)).ToArray();
             var started = Logger.IsTraceEnabled ? Stopwatch.GetTimestamp() : 0;
             var surnameIndexes = Enumerable.Range(0, tokens.Count)
-                .Where(index => string.Equals(surname, nameTokens[index], StringComparison.OrdinalIgnoreCase) ||
+                .Where(index => SurnameTokenMatches(surname, nameTokens[index], allowSurnameSuffix) ||
                                 string.Equals(compactName, nameTokens[index], StringComparison.OrdinalIgnoreCase) ||
                                 (hasLiteralOrder && nameTokens[index].Length > 0 && expected.LiteralKey.EndsWith(nameTokens[index], StringComparison.OrdinalIgnoreCase)))
                 .ToList();
@@ -527,7 +577,7 @@ namespace NzbDrone.Core.Parser
                                 !nameTokens[start - 1].All(char.IsDigit) && !IsNameJoiner(source, tokens[start - 1]) &&
                                 !HasNameBoundary(source, tokens[start - 1].End, tokens[start].Start);
                             if (AuthorNamesExactlyMatch(expected, candidate) ||
-                                (!startsWithSharedJoiner && !borrowsExpandedInitial && (comma < 0 || tokens[end].End <= comma) && AuthorNamesMatch(expected, candidate)))
+                                (!startsWithSharedJoiner && !borrowsExpandedInitial && (comma < 0 || tokens[end].End <= comma) && AuthorNamesMatch(expected, candidate, allowSurnameSuffix)))
                             {
                                 matched++;
                                 yield return (start, end, false);
@@ -571,8 +621,10 @@ namespace NzbDrone.Core.Parser
             {
                 if (started != 0)
                 {
-                    Logger.Trace("Author span search: tokens={0}, maxSpan={1}, examined={2}, matched={3}, elapsedMs={4:F3}",
-                        tokens.Count, maxLength, examined, matched, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                    Logger.Trace("Author span search: tokens={0}, maxSpan={1}, examined={2}, matched={3}, elapsedMs={4:F3}, possessiveAnchors={5}",
+                        tokens.Count, maxLength, examined, matched, Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                        surnameIndexes.Count(index => !string.Equals(surname, nameTokens[index], StringComparison.OrdinalIgnoreCase) &&
+                            SurnameTokenMatches(surname, nameTokens[index], allowSurnameSuffix)));
                 }
             }
 
@@ -632,7 +684,7 @@ namespace NzbDrone.Core.Parser
                     }
 
                     examined++;
-                    if (AuthorNamesMatch(expected, candidate))
+                    if (AuthorNamesMatch(expected, candidate, allowSurnameSuffix))
                     {
                         matched++;
                         yield return (start, end, true);
